@@ -8,6 +8,8 @@ import {
   Ban,
   CheckCircle2,
   Loader2,
+  Pencil,
+  RotateCcw,
   Send,
   ThumbsDown,
   ThumbsUp,
@@ -22,7 +24,10 @@ import {
   useDeclineEstimate,
   useConvertEstimateToInvoice,
   useVoidEstimate,
+  useRevertEstimateToDraft,
 } from "@/lib/api/estimates";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { CreateEstimateModal } from "../EstimateFormModal";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
@@ -69,6 +74,43 @@ function VoidConfirmModal({
   );
 }
 
+// ─── Back-to-draft confirm (accepted quotes only) ─────────────────────────────
+
+function RevertAcceptedModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  estimateNumber,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  estimateNumber: string;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Move the accepted estimate back to draft?"
+      description={`The customer accepted ${estimateNumber}. As a draft, it needs to be sent and accepted again.`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} loading={isPending}>
+            Back to draft
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-navy/70">You can edit it, then send it again.</p>
+    </Modal>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EstimateDetailPage() {
@@ -85,8 +127,11 @@ export default function EstimateDetailPage() {
   const convertToInvoice = useConvertEstimateToInvoice();
   const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const voidEstimate = useVoidEstimate();
+  const revertToDraft = useRevertEstimateToDraft();
 
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
+  const [isEditOpen, setIsEditOpen] = React.useState(false);
+  const [isRevertOpen, setIsRevertOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (estimate) setTitle(estimate.estimateNumber);
@@ -212,6 +257,26 @@ export default function EstimateDetailPage() {
     });
   };
 
+  const handleRevert = () => {
+    revertToDraft.mutate(estimate.id, {
+      onSuccess: () => {
+        setIsRevertOpen(false);
+        toast({
+          title: "Back to draft",
+          description: `${estimate.estimateNumber} is a draft again. Edit it, then mark it as sent.`,
+          variant: "success",
+        });
+      },
+      onError: (err: unknown) => {
+        toast({
+          title: "Couldn't move the estimate back to draft",
+          description: genericToastCopy(err),
+          variant: "error",
+        });
+      },
+    });
+  };
+
   const handleVoid = () => {
     voidEstimate.mutate(estimate.id, {
       onSuccess: () => {
@@ -237,6 +302,10 @@ export default function EstimateDetailPage() {
   // Wave E / imp-10b, L-072 (sibling-sweep find): dropped a comparison against a
   // phantom "EXPIRED" EstimateStatus value the schema has never had.
   const isReadOnly = status === "DECLINED";
+  // A sent or accepted quote can be revised: back to draft, edit, send again.
+  const canRevert = status === "SENT" || status === "ACCEPTED";
+  // Void closes an open quote; a converted one has an invoice and a declined one is already closed.
+  const canVoid = status !== "DECLINED" && status !== "CONVERTED";
 
   return (
     <div className="space-y-5 p-6">
@@ -262,19 +331,19 @@ export default function EstimateDetailPage() {
             <>
               <Button
                 size="sm"
+                variant="secondary"
+                leftIcon={<Pencil className="h-4 w-4" />}
+                onClick={() => setIsEditOpen(true)}
+              >
+                Edit
+              </Button>
+              <Button
+                size="sm"
                 leftIcon={<Send className="h-4 w-4" />}
                 onClick={handleSend}
                 loading={sendEstimate.isPending}
               >
                 Mark as sent
-              </Button>
-              <Button
-                size="sm"
-                variant="danger-outline"
-                leftIcon={<Ban className="h-4 w-4" />}
-                onClick={() => setIsVoidOpen(true)}
-              >
-                Void
               </Button>
             </>
           )}
@@ -312,9 +381,33 @@ export default function EstimateDetailPage() {
             </Button>
           )}
 
+          {canRevert && (
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<RotateCcw className="h-4 w-4" />}
+              // An accepted quote is the customer's yes: confirm before undoing it. A sent one moves at once.
+              onClick={() => (status === "ACCEPTED" ? setIsRevertOpen(true) : handleRevert())}
+              loading={revertToDraft.isPending}
+            >
+              Back to draft
+            </Button>
+          )}
+
+          {status === "CONVERTED" && estimate.invoiceId && (
+            <Button
+              size="sm"
+              variant="secondary"
+              leftIcon={<FileText className="h-4 w-4" />}
+              href={`/invoices/${estimate.invoiceId}`}
+            >
+              View invoice
+            </Button>
+          )}
+
           {isReadOnly && (
             <span className="text-sm italic text-navy/70">
-              {status === "DECLINED" ? "This estimate was declined." : "This estimate has expired."}
+              This estimate was declined or voided.
             </span>
           )}
         </div>
@@ -432,6 +525,14 @@ export default function EstimateDetailPage() {
                 <p className="text-sm text-navy/70 whitespace-pre-line">{estimate.notes}</p>
               </div>
             )}
+            {estimate.terms && (
+              <div className="mt-4 border-t border-surface-border pt-4">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Terms
+                </p>
+                <p className="text-sm text-navy/70 whitespace-pre-line">{estimate.terms}</p>
+              </div>
+            )}
           </Card>
         </div>
 
@@ -458,43 +559,6 @@ export default function EstimateDetailPage() {
                 <dd>{fmt(total)}</dd>
               </div>
             </dl>
-
-            {canConvert && (
-              <div className="mt-4 space-y-2">
-                <Button
-                  size="sm"
-                  className="w-full"
-                  leftIcon={<FileText className="h-4 w-4" />}
-                  onClick={handleConvert}
-                  loading={convertToInvoice.isPending}
-                >
-                  Convert to invoice
-                </Button>
-              </div>
-            )}
-
-            {status === "SENT" && (
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  leftIcon={<ThumbsUp className="h-4 w-4" />}
-                  onClick={handleAccept}
-                  loading={acceptEstimate.isPending}
-                >
-                  Accept
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  leftIcon={<ThumbsDown className="h-4 w-4" />}
-                  onClick={handleDecline}
-                  loading={declineEstimate.isPending}
-                >
-                  Decline
-                </Button>
-              </div>
-            )}
           </Card>
 
           <Card title="Dates">
@@ -527,7 +591,7 @@ export default function EstimateDetailPage() {
             </dl>
           </Card>
 
-          {!isReadOnly && (
+          {canVoid && (
             <div className="pt-1">
               <button
                 onClick={() => setIsVoidOpen(true)}
@@ -561,6 +625,21 @@ export default function EstimateDetailPage() {
         estimateNumber={estimate.estimateNumber}
         isPending={voidEstimate.isPending}
       />
+      <RevertAcceptedModal
+        isOpen={isRevertOpen}
+        onClose={() => setIsRevertOpen(false)}
+        onConfirm={handleRevert}
+        estimateNumber={estimate.estimateNumber}
+        isPending={revertToDraft.isPending}
+      />
+      {status === "DRAFT" && (
+        <CreateEstimateModal
+          isOpen={isEditOpen}
+          onClose={() => setIsEditOpen(false)}
+          onSuccess={() => setIsEditOpen(false)}
+          estimate={estimate}
+        />
+      )}
       {rw.dialog}
     </div>
   );

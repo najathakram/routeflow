@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -6,7 +6,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { EstimatesService } from "./estimates.service";
-import { CreateEstimateDto } from "./dto/create-estimate.dto";
+import { CreateEstimateDto, UpdateEstimateDto } from "./dto/create-estimate.dto";
 import { ConvertEstimateDto } from "./dto/convert-estimate.dto";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -47,6 +47,18 @@ export class EstimatesController {
   }
   @Get(":id") findOne(@Param("id") id: string) {
     return this.estimatesService.findOne(id);
+  }
+  /** Edit a DRAFT (lines, prices, customer, dates, notes, terms). */
+  @Patch(":id") update(
+    @Param("id") id: string,
+    @Body() dto: UpdateEstimateDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.estimatesService.update(id, dto, user);
+  }
+  /** A SENT or ACCEPTED estimate back to DRAFT, to revise it. */
+  @Post(":id/revert-to-draft") revertToDraft(@Param("id") id: string) {
+    return this.estimatesService.revertToDraft(id);
   }
   @Post(":id/send") send(@Param("id") id: string) {
     return this.estimatesService.send(id);
