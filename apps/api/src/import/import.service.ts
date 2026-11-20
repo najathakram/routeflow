@@ -30,11 +30,17 @@ import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import {
+  IMPORT_FAMILY_TOBACCO_HINT,
   ProductFamilyImportService,
+  importFamilyTobaccoAddonReason,
   type FamilyDecision,
   type FamilyPlan,
   type FamilyRowInput,
 } from "./product-family-import.service";
+import {
+  ImportRequirementLabelService,
+  type ImportRequirementLabels,
+} from "./import-requirement-labels";
 import { roundMoney, roundUnitCost } from "@routeflow/pricing";
 import { stripParentPrefix } from "../products/product-variant-name";
 import { ProductImportJobService } from "./product-import-job.service";
@@ -276,6 +282,8 @@ export class ImportService {
     @Optional() private readonly familyImport?: ProductFamilyImportService,
     // SA-823 section 5: the queue a large family-import apply runs on (absent in specs that never regroup in bulk).
     @Optional() private readonly productImportJobs?: ProductImportJobService,
+    // SA-1193 A1-2: the billing page's names for what a skipped column needs (absent in specs where no gate denies).
+    @Optional() private readonly requirementLabels?: ImportRequirementLabelService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -2577,7 +2585,11 @@ export class ImportService {
     const headers = rawRows.length > 0 ? Object.keys(rawRows[0]) : [];
     // ── SA-1193 K1: file-level entitlement gates — BEFORE any write-capable query, identical in dryRun and real. Every
     // gate whose column is present is asked (no short-circuit); a denied column is dropped and named, an outage refuses.
-    const { resolved, skippedColumns } = await skipDeniedGatedColumns(
+    const {
+      resolved,
+      skippedColumns: skips,
+      verdicts,
+    } = await skipDeniedGatedColumns(
       headers,
       resolveColumns(headers, PRODUCT_COLUMNS),
       PRODUCT_COLUMNS,
@@ -2588,7 +2600,35 @@ export class ImportService {
       },
       isEntitlementDenial,
     );
-    const tobaccoColumnSkipped = skippedColumns.some((c) => c.requires === "TOBACCO_DEALER");
+    // SA-1193 A1-2: the billing page's names, looked up at most once per import and only when a name is needed.
+    let labelsOnce: Promise<ImportRequirementLabels> | undefined;
+    const labels = () => {
+      if (!this.requirementLabels)
+        throw new Error("ImportRequirementLabelService is not available");
+      return (labelsOnce ??= this.requirementLabels.labels());
+    };
+    const skippedColumns: ImportSkippedColumn[] =
+      skips.length === 0
+        ? []
+        : await labels().then((l) => skips.map((s) => ({ ...s, label: l[s.requires] })));
+    // SA-1193 A1-1: the file's ONE Tobacco entitlement verdict. K1's answer when the file has the column; otherwise
+    // asked once, and only if a plain row meets a tobacco family. A denial picks the add-on reason; an outage refuses.
+    let tobaccoOnce: Promise<boolean> | undefined =
+      verdicts.tobacco === undefined ? undefined : Promise.resolve(verdicts.tobacco);
+    const tobaccoAllowed = () =>
+      (tobaccoOnce ??= (async () => {
+        try {
+          await this.productsService.assertCanFlagTobacco(true);
+          return true;
+        } catch (e) {
+          if (!isEntitlementDenial(e)) throw e;
+          return false;
+        }
+      })());
+    const plainIntoTobaccoReason = async () =>
+      (await tobaccoAllowed())
+        ? IMPORT_FAMILY_TOBACCO_HINT
+        : importFamilyTobaccoAddonReason((await labels()).TOBACCO_DEALER);
 
     // SA-823: a Family column is refused for the WHOLE file (too many rows, or family pricing on) before any lookup.
     const hasFamilyColumn = !!resolved.byField.family;
@@ -2690,7 +2730,7 @@ export class ImportService {
       if (real.length > 0) {
         // The cap and the pricing 409 apply only to a file that really regroups or creates (SA-823 section 4/5).
         familyImport.assertRowCap(rawRows.length);
-        famPlan = await familyImport.planRows(real, { tobaccoColumnSkipped });
+        famPlan = await familyImport.planRows(real, { plainIntoTobaccoReason });
         const changesFamily = (d: FamilyDecision) =>
           d.skip === undefined &&
           (!d.existing ||

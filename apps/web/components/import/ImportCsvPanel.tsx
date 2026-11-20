@@ -442,16 +442,16 @@ function SkippedColumnsNotice({
       <p className="font-medium">{notice.title}</p>
       <ul className="mt-0.5 space-y-0.5">
         {notice.lines.map((l) => {
-          const next = IMPORT_REQUIREMENT_NEXT_STEP[l.requires];
+          const next = l.label ? IMPORT_REQUIREMENT_NEXT_STEP[l.requires] : undefined;
           return (
             <li key={l.requires}>
               {l.text}
-              {next && (
+              {next && l.label && (
                 <>
                   {" "}
-                  {next.before}
+                  {next.before(l.label)}
                   <Link href={next.href} className="font-medium underline">
-                    {next.label}
+                    {next.linkText}
                   </Link>
                   {next.after}
                 </>

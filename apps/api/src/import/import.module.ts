@@ -14,6 +14,7 @@ import { DuplicateMatchModule } from "./duplicate-match.module";
 import { VariantResolutionService } from "./variant-resolution.service";
 import { MigrationService } from "./migration.service";
 import { ProductFamilyImportService } from "./product-family-import.service";
+import { ImportRequirementLabelService } from "./import-requirement-labels";
 import { ProductImportJobService } from "./product-import-job.service";
 import { ProductImportProcessor } from "./product-import.processor";
 import { PRODUCT_IMPORT_QUEUE } from "./product-import-job";
@@ -61,6 +62,8 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
   providers: [
     ImportService,
     ProductFamilyImportService,
+    // SA-1193 A1-2: EntitlementsModule (imported above) provides PlanCatalogService + EntitlementsService
+    ImportRequirementLabelService,
     ProductImportJobService,
     ProductImportProcessor,
     ExternalRefService,

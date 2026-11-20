@@ -9,6 +9,8 @@ import {
 } from "./product-family-import.service";
 import { ProductImportJobService } from "./product-import-job.service";
 import { IMPORT_FAMILY_SYNC_MAX_ROWS } from "./product-import-job";
+import { ImportRequirementLabelService, requirementLabels } from "./import-requirement-labels";
+import { V11_ADDON_SEEDS } from "../../prisma/plan-catalog-v11.definitions";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
@@ -94,6 +96,8 @@ function matches(r: any, where: any): boolean {
 
 describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR-2)", () => {
   let service: ImportService;
+  // SA-1193 A1-2: the label source, over the real v11 catalog (the fixture catalog)
+  let labelService: { labels: jest.Mock };
   let rows: Row[];
   let audits: Array<Record<string, unknown>>;
   let trackedCategories: Array<{ id: string; name: string }>;
@@ -263,11 +267,13 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
     featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("off") };
     auditService = { log: jest.fn().mockResolvedValue(undefined) };
     jobs = { enqueue: jest.fn(async () => ({ jobId: "job-1" })) };
+    labelService = { labels: jest.fn().mockResolvedValue(requirementLabels(V11_ADDON_SEEDS)) };
 
     const mod = await Test.createTestingModule({
       providers: [
         ImportService,
         ProductFamilyImportService,
+        { provide: ImportRequirementLabelService, useValue: labelService },
         { provide: PrismaService, useValue: prisma },
         { provide: VendorBillsService, useValue: {} },
         { provide: CustomersService, useValue: {} },
@@ -938,10 +944,76 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
         }),
       );
       const r = await run(csv("Mint,,,6,Acme Cola,Mint,,Yes"), true);
-      expect(r.skippedColumns).toEqual([{ column: "Tobacco", requires: "TOBACCO_DEALER" }]);
+      expect(r.skippedColumns).toEqual([
+        { column: "Tobacco", requires: "TOBACCO_DEALER", label: "Regulated items" },
+      ]);
+      // SA-1193 A1-2: the add-on is named by the catalog's own name (the billing page's), never a typed one
       expect(byRow(r, 1)).toMatchObject({
         action: "skip",
-        reason: "This is a tobacco family. Adding to it needs the Tobacco dealer add-on.",
+        reason: "This is a tobacco family. Adding to it needs the Regulated items add-on.",
+      });
+      // K1's one per-file verdict is reused, never asked again for the row
+      expect(productsService.assertCanFlagTobacco).toHaveBeenCalledTimes(1);
+    });
+
+    describe("SA-1193 A1-1: the hint follows the Tobacco entitlement, with or without the column", () => {
+      const NO_TOBACCO = "Item Name,SKU,Barcode,Rate,Family,Variant Name,Product ID";
+      const csvNoTobacco = (...lines: string[]) =>
+        Buffer.from([NO_TOBACCO, ...lines].join("\n") + "\n");
+      beforeEach(() => {
+        rows.push(mk({ id: "fam", name: "Acme Cola", kind: "FAMILY" }));
+        rows.push(
+          mk({
+            id: "kid",
+            name: "Classic",
+            kind: "VARIANT",
+            parentProductId: "fam",
+            isTobacco: true,
+            trackedCategoryId: "cat-t",
+          }),
+        );
+      });
+
+      it("no Tobacco column, tenant WITHOUT the add-on: the rows name the add-on, asked once for the file", async () => {
+        productsService.assertCanFlagTobacco.mockRejectedValue(
+          new ForbiddenException("tobacco_dealer add-on required"),
+        );
+        const b = csvNoTobacco("Mint,,,6,Acme Cola,Mint,", "Berry,,,6,Acme Cola,Berry,");
+        for (const dryRun of [true, false]) {
+          productsService.assertCanFlagTobacco.mockClear();
+          const r = await run(b, dryRun);
+          expect(r.skippedColumns).toEqual([]);
+          for (const n of [1, 2]) {
+            expect(byRow(r, n)).toMatchObject({
+              action: "skip",
+              reason: "This is a tobacco family. Adding to it needs the Regulated items add-on.",
+            });
+          }
+          expect(productsService.assertCanFlagTobacco).toHaveBeenCalledTimes(1);
+        }
+      });
+
+      it("no Tobacco column, tenant WITH the add-on: the hint is unchanged", async () => {
+        const r = await run(csvNoTobacco("Mint,,,6,Acme Cola,Mint,"), true);
+        expect(byRow(r, 1)).toMatchObject({
+          action: "skip",
+          reason: "Set Tobacco to Yes to add this to a tobacco family.",
+        });
+        expect(productsService.assertCanFlagTobacco).toHaveBeenCalledTimes(1);
+      });
+
+      it("no Tobacco column and no row meeting a tobacco family: the Tobacco gate is never asked", async () => {
+        rows.push(mk({ id: "fam-plain", name: "Acme Soda", kind: "FAMILY" }));
+        const r = await run(csvNoTobacco("Lime,,,6,Acme Soda,Lime,"), true);
+        expect(r.skipped).toBe(0);
+        expect(productsService.assertCanFlagTobacco).not.toHaveBeenCalled();
+      });
+
+      it("an OUTAGE on that one ask refuses the file, like K1's outage", async () => {
+        productsService.assertCanFlagTobacco.mockRejectedValue(new Error("connect ECONNREFUSED"));
+        await expect(run(csvNoTobacco("Mint,,,6,Acme Cola,Mint,"), true)).rejects.toThrow(
+          "connect ECONNREFUSED",
+        );
       });
     });
   });
@@ -1164,7 +1236,9 @@ describe("ImportService.importProducts: Family / Variant name columns (SA-823 PR
         new ForbiddenException("tobacco_dealer add-on required"),
       );
       const file = regroupFile(IMPORT_FAMILY_SYNC_MAX_ROWS + 1);
-      const expected = [{ column: "Tobacco", requires: "TOBACCO_DEALER" }];
+      const expected = [
+        { column: "Tobacco", requires: "TOBACCO_DEALER", label: "Regulated items" },
+      ];
       const preview: any = await apply(file, { dryRun: true });
       const queued: any = await apply(file);
       const jobRun: any = await service.importProducts(file, "user-1", { fileName: "f.csv" });

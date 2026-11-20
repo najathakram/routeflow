@@ -220,4 +220,9 @@ export type ImportColumnRequirement = (typeof IMPORT_COLUMN_REQUIREMENT_VALUES)[
 export interface ImportSkippedColumn {
   column: string;
   requires: ImportColumnRequirement;
+  /**
+   * SA-1193 A1-2: the name the billing page shows for what it needs (the catalog name of its SKU), resolved by the
+   * server once per import. Data only: the web puts it into its own fixed sentence.
+   */
+  label: string;
 }

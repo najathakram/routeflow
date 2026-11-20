@@ -39,9 +39,13 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS } from "./import-columns";
 import { IMPORT_PACK_READING, packCostAbovePieceCount } from "./import-pack-reading";
+import { ImportRequirementLabelService, requirementLabels } from "./import-requirement-labels";
+import { V11_ADDON_SEEDS } from "../../prisma/plan-catalog-v11.definitions";
 
 describe("ImportService — commercial columns (B858/B859)", () => {
   let service: ImportService;
+  // SA-1193 A1-2: the label source, over the real v11 catalog (the fixture catalog)
+  let labelService: { labels: jest.Mock };
   let prisma: ReturnType<typeof createMockPrisma>;
   let productsService: {
     create: jest.Mock;
@@ -81,8 +85,10 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       setCustomerConsent: jest.fn().mockResolvedValue(undefined),
     };
 
+    labelService = { labels: jest.fn().mockResolvedValue(requirementLabels(V11_ADDON_SEEDS)) };
     const mod = await Test.createTestingModule({
       providers: [
+        { provide: ImportRequirementLabelService, useValue: labelService },
         {
           provide: SellingRestrictionsService,
           useValue: {
@@ -1053,7 +1059,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
 
         for (const dryRun of [true, false]) {
           const r: any = await service.importProducts(Buffer.from(csv), "user-1", { dryRun });
-          expect(r.skippedColumns).toEqual([{ column: header, requires: "FORECASTING" }]);
+          expect(r.skippedColumns).toEqual([
+            { column: header, requires: "FORECASTING", label: "Forecasting" },
+          ]);
         }
         expect(productsService.create).toHaveBeenCalledTimes(1);
         const dto = productsService.create.mock.calls[0][0];
@@ -1114,7 +1122,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       const real: any = await service.importProducts(Buffer.from(csv), "user-1");
 
       for (const r of [preview, real]) {
-        expect(r.skippedColumns).toEqual([{ column: "Tobacco", requires: "TOBACCO_DEALER" }]);
+        expect(r.skippedColumns).toEqual([
+          { column: "Tobacco", requires: "TOBACCO_DEALER", label: "Regulated items" },
+        ]);
         expect(r.unknownColumns).toEqual([]);
       }
       expect(preview.rows[0]).toMatchObject({ action: "create" });
@@ -1134,29 +1144,31 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       const real: any = await service.importProducts(Buffer.from(csv), "user-1");
 
       for (const r of [preview, real]) {
-        expect(r.skippedColumns).toEqual([{ column: "MSRP", requires: "MSRP" }]);
+        expect(r.skippedColumns).toEqual([
+          { column: "MSRP", requires: "MSRP", label: "MSRP on invoices" },
+        ]);
       }
       expect(productsService.create).toHaveBeenCalledTimes(1);
       expect(productsService.create.mock.calls[0][0]).not.toHaveProperty("msrp");
     });
 
     // ── SA-1193 K3 (turned B987-E): the refusal code is never produced; each gated column answers 200 with
-    // `skippedColumns[{column, requires}]`, `column` being the user's own header. ────────────────────────────────────
+    // `skippedColumns[{column, requires, label}]`, `column` being the user's own header. ────────────────────────────────────
 
     it.each([
-      ["MSRP", "assertMsrpAllowed", "MSRP"],
-      ["Tobacco", "assertCanFlagTobacco", "TOBACCO_DEALER"],
-      ["Reorder Point", "assertReorderAllowed", "FORECASTING"],
+      ["MSRP", "assertMsrpAllowed", "MSRP", "MSRP on invoices"],
+      ["Tobacco", "assertCanFlagTobacco", "TOBACCO_DEALER", "Regulated items"],
+      ["Reorder Point", "assertReorderAllowed", "FORECASTING", "Forecasting"],
     ])(
       "SA-1193: a %s column without its entitlement answers a result naming it in skippedColumns, never a 403",
-      async (header, gate, requires) => {
+      async (header, gate, requires, label) => {
         (productsService as any)[gate].mockRejectedValue(new ForbiddenException("denied"));
         const csv = `Item Name,SKU,Rate,${header}\nWidget,SKU-1,10,1\n`;
         const r: any = await service
           .importProducts(Buffer.from(csv), "user-1", { dryRun: true })
           .catch((e) => e);
         expect(r).not.toBeInstanceOf(Error);
-        expect(r.skippedColumns).toEqual([{ column: header, requires }]);
+        expect(r.skippedColumns).toEqual([{ column: header, requires, label }]);
         expect(r.rows[0]).toMatchObject({ action: "create" });
         expect(JSON.stringify(r)).not.toContain("IMPORT_COLUMN_NEEDS_ENTITLEMENT");
       },
@@ -1200,10 +1212,10 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         const real: any = await service.importProducts(Buffer.from(csv), "user-1");
 
         const expected = [
-          { column: "MSRP", requires: "MSRP" },
-          { column: "Tobacco", requires: "TOBACCO_DEALER" },
-          { column: "Reorder Point", requires: "FORECASTING" },
-          { column: "Reorder Qty", requires: "FORECASTING" },
+          { column: "MSRP", requires: "MSRP", label: "MSRP on invoices" },
+          { column: "Tobacco", requires: "TOBACCO_DEALER", label: "Regulated items" },
+          { column: "Reorder Point", requires: "FORECASTING", label: "Forecasting" },
+          { column: "Reorder Qty", requires: "FORECASTING", label: "Forecasting" },
         ];
         expect(preview.skippedColumns).toEqual(expected);
         expect(real.skippedColumns).toEqual(expected);
@@ -1217,6 +1229,37 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         for (const f of ["msrp", "isTobacco", "reorderPoint", "reorderQty"]) {
           expect(dto).not.toHaveProperty(f);
         }
+      });
+
+      it("SA-1193 A1-2: each entry's label is the catalog's name for its SKU (the billing page's), resolved once per import", async () => {
+        denyAll();
+        const csv = `${TEMPLATE}\nWidget,SKU-1,,,10,,,,,,,,,19.99,Yes,4,12,,,\n`;
+        const catalogName = (sku: string) => V11_ADDON_SEEDS.find((s) => s.sku === sku)!.name;
+
+        const r: any = await service.importProducts(Buffer.from(csv), "user-1", { dryRun: true });
+
+        // observed catalog strings (v11, unchanged in v12/v13): the names the billing page lists
+        expect(r.skippedColumns).toEqual([
+          { column: "MSRP", requires: "MSRP", label: "MSRP on invoices" },
+          { column: "Tobacco", requires: "TOBACCO_DEALER", label: "Regulated items" },
+          { column: "Reorder Point", requires: "FORECASTING", label: "Forecasting" },
+          { column: "Reorder Qty", requires: "FORECASTING", label: "Forecasting" },
+        ]);
+        // the same SKU the billing route bridges each gate's key to: flag.msrp, tobacco_dealer, flag.forecasting
+        expect(r.skippedColumns[0].label).toBe(catalogName("MSRP"));
+        expect(r.skippedColumns[1].label).toBe(catalogName("REGULATED_ITEMS"));
+        expect(r.skippedColumns[2].label).toBe(catalogName("FORECASTING"));
+        expect(labelService.labels).toHaveBeenCalledTimes(1);
+      });
+
+      it("SA-1193 A1-2: a file with nothing skipped never looks the labels up", async () => {
+        const r: any = await service.importProducts(
+          Buffer.from("Item Name,SKU,Rate\nWidget,SKU-1,10\n"),
+          "user-1",
+          { dryRun: true },
+        );
+        expect(r.skippedColumns).toEqual([]);
+        expect(labelService.labels).not.toHaveBeenCalled();
       });
 
       it("K5 3: every blank gated cell still names its column (the header alone is enough)", async () => {
@@ -1235,7 +1278,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         denyAll();
         const csv = "Item Name,SKU,Rate,Retail Price\nWidget,SKU-1,10,19.99\n";
         const r: any = await service.importProducts(Buffer.from(csv), "user-1");
-        expect(r.skippedColumns).toEqual([{ column: "Retail Price", requires: "MSRP" }]);
+        expect(r.skippedColumns).toEqual([
+          { column: "Retail Price", requires: "MSRP", label: "MSRP on invoices" },
+        ]);
         expect(productsService.create).toHaveBeenCalledTimes(1);
         expect(productsService.create.mock.calls[0][0]).not.toHaveProperty("msrp");
       });
@@ -1245,9 +1290,9 @@ describe("ImportService — commercial columns (B858/B859)", () => {
         const csv = "Item Name,SKU,Rate,MSRP,Retail Price,msrp\nWidget,SKU-1,10,19.99,18,17\n";
         const r: any = await service.importProducts(Buffer.from(csv), "user-1");
         expect(r.skippedColumns).toEqual([
-          { column: "MSRP", requires: "MSRP" },
-          { column: "Retail Price", requires: "MSRP" },
-          { column: "msrp", requires: "MSRP" },
+          { column: "MSRP", requires: "MSRP", label: "MSRP on invoices" },
+          { column: "Retail Price", requires: "MSRP", label: "MSRP on invoices" },
+          { column: "msrp", requires: "MSRP", label: "MSRP on invoices" },
         ]);
         expect(r.unknownColumns).toEqual([]);
         expect(productsService.create.mock.calls[0][0]).not.toHaveProperty("msrp");
@@ -1300,8 +1345,8 @@ describe("ImportService — commercial columns (B858/B859)", () => {
           dryRun: true,
         });
         expect(preview.skippedColumns).toEqual([
-          { column: "Reorder Point", requires: "FORECASTING" },
-          { column: "Reorder Qty", requires: "FORECASTING" },
+          { column: "Reorder Point", requires: "FORECASTING", label: "Forecasting" },
+          { column: "Reorder Qty", requires: "FORECASTING", label: "Forecasting" },
         ]);
         expect(preview.rows[0].action).toBe("update");
         expect(preview.rows[0].changes).not.toHaveProperty("reorderPoint");

@@ -27,6 +27,16 @@ describe("skipDeniedGatedColumns (SA-1193 K1)", () => {
     expect(asks.msrp).toHaveBeenCalledTimes(1);
     expect(asks.tobacco).not.toHaveBeenCalled();
     expect(asks.forecasting).not.toHaveBeenCalled();
+    expect(out.verdicts).toEqual({ msrp: true });
+  });
+
+  it("SA-1193 A1-1: verdicts hold each asked gate's answer (the import reuses Tobacco's); an unasked gate is absent", async () => {
+    const headers = ["Item Name", "MSRP", "Tobacco"];
+    const resolved = resolveColumns(headers, PRODUCT_COLUMNS);
+    const asks = { msrp: jest.fn(allow), tobacco: jest.fn(deny), forecasting: jest.fn(allow) };
+    const out = await skipDeniedGatedColumns(headers, resolved, PRODUCT_COLUMNS, asks, denial);
+    expect(out.verdicts).toEqual({ msrp: true, tobacco: false });
+    expect(out.skippedColumns).toEqual([{ column: "Tobacco", requires: "TOBACCO_DEALER" }]);
   });
 
   it("drops a denied field from a COPY of byField; the input resolution is not mutated", async () => {

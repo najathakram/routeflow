@@ -14,6 +14,12 @@ export const IMPORT_GATE_REQUIREMENT: Record<ImportColumnGate, ImportColumnRequi
 /** Longest `column` a skipped entry carries: a header is the user's own text, data only (B987-E). */
 export const SKIPPED_COLUMN_MAX = 120;
 
+/** A skipped header before its `label` is resolved (the import adds it once, from the catalog). */
+export type GatedColumnSkip = Omit<ImportSkippedColumn, "label">;
+
+/** What each gate that was asked answered: true = allowed, false = denied. A gate not asked is absent. */
+export type GateVerdicts = Partial<Record<ImportColumnGate, boolean>>;
+
 /**
  * SA-1193 K1 (B1377): ask every gate whose column the file carries, with no short-circuit, before any row is parsed.
  *
@@ -29,22 +35,29 @@ export async function skipDeniedGatedColumns(
   registry: ColumnDef[],
   asks: Record<ImportColumnGate, () => Promise<void>>,
   isDenial: (e: unknown) => boolean,
-): Promise<{ resolved: ResolvedColumns; skippedColumns: ImportSkippedColumn[] }> {
+): Promise<{
+  resolved: ResolvedColumns;
+  skippedColumns: GatedColumnSkip[];
+  verdicts: GateVerdicts;
+}> {
   const present = new Set<ImportColumnGate>();
   for (const col of registry) {
     if (col.gate && resolved.byField[col.field]) present.add(col.gate);
   }
 
   const denied = new Set<ImportColumnGate>();
+  const verdicts: GateVerdicts = {};
   for (const gate of present) {
     try {
       await asks[gate]();
+      verdicts[gate] = true;
     } catch (e) {
       if (!isDenial(e)) throw e;
       denied.add(gate);
+      verdicts[gate] = false;
     }
   }
-  if (denied.size === 0) return { resolved, skippedColumns: [] };
+  if (denied.size === 0) return { resolved, skippedColumns: [], verdicts };
 
   const byField = { ...resolved.byField };
   const deniedKeys = new Map<string, ImportColumnRequirement>();
@@ -56,7 +69,7 @@ export async function skipDeniedGatedColumns(
     }
   }
 
-  const skippedColumns: ImportSkippedColumn[] = [];
+  const skippedColumns: GatedColumnSkip[] = [];
   const skippedHeaders = new Set<string>();
   for (const header of headers) {
     const requires = deniedKeys.get(normalizeHeader(header));
@@ -71,5 +84,6 @@ export async function skipDeniedGatedColumns(
       unknownColumns: resolved.unknownColumns.filter((h) => !skippedHeaders.has(h)),
     },
     skippedColumns,
+    verdicts,
   };
 }
