@@ -112,20 +112,29 @@ describe("home.html structured data (SA-1178)", () => {
     expect(homeJsonLdProblems(home, real)).toEqual([]);
   });
 
-  it("a brand whose name, formerly and officialName all differ goes red: alternateName is stale", () => {
+  it("a brand whose name, formerly and officialName all differ gets both in alternateName, not stale", () => {
     const fx = { ...real, name: "Fx Name", formerly: "Fx Former", officialName: "Fx-Official" };
-    expect(homeJsonLd(fx)).toContain('"alternateName":["{{brand:name}}","{{brand:formerly}}"]');
-    expect(homeJsonLdProblems(home, fx).join("\n")).toContain(
-      "regenerate home: alternateName is stale",
-    );
+    // the alternateName the generator builds from this fixture's fields: both distinct values
+    const expected = `"alternateName":["{{brand:name}}","{{brand:formerly}}"]`;
+    expect(new Set([fx.name, fx.formerly, fx.officialName]).size).toBe(3);
+    expect(homeJsonLd(fx)).toContain(expected);
+    // the page is tokenised, so a brand with the same distinct-value shape yields the same template
+    expect(homeJsonLd(fx)).toBe(homeJsonLd(real));
+    expect(homeJsonLdProblems(home, fx)).toEqual([]);
   });
 
   it("alternateName drops duplicates and the official name, and is left out when empty", () => {
-    expect(homeJsonLd(real)).not.toContain("alternateName");
-    const one = homeJsonLd({ ...real, name: "A", formerly: "A", officialName: "B" });
-    expect(one).toContain('"alternateName":["{{brand:name}}"]');
-    const none = homeJsonLd({ ...real, name: "A", formerly: "B", officialName: "A" });
-    expect(none).toContain('"alternateName":["{{brand:formerly}}"]');
+    // fixture brands whose values repeat; nothing here reads the real brand.json
+    const base = { ...real, name: "Fx A", formerly: "Fx A", officialName: "Fx B" };
+    const nameOnly = homeJsonLd(base);
+    expect(nameOnly).toContain('"alternateName":["{{brand:name}}"]');
+    expect(nameOnly).not.toContain("{{brand:formerly}}");
+    const swapped = { ...base, name: "Fx B", formerly: "Fx A", officialName: "Fx B" };
+    const formerlyOnly = homeJsonLd(swapped);
+    expect(formerlyOnly).toContain('"alternateName":["{{brand:formerly}}"]');
+    expect(formerlyOnly).not.toContain('"{{brand:name}}"');
+    const empty = homeJsonLd({ ...base, name: "Fx B", formerly: "Fx B", officialName: "Fx B" });
+    expect(empty).not.toContain("alternateName");
   });
 
   it("a brand value with & < > \" or ' in a tokenised key goes red and names the key", () => {
