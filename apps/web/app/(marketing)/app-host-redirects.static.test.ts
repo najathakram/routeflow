@@ -63,6 +63,7 @@ interface Loaded {
   slotApple: { ok?: string[]; error?: string };
   sitemapGen: { ok?: string[]; error?: string };
   sitemapConst: { ok?: string[]; error?: string };
+  sitemapStar: { ok?: string[]; error?: string };
   iconGen: { ok?: string[]; error?: string };
   sitemapDestructured: { ok?: string[]; error?: string };
   sitemapList: { ok?: string[]; error?: string };
