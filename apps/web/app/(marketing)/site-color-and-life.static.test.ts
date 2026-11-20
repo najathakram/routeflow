@@ -170,10 +170,10 @@ describe("the colour is decoration, not a new claim", () => {
     expect(css).toContain(".home #use-cases .kick::before{");
   });
 
-  it("all twenty-two use-case cards are there and none carries an inline --pc/--pi pair (lane 2.3-home took them out)", () => {
+  it("all twenty-two use-case cards are there and the page sets no --pc/--pi anywhere (lane 2.3-home took them out)", () => {
     const cards = home.match(/<li class="inc-i"[^>]*>/gi) ?? [];
     expect(cards).toHaveLength(22);
-    expect(cards.filter((c) => /--p[ci]:/.test(c))).toEqual([]);
+    expect(home).not.toMatch(/--p[ci]\s*:/);
   });
 
   it("the FAQ delivery van is hidden from assistive tech and holds only a question mark glyph", () => {
