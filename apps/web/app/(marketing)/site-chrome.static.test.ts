@@ -230,19 +230,32 @@ describe("no typed header height (SA-1199 P5)", () => {
   });
 });
 
-// SA-1199 A1: every header offset in the site css reads --rf-header-h. A header-offset declaration (top, inset,
-// scroll-margin-top, --hx-bar) or a calc(100vh|100svh - …) carrying a px literal equal to the header height is a typed
-// copy. Width and font declarations are out of scope (an icon or a type size may equal it by chance).
+// SA-1199 A1/A2: every header offset in the site css reads --rf-header-h. A header-offset declaration (top, inset,
+// inset-block-start, the scroll-margin and scroll-padding top/block-start/shorthand forms, --hx-bar) or a
+// calc(100vh|100svh|100dvh|100lvh - …) carrying a px literal equal to the header height is a typed copy. Width and font
+// declarations are out of scope (an icon or a type size may equal it by chance), and so are generic margins and
+// paddings (A2-2: they would flag unrelated spacing).
 describe("no typed header offset in the site css (SA-1199 A1)", () => {
   const H = headerHeights[0] as string;
   const LIT = `(?<![\\d.])${H}(?:\\.\\d+)?px`;
-  const OFFSET_PROPS = new Set(["top", "inset", "scroll-margin-top", "--hx-bar"]);
+  const OFFSET_PROPS = new Set([
+    "top",
+    "inset",
+    "inset-block-start",
+    "scroll-margin-top",
+    "scroll-margin-block-start",
+    "scroll-margin",
+    "scroll-padding-top",
+    "scroll-padding-block-start",
+    "scroll-padding",
+    "--hx-bar",
+  ]);
   const offsetHits = (css: string) => {
     const hits: string[] = [];
     for (const m of css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([\w-]+)\s*:\s*([^;{}]+)/g)) {
       const [decl, prop, value] = [m[0], m[1] as string, m[2] as string];
       if (OFFSET_PROPS.has(prop) && new RegExp(LIT).test(value)) hits.push(decl);
-      else if (new RegExp(`calc\\(\\s*100s?vh\\s*-\\s*${LIT}`).test(value)) hits.push(decl);
+      else if (new RegExp(`calc\\(\\s*100[sdl]?vh\\s*-\\s*${LIT}`).test(value)) hits.push(decl);
     }
     return hits;
   };
@@ -252,6 +265,19 @@ describe("no typed header offset in the site css (SA-1199 A1)", () => {
     expect(offsetHits(`.x{inset:${H}px 0 0}`)).toHaveLength(1);
     expect(offsetHits(`.x{--hx-bar:${H}px}`)).toHaveLength(1);
     expect(offsetHits(`.x{height:calc(100svh - ${H}px)}`)).toHaveLength(1);
+    // A2-2: the logical, shorthand and scroll-padding forms, and the dynamic and large viewport units.
+    expect(offsetHits(`html{scroll-padding-top:${H}px}`)).toHaveLength(1);
+    expect(offsetHits(`html{scroll-padding-block-start:${H}px}`)).toHaveLength(1);
+    expect(offsetHits(`html{scroll-padding:${H}px 0 0}`)).toHaveLength(1);
+    expect(offsetHits(`.x{scroll-margin:${H}px 0 0}`)).toHaveLength(1);
+    expect(offsetHits(`.x{scroll-margin-block-start:${H}px}`)).toHaveLength(1);
+    expect(offsetHits(`.x{inset-block-start:${H}px}`)).toHaveLength(1);
+    expect(offsetHits(`.x{height:calc(100dvh - ${H}px)}`)).toHaveLength(1);
+    expect(offsetHits(`.x{height:calc(100lvh - ${H}px)}`)).toHaveLength(1);
+    // A2-2 refused: a generic margin or padding of the same size is unrelated spacing.
+    expect(
+      offsetHits(`.x{margin-top:${H}px;padding-top:${H}px;scroll-padding-inline:20px}`),
+    ).toHaveLength(0);
     expect(offsetHits(`.x{width:${H}px;font-size:clamp(40px,4.5vw,${H}px)}`)).toHaveLength(0);
     expect(offsetHits(`.x{top:1${H}px;top:var(--rf-header-h)}`)).toHaveLength(0);
   });
