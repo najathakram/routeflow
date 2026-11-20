@@ -14,6 +14,11 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 jest.mock("@/lib/api/units-v2", () => ({ usePricesV2Enabled: () => false }));
+let mockPriceRights = true;
+jest.mock("@/lib/api/my-permissions", () => ({
+  ...jest.requireActual("@/lib/api/my-permissions"),
+  usePriceEditAllowed: () => mockPriceRights,
+}));
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: { get: jest.fn(() => Promise.reject(new Error("nope"))), post: jest.fn() },
@@ -75,8 +80,10 @@ const DRAFT: Estimate = {
   updatedAt: "2026-11-19T00:00:00.000Z",
 };
 
-beforeEach(() => jest.clearAllMocks());
-
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockPriceRights = true;
+});
 const submit = (dialog: HTMLElement, name: string) =>
   userEvent.setup().click(within(dialog).getByRole("button", { name }));
 
@@ -162,5 +169,24 @@ describe("estimate form: edit a draft", () => {
       { id: "item-1", productId: "prod-1", description: "Widget", qty: 2, unitPrice: 30 },
     ]);
     expect(onSuccess).toHaveBeenCalledWith("est-1");
+  });
+
+  it("without price rights: no price box, and the held typed price is re-sent unchanged", async () => {
+    mockPriceRights = false;
+    const user = userEvent.setup();
+    renderWithProviders(
+      <CreateEstimateModal isOpen onClose={jest.fn()} onSuccess={jest.fn()} estimate={DRAFT} />,
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("$30.00/each")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Price for Widget")).not.toBeInTheDocument();
+    const notes = within(dialog).getByDisplayValue("Call before delivery");
+    await user.clear(notes);
+    await user.type(notes, "Ring the bell");
+    await submit(dialog, "Save changes");
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(mockUpdate.mock.calls[0][0].dto.items).toEqual([
+      { id: "item-1", productId: "prod-1", description: "Widget", qty: 2, unitPrice: 30 },
+    ]);
   });
 });

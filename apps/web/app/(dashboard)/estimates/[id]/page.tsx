@@ -74,6 +74,43 @@ function VoidConfirmModal({
   );
 }
 
+// ─── Back-to-draft confirm (accepted quotes only) ─────────────────────────────
+
+function RevertAcceptedModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  estimateNumber,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  estimateNumber: string;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Move the accepted estimate back to draft?"
+      description={`The customer accepted ${estimateNumber}. As a draft, it needs to be sent and accepted again.`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} loading={isPending}>
+            Back to draft
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-navy/70">You can edit it, then send it again.</p>
+    </Modal>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EstimateDetailPage() {
@@ -94,6 +131,7 @@ export default function EstimateDetailPage() {
 
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isEditOpen, setIsEditOpen] = React.useState(false);
+  const [isRevertOpen, setIsRevertOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (estimate) setTitle(estimate.estimateNumber);
@@ -222,6 +260,7 @@ export default function EstimateDetailPage() {
   const handleRevert = () => {
     revertToDraft.mutate(estimate.id, {
       onSuccess: () => {
+        setIsRevertOpen(false);
         toast({
           title: "Back to draft",
           description: `${estimate.estimateNumber} is a draft again. Edit it, then mark it as sent.`,
@@ -347,7 +386,8 @@ export default function EstimateDetailPage() {
               size="sm"
               variant="secondary"
               leftIcon={<RotateCcw className="h-4 w-4" />}
-              onClick={handleRevert}
+              // An accepted quote is the customer's yes: confirm before undoing it. A sent one moves at once.
+              onClick={() => (status === "ACCEPTED" ? setIsRevertOpen(true) : handleRevert())}
               loading={revertToDraft.isPending}
             >
               Back to draft
@@ -584,6 +624,13 @@ export default function EstimateDetailPage() {
         onConfirm={handleVoid}
         estimateNumber={estimate.estimateNumber}
         isPending={voidEstimate.isPending}
+      />
+      <RevertAcceptedModal
+        isOpen={isRevertOpen}
+        onClose={() => setIsRevertOpen(false)}
+        onConfirm={handleRevert}
+        estimateNumber={estimate.estimateNumber}
+        isPending={revertToDraft.isPending}
       />
       {status === "DRAFT" && (
         <CreateEstimateModal

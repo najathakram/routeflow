@@ -199,6 +199,43 @@ describe("Estimates: typed prices, draft edit, back to draft", () => {
       });
     });
 
+    // #4386 read A M1: a held price is judged against its customer. A new customer makes every held typed price a new
+    // price for them, so it is authoring again and needs price rights.
+    it("a customer change without price rights is refused when a held line carries a typed price", async () => {
+      rights = false;
+      await expect(
+        service.update("est-1", { customerId: "cust-2" }, NO_PRICE_RIGHTS),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.estimate.updateMany).not.toHaveBeenCalled();
+      expect(prisma.estimateItem.createMany).not.toHaveBeenCalled();
+    });
+
+    it("the same customer sent back is no change: the held typed price needs no rights", async () => {
+      rights = false;
+      await service.update("est-1", { customerId: "cust-1", notes: "x" }, NO_PRICE_RIGHTS);
+      expect(prisma.estimateItem.createMany.mock.calls[0][0].data[0]).toMatchObject({
+        unitPrice: 8,
+        priceType: "DISCOUNTED",
+      });
+    });
+
+    it("a new custom line without price rights is refused before any write", async () => {
+      rights = false;
+      await expect(
+        service.update(
+          "est-1",
+          {
+            items: [
+              { id: "line-1", productId: "p1", qty: 2, unitPrice: 8 },
+              { description: "Delivery", qty: 1, unitPrice: 15 },
+            ],
+          },
+          NO_PRICE_RIGHTS,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.estimate.updateMany).not.toHaveBeenCalled();
+    });
+
     it("a SENT estimate is refused: move it back to draft first", async () => {
       prisma.estimate.findUnique.mockResolvedValue(heldDraft({ status: "SENT" }));
       await expect(service.update("est-1", { notes: "x" }, NO_PRICE_RIGHTS)).rejects.toThrow(
@@ -234,6 +271,14 @@ describe("Estimates: typed prices, draft edit, back to draft", () => {
       prisma.estimate.findFirst.mockResolvedValue({ id: "est-1", status: "CONVERTED" });
       await expect(service.revertToDraft("est-1")).rejects.toThrow(
         "Converted estimates cannot be moved back to draft",
+      );
+    });
+
+    it("a DECLINED estimate stays closed (a void is stored as DECLINED today)", async () => {
+      prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
+      prisma.estimate.findFirst.mockResolvedValue({ id: "est-1", status: "DECLINED" });
+      await expect(service.revertToDraft("est-1")).rejects.toThrow(
+        "Declined estimates cannot be moved back to draft",
       );
     });
   });

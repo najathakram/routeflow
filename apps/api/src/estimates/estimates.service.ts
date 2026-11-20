@@ -236,11 +236,16 @@ export class EstimatesService {
 
     const issueDate = dto.issueDate !== undefined ? parseIssueDate(dto.issueDate) : undefined;
     const customerId = dto.customerId ?? held.customerId;
-    const heldLines: HeldEstimateLine[] = held.items.map((it: any) => ({
-      id: it.id,
-      productId: it.productId ?? null,
-      unitPrice: Number(it.unitPrice),
-    }));
+    // A held price was judged against its customer. Under a new customer every held typed price is a new price for
+    // them, so no line counts as unchanged and the price-rights checks run again (#4386 read A, M1).
+    const heldLines: HeldEstimateLine[] =
+      customerId !== held.customerId
+        ? []
+        : held.items.map((it: any) => ({
+            id: it.id,
+            productId: it.productId ?? null,
+            unitPrice: Number(it.unitPrice),
+          }));
     // No `items`: the held lines as they stand. A held typed price (DISCOUNTED / MANUAL, or a custom line) is re-sent
     // as typed; a tier-priced line is re-priced at the (possibly new) customer's tier, exactly as create would.
     const items: EstimateLineInput[] =
@@ -419,8 +424,8 @@ export class EstimatesService {
 
         if (overridePrice != null) {
           // The staff-override rule every sale path uses (@routeflow/pricing), judged against the CUSTOMER's price:
-          // within half a cent of it is that price (no override); below list is DISCOUNTED, at or above list MANUAL. A
-          // quote carries no override reason, so the special-tier reason rule (an invoice's) is not asked here.
+          // within half a cent of it is that price (no override); below list is DISCOUNTED, at or above list MANUAL.
+          // SA-1182: a quote asks no override reason; the reason is judged at convert, where the price binds.
           const d = decideStaffOverride({
             overridePrice,
             baselinePrice: tierPrice,

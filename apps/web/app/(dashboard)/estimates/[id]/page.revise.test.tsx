@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { renderWithProviders, screen, within } from "@/test-utils/render";
 import type { Estimate, EstimateStatus } from "@/lib/api/estimates";
 import EstimateDetailPage from "./page";
 
@@ -63,11 +63,22 @@ describe("EstimateDetailPage: revise an estimate", () => {
     expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument();
   });
 
-  it.each(["SENT", "ACCEPTED"])("a %s estimate goes Back to draft", async (status) => {
+  it("a SENT estimate goes Back to draft at once", async () => {
     const user = userEvent.setup();
-    show({ status: status as EstimateStatus });
+    show({ status: "SENT" as EstimateStatus });
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /back to draft/i }));
+    expect(mockRevert).toHaveBeenCalledWith("est-1", expect.anything());
+  });
+
+  it("an ACCEPTED estimate asks first (the customer's yes), then goes Back to draft", async () => {
+    const user = userEvent.setup();
+    show({ status: "ACCEPTED" as EstimateStatus });
+    await user.click(screen.getByRole("button", { name: /back to draft/i }));
+    expect(mockRevert).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("The customer accepted EST-0001");
+    await user.click(within(dialog).getByRole("button", { name: "Back to draft" }));
     expect(mockRevert).toHaveBeenCalledWith("est-1", expect.anything());
   });
 
