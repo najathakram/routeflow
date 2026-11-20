@@ -66,8 +66,11 @@ const isFaviconName = (name) =>
 
 // A generator that Next serves under an id instead of at its plain path. Any mention of
 // generateImageMetadata or generateSitemaps in a root metadata source fails closed, whatever the
-// export shape (function, const, let, var, export list, destructuring, re-export).
+// export shape (function, const, let, var, export list, destructuring, re-export). A mention in a
+// comment or string fails too, by design, and it fails loading next.config.mjs, so the build.
+// An `export *` re-exports names we cannot see, so it fails closed as well.
 const MULTI_EXPORT = /\b(generateImageMetadata|generateSitemaps)\b/;
+const STAR_EXPORT = /\bexport\s*\*/;
 
 /** The path Next serves a metadata file at (groups and slots removed; a hash is kept). */
 function servedPath(file) {
@@ -85,8 +88,9 @@ function servedPath(file) {
  * groups removed and any `[param]` segment kept as written (for a metadata file, the path Next
  * serves); `file` is the posix path below `appDir`; `group` is the top route group or folder ("" at
  * the app root); `metadata` is true for a metadata file. A parallel-route folder (`@slot`) is walked
- * like a route group: it adds no segment. A root metadata code file whose source exports
- * generateImageMetadata or generateSitemaps throws: Next serves it under an id, not at its path.
+ * like a route group: it adds no segment. A root metadata code file whose source mentions
+ * generateImageMetadata or generateSitemaps, or has an `export *`, throws: Next may serve it under
+ * an id, not at its path.
  * @param {string} [appDir]
  * @param {(dir: string) => Array<{ name: string, isDirectory(): boolean }>} [readdir] injectable, so
  *   a test can walk an in-memory tree
@@ -112,10 +116,16 @@ export function listAppRoutes(appDir = APP_DIR, readdir = readDirents, readSourc
         isFaviconName(entry.name)
       ) {
         if (segments.files.length === 0 && CODE_EXTENSION.test(entry.name)) {
-          const used = MULTI_EXPORT.exec(readSource(path.join(dir, entry.name)));
+          const source = readSource(path.join(dir, entry.name));
+          const used = MULTI_EXPORT.exec(source);
           if (used) {
             throw new Error(
-              `${file}: exports ${used[1] ?? used[2]}, so it is served under an id, not at one path (rule it first)`,
+              `${file}: mentions ${used[1]}, so Next may serve it under an id, not at one path (rule it first)`,
+            );
+          }
+          if (STAR_EXPORT.test(source)) {
+            throw new Error(
+              `${file}: has an export *, which re-exports everything, so it cannot be checked for an id generator (rule it first)`,
             );
           }
         }
