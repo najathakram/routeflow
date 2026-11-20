@@ -103,14 +103,16 @@ const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /**
  * The paths that stay on the main host, derived and never typed: the public paths, every alias or
  * raw page address that ends on one, /_next/, every top-level entry of public/, every (marketing)
- * route, the app-root robots and sitemap, and /.well-known/. A new app route is outside this set, so it is sent to the old host
- * without anyone listing it; a new page joins SITE_PAGES and stays.
+ * route, the app-root favicon, robots and sitemap, and /.well-known/. A new app route is outside
+ * this set, so it is sent to the old host without anyone listing it; a new page joins SITE_PAGES
+ * and stays.
  * @param {Array<{ source: string, destination: string }>} aliases
+ * @param {ReturnType<typeof listAppRoutes>} [routes] the app's routes (injectable for a test)
  * @returns {{ exact: string[], prefixes: string[] }}
  */
 export function deriveStays(aliases, routes = listAppRoutes()) {
   const publicPaths = new Set(PUBLIC_PATHS);
-  // By place (lib/app-route-paths.mjs): every (marketing) route and the app-root robots and sitemap.
+  // By place (lib/app-route-paths.mjs): every (marketing) route and the app-root fixed addresses.
   const exact = new Set([...PUBLIC_PATHS, ...placeStays(routes)]);
   for (const alias of aliases) {
     if (publicPaths.has(alias.destination.replace(/#.*$/, ""))) exact.add(alias.source);
@@ -131,17 +133,18 @@ export function deriveStays(aliases, routes = listAppRoutes()) {
  * Like the old-host rules it exists only while the two hosts differ.
  * @param {{ origin: string, oldOrigin: string }} hosts
  * @param {Array<{ source: string, destination: string }>} aliases
+ * @param {ReturnType<typeof listAppRoutes>} [routes] the app's routes (injectable for a test)
  */
-export function buildAppHostRedirects({ origin, oldOrigin }, aliases) {
+export function buildAppHostRedirects({ origin, oldOrigin }, aliases, routes = listAppRoutes()) {
   const to = new URL(origin);
   const from = new URL(oldOrigin);
   if (to.host === from.host) return [];
-  return appPathRules(to.hostname, from.origin, aliases);
+  return appPathRules(to.hostname, from.origin, aliases, routes);
 }
 
 /** The stays set as one regex body (exact names end the path, prefixes start it). */
-function staysPattern(aliases) {
-  const { exact, prefixes } = deriveStays(aliases);
+function staysPattern(aliases, routes) {
+  const { exact, prefixes } = deriveStays(aliases, routes);
   return [
     ...exact.map((p) => `${escapeRegex(p.slice(1))}/?$`),
     ...prefixes.map((p) => escapeRegex(p.slice(1))),
@@ -149,7 +152,7 @@ function staysPattern(aliases) {
 }
 
 /** Rules for one host: app-ending aliases, then every path outside stays, to the old origin (307). */
-function appPathRules(hostname, oldOrigin, aliases) {
+function appPathRules(hostname, oldOrigin, aliases, routes = listAppRoutes()) {
   const has = [{ type: "host", value: hostname.replace(/\./g, "\\.") }];
   const publicPaths = new Set(PUBLIC_PATHS);
   return [
@@ -162,7 +165,7 @@ function appPathRules(hostname, oldOrigin, aliases) {
         permanent: false,
       })),
     {
-      source: `/:path((?!(?:${staysPattern(aliases)})).*)`,
+      source: `/:path((?!(?:${staysPattern(aliases, routes)})).*)`,
       has,
       destination: `${oldOrigin}/:path`,
       permanent: false,
