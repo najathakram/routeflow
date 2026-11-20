@@ -80,6 +80,17 @@ describe("invoice account block sites (SA-1197)", () => {
         "[id]",
         "InvoiceTotalsSummary.tsx",
       ),
+      // read B L1: the settings preview reads the map too, so a typed short label there goes red
+      path.join(
+        REPO,
+        "apps",
+        "web",
+        "app",
+        "(dashboard)",
+        "settings",
+        "_components",
+        "InvoiceLayoutPreview.tsx",
+      ),
     ];
     for (const f of renderers) {
       const src = strip(fs.readFileSync(f, "utf8"));
@@ -105,5 +116,46 @@ describe("one account read per send (SA-1197 C4, T3)", () => {
     expect(deliver.indexOf("readInvoiceAccountBalance(")).toBeLessThan(
       deliver.indexOf("getOrGenerate("),
     );
+  });
+});
+
+/**
+ * SA-1197 A2-2: every caller of the invoice PDF (getOrGenerate / generateAndUpload) with its account policy.
+ *   handed     - passes the one account read it made (the send, C4)
+ *   show:false - passes { show: false }, so the PDF prints no block and reads nothing (the reminder, C13)
+ *   reads      - passes no account; the PDF reads the block itself when the switch is on
+ * A new caller fails here until it is listed with its policy.
+ */
+describe("invoice PDF callers and their account policy (SA-1197 A2-2)", () => {
+  const CALL = /([\w.]+)\.(getOrGenerate|generateAndUpload)\(/g;
+  const policyOf = (args: string) =>
+    /\baccount:\s*\{\s*show:\s*false\s*\}/.test(args)
+      ? "show:false"
+      : /\baccount\b/.test(args)
+        ? "handed"
+        : "reads";
+
+  it("lists every caller with its policy", () => {
+    const found: Record<string, string[]> = {};
+    for (const f of walk(API_SRC)) {
+      const rel = path.relative(API_SRC, f).split(path.sep).join("/");
+      if (rel === "invoices/invoice-pdf.service.ts") continue; // its own getOrGenerate -> generateAndUpload hop
+      const src = strip(fs.readFileSync(f, "utf8"));
+      for (const m of src.matchAll(CALL)) {
+        if (/statementPdf/i.test(m[1])) continue; // the statement PDF is another service
+        // the call's arguments run to the end of its statement
+        const at = (m.index ?? 0) + m[0].length;
+        const end = src.indexOf(";", at);
+        (found[rel] ??= []).push(policyOf(src.slice(at, end > -1 ? end : src.length)));
+      }
+    }
+    expect(found).toEqual({
+      "invoices/invoices.service.ts": ["handed"], // the send: ONE read for the PDF and the email (C4)
+      "invoices/invoice-reminder-email.ts": ["show:false"], // C13: the reminder carries none
+      "invoices/invoices.controller.ts": ["reads"], // the staff download
+      "buyer/buyer.controller.ts": ["reads"], // the buyer detail's PDF (its extra read: LATER, PR-2)
+      "bookkeeping/bookkeeping.service.ts": ["reads"], // the bookkeeping download
+      "invoices/invoice-completion-email.ts": ["reads"], // the completion email's attached PDF prints the block
+    });
   });
 });

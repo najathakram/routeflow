@@ -15,10 +15,12 @@ export interface InvoiceLayoutFlags {
 
 const BARS = [2, 1, 3, 1, 2, 2, 1, 3, 1, 1, 2, 3, 1, 2, 1, 3, 2, 1];
 const SAMPLE_CODE = "0123456789";
+// One sample Balance Due: the account block's "This invoice" row is the same figure (T16 on the sample).
+const SAMPLE_BALANCE = "$25.00";
 const TOTALS = [
   ["Total", "$40.00"],
   ["Amount Paid", "$15.00"],
-  ["Balance Due", "$25.00"],
+  ["Balance Due", SAMPLE_BALANCE],
 ] as const;
 // SA-1197: a fixed sample of the account block (the real one is the server's figures, never added on a screen).
 const SAMPLE_OTHERS = "$30.00";
@@ -105,7 +107,7 @@ export function InvoiceLayoutPreview({ layout }: { layout: InvoiceLayoutFlags })
                   ]
                 : [
                     [INVOICE_ACCOUNT_LABELS.others, SAMPLE_OTHERS],
-                    [INVOICE_ACCOUNT_LABELS.thisInvoice, "$25.00"],
+                    [INVOICE_ACCOUNT_LABELS.thisInvoice, SAMPLE_BALANCE],
                     [INVOICE_ACCOUNT_LABELS.openBalance, SAMPLE_OPEN],
                   ]
               ).map(([label, amount]) => (

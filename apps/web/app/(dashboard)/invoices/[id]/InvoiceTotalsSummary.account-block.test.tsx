@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { renderWithProviders as render, screen } from "@/test-utils/render";
 import { InvoiceTotalsSummary, type InvoiceTotalsSummaryProps } from "./InvoiceTotalsSummary";
 
 // SA-1197 (T22, C5): the staff invoice view prints the server's account rows as given, under Balance due, in a neutral
