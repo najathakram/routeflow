@@ -247,7 +247,9 @@ test("T47 the invoice box of the problem picture sits inside its frame @1440x900
  * What T47 measures at one beat: the big line against the two headings of the problem picture (the phone's sender line
  * and the invoice's "Invoice" heading), each heading against its own box. Returns one string per fault.
  */
-async function problemFaults(page: Page): Promise<string[]> {
+type BeatSample = { name: string; bigOpacity: number; artOpacity: number; overlap: boolean };
+
+async function problemBeat(page: Page): Promise<{ faults: string[]; samples: BeatSample[] }> {
   return page.evaluate(() => {
     const q = (sel: string) => {
       const el = document.querySelector(sel) as HTMLElement | null;
@@ -260,6 +262,12 @@ async function problemFaults(page: Page): Promise<string[]> {
     // once the picture itself has faded (the timeline's last beat) the big line takes its place by design
     const artOpacity = Number(getComputedStyle(q(".pb-art")).opacity);
     const out: string[] = [];
+    const samples: Array<{
+      name: string;
+      bigOpacity: number;
+      artOpacity: number;
+      overlap: boolean;
+    }> = [];
     const pairs: Array<[string, string, string]> = [
       ["phone", ".pb-ph", ".pb-ph .pb-from"],
       ["invoice", ".pb-paper", ".pb-paper .pp-h"],
@@ -277,6 +285,7 @@ async function problemFaults(page: Page): Promise<string[]> {
         out.push(name + " heading leaves its box");
       if (headEl.scrollWidth > headEl.clientWidth + 1) out.push(name + " heading is clipped");
       const hit = bb.left < h.right && bb.right > h.left && bb.top < h.bottom && bb.bottom > h.top;
+      samples.push({ name, bigOpacity, artOpacity, overlap: hit });
       if (hit && bigOpacity > 0.05 && artOpacity > 0.5)
         out.push(
           name +
@@ -287,11 +296,15 @@ async function problemFaults(page: Page): Promise<string[]> {
             ")",
         );
     }
-    return out;
+    return { faults: out, samples };
   });
 }
 
-test("T47 before the page script starts, the big line paints over neither heading @1440x900", async ({
+async function problemFaults(page: Page): Promise<string[]> {
+  return (await problemBeat(page)).faults;
+}
+
+test("T47 when home-up.js fails to load, the big line paints over neither heading @1440x900", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -327,12 +340,23 @@ test("T47 from first paint to settle, at every beat of the pinned section @1440x
     const y = Math.max(0, Math.round(top + k * 900));
     await page.evaluate((yy) => window.scrollTo(0, yy), y);
     await page.waitForFunction((yy) => Math.abs(window.scrollY - yy) <= 1, y);
-    // two frames, so the scrub and the layout have taken the new position
-    await page.evaluate(
-      () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
-    );
+    // the pin scrubs (0.8 s), so wait until every scroll trigger's animation has caught up with its scroll progress
+    await page.waitForFunction(() => {
+      const st = (window as unknown as { ScrollTrigger?: { getAll(): any[] } }).ScrollTrigger;
+      if (!st) return false;
+      return st
+        .getAll()
+        .every((t) => !t.animation || Math.abs(t.animation.progress() - t.progress) < 0.005);
+    });
+    // one frame, so the layout has taken the settled state
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
     beats.push(String(k.toFixed(2)));
-    for (const f of await problemFaults(page)) faults.push("beat " + k.toFixed(2) + ": " + f);
+    const beat = await problemBeat(page);
+    for (const sm of beat.samples)
+      console.log(
+        `T47 beat ${k.toFixed(2)} ${sm.name}: big opacity ${sm.bigOpacity}, picture opacity ${sm.artOpacity}, overlap ${sm.overlap}`,
+      );
+    for (const f of beat.faults) faults.push("beat " + k.toFixed(2) + ": " + f);
   }
   expect(beats.length).toBeGreaterThanOrEqual(12);
   expect(faults).toEqual([]);
