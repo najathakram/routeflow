@@ -7,19 +7,27 @@
   },
   {
     "key": "/pricing|desktop",
-    "row": "details|What does RouteFlow do?",
+    "row": "details|What is RouteFlow for?",
     "kind": "added",
     "req": "R11"
   },
   { "key": "/pricing|phone", "row": "details|What is RouteFlow?", "kind": "removed", "req": "R11" },
   {
     "key": "/pricing|phone",
-    "row": "details|What does RouteFlow do?",
+    "row": "details|What is RouteFlow for?",
     "kind": "added",
     "req": "R11"
   },
   { "key": "/|desktop", "row": "id|sy-h", "kind": "removed", "req": "R8" },
   { "key": "/|desktop", "row": "id|sy-ph", "kind": "added", "req": "R8" },
   { "key": "/|phone", "row": "id|sy-h", "kind": "removed", "req": "R8" },
-  { "key": "/|phone", "row": "id|sy-ph", "kind": "added", "req": "R8" }
+  { "key": "/|phone", "row": "id|sy-ph", "kind": "added", "req": "R8" },
+  { "key": "/|desktop", "row": "details|What is RouteFlow?", "kind": "removed", "req": "R11" },
+  { "key": "/|desktop", "row": "details|What is RouteFlow for?", "kind": "added", "req": "R11" },
+  { "key": "/|desktop", "row": "id|rfwsd", "kind": "removed", "req": "R18" },
+  { "key": "/|desktop", "row": "id|brand-symbol", "kind": "added", "req": "R22" },
+  { "key": "/|phone", "row": "details|What is RouteFlow?", "kind": "removed", "req": "R11" },
+  { "key": "/|phone", "row": "details|What is RouteFlow for?", "kind": "added", "req": "R11" },
+  { "key": "/|phone", "row": "id|rfwsd", "kind": "removed", "req": "R18" },
+  { "key": "/|phone", "row": "id|brand-symbol", "kind": "added", "req": "R22" }
 ]
