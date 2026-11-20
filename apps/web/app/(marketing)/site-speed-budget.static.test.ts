@@ -13,12 +13,18 @@ import * as fs from "fs";
 import * as path from "path";
 import * as zlib from "zlib";
 import { readServedSitePage } from "@/lib/read-site-page";
-import { STATIC_SITE_PAGE_NAMES, type StaticSitePage } from "@/lib/static-site-page";
+import {
+  ANALYTICS_SRC,
+  FIRST_TOUCH_SRC,
+  STATIC_SITE_PAGE_NAMES,
+  type StaticSitePage,
+} from "@/lib/static-site-page";
 import {
   FONT_GZIP_KB,
   GZIP_TOTAL_KB,
   HTML_GZIP_KB,
   RASTER_ICON_GZIP_KB,
+  RENDERER_SCRIPT_GZIP_KB,
   SCRIPT_GZIP_KB,
 } from "../../e2e/helpers/site-speed-budget";
 
@@ -57,10 +63,14 @@ interface PageWeight {
   html: string;
   htmlGz: number;
   scripts: string[];
+  rendererScripts: string[];
   styles: string[];
   images: string[];
   fonts: string[];
+  /** Scripts the page links itself (the renderer's tags are not in it). */
   scriptGz: number;
+  /** The tags the renderer adds to every page (first touch, and analytics with a site ID). */
+  rendererGz: number;
   totalGz: number;
   gzOf: (url: string) => number;
 }
@@ -106,9 +116,30 @@ function linkedFiles(html: string, page: string) {
   };
 }
 
+// The renderer's tags are weighed with a site ID set, the worst case (SA-1187).
+const FAKE_SITE_ID = "00000000-0000-4000-8000-000000000000";
+const RENDERER_SCRIPTS: string[] = [FIRST_TOUCH_SRC, ANALYTICS_SRC];
+
+/** The script rules for one page: its own scripts against SCRIPT_GZIP_KB, the renderer's tags against theirs. */
+export function scriptProblems(
+  kind: "home" | "inner" | "landing",
+  ownKb: number,
+  rendererKb: number,
+): string[] {
+  const out: string[] = [];
+  if (ownKb > SCRIPT_GZIP_KB[kind]) out.push(`own scripts ${ownKb} > ${SCRIPT_GZIP_KB[kind]}`);
+  if (rendererKb > RENDERER_SCRIPT_GZIP_KB) {
+    out.push(`renderer tags ${rendererKb} > ${RENDERER_SCRIPT_GZIP_KB}`);
+  }
+  return out;
+}
+
 function weigh(page: StaticSitePage): PageWeight {
-  const html = readServedSitePage(page, { websiteId: undefined });
-  const { scripts, styles, images, preloaded } = linkedFiles(html, page);
+  const html = readServedSitePage(page, { websiteId: FAKE_SITE_ID });
+  const linked = linkedFiles(html, page);
+  const { styles, images, preloaded } = linked;
+  const scripts = linked.scripts.filter((u) => !RENDERER_SCRIPTS.includes(u));
+  const rendererScripts = linked.scripts.filter((u) => RENDERER_SCRIPTS.includes(u));
   // @font-face urls inside the linked stylesheets (relative to the stylesheet's own folder).
   const cssFonts = styles.flatMap((css) => {
     const text = readPublic(css)?.toString("utf8") ?? "";
@@ -125,15 +156,18 @@ function weigh(page: StaticSitePage): PageWeight {
   const sum = (urls: string[]): number => urls.reduce((n, u) => n + gzOf(u), 0);
   const htmlGz = gz(html);
   const scriptGz = sum(scripts);
+  const rendererGz = sum(rendererScripts);
   return {
     html,
     htmlGz,
     scripts,
+    rendererScripts,
     styles,
     images,
     fonts,
     scriptGz,
-    totalGz: htmlGz + scriptGz + sum(styles) + sum(images) + sum(fonts),
+    rendererGz,
+    totalGz: htmlGz + scriptGz + rendererGz + sum(styles) + sum(images) + sum(fonts),
     gzOf,
   };
 }
@@ -150,6 +184,22 @@ function rule(ruleId: string, page: StaticSitePage, title: string, body: () => v
 const weights = new Map<StaticSitePage, PageWeight>(
   STATIC_SITE_PAGE_NAMES.map((p) => [p, weigh(p)]),
 );
+
+describe("T43 script caps catch a planted overrun (SA-1187 K1)", () => {
+  it("product's own scripts at 57.1 KB are red", () => {
+    expect(scriptProblems("inner", 57.1, 1.4)).toHaveLength(1);
+  });
+  it("the renderer's tags at 2.1 KB are red", () => {
+    expect(scriptProblems("inner", 55.7, 2.1)).toHaveLength(1);
+  });
+  it("landing with any linked script of its own is red", () => {
+    expect(scriptProblems("landing", 0.01, 1.4)).toHaveLength(1);
+  });
+  it("the measured values are green", () => {
+    expect(scriptProblems("inner", 55.7, 1.43)).toEqual([]);
+    expect(scriptProblems("landing", 0, 1.43)).toEqual([]);
+  });
+});
 
 describe("T43 site weight budget (gzip)", () => {
   test("finds the ten pages and their linked files", () => {
@@ -197,9 +247,20 @@ describe("T43 site weight budget (gzip)", () => {
       });
 
       const cap = SCRIPT_GZIP_KB[kind];
-      rule("scripts", page, `${page}: script gzip <= ${cap} KB`, () => {
+      rule("scripts", page, `${page}: own script gzip <= ${cap} KB`, () => {
         expect(kb(w.scriptGz)).toBeLessThanOrEqual(cap);
+        // the headroom, printed as the other budgets are
+        console.log(`${page}: own scripts ${kb(w.scriptGz).toFixed(2)} of ${cap} KB`);
       });
+      rule(
+        "scripts",
+        page,
+        `${page}: renderer script gzip <= ${RENDERER_SCRIPT_GZIP_KB} KB`,
+        () => {
+          expect(w.rendererScripts).toContain(FIRST_TOUCH_SRC);
+          expect(kb(w.rendererGz)).toBeLessThanOrEqual(RENDERER_SCRIPT_GZIP_KB);
+        },
+      );
 
       rule("img-size", page, `${page}: every img has width and height`, () => {
         // a <template> image is only a decode source for the wheel hub, never laid out

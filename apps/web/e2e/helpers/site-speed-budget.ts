@@ -9,8 +9,10 @@
 export const GZIP_TOTAL_KB = { home: 175, inner: 115, landing: 45 } as const;
 /** T43: the html alone, gzip KB, every page. */
 export const HTML_GZIP_KB = 20;
-/** T43: all linked scripts together, gzip KB. */
-export const SCRIPT_GZIP_KB = { home: 90, inner: 57, landing: 2 } as const;
+/** T43: the scripts a page links itself, together, gzip KB. Landing links none (SA-1187 K1). */
+export const SCRIPT_GZIP_KB = { home: 90, inner: 57, landing: 0 } as const;
+/** T43: the tags the page renderer adds to every page (first touch, and analytics with a site ID), gzip KB. */
+export const RENDERER_SCRIPT_GZIP_KB = 2;
 /** T43: one raster icon (png/jpg/webp), gzip KB. */
 export const RASTER_ICON_GZIP_KB = 15;
 /** T43: the one Geist woff2, gzip KB. */
