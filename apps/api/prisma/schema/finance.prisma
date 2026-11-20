@@ -87,6 +87,9 @@ enum EstimateStatus {
   ACCEPTED
   DECLINED
   CONVERTED
+  // Owner 2026-11-19: the business closed the quote (void), apart from the customer saying no (DECLINED).
+  // Appended last (ADD VALUE). Nothing writes it until the migration is in prod.
+  VOID
 }
 
 enum CreditNoteStatus {
@@ -805,6 +808,9 @@ model Estimate {
   expiresAt      DateTime?
   notes          String?
   terms          String?
+  // Owner 2026-11-19: the quote's revision, shown as "Rev 2" once a sent quote goes back to draft and is sent
+  // again. 1 for every quote ever written (constant default, no backfill).
+  revision       Int            @default(1)
   // F01/B17+B70: the invoice a CONVERTED estimate produced. One estimate, one
   // invoice; a second conversion attempt has this non-null to trip over. F27
   // wires the write; SetNull so deleting an invoice never deletes the estimate.
