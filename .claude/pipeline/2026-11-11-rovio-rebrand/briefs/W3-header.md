@@ -6,6 +6,11 @@ Base: `rebrand/rovio-site` with every W2 lane landed (2.1b is done with `site.cs
 - **Owns:** `components/site-frame/SiteFrameHeader.tsx`, `components/site-frame/site-frame.css`, `public/site/css/site.css`, `public/site/css/mobile.css`, `public/site/js/site.js`; NEW `e2e/93-site-w3-header.spec.ts` (project `site-waves`). All of `public/site/css/home-up.css` (the P09 rules are at `:92-99`) and `public/site/js/home-up.js:64` (the hero-only `hero-btn-in` toggle, that line only), granted by SA-1174 K6 and K7. Build one observer in `js/site.js`: "the header trial pill is hidden while any other trial button is in the viewport". Delete the hero-only toggle at `home-up.js:64`, so only one script toggles the class; `SiteFrameHeader.tsx:53`, which hard-codes the class, follows.
 - **Must not touch:** any `*.html` (the static pages' header markup belongs to the page lanes in this wave; CSS and JS only here), `SiteFrame.tsx`, `site-frame-nav.ts`, `rf-wheel-up.*`, `js/home-up.js` (except the `:64` toggle), `js/auth-nav.js`, the API.
 - **SA-1180 (3):** the three `%23` hex literals in the `mobile.css` hero ring data-URI become the hex of current palette values (a data-URI cannot read a variable). Widen T35d red first: decode `%23` hex inside `url()` and fail unless the colour is in the palette value set. In the same commit, `site-mobile-pass` drops its pins on the old literals.
+- **P01, the css half (moved from 2.3-pricing by the lead, 2026-11-20; one owner per file).**
+  - The problem: the plan cards' bottoms do not line up. At 1440 the Starter card is 221 px taller than the others, because the grid uses `.pgrid{align-items:start}` (`site.css:102`).
+  - The fix: make the cards in a row equal height with no empty band above the button. Use `align-items:stretch` (the card is already a flex column with `.pcard` at `site.css:103` with `.pbtn{margin-top:auto}` at `:188`) or subgrid rows.
+  - Red first: e2e 89 T46a (the gap between a card's last content block and its button is at most 32 px, at 1440x900 and 393x844), plus a new 93 case: every `.pcard` in one `.pgrid` row has the same bottom (+-1 px) on `/pricing` and home `#pricing`. Red today on the shortest card.
+  - The pricing markup was done in 2.3-pricing; edit no html.
 
 ## 2. Red first
 | T | File · red now |
