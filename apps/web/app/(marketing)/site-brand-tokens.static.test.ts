@@ -253,6 +253,36 @@ describe("T35d: no palette value typed outside the injected style", () => {
     }
   });
 
+  /** Colours typed as %23rrggbb inside a url() (a data-URI cannot read a variable). */
+  const uriHexesIn = (text: string): string[] => {
+    const found: string[] = [];
+    for (const u of text.matchAll(/url\(([^)]*)\)/g)) {
+      for (const m of (u[1] as string).matchAll(/%23([0-9a-f]+)(?![0-9a-f])/gi)) {
+        found.push(`#${(m[1] as string).toLowerCase()}`);
+      }
+    }
+    return found;
+  };
+
+  it("uriHexesIn decodes %23 hex inside url() only", () => {
+    expect(uriHexesIn('a{b:url("data:x,%3Ccircle stroke=%27%234caed9%27/%3E")}')).toEqual([
+      "#4caed9",
+    ]);
+    expect(uriHexesIn("a{content:'%23123456'}")).toEqual([]);
+  });
+
+  it.each(FILES)("%s: every colour typed as %%23hex inside a url() is a palette value", (file) => {
+    const strays = uriHexesIn(read(file)).filter((h) => {
+      const key = expandHex(h.slice(1));
+      return !key || !PALETTE_RGB.has(key);
+    });
+    expect(strays).toEqual([]);
+  });
+
+  it("the scan finds the data-URI colours it is there for (mobile.css holds three)", () => {
+    expect(uriHexesIn(read("public/site/css/mobile.css")).length).toBeGreaterThanOrEqual(3);
+  });
+
   it("rf-graphics.css and the share image route are clean outright", () => {
     expect(paletteHexesIn(read("public/site/graphics/rf-graphics.css"))).toEqual([]);
     expect(paletteHexesIn(read("app/(marketing)/opengraph-image/route.tsx"))).toEqual([]);

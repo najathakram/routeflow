@@ -79,6 +79,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 .band-white{background:var(--rf-white);color:var(--rf-text)}
 .band-bone{background:var(--rf-soft);color:var(--rf-text)}
 .band-ink{background:var(--rf-panel);color:var(--rf-on-panel)}
+.band-line{border-bottom:1px solid var(--rf-line)}
 .band-ink .eyebrow,.band-ink .kick{color:var(--rf-link-on-panel)}
 .band-ink .lede,.band-ink .sub,.band-ink p{color:var(--rf-on-panel-2)}
 .band-ink a:not(.btn){color:var(--rf-link-on-panel)}
@@ -99,7 +100,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 .checks .ico{color:var(--rf-text);width:24px;height:24px;margin-top:2px}
 
 /* ---------- pricing ---------- */
-.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;align-items:start}
+.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;align-items:stretch}
 .pcard{background:var(--rf-white);border-radius:var(--r);padding:clamp(28px,3vw,40px);display:flex;flex-direction:column;gap:6px;box-shadow:var(--rf-ring)}
 .pcard.featured{background:var(--rf-panel);color:var(--rf-on-panel);box-shadow:var(--rf-ring)}
 .pprice{display:flex;align-items:baseline;gap:4px;margin:14px 0 4px;font-size:64px;font-weight:650;letter-spacing:-.04em;line-height:1}
@@ -107,7 +108,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 .pprice small{font-size:17px;font-weight:500;letter-spacing:-.01em;margin-left:8px;color:var(--rf-text-2)}
 .pcard.featured .pprice small,.pcard.featured .pfor,.pcard.featured .pfrom,.pcard.featured .pyear{color:var(--rf-on-panel-2)}
 .pfor{font-size:17px;color:var(--rf-text-2);min-height:3.1em}
-.pcard .checks{margin-top:22px;gap:12px}
+.pcard .checks{margin-top:auto;padding-top:22px;gap:12px}
 .pcard .checks li{font-size:17px}
 .pcard.featured .checks .ico{color:var(--rf-accent-on-panel)}
 .pcard b{font-weight:650}
@@ -139,10 +140,10 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
   .nav-links,.nav-signin,.nav>nav{display:none}
   .nav{gap:12px}
   .menu-btn{display:grid;place-items:center}
-  .mobile-menu{position:fixed;inset:68px 0 0;background:var(--rf-white);padding:12px 24px 32px;z-index:49;overflow:auto;display:block;visibility:hidden;opacity:0;transform:translateY(-8px);transition:opacity .2s,transform .2s,visibility 0s .2s}
+  .mobile-menu{position:fixed;inset:68px 0 0;background:var(--rf-white);padding:8px 24px 24px;z-index:49;overflow:auto;display:block;visibility:hidden;opacity:0;transform:translateY(-8px);transition:opacity .2s,transform .2s,visibility 0s .2s}
   .mobile-menu.open{visibility:visible;opacity:1;transform:none;transition:opacity .2s,transform .2s}
-  .mobile-menu a{display:flex;align-items:center;min-height:56px;font-size:24px;font-weight:600;letter-spacing:-.02em;text-decoration:none;border-bottom:1px solid var(--rf-line)}
-  .mobile-menu .btn{margin-top:24px;width:100%}
+  .mobile-menu a{display:flex;align-items:center;min-height:48px;font-size:22px;font-weight:600;letter-spacing:-.02em;text-decoration:none;border-bottom:1px solid var(--rf-line)}
+  .mobile-menu .btn{margin-top:16px;width:100%}
   body.menu-open{overflow:hidden}
   .footer-grid{grid-template-columns:1fr 1fr}
 }
@@ -185,7 +186,7 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
 .pcard .pprice{margin-top:2px}
 .pyear{font-size:16px;color:var(--rf-text-2)}
 .pgrid--4 .pfor{min-height:4.6em;margin-top:8px}
-.pbtn{margin-top:auto;width:100%}
+.pbtn{margin-top:0;width:100%}
 .pcard .checks{margin-bottom:26px}
 .pcard.featured .btn-light{color:var(--rf-text)}
 .custom{margin-top:clamp(56px,7vw,96px)}
@@ -220,6 +221,20 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
   .site-header .nav-actions{gap:4px}
 }
 @media (max-width:359.98px){.site-header .brand span{display:none}}
+
+/* ---------- phone header: one trial button on screen ----------
+   js/site.js puts hero-btn-in on the header while any other trial button is on screen; the header then offers Pricing in place of a
+   second one. The wheel's own button keeps its own signal (rfw-go-in). An open menu has its own trial button, so the pill steps aside. */
+@media (max-width:899.98px){
+  .js .site-header.hero-btn-in .nav-price{display:inline-flex}
+  .js body:has(.rfw.rfw-go-on.rfw-go-in) .site-header .nav-price{display:inline-flex}
+  .js .site-header.hero-btn-in .btn-sm{display:none}
+  .js body:has(.rfw.rfw-go-on.rfw-go-in) .site-header .btn-sm{display:none}
+  body.menu-open .site-header .btn-sm{display:none}
+  /* the open menu lists Pricing itself */
+  .js body.menu-open .site-header.hero-btn-in .nav-price{display:none}
+  .js body.menu-open:has(.rfw.rfw-go-on.rfw-go-in) .site-header .nav-price{display:none}
+}
 @media (max-width:1080px){a[href^="mailto:"]{display:inline-flex;align-items:center;min-height:44px}
   /* An address inside a sentence keeps the tap area but not the tall line. */
   p a[href^="mailto:"]{display:inline;min-height:0;padding-block:12px}}

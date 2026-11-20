@@ -169,7 +169,8 @@ describe("the first screen on a phone", () => {
   it("three thin brand rings sit in the hero's right margin, no repeat, behind the text", () => {
     expect(css).toContain("background-repeat:no-repeat");
     expect(css).toContain("background-size:76px 76px;");
-    for (const hex of ["%234caed9", "%236261af", "%23ffc933"]) expect(css).toContain(hex);
+    // The three colours are palette values (site-brand-tokens T35d checks which); here: three rings, three colours.
+    expect(css.match(/%23[0-9a-f]{6}/gi)).toHaveLength(3);
   });
 
   it("the trial sentence breaks between its two sentences, or is balanced", () => {

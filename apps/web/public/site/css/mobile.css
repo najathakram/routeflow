@@ -33,7 +33,7 @@ h1+.sub,h2+.sub,h1+.lede,h2+.lede{margin-top:12px}
 body:has(.pg-top) .section-head.center,body:has(.pg-top) .section-head.center .lede,.pg-notes{text-align:left;margin-inline:0}
 
 /* ---------- three thin rings in the hero margin (the glow that sat under them is gone) ---------- */
-.home .hx-up .hx-over{background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 200 200%27 fill=%27none%27%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2796%27 stroke=%27%234caed9%27 stroke-opacity=%27.34%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2770%27 stroke=%27%236261af%27 stroke-opacity=%27.26%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2744%27 stroke=%27%23ffc933%27 stroke-opacity=%27.5%27 stroke-width=%272%27/%3E%3C/svg%3E");background-repeat:no-repeat;background-size:76px 76px;background-position:right 8px top 318px}
+.home .hx-up .hx-over{background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 200 200%27 fill=%27none%27%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2796%27 stroke=%27%23B5683A%27 stroke-opacity=%27.34%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2770%27 stroke=%27%235A6675%27 stroke-opacity=%27.26%27 stroke-width=%272%27/%3E%3Ccircle cx=%27100%27 cy=%27100%27 r=%2744%27 stroke=%27%23D69062%27 stroke-opacity=%27.5%27 stroke-width=%272%27/%3E%3C/svg%3E");background-repeat:no-repeat;background-size:76px 76px;background-position:right 8px top 318px}
 
 
 /* ---------- life ---------- */
