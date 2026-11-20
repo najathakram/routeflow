@@ -7,7 +7,11 @@
 import type { Page } from "@playwright/test";
 
 /** `each`: every shown match is its own scope. `union`: all shown matches together are one scope. */
-export type BandScope = { each: string } | { union: string; name: string };
+export type BandScope =
+  | { each: string }
+  | { union: string; name: string }
+  /** `from` and the shown siblings after it, up to and including the first one matching `through`. Nothing before `from`. */
+  | { from: string; through: string; name: string };
 
 export interface Band {
   where: string;
@@ -57,6 +61,17 @@ export async function emptyBands(page: Page, scope: BandScope): Promise<Band[]> 
       return Array.from(document.querySelectorAll(spec.each))
         .filter(shown)
         .map((el) => ({ where: label(el), gap: band([el]) }));
+    }
+    if ("from" in spec) {
+      const start = Array.from(document.querySelectorAll(spec.from)).find(shown);
+      if (!start) return [];
+      const chain: Element[] = [start];
+      for (let el = start.nextElementSibling; el; el = el.nextElementSibling) {
+        if (!shown(el)) continue;
+        chain.push(el);
+        if (el.matches(spec.through)) break;
+      }
+      return [{ where: spec.name, gap: band(chain) }];
     }
     const roots = Array.from(document.querySelectorAll(spec.union)).filter(shown);
     return roots.length ? [{ where: spec.name, gap: band(roots) }] : [];

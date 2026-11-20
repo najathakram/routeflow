@@ -120,14 +120,19 @@ describe("chrome.js is the one home of the page chrome", () => {
     );
     expect(src).toMatch(/if \(!head\) return;/);
     expect(src).toContain("IntersectionObserver");
-    // the root selectors are read from chrome.js (every unscoped $("...") or $$("...") lookup), never typed here.
+    // the root selectors are read from chrome.js (every one-argument $("...") or $$("...") lookup, and every
+    // document.querySelector / querySelectorAll call with a string literal), never typed here.
     // One with no element on any chrome page is dead code.
-    const roots = [
-      ...new Set(
-        [...src.matchAll(/\$\$?\(\s*(["'])((?:(?!\1).)+)\1\s*\)/g)].map((m) => m[2] as string),
-      ),
-    ];
+    const lookup = /(?:\$\$?|querySelector(?:All)?)\(\s*(["'])((?:(?!\1).)+)\1\s*\)/g;
+    const roots = [...new Set([...src.matchAll(lookup)].map((m) => m[2] as string))];
     expect(roots).toEqual(expect.arrayContaining([".site-header", ".menu-btn", "#mobile-menu"]));
+    // the lookup finds a planted direct call, so the scan cannot go quiet by missing a style of call
+    const planted = [
+      ...`document.querySelector(".x"); document.querySelectorAll('.y'); $("z", r)`.matchAll(
+        lookup,
+      ),
+    ].map((m) => m[2]);
+    expect(planted).toEqual([".x", ".y"]);
     const docs = chromePages.map((page) => new JSDOM(html(page)).window.document);
     expect(docs.length).toBe(9);
     for (const root of roots) {

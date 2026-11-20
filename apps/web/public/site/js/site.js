@@ -21,7 +21,7 @@
     if (ad[el.dataset.field] != null) el.textContent = ad[el.dataset.field];
   });
 
-  /* The page chrome (analytics hook, header shadow, menu, header pill, sticky CTA) is js/chrome.js. */
+  /* The page chrome (analytics hook, header shadow, menu, header pill) is js/chrome.js. */
 
   if (!window.gsap) { doc.classList.remove("js-motion"); return; }
   gsap.registerPlugin.apply(gsap, [window.ScrollTrigger, window.SplitText, window.DrawSVGPlugin, window.MotionPathPlugin].filter(Boolean));

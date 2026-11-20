@@ -9,6 +9,7 @@ import * as path from "path";
 import { test, expect, type Page } from "@playwright/test";
 import { SCRIPT_GZIP_KB } from "./helpers/site-speed-budget";
 import { emptyBands } from "./helpers/empty-bands";
+import { readPill } from "./helpers/header-pill";
 import { blockAnalytics, nonEmpty } from "./helpers/site-proof";
 
 test.beforeEach(async ({ context }) => {
@@ -20,8 +21,6 @@ async function open(page: Page, route: string, w: number, h: number): Promise<vo
   await page.goto(route, { waitUntil: "load" });
   await page.evaluate(() => document.fonts.ready);
 }
-
-const HEADER_PILL = '.site-header a[href^="/signup"].btn';
 
 // ─── T48a ───────────────────────────────────────────────────────────────────
 
@@ -41,30 +40,8 @@ test("T48a at 390x844, while another trial button is on screen, the header pill 
     await page.evaluate(
       () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
     );
-    const state = await page.evaluate((pill) => {
-      const inView = (el: Element) => {
-        const s = getComputedStyle(el);
-        const r = el.getBoundingClientRect();
-        return (
-          s.display !== "none" &&
-          s.visibility !== "hidden" &&
-          r.width > 0 &&
-          r.height > 0 &&
-          r.bottom > 68 &&
-          r.top < innerHeight
-        );
-      };
-      // The wheel's own button counts once the wheel says it is clickable and on screen.
-      const wheelLive = !!document.querySelector(".rfw.rfw-go-on.rfw-go-in");
-      const others = Array.from(document.querySelectorAll('a.btn[href^="/signup"]')).filter(
-        (b) =>
-          !b.closest(".site-header, #mobile-menu") &&
-          (wheelLive || !b.closest(".rfw")) &&
-          inView(b),
-      );
-      const head = document.querySelector(pill);
-      return { others: others.length, pill: !!head && inView(head) };
-    }, HEADER_PILL);
+    const read = await readPill(page); // judged against the live header box (SA-1196 A4-1)
+    const state = { others: read.others, pill: read.pillShown };
     if (state.others > 0) {
       withOthers++;
       if (state.pill) bad.push(`scroll ${Math.round(y)}: ${state.others} other, pill shown`);
@@ -90,65 +67,67 @@ const CHROME_ROUTES = fs
   .filter((name) => SCRIPT_GZIP_KB[name as keyof typeof SCRIPT_GZIP_KB] !== 0)
   .map((name) => (name === "home" ? "/" : "/" + name));
 
-test("the chrome pages are found", () => {
-  expect(CHROME_ROUTES.length).toBe(9);
-});
+// The T48e rows run serially in one worker so the closing row reads what they recorded. A row that checked nothing in
+// a state cannot pass the suite for that state: the closing row needs both.
+const STATE_SHOWN = "shown, no watched button in view";
+const STATE_HIDDEN = "hidden, one in view";
+const SEEN_STATES = new Set<string>();
 
-for (const route of CHROME_ROUTES) {
-  test(
-    "T48e at 393x844 the header pill shows exactly when no watched trial button is in view: " +
-      route,
-    async ({ page }) => {
-      await open(page, route, 393, 844);
-      const bad: string[] = [];
-      for (const at of ["load", "end"] as const) {
-        await page.evaluate((where) => {
-          window.scrollTo({
-            top: where === "end" ? document.documentElement.scrollHeight : 0,
-            behavior: "instant",
-          });
-        }, at);
-        await page.evaluate(
-          () =>
-            new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
-        );
-        const state = await page.evaluate((pill) => {
-          const inView = (el: Element) => {
-            const s = getComputedStyle(el);
-            const r = el.getBoundingClientRect();
-            return (
-              s.display !== "none" &&
-              s.visibility !== "hidden" &&
-              r.width > 0 &&
-              r.height > 0 &&
-              r.bottom > 68 &&
-              r.top < innerHeight
+test.describe("T48e", () => {
+  test.describe.configure({ mode: "serial" });
+
+  test("the chrome pages are found", () => {
+    expect(CHROME_ROUTES.length).toBe(9);
+  });
+
+  for (const route of CHROME_ROUTES) {
+    test(
+      "T48e at 393x844 the header pill shows exactly when no watched trial button is in view: " +
+        route,
+      async ({ page }) => {
+        await open(page, route, 393, 844);
+        const bad: string[] = [];
+        for (const at of ["load", "end"] as const) {
+          await page.evaluate((where) => {
+            window.scrollTo({
+              top: where === "end" ? document.documentElement.scrollHeight : 0,
+              behavior: "instant",
+            });
+          }, at);
+          await page.evaluate(
+            () =>
+              new Promise<void>((r) =>
+                requestAnimationFrame(() => requestAnimationFrame(() => r())),
+              ),
+          );
+          const read = await readPill(page); // judged against the live header box (SA-1196 A4-1)
+          const state = { others: read.others, pill: read.pillShown };
+          // Record the state this reading checked (A4-2), so the closing row can prove both were seen.
+          SEEN_STATES.add(state.others === 0 ? STATE_SHOWN : STATE_HIDDEN);
+          if (state.pill !== (state.others === 0)) {
+            bad.push(
+              at +
+                ": " +
+                state.others +
+                " watched button(s) in view, pill " +
+                (state.pill ? "shown" : "hidden") +
+                ", pill box " +
+                JSON.stringify(read.pillBox) +
+                ", nav box " +
+                JSON.stringify(read.navBox),
             );
-          };
-          const wheelLive = !!document.querySelector(".rfw.rfw-go-on.rfw-go-in");
-          const others = Array.from(document.querySelectorAll('a.btn[href^="/signup"]')).filter(
-            (b) =>
-              !b.closest(".site-header, #mobile-menu") &&
-              (wheelLive || !b.closest(".rfw")) &&
-              inView(b),
-          );
-          const head = document.querySelector(pill);
-          return { others: others.length, pill: !!head && inView(head) };
-        }, HEADER_PILL);
-        if (state.pill !== (state.others === 0)) {
-          bad.push(
-            at +
-              ": " +
-              state.others +
-              " watched button(s) in view, pill " +
-              (state.pill ? "shown" : "hidden"),
-          );
+          }
         }
-      }
-      expect(bad).toEqual([]);
-    },
-  );
-}
+        expect(bad).toEqual([]);
+      },
+    );
+  }
+
+  test("T48e saw both states: shown with no watched button in view, hidden with one in view", () => {
+    // Serial in one worker, last in the file's T48e group, so it reads what every row above recorded.
+    expect([...SEEN_STATES].sort()).toEqual([STATE_HIDDEN, STATE_SHOWN].sort());
+  });
+});
 
 // ─── T48b ───────────────────────────────────────────────────────────────────
 
@@ -297,9 +276,9 @@ for (const { route, scope } of [
         w < 900
           ? {
               name: "phone plan block",
-              union: [".pl-wrap", ".pg-notes", ".pl-why", ".pl-more", ".pl-go"]
-                .map((s) => scope + " " + s)
-                .join(", "),
+              // from .pl-wrap and its shown siblings after it, through .pl-more or .pl-go; nothing above .pl-wrap
+              from: scope + " .pl-wrap",
+              through: ".pl-more, .pl-go",
             }
           : { each: scope + " .pcard" },
       );
