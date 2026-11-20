@@ -48,13 +48,10 @@ const refs = (file: string, re: RegExp) => [...new Set(stripComments(read(file))
 // Files outside this lane that still reference a retired name today (scanned 2026-11-14).
 const T14B_ROWS: Array<{ file: string; lane: string; wave: string }> = [
   { file: "public/site/graphics/rf-graphics.css", lane: "2.1b-last", wave: "W2" },
-  { file: "public/site/graphics/rf-wheel-up.css", lane: "2.2", wave: "W2" },
 ];
 
 // Files outside this lane that still hold a gradient, blur, glow or non-ring shadow today.
-const T18A_ROWS: Array<{ file: string; lane: string; wave: string }> = [
-  { file: "public/site/graphics/rf-wheel-up.css", lane: "2.2", wave: "W2" },
-];
+const T18A_ROWS: Array<{ file: string; lane: string; wave: string }> = [];
 
 const flatOffences = (file: string): string[] => {
   const css = stripComments(read(file));
@@ -107,12 +104,15 @@ describe("T18a scoped: flat, one ring", () => {
     expect(flatOffences(file)).toEqual([]);
   });
 
-  it.each(T18A_ROWS.map((r) => [r.file, r.lane, r.wave]))(
-    "%s is still not flat (owned by %s, %s): a flat file loses its row",
-    (file) => {
-      expect(flatOffences(file).length).toBeGreaterThan(0);
-    },
-  );
+  // An empty table is fine (every file is flat): it.each throws on no rows, so the block is conditional.
+  if (T18A_ROWS.length > 0) {
+    it.each(T18A_ROWS.map((r) => [r.file, r.lane, r.wave]))(
+      "%s is still not flat (owned by %s, %s): a flat file loses its row",
+      (file) => {
+        expect(flatOffences(file).length).toBeGreaterThan(0);
+      },
+    );
+  }
 
   it("no other site CSS file is un-flat without a row", () => {
     const rows = new Set(T18A_ROWS.map((r) => r.file));

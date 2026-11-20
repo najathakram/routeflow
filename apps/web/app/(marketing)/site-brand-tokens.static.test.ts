@@ -193,9 +193,7 @@ describe("T35d: no palette value typed outside the injected style", () => {
   /** Stylesheets still typing palette values, the lane that repaints each and its wave. Data, not
    *  logic: the listed values must be EXACTLY what the file holds, so a lane that cleans a file (or
    *  part of it) must edit its row, and a new typed value fails. rf-graphics.css has no row. */
-  const EXEMPT_T35D: Array<{ file: string; hexes: string[]; lane: string; wave: string }> = [
-    { file: "public/site/graphics/rf-wheel-up.css", hexes: ["#FFFFFF"], lane: "2.2", wave: "W2" },
-  ];
+  const EXEMPT_T35D: Array<{ file: string; hexes: string[]; lane: string; wave: string }> = [];
 
   const cssFiles = (dir: string, deep: boolean): string[] => {
     const abs = path.join(WEB, dir);

@@ -1,28 +1,24 @@
-/* RouteFlow wheel, hero variant. One calm light stage nearly the width of the screen: a white dial at rest beside the hero's words, each piece its own solid colour when it comes apart. */
-.rfw{--muted:var(--rf-ink-3);--acc:var(--rf-brand-500);--rfw-grid:min(1640px,calc(100% - 32px));--rfw-gy:clamp(8px,2.2vh,24px);--rfw-in:40px;--rfw-run:3;position:relative;height:calc(100vh - var(--rfw-top,0px) + 100vh*var(--rfw-run));background:#fff;color:var(--ink);font-family:var(--rf-font);isolation:isolate}
+/* The wheel, hero variant. One calm light stage nearly the width of the screen: a bone and ink dial at rest beside the hero's words, one copper piece in focus. */
+.rfw{--muted:var(--rf-text-2);--rfw-grid:min(1640px,calc(100% - 32px));--rfw-gy:clamp(8px,2.2vh,24px);--rfw-in:40px;--rfw-run:3;position:relative;height:calc(100vh - var(--rfw-top,0px) + 100vh*var(--rfw-run));background:var(--rf-white);color:var(--rf-text);font-family:var(--rf-font);isolation:isolate}
 @supports (height:1svh){.rfw{height:calc(100svh - var(--rfw-top,0px) + 100svh*var(--rfw-run))}}
 .rfw *{box-sizing:border-box}
-.rfw-defs{position:absolute}
 /* The pin is CSS sticky: no pin spacer in the host page, and the page's own scroll stays on the compositor. */
 .rfw-pin{position:sticky;top:var(--rfw-top,0px);height:calc(100vh - var(--rfw-top,0px));overflow:hidden;overflow:clip}
 @supports (height:1svh){.rfw-pin{height:calc(100svh - var(--rfw-top,0px))}}
 /* The stage: one rounded light tile on the page grid. White page all round, so it hands off to the sections above and below. */
-.rfw-tile{position:absolute;top:var(--rfw-gy);bottom:var(--rfw-gy);left:0;right:0;width:var(--rfw-grid);margin:0 auto;border-radius:var(--rf-r-stage);background:#fff}
+.rfw-tile{position:absolute;top:var(--rfw-gy);bottom:var(--rfw-gy);left:0;right:0;width:var(--rfw-grid);margin:0 auto;border-radius:var(--rf-r-stage);background:var(--rf-white)}
 .rfw-cvw{position:absolute;left:0;top:0;overflow:hidden;border-radius:inherit}
 .rfw-cv{position:absolute;left:0;top:0;display:block;touch-action:pan-y;will-change:transform}
 .rfw-wheel{position:absolute;left:50%;top:50%;width:1px;height:1px;pointer-events:none}
 .rfw-b{position:absolute;inset:0;width:1px;height:1px;padding:0;border:0;opacity:0;pointer-events:none}
-/* The one object: sized once per layout, moved by one transform per frame. */
-.rfw-tok{position:absolute;left:0;top:0;z-index:2;width:0;height:0;pointer-events:none;visibility:hidden;will-change:transform}
-.rfw-tok svg{position:absolute;max-width:none;width:var(--tok,120px);height:calc(var(--tok,120px)*.8889);left:calc(var(--tok,120px)*-.5);top:calc(var(--tok,120px)*-.6389);overflow:visible}
-.rfw-tip{position:absolute;left:0;top:0;z-index:4;padding:6px 13px;border-radius:999px;background:#fff;color:var(--ink);font-size:15px;line-height:20px;font-weight:500;white-space:nowrap;box-shadow:0 0 0 1px rgba(15,27,45,.06),0 6px 16px rgba(15,27,45,.1);opacity:0;transition:opacity .2s ease;pointer-events:none}
+.rfw-tip{position:absolute;left:0;top:0;z-index:4;padding:6px 13px;border-radius:999px;background:var(--rf-white);color:var(--rf-text);font-size:15px;line-height:20px;font-weight:500;white-space:nowrap;box-shadow:var(--rf-ring);opacity:0;transition:opacity .2s ease;pointer-events:none}
 .rfw-tip.on{opacity:1}
 /* One reading column beside the wheel, every beat, where the hero's words were. */
 .rfw-words{position:absolute;inset:0;z-index:3;pointer-events:none}
 .rfw-title{margin:0;font-weight:650;line-height:1.06;letter-spacing:-.034em;text-wrap:balance}
-.rfw-sub{margin:14px 0 0;font-size:clamp(18px,1.45vw,21px);line-height:1.35;letter-spacing:-.01em;color:var(--rf-ink-2);text-wrap:pretty}
+.rfw-sub{margin:14px 0 0;font-size:clamp(18px,1.45vw,21px);line-height:1.35;letter-spacing:-.01em;color:var(--rf-text-2);text-wrap:pretty}
 .rfw-eye{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:15px;line-height:1.3;font-weight:500;color:var(--muted)}
-.rfw-t .rfw-eye::before{content:"";flex:none;width:9px;height:9px;border-radius:50%;background:var(--pc,var(--rf-brand-700))}
+.rfw-t .rfw-eye::before{content:"";flex:none;width:9px;height:9px;border-radius:50%;background:var(--rf-accent)}
 .rfw-h,.rfw-s{position:absolute;top:var(--rfw-in);bottom:var(--rfw-in);left:var(--rfw-l,var(--rfw-in));display:flex;flex-direction:column;justify-content:center;width:clamp(320px,31%,430px)}
 .rfw-s{gap:22px}
 .rfw-h .rfw-title{font-size:clamp(40px,3.9vw,56px)}
@@ -34,8 +30,8 @@
 .rfw-h,.rfw-t{contain:layout style;will-change:transform,opacity}
 /* One screen of the product at a time: white, a hairline edge and one soft neutral shadow. */
 .rfw-card,.uc-card{--c-tx:var(--app-ink);--c-mu:var(--app-ink-3);--c-li:var(--app-line);--c-so:var(--app-sunken)}
-.rfw-card{position:relative;padding:16px 20px 8px;border-radius:12px;color:var(--c-tx);background:#fff;box-shadow:var(--rf-sh-sample);font-size:16px;line-height:1.3;contain:layout style;will-change:transform,opacity}
-.uc-card{margin:0;padding:14px 16px 6px;border-radius:12px;color:var(--c-tx);background:#fff;box-shadow:var(--rf-sh-sample);font-size:15px;line-height:1.3}
+.rfw-card{position:relative;padding:16px 20px 8px;border-radius:12px;color:var(--c-tx);background:var(--rf-white);box-shadow:var(--rf-ring);font-size:16px;line-height:1.3;contain:layout style;will-change:transform,opacity}
+.uc-card{margin:0;padding:14px 16px 6px;border-radius:12px;color:var(--c-tx);background:var(--rf-white);box-shadow:var(--rf-ring);font-size:15px;line-height:1.3}
 .uc-card .rfw-id b{font-size:16px;letter-spacing:0}
 .uc-card .rfw-id span{font-size:14px}
 .uc-card .rfw-row{min-height:34px;padding:4px 0}
@@ -54,7 +50,7 @@
 .rfw-row .m{font-variant-numeric:tabular-nums;font-weight:500;text-align:right;white-space:nowrap}
 .rfw-row.t{font-weight:600}.rfw-row.t .m{font-weight:600;font-size:17px;letter-spacing:-.01em}
 .rfw-tk{display:block;width:20px;height:20px}
-.rfw-tk path{fill:none;stroke:var(--rf-ok);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1}
+.rfw-tk path{fill:none;stroke:var(--rf-paid);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1}
 .rfw-big{display:flex;align-items:baseline;gap:10px;padding:0 0 8px;font-size:clamp(38px,3.4vw,48px);line-height:1.05;font-weight:600;letter-spacing:-.035em;font-variant-numeric:tabular-nums}
 .rfw-big small{font-size:17px;font-weight:500;letter-spacing:-.01em;color:var(--c-mu)}
 .rfw-list{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
@@ -64,24 +60,30 @@
 /* Waiting to be built: the height the live wheel will take, so nothing below it ever shifts. */
 .rfw--static.rfw-wait{display:flow-root;height:calc(100vh - var(--rfw-top,0px) + 100vh*var(--rfw-run))}
 @supports (height:1svh){.rfw--static.rfw-wait{height:calc(100svh - var(--rfw-top,0px) + 100svh*var(--rfw-run))}}
-.rfw--static .rfw-pin{position:relative;top:auto;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.06fr);align-items:center;gap:clamp(32px,4.4vw,72px);width:var(--rfw-grid);height:auto;margin:var(--rfw-gy) auto;padding:clamp(28px,4.4vw,64px);border-radius:var(--rf-r-stage);background:var(--tint);overflow:visible}
-.rfw--static .rfw-wheel{position:relative;left:auto;top:auto;width:100%;height:auto;aspect-ratio:1;pointer-events:auto;filter:drop-shadow(0 14px 30px rgba(15,27,45,.1))}
+.rfw--static .rfw-pin{position:relative;top:auto;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.06fr);align-items:center;gap:clamp(32px,4.4vw,72px);width:var(--rfw-grid);height:auto;margin:var(--rfw-gy) auto;padding:clamp(28px,4.4vw,64px);border-radius:var(--rf-r-stage);background:var(--rf-soft);overflow:visible}
+.rfw--static .rfw-wheel{position:relative;left:auto;top:auto;width:100%;height:auto;aspect-ratio:1;pointer-events:auto}
 .rfw--static .rfw-stage{position:static;pointer-events:auto}
 .rfw--static .rfw-title{font-size:clamp(36px,3.9vw,56px)}
-.rfw--static .rfw-sub{color:var(--rf-ink-2)}.rfw--static .rfw-eye{color:var(--muted)}
+.rfw--static .rfw-sub{color:var(--rf-text-2)}.rfw--static .rfw-eye{color:var(--muted)}
 .rfw-svg{display:block;width:100%;height:100%;overflow:visible;font-family:var(--rf-font)}
-.rfw-w{fill:#fff;stroke:#fff;stroke-width:20;stroke-linejoin:round}
-.rfw-w.g{fill:#fafafc;stroke:#fafafc}
-.rfw-ln{fill:none;stroke:rgba(15,27,45,.09);stroke-width:22;stroke-linejoin:round}
-.rfw-lb{fill:var(--ink);font-size:31px;font-weight:600;letter-spacing:-.01em;text-anchor:middle}
+/* The still dial: the same roles the canvas reads. Outer pieces alternate two bone values, inner two ink values, Payments is copper. */
+.rfw-w{fill:var(--rf-wh-work);stroke:var(--rf-wh-work);stroke-width:20;stroke-linejoin:round}
+.rfw-w.g{fill:var(--rf-wh-work-2);stroke:var(--rf-wh-work-2)}
+.rfw-w.i{fill:var(--rf-wh-sell);stroke:var(--rf-wh-sell)}
+.rfw-w.i.g{fill:var(--rf-wh-sell-2);stroke:var(--rf-wh-sell-2)}
+.rfw-w.f{fill:var(--rf-wh-focus-wall);stroke:var(--rf-wh-focus-wall)}
+.rfw-ln{fill:none;stroke:var(--rf-line);stroke-width:22;stroke-linejoin:round}
+.rfw-hub{fill:var(--rf-panel)}
+.rfw-lb{fill:var(--rf-text);font-size:31px;font-weight:600;letter-spacing:-.01em;text-anchor:middle}
 .rfw-icw{transform:translateY(-24px) scale(1.3)}
 .rfw-i2w{transform:scale(1.25)}
-.rfw-ic{fill:none;stroke:var(--ink);stroke-linecap:round;stroke-linejoin:round}
+.rfw-ic{fill:none;stroke:var(--rf-text);stroke-linecap:round;stroke-linejoin:round}
+.rfw-ic.on{stroke:var(--rf-white)}
+.rfw-lb.on{fill:var(--rf-white)}
 .rfw-ic *{vector-effect:non-scaling-stroke;stroke-width:1.25px}
-.rfw-svg .mk{fill:none;stroke:#fff;stroke-width:13;stroke-linecap:round;stroke-linejoin:round}
 /* An older copy of the still wheel, pasted into a page, stays calm too. */
 .rfw--static .rfw-keys{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px;margin:20px 0 0;padding:0;list-style:none;font-size:17px;line-height:1.3;font-weight:500;letter-spacing:-.01em}
-.rfw-keys li{padding:9px 0;border-top:1px solid var(--line)}
+.rfw-keys li{padding:9px 0;border-top:1px solid var(--rf-line)}
 .rfw-keys span{display:block;margin-top:2px;font-size:15px;font-weight:400;letter-spacing:0;color:var(--muted)}
 .rfw-keyh{margin:24px 0 0;font-size:15px;font-weight:500;color:var(--muted)}
 .rfw-keyh+.rfw-keys{margin-top:8px}
@@ -152,9 +154,9 @@
   .rfw-legend .rfw-keys+.rfw-keyh+.rfw-keys{margin-top:8px}
 }
 @media (prefers-contrast:more){
-  .rfw-tile{background:#fff;box-shadow:inset 0 0 0 1px var(--rf-ink)}
-  .rfw-card,.uc-card{box-shadow:inset 0 0 0 1px var(--rf-ink)}
-  .rfw-sub,.rfw-eye{color:var(--ink)}
+  .rfw-tile{background:var(--rf-white);box-shadow:var(--rf-ring)}
+  .rfw-card,.uc-card{box-shadow:var(--rf-ring)}
+  .rfw-sub,.rfw-eye{color:var(--rf-text)}
 }
 /* The page's own grid gets narrower gutters on small phones. */
 @media (max-width:560px){.rfw{--rfw-grid:calc(100% - 16px)}}
