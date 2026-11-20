@@ -1,5 +1,5 @@
 /* The home page (index.html), the wheel in the hero. Replaces js/site.js on this page only. Edited by hand.
-   Chrome first (prices, tracking, header, menu), then motion.
+   Prices and home-only chrome first (the shared chrome is js/chrome.js), then motion.
    Motion: GSAP + ScrollTrigger. One init per section: initX(scope) builds that section inside gsap.matchMedia(scope)
    and returns a cleanup (gsap.context style), so each one ports to useGSAP({ scope }) as it is.
    Rules kept here: transforms and opacity only; triggers are made top to bottom; no layout reads in onUpdate; will-change
@@ -34,30 +34,7 @@
       if (v != null) el.textContent = v;
     });
   }
-  /* Analytics hook: names only. Nothing is sent anywhere. */
-  W.dataLayer = W.dataLayer || [];
-  d.addEventListener("click", function (e) {
-    var el = e.target.closest && e.target.closest("[data-track]");
-    if (el) W.dataLayer.push({ event: el.getAttribute("data-track"), where: el.getAttribute("data-where") || "", page: location.pathname });
-  });
-  var header = $(".site-header");
-  if (header) {
-    var onS = function () { header.classList.toggle("scrolled", W.scrollY > 8); };
-    onS(); W.addEventListener("scroll", onS, { passive: true });
-  }
-  var mBtn = $(".menu-btn"), menu = $("#mobile-menu");
-  if (mBtn && menu) {
-    var mUse = $("use", mBtn);
-    var setOpen = function (open) {
-      mBtn.setAttribute("aria-expanded", String(open)); mBtn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
-      if (mUse) mUse.setAttribute("href", open ? "#i-x" : "#i-menu");
-      menu.classList.toggle("open", open); d.body.classList.toggle("menu-open", open);
-    };
-    mBtn.addEventListener("click", function () { setOpen(mBtn.getAttribute("aria-expanded") !== "true"); });
-    menu.addEventListener("click", function (e) { if (e.target.closest && e.target.closest("a")) setOpen(false); });
-    d.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
-    W.addEventListener("resize", function () { if (W.innerWidth > 1080) setOpen(false); });
-  }
+  var header = $(".site-header"); // the shared chrome (hook, shadow, menu) is js/chrome.js
   /* The header turns dark over a dark section. A thin strip at header height decides; no scroll reads. */
   var darks = $$(".pb, .end");
   if (header && darks.length && "IntersectionObserver" in W) {

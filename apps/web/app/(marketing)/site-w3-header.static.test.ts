@@ -97,9 +97,9 @@ describe("K5: no var() read names a property nothing sets", () => {
 });
 
 describe("one observer owns the header trial pill", () => {
-  const site = read("js/site.js");
+  const site = read("js/chrome.js");
 
-  it("site.js observes the trial buttons outside the header and the phone menu, and sets the class from all of them", () => {
+  it("chrome.js observes the trial buttons outside the header and the phone menu, and sets the class from all of them", () => {
     const src = site.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
     // the trial buttons: a selector on the sign-up links, in any quote style
     expect(src).toMatch(/\.btn\[href\^=\\?["']?\/signup/);
@@ -115,8 +115,9 @@ describe("one observer owns the header trial pill", () => {
     expect(src).not.toMatch(/\w+\[\s*\w+\.length\s*-\s*1\s*\]/);
   });
 
-  it("home-up.js no longer toggles it", () => {
+  it("home-up.js and site.js no longer toggle it", () => {
     expect(read("js/home-up.js")).not.toContain("hero-btn-in");
+    expect(read("js/site.js")).not.toContain("hero-btn-in");
   });
 
   it("the React header does not hard-code the class", () => {

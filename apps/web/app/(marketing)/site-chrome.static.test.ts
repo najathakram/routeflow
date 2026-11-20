@@ -1,0 +1,133 @@
+/**
+ * @jest-environment node
+ */
+// SA-1196 K1/A1: the page chrome (analytics hook, header shadow, phone menu, phones header pill, sticky
+// mobile CTA) lives in one file, js/chrome.js, loaded once by every ready-made page. No other script
+// keeps a copy. The tokens are read from chrome.js itself. Every scan asserts it found its targets (L-202).
+import * as fs from "fs";
+import * as path from "path";
+
+const WEB = path.resolve(__dirname, "../..");
+const SITE = path.join(WEB, "public/site");
+const JS = path.join(SITE, "js");
+
+const pages = fs.readdirSync(SITE).filter((f) => f.endsWith(".html"));
+const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+const chrome = () => fs.readFileSync(path.join(JS, "chrome.js"), "utf8");
+
+/** The class names chrome.js puts on elements through classList, read from its code. */
+function chromeTokens(): string[] {
+  const src = strip(chrome());
+  const found = new Set<string>();
+  for (const m of src.matchAll(/classList\.(?:toggle|add|remove)\(\s*(["'])([\w-]+)\1/g)) {
+    found.add(m[2] as string);
+  }
+  return [...found];
+}
+
+const GENERIC = new Set(["open", "show"]);
+
+describe("chrome.js is the one home of the page chrome", () => {
+  it("finds the ten ready-made pages", () => {
+    expect(pages.length).toBe(10);
+  });
+
+  it("every page loads /site/js/chrome.js exactly once", () => {
+    expect(pages.length).toBeGreaterThan(0);
+    for (const page of pages) {
+      const html = fs.readFileSync(path.join(SITE, page), "utf8");
+      const tags = html.match(/<script\b[^>]*\bsrc="\/site\/js\/chrome\.js"[^>]*>/g) ?? [];
+      expect({ page, tags: tags.length }).toEqual({ page, tags: 1 });
+    }
+  });
+
+  it("chrome.js runs before site.js and home-up.js where a page has them", () => {
+    let ordered = 0;
+    for (const page of pages) {
+      const html = fs.readFileSync(path.join(SITE, page), "utf8");
+      const at = html.indexOf("/site/js/chrome.js");
+      for (const later of ["/site/js/site.js", "/site/js/home-up.js"]) {
+        const i = html.indexOf(later);
+        if (i < 0) continue;
+        expect({ page, found: at >= 0 }).toEqual({ page, found: true });
+        ordered++;
+        expect({ page, later, before: at < i }).toEqual({ page, later, before: true });
+      }
+    }
+    expect(ordered).toBe(9);
+  });
+
+  it("the tokens are found in chrome.js, and no other script keeps them", () => {
+    const tokens = chromeTokens();
+    // the pill, the header shadow, the menu and the sticky CTA toggles
+    for (const t of ["hero-btn-in", "scrolled", "open", "menu-open", "show"])
+      expect(tokens).toContain(t);
+    const others = fs.readdirSync(JS).filter((f) => f.endsWith(".js") && f !== "chrome.js");
+    expect(others.length).toBeGreaterThan(0);
+    for (const file of others) {
+      const src = strip(fs.readFileSync(path.join(JS, file), "utf8"));
+      for (const t of tokens) {
+        // Named exemption: "open" and "show" are plain words other motion blocks toggle on their own elements
+        // (use-case and founder cards). The menu and sticky CTA they serve are keyed by selector below.
+        if (GENERIC.has(t)) continue;
+        const re = new RegExp(String.raw`classList\.(?:toggle|add|remove)\(\s*["']${t}["']`);
+        expect({ file, token: t, has: re.test(src) }).toEqual({ file, token: t, has: false });
+      }
+      // the analytics hook and the menu/CTA hooks are chrome too
+      expect({ file, hook: /\[data-track\]/.test(src) }).toEqual({ file, hook: false });
+      expect({ file, menu: /["']#mobile-menu["']/.test(src) }).toEqual({ file, menu: false });
+      expect({ file, cta: /["']\.sticky-cta["']/.test(src) }).toEqual({ file, cta: false });
+    }
+  });
+
+  it("the header on-dark observer is the one named exception: only home-up.js, one observer block", () => {
+    // It is home-only chrome (its selector matches only the home page). Keyed by file and token, not by
+    // line: it sits near the header block of home-up.js (home-up.js:61-69 at d1b0b95ef7).
+    const holders: string[] = [];
+    for (const f of fs.readdirSync(JS).filter((x) => x.endsWith(".js"))) {
+      const src = strip(fs.readFileSync(path.join(JS, f), "utf8"));
+      if (/["']on-dark["']/.test(src)) holders.push(f);
+    }
+    expect(holders).toEqual(["home-up.js"]);
+    const home = strip(fs.readFileSync(path.join(JS, "home-up.js"), "utf8"));
+    expect(home.match(/["']on-dark["']/g)?.length).toBe(1);
+    expect(home.match(/new IntersectionObserver\([^]*?["']on-dark["']/g)?.length).toBe(1);
+  });
+
+  it("the analytics hook sends {event, where, page}", () => {
+    const src = strip(chrome());
+    expect(src).toMatch(/\[data-track\]/);
+    expect(src).toMatch(/data-where/);
+    expect(src).toMatch(/page:\s*location\.pathname/);
+  });
+
+  it("every chrome block is guarded on its element being present", () => {
+    const src = strip(chrome());
+    for (const sel of ['".site-header"', '".menu-btn"', '"#mobile-menu"', '".sticky-cta"']) {
+      expect(src).toContain(sel);
+    }
+    expect(src).toContain("IntersectionObserver");
+  });
+});
+
+describe("the sync script copies every script and stylesheet under public/site", () => {
+  const script = fs.readFileSync(path.resolve(WEB, "../../scripts/sync-site-port.mjs"), "utf8");
+  // Named exemptions: files that are not copied from the design source.
+  const EXEMPT = new Set<string>([
+    // written in this repo and injected when the page is served (lib/static-site-page.ts); not in the design source
+    "js/first-touch.js",
+  ]);
+  const walk = (dir: string, base: string): string[] =>
+    fs
+      .readdirSync(dir, { withFileTypes: true })
+      .flatMap((e) =>
+        e.isDirectory() ? walk(path.join(dir, e.name), `${base}${e.name}/`) : [`${base}${e.name}`],
+      );
+
+  it("js/ and css/ files are in the copy list", () => {
+    const files = [...walk(JS, "js/"), ...walk(path.join(SITE, "css"), "css/")];
+    expect(files.length).toBeGreaterThan(10);
+    const missing = files.filter((f) => !EXEMPT.has(f) && !script.includes(`"${f}"`));
+    expect(missing).toEqual([]);
+  });
+});

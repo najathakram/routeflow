@@ -9,8 +9,8 @@
 export const GZIP_TOTAL_KB = { home: 175, inner: 115, landing: 45 } as const;
 /** T43: the html alone, gzip KB, every page. */
 export const HTML_GZIP_KB = 20;
-/** T43: the scripts a page links itself, together, gzip KB. Landing links none (SA-1187 K1). */
-export const SCRIPT_GZIP_KB = { home: 90, inner: 57, landing: 0 } as const;
+/** T43: the scripts a page links itself, together, gzip KB. Landing links only the shared chrome.js, about 1.3 KB (SA-1196 A1, was none in SA-1187 K1). */
+export const SCRIPT_GZIP_KB = { home: 90, inner: 57, landing: 1.5 } as const;
 /** T43: the tags the page renderer adds to every page (first touch, and analytics with a site ID), gzip KB. */
 export const RENDERER_SCRIPT_GZIP_KB = 2;
 /** T43: one raster icon (png/jpg/webp), gzip KB. */

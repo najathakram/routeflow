@@ -184,12 +184,12 @@ describe("T43 script caps catch a planted overrun (SA-1187 K1)", () => {
   it("the renderer's tags at 2.1 KB are red", () => {
     expect(scriptProblems("inner", 55.7, 2.1)).toHaveLength(1);
   });
-  it("landing with any linked script of its own is red", () => {
-    expect(scriptProblems("landing", 0.01, 1.4)).toHaveLength(1);
+  it("landing with a script of its own beyond chrome.js is red", () => {
+    expect(scriptProblems("landing", 1.6, 1.4)).toHaveLength(1);
   });
   it("the measured values are green", () => {
     expect(scriptProblems("inner", 55.7, 1.43)).toEqual([]);
-    expect(scriptProblems("landing", 0, 1.43)).toEqual([]);
+    expect(scriptProblems("landing", 1.24, 1.43)).toEqual([]);
   });
 });
 
