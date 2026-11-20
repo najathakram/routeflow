@@ -33,7 +33,5 @@
   { "key": "/pricing|desktop", "row": "a|#plans|Skip to plans", "kind": "added", "req": "R12" },
   { "key": "/pricing|desktop", "row": "id|plans", "kind": "added", "req": "R12" },
   { "key": "/pricing|phone", "row": "a|#plans|Skip to plans", "kind": "added", "req": "R12" },
-  { "key": "/pricing|phone", "row": "id|plans", "kind": "added", "req": "R12" },
-  { "key": "/pricing|desktop", "row": "id|plan-starter-h", "kind": "added", "req": "R12" },
-  { "key": "/pricing|phone", "row": "id|plan-starter-h", "kind": "added", "req": "R12" }
+  { "key": "/pricing|phone", "row": "id|plans", "kind": "added", "req": "R12" }
 ]
