@@ -249,7 +249,7 @@ export default function BuyerInvoiceDetailPage() {
                 router.push(
                   `/buyer/portal/${sellerSlug}/payments?amount=${encodeURIComponent(
                     balanceDue.toFixed(2),
-                  )}`,
+                  )}&invoiceId=${encodeURIComponent(invoiceId)}`,
                 )
               }
               className="flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-buyer-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-buyer-600"

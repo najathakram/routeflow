@@ -50,10 +50,12 @@ function AllocationPreview({
   lines,
   excess,
   isFetching,
+  chosenInvoiceId,
 }: {
   lines: BuyerPaymentAllocationLine[];
   excess: number;
   isFetching: boolean;
+  chosenInvoiceId?: string;
 }) {
   if (lines.length === 0) {
     return (
@@ -62,8 +64,14 @@ function AllocationPreview({
       </p>
     );
   }
+  const chosen = chosenInvoiceId ? lines.find((l) => l.invoiceId === chosenInvoiceId) : undefined;
   return (
     <div className="overflow-hidden rounded-lg border border-surface-border">
+      {chosen && (
+        <p className="border-b border-surface-border bg-surface-raised px-3 py-2 text-xs text-navy/70">
+          This pays invoice {chosen.invoiceNumber} first.
+        </p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[420px]">
           <thead>
@@ -108,10 +116,12 @@ function AllocationPreview({
 
 function CashForm({
   amount,
+  fromInvoiceId,
   onDone,
   onCancel,
 }: {
   amount: number;
+  fromInvoiceId?: string;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -125,7 +135,12 @@ function CashForm({
     e.preventDefault();
     setError(null);
     declareCash.mutate(
-      { amount, note: note.trim() || undefined, reference: reference.trim() || undefined },
+      {
+        amount,
+        fromInvoiceId,
+        note: note.trim() || undefined,
+        reference: reference.trim() || undefined,
+      },
       {
         onSuccess: () => {
           toast({
@@ -280,9 +295,14 @@ export interface MakePaymentPanelProps {
   /** Seeds the amount input (e.g. a specific invoice's balance from WP4's "Pay
    *  this invoice" link). Falls back to the full account balance due. */
   defaultAmount?: number;
+  /** SA-1148: the invoice the buyer chose; the server applies the payment to it first. */
+  fromInvoiceId?: string;
 }
 
-export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
+export function MakePaymentPanel({
+  defaultAmount,
+  fromInvoiceId: chosenParam,
+}: MakePaymentPanelProps) {
   const { activeSeller } = useBuyerAuth();
   const sellerName = activeSeller?.tenant.name ?? "your seller";
   const searchParams = useSearchParams();
@@ -292,6 +312,11 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
 
   const qc = useQueryClient();
   const { data: context, isLoading, isError, refetch } = useBuyerPaymentContext();
+  // A stale link (Back button, bookmark) can name an invoice that is no longer open; the server would
+  // refuse it, so only a still-open invoice is sent as the target.
+  const fromInvoiceId = context?.openInvoices?.some((l) => l.invoiceId === chosenParam)
+    ? chosenParam
+    : undefined;
 
   const [amount, setAmount] = React.useState<number | null>(defaultAmount ?? null);
   const [touched, setTouched] = React.useState(defaultAmount != null);
@@ -315,7 +340,7 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
     return () => clearTimeout(t);
   }, [returnedFromCheckout]);
 
-  const preview = useBuyerPaymentPreview(amount ?? 0);
+  const preview = useBuyerPaymentPreview(amount ?? 0, fromInvoiceId);
 
   const startCard = useStartCardPayment();
 
@@ -368,7 +393,7 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
     if (!cardAmountValid || amount == null) return;
     setCardError(null);
     startCard.mutate(
-      { amount },
+      { amount, fromInvoiceId },
       {
         onSuccess: (data) => {
           window.location.href = data.url;
@@ -408,9 +433,12 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
               </p>
             )}
           </div>
-          <p className="mb-4 text-xs text-navy/60">
-            Payments are applied to your oldest invoices first.
-          </p>
+          {/* With a chosen invoice the preview says "This pays invoice {number} first." instead. */}
+          {!fromInvoiceId && (
+            <p className="mb-4 text-xs text-navy/60">
+              Payments are applied to your oldest invoices first.
+            </p>
+          )}
 
           {pendingRequest ? (
             <PendingRequestStatus
@@ -456,6 +484,7 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
                   lines={amountValid ? (preview.data?.lines ?? []) : []}
                   excess={amountValid ? (preview.data?.excess ?? 0) : 0}
                   isFetching={preview.isFetching}
+                  chosenInvoiceId={fromInvoiceId}
                 />
               </div>
 
@@ -490,6 +519,7 @@ export function MakePaymentPanel({ defaultAmount }: MakePaymentPanelProps) {
               {cashFormOpen && amount != null && (
                 <CashForm
                   amount={amount}
+                  fromInvoiceId={fromInvoiceId}
                   onDone={() => setCashFormOpen(false)}
                   onCancel={() => setCashFormOpen(false)}
                 />

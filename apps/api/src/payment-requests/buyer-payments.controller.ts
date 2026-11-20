@@ -19,7 +19,7 @@ import { PaymentRequestsService } from "./payment-requests.service";
 
 class StartCardPaymentDto {
   @IsNumber() @Min(0.5) @Max(999999) amount: number;
-  /** The invoice screen the buyer started from — provenance only, never allocation. */
+  /** The invoice the buyer chose to pay — paid first at settlement (SA-1148). */
   @IsOptional() @IsString() fromInvoiceId?: string;
 }
 
@@ -33,7 +33,8 @@ class DeclareCashPaymentDto {
 /**
  * Buyer-side payments: the "Make a payment" panel. Card payments run on the
  * seller's connected Stripe account; cash declarations wait for the seller's
- * approval. Every payment settles the buyer's OLDEST invoices first.
+ * approval. A payment settles the invoice the buyer chose first (SA-1148), then
+ * the buyer's OLDEST invoices.
  */
 @ApiTags("buyer")
 @Controller("buyer/payments")
@@ -51,9 +52,15 @@ export class BuyerPaymentsController {
   }
 
   @Get("preview")
-  @ApiOperation({ summary: "Which invoices a payment of ?amount= would settle (oldest first)" })
-  preview(@CurrentBuyerCustomer() ctx: any, @Query("amount") amount: string) {
-    return this.payments.previewAllocation(ctx.customerId, Number(amount));
+  @ApiOperation({
+    summary: "Which invoices a payment of ?amount= would settle (?invoiceId= first, then oldest)",
+  })
+  preview(
+    @CurrentBuyerCustomer() ctx: any,
+    @Query("amount") amount: string,
+    @Query("invoiceId") invoiceId?: string,
+  ) {
+    return this.payments.previewAllocation(ctx.customerId, Number(amount), invoiceId || null);
   }
 
   @Get("requests")

@@ -126,6 +126,9 @@ function BuyerPaymentsPageInner() {
   const defaultAmount =
     Number.isFinite(parsedAmount) && parsedAmount > 0 ? parsedAmount : undefined;
 
+  // SA-1148: the invoice the buyer chose to pay; the server pays it first.
+  const chosenInvoiceId = searchParams.get("invoiceId") || undefined;
+
   const [page, setPage] = React.useState(1);
   const { data: payments, isLoading, isError } = useBuyerPayments({ page, limit: 20 });
 
@@ -240,7 +243,7 @@ function BuyerPaymentsPageInner() {
       )}
 
       {/* Make a payment — the primary action, first block on the page */}
-      <MakePaymentPanel defaultAmount={defaultAmount} />
+      <MakePaymentPanel defaultAmount={defaultAmount} fromInvoiceId={chosenInvoiceId} />
 
       {/* Wallet row */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">

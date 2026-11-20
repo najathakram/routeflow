@@ -169,9 +169,9 @@ describe("PaymentRequestsService", () => {
     service = module.get<PaymentRequestsService>(PaymentRequestsService);
   });
 
-  // ─── buildOldestFirstAllocation ─────────────────────────────────────────────
+  // ─── buildAllocation ─────────────────────────────────────────────
 
-  describe("buildOldestFirstAllocation", () => {
+  describe("buildAllocation", () => {
     it("orders oldest-first, caps each invoice at its balance due, and partially covers the last invoice reached", async () => {
       const older = invoiceRow({
         id: "inv-old",
@@ -199,7 +199,7 @@ describe("PaymentRequestsService", () => {
       });
       prisma.invoice.findMany.mockResolvedValue([older, middle, partial, untouched]);
 
-      const result = await service.buildOldestFirstAllocation("cust-1", 100);
+      const result = await service.buildAllocation("cust-1", 100, null);
 
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -245,7 +245,7 @@ describe("PaymentRequestsService", () => {
       });
       prisma.invoice.findMany.mockResolvedValue([a, b]);
 
-      const result = await service.buildOldestFirstAllocation("cust-1", 100);
+      const result = await service.buildAllocation("cust-1", 100, null);
 
       expect(result.allocations).toEqual([
         { invoiceId: "inv-a", amount: 50 },
@@ -271,7 +271,7 @@ describe("PaymentRequestsService", () => {
       });
       prisma.invoice.findMany.mockResolvedValue([settled, open]);
 
-      const result = await service.buildOldestFirstAllocation("cust-1", 40);
+      const result = await service.buildAllocation("cust-1", 40, null);
 
       expect(result.lines.map((l) => l.invoiceId)).toEqual(["inv-open"]);
       expect(result.allocations).toEqual([{ invoiceId: "inv-open", amount: 40 }]);
@@ -294,7 +294,7 @@ describe("PaymentRequestsService", () => {
       };
       prisma.invoice.findMany.mockResolvedValue([drafted]);
 
-      const result = await service.buildOldestFirstAllocation("cust-1", 500);
+      const result = await service.buildAllocation("cust-1", 500, null);
 
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -318,7 +318,7 @@ describe("PaymentRequestsService", () => {
     it("still reads open invoices ordered [issueDate asc, createdAt asc, invoiceNumber asc]", async () => {
       prisma.invoice.findMany.mockResolvedValue([]);
 
-      await service.buildOldestFirstAllocation("cust-1", 100);
+      await service.buildAllocation("cust-1", 100, null);
 
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1179,6 +1179,14 @@ describe("PaymentRequestsService", () => {
     it("createCashRequest accepts a fromInvoiceId that does belong to the customer", async () => {
       buyerPaymentRequest.findFirst.mockResolvedValue(null);
       prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1" });
+      prisma.invoice.findMany.mockResolvedValue([
+        invoiceRow({
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          issueDate: new Date("2026-01-01"),
+          total: 50,
+        }),
+      ]);
       prisma.customer.findFirst.mockResolvedValue({ businessName: "Acme Retail" });
       buyerPaymentRequest.create.mockResolvedValue({
         id: "req-1",
@@ -1197,6 +1205,241 @@ describe("PaymentRequestsService", () => {
           fromInvoiceId: "inv-1",
         }),
       ).resolves.toMatchObject({ id: "req-1" });
+    });
+  });
+
+  // ─── SA-1148: the chosen invoice is paid first ──────────────────────────────
+
+  describe("chosen invoice first (SA-1148)", () => {
+    const A = () =>
+      invoiceRow({
+        id: "inv-a",
+        invoiceNumber: "INV-A",
+        issueDate: new Date("2026-01-01"),
+        total: 100,
+      });
+    const B = (paid = 0) =>
+      invoiceRow({
+        id: "inv-b",
+        invoiceNumber: "INV-B",
+        issueDate: new Date("2026-02-01"),
+        total: 100,
+        paid,
+      });
+    const applied = (r: { allocations: Array<{ invoiceId: string; amount: number }> }) =>
+      r.allocations.map((a) => [a.invoiceId, a.amount]);
+
+    it("case 1/3/4/5: the chosen newer invoice takes the money first, the remainder goes oldest first, the rest is excess", async () => {
+      prisma.invoice.findMany.mockResolvedValue([A(), B()]);
+      expect(applied(await service.buildAllocation("cust-1", 100, "inv-b"))).toEqual([
+        ["inv-b", 100],
+      ]);
+      expect(applied(await service.buildAllocation("cust-1", 150, "inv-b"))).toEqual([
+        ["inv-b", 100],
+        ["inv-a", 50],
+      ]);
+      const over = await service.buildAllocation("cust-1", 250, "inv-b");
+      expect(applied(over)).toEqual([
+        ["inv-b", 100],
+        ["inv-a", 100],
+      ]);
+      expect(over.excess).toBe(50);
+      expect(applied(await service.buildAllocation("cust-1", 40, "inv-b"))).toEqual([
+        ["inv-b", 40],
+      ]);
+    });
+
+    it("case 8: a chosen invoice whose live balance fell takes only that balance, the rest follows", async () => {
+      prisma.invoice.findMany.mockResolvedValue([A(), B(70)]);
+      expect(applied(await service.buildAllocation("cust-1", 100, "inv-b"))).toEqual([
+        ["inv-b", 30],
+        ["inv-a", 70],
+      ]);
+    });
+
+    it("case 6/7: a chosen invoice that is no longer open is skipped (never refused) and flagged", async () => {
+      prisma.invoice.findMany.mockResolvedValue([A()]); // B is void or paid: not in the open read
+      const r = await service.buildAllocation("cust-1", 100, "inv-b");
+      expect(applied(r)).toEqual([["inv-a", 100]]);
+      expect(r.chosenSkipped).toBe(true);
+    });
+
+    it("case 10: no chosen invoice is oldest first, unflagged", async () => {
+      prisma.invoice.findMany.mockResolvedValue([A(), B()]);
+      const r = await service.buildAllocation("cust-1", 150, null);
+      expect(applied(r)).toEqual([
+        ["inv-a", 100],
+        ["inv-b", 50],
+      ]);
+      expect(r.chosenSkipped).toBe(false);
+    });
+
+    it("case 6: approve of a cash request whose chosen invoice closed lands oldest first with one log line, no refusal", async () => {
+      const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      buyerPaymentRequest.findFirst.mockResolvedValue({
+        id: "req-1",
+        tenantId: "tenant-1",
+        customerId: "cust-1",
+        kind: "CASH",
+        status: "PENDING",
+        amount: 100,
+        invoiceId: "inv-b",
+      });
+      prisma.invoice.findMany.mockResolvedValue([A()]);
+      mockInvoices.recordStandalonePayment.mockResolvedValue({ paymentGroupId: "pg-1", excess: 0 });
+      await service.approve("req-1", { id: "u-1", username: "op" });
+      expect(mockInvoices.recordStandalonePayment.mock.calls[0][0].allocations).toEqual([
+        { invoiceId: "inv-a", amount: 100 },
+      ]);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes("req-1"))).toHaveLength(1);
+    });
+
+    it("case 1: approve of a cash request carrying the newer invoice pays that one", async () => {
+      buyerPaymentRequest.findFirst.mockResolvedValue({
+        id: "req-1",
+        tenantId: "tenant-1",
+        customerId: "cust-1",
+        kind: "CASH",
+        status: "PENDING",
+        amount: 100,
+        invoiceId: "inv-b",
+      });
+      prisma.invoice.findMany.mockResolvedValue([A(), B()]);
+      mockInvoices.recordStandalonePayment.mockResolvedValue({ paymentGroupId: "pg-1", excess: 0 });
+      await service.approve("req-1", { id: "u-1", username: "op" });
+      expect(mockInvoices.recordStandalonePayment.mock.calls[0][0].allocations).toEqual([
+        { invoiceId: "inv-b", amount: 100 },
+      ]);
+    });
+
+    it("case 2: the card settle of a request carrying the newer invoice pays that one", async () => {
+      buyerPaymentRequest.findFirst.mockResolvedValue({
+        id: "req-1",
+        tenantId: "tenant-1",
+        customerId: "cust-1",
+        amount: 100,
+        status: "PENDING",
+        stripeSessionId: "cs_test_123",
+        invoiceId: "inv-b",
+      });
+      buyerPaymentRequest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoice.findMany.mockResolvedValue([A(), B()]);
+      mockInvoices.recordStandalonePayment.mockResolvedValue({ paymentGroupId: "pg-1", excess: 0 });
+      await service.settleByPaymentIntent(piSucceededEvent({ amountDollars: 100 }) as any);
+      expect(mockInvoices.recordStandalonePayment.mock.calls[0][0].allocations).toEqual([
+        { invoiceId: "inv-b", amount: 100 },
+      ]);
+    });
+
+    it("case 7: a card settle whose chosen invoice was paid before the webhook lands oldest first and is never refused", async () => {
+      const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      buyerPaymentRequest.findFirst.mockResolvedValue({
+        id: "req-1",
+        tenantId: "tenant-1",
+        customerId: "cust-1",
+        amount: 100,
+        status: "PENDING",
+        stripeSessionId: "cs_test_123",
+        invoiceId: "inv-b",
+      });
+      buyerPaymentRequest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.invoice.findMany.mockResolvedValue([A()]);
+      mockInvoices.recordStandalonePayment.mockResolvedValue({ paymentGroupId: "pg-1", excess: 0 });
+      await expect(
+        service.settleByPaymentIntent(piSucceededEvent({ amountDollars: 100 }) as any),
+      ).resolves.toEqual({ handled: true });
+      expect(mockInvoices.recordStandalonePayment.mock.calls[0][0].allocations).toEqual([
+        { invoiceId: "inv-a", amount: 100 },
+      ]);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes("req-1"))).toHaveLength(1);
+    });
+
+    it("case 6: the operator's allocation preview shows where the cash will land (the chosen invoice first, A when it closed)", async () => {
+      const row = (invoiceId: string | null) => ({
+        id: "req-1",
+        kind: "CASH",
+        status: "PENDING",
+        amount: 100,
+        note: null,
+        reference: null,
+        customerId: "cust-1",
+        customer: { businessName: "Acme", contactName: "Pat" },
+        createdAt: new Date(),
+        decidedAt: null,
+        decidedByName: null,
+        outcome: null,
+        providerPaymentId: null,
+        invoiceId,
+      });
+      prisma.invoice.findMany.mockResolvedValue([A(), B()]);
+      buyerPaymentRequest.findMany.mockResolvedValue([row("inv-b")]);
+      const open: any[] = await service.listForTenant("PENDING");
+      expect(open[0].allocationPreview.map((l: any) => l.invoiceId)).toEqual(["inv-b"]);
+      prisma.invoice.findMany.mockResolvedValue([A()]);
+      const closed: any[] = await service.listForTenant("PENDING");
+      expect(closed[0].allocationPreview.map((l: any) => l.invoiceId)).toEqual(["inv-a"]);
+    });
+
+    it("case 9: a request naming an invoice that is already paid is a 400 at creation, no row", async () => {
+      buyerPaymentRequest.findFirst.mockResolvedValue(null);
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-b" }); // belongs to the customer
+      prisma.invoice.findMany.mockResolvedValue([A()]); // but is not open any more
+      for (const call of [
+        () =>
+          service.createCashRequest({
+            tenantId: "tenant-1",
+            customerId: "cust-1",
+            buyerAccountId: "buyer-1",
+            amount: 10,
+            fromInvoiceId: "inv-b",
+          }),
+        () =>
+          service.createCardRequest({
+            tenantId: "tenant-1",
+            tenantSlug: "acme",
+            customerId: "cust-1",
+            buyerAccountId: "buyer-1",
+            amount: 10,
+            fromInvoiceId: "inv-b",
+          }),
+      ]) {
+        await expect(call()).rejects.toThrow("That invoice is already paid.");
+      }
+      expect(buyerPaymentRequest.create).not.toHaveBeenCalled();
+    });
+
+    it("the Checkout description names the chosen invoice, and keeps oldest-first wording without one", async () => {
+      buyerPaymentRequest.findFirst.mockResolvedValue(null);
+      prisma.invoice.findFirst.mockResolvedValue({ id: "inv-b" });
+      prisma.invoice.findMany.mockResolvedValue([A(), B()]);
+      mockConnect.chargeableAccount.mockResolvedValue("acct_1");
+      prisma.customer.findFirst.mockResolvedValue({ businessName: "Acme Retail", email: null });
+      buyerPaymentRequest.create.mockResolvedValue({ id: "req-1" });
+      mockProvider.createHostedCheckout.mockResolvedValue({ sessionId: "cs_1", url: "https://x" });
+      const start = (fromInvoiceId?: string) =>
+        service.createCardRequest({
+          tenantId: "tenant-1",
+          tenantSlug: "acme",
+          customerId: "cust-1",
+          buyerAccountId: "buyer-1",
+          amount: 100,
+          fromInvoiceId,
+        });
+      await start("inv-b");
+      expect(mockProvider.createHostedCheckout.mock.calls[0][0].description).toContain(
+        "applied to invoice INV-B first",
+      );
+      await start();
+      expect(mockProvider.createHostedCheckout.mock.calls[1][0].description).toContain(
+        "applied to your oldest open invoices first",
+      );
+      expect(buyerPaymentRequest.create.mock.calls[0][0].data.invoiceId).toBe("inv-b");
+    });
+
+    it("case 5: the buyer preview puts the chosen invoice first", async () => {
+      prisma.invoice.findMany.mockResolvedValue([A(), B()]);
+      const r = await service.previewAllocation("cust-1", 100, "inv-b");
+      expect(r.lines.map((l) => l.invoiceId)).toEqual(["inv-b"]);
     });
   });
 

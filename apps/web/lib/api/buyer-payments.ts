@@ -85,17 +85,17 @@ export function useBuyerPaymentContext() {
 
 /** Debounced ~350ms so keystrokes stay responsive; keeps the last preview
  *  visible while a new one loads (`placeholderData`) instead of flashing empty. */
-export function useBuyerPaymentPreview(amount: number) {
+export function useBuyerPaymentPreview(amount: number, invoiceId?: string) {
   const [debounced, setDebounced] = useState(amount);
   useEffect(() => {
     const t = setTimeout(() => setDebounced(amount), 350);
     return () => clearTimeout(t);
   }, [amount]);
   return useQuery<BuyerPaymentPreview>({
-    queryKey: ["buyer", "payment-preview", debounced],
+    queryKey: ["buyer", "payment-preview", debounced, invoiceId ?? null],
     queryFn: () =>
       buyerApiClient
-        .get("/buyer/payments/preview", { params: { amount: debounced } })
+        .get("/buyer/payments/preview", { params: { amount: debounced, invoiceId } })
         .then((r) => r.data),
     enabled: Number.isFinite(debounced) && debounced >= 0.5,
     placeholderData: (prev) => prev,

@@ -145,7 +145,7 @@ function RequestRow({
 
       {isPendingCash && (
         <div className="border-t border-surface-border bg-surface-raised/40 px-4 py-3">
-          <p className="mb-2 text-xs text-navy/70">Payments settle the oldest invoices first.</p>
+          <p className="mb-2 text-xs text-navy/70">Approving applies the payment here:</p>
           <AllocationPreview lines={r.allocationPreview} />
         </div>
       )}
