@@ -7,6 +7,8 @@
  * that finds nothing throws (L-202); nothing sleeps.
  */
 import { test, expect, type Page } from "@playwright/test";
+import * as fs from "fs";
+import * as path from "path";
 import { blockAnalytics, frames, nonEmpty } from "./helpers/site-proof";
 import {
   floorFor,
@@ -15,6 +17,7 @@ import {
   parseRgb,
   scrubOff,
   scrubSettled,
+  type Rgb,
   type TriggerLike,
 } from "./helpers/site-overlap";
 
@@ -266,6 +269,7 @@ type BeatSample = {
   text: string;
   card: string;
   panel: string;
+  bigColor: string;
   fontPx: number;
   weight: number;
 };
@@ -277,22 +281,21 @@ async function problemBeat(page: Page): Promise<{ faults: string[]; samples: Bea
       if (!el) throw new Error("the problem picture is missing " + sel);
       return el;
     };
+    // an element's effective opacity: its own times every ancestor's, up to and including the section
+    const chain = (from: Element | null): number => {
+      let o = 1;
+      for (let e = from; e; e = e.parentElement) {
+        o *= Number(getComputedStyle(e).opacity);
+        if (e.id === "problem") break;
+      }
+      return o;
+    };
     const big = q(".pb-big");
     const bb = big.getBoundingClientRect();
-    const bigOpacity = Number(getComputedStyle(big).opacity);
-    const artOpacity = Number(getComputedStyle(q(".pb-art")).opacity);
+    const bigOpacity = chain(big);
+    const bigColor = getComputedStyle(big).color;
     const out: string[] = [];
-    const samples: Array<{
-      name: string;
-      bigOpacity: number;
-      artOpacity: number;
-      overlap: boolean;
-      text: string;
-      card: string;
-      panel: string;
-      fontPx: number;
-      weight: number;
-    }> = [];
+    const samples: BeatSample[] = [];
     // the first opaque background at or above an element: what a heading is painted on
     const paint = (from: Element | null): string => {
       for (let e = from; e; e = e.parentElement) {
@@ -324,11 +327,12 @@ async function problemBeat(page: Page): Promise<{ faults: string[]; samples: Bea
       samples.push({
         name,
         bigOpacity,
-        artOpacity,
+        artOpacity: chain(headEl),
         overlap: hit,
         text: cs.color,
         card: paint(headEl),
         panel,
+        bigColor,
         fontPx: parseFloat(cs.fontSize),
         weight: Number(cs.fontWeight),
       });
@@ -337,26 +341,52 @@ async function problemBeat(page: Page): Promise<{ faults: string[]; samples: Bea
   });
 }
 
+/** A brand token as the page's token style defines it, as channels. */
+async function token(page: Page, key: string): Promise<Rgb> {
+  return parseRgb(
+    await page.evaluate(
+      (k) => getComputedStyle(document.documentElement).getPropertyValue(`--brand-${k}`).trim(),
+      key,
+    ),
+  );
+}
+
+const same = (a: Rgb, b: Rgb) => a.every((v, i) => v === b[i]);
+
 /**
- * Every fault at one beat: the structural ones, and K1 for both headings (SA-1190 A1). Each heading's floor comes from
- * its own computed size and weight (3 for large text, 4.5 otherwise), never typed.
+ * Every fault at one beat: the structural ones, the colour roles the K1 maths assumes (checked against the page's
+ * tokens, not assumed), and K1 for both headings (SA-1190 A1). Each heading's floor comes from its own computed size and
+ * weight (3 for large text, 4.5 otherwise), never typed. The card is the heading's real computed background.
  */
 async function beatFaults(page: Page, w: number, k: string): Promise<string[]> {
-  const white = parseRgb((await roles(page)).white);
+  const white = await token(page, "white");
+  const ink = await token(page, "ink");
+  const steel = await token(page, "steel");
   const beat = await problemBeat(page);
   const out = beat.faults.map((f) => `beat ${k}: ${f}`);
   for (const sm of beat.samples) {
-    let note = "";
+    const look = {
+      text: parseRgb(sm.text),
+      card: parseRgb(sm.card),
+      panel: parseRgb(sm.panel),
+      white,
+    };
+    const roleFaults: string[] = [];
+    if (!same(look.panel, ink)) roleFaults.push(`the panel is ${sm.panel}, not the ink token`);
+    if (!same(parseRgb(sm.bigColor), white))
+      roleFaults.push(`the big line is ${sm.bigColor}, not the white token`);
+    if (sm.name === "invoice") {
+      if (!same(look.card, white)) roleFaults.push(`the invoice card is ${sm.card}, not white`);
+      if (!same(look.text, ink)) roleFaults.push(`INVOICE is ${sm.text}, not ink`);
+    } else if (!same(look.text, steel)) {
+      roleFaults.push(`the sender heading is ${sm.text}, not the steel token`);
+    }
+    for (const f of roleFaults) out.push(`beat ${k}: ${sm.name}: ${f}`);
+    let note = `, card ${sm.card}`;
     if (sm.overlap) {
-      const look = {
-        text: parseRgb(sm.text),
-        card: parseRgb(sm.card),
-        panel: parseRgb(sm.panel),
-        white,
-      };
       const floor = floorFor(sm.fontPx, sm.weight);
       const r = overlapRatios(sm.artOpacity, sm.bigOpacity, look);
-      note = `, heading ratio ${r.heading.toFixed(2)} (floor ${floor}, ${sm.fontPx}px ${sm.weight}), line ratio ${r.line.toFixed(2)}`;
+      note += `, heading ratio ${r.heading.toFixed(2)} (floor ${floor}, ${sm.fontPx}px ${sm.weight}), line ratio ${r.line.toFixed(2)}`;
       for (const f of overlapFaults(sm.name, sm.artOpacity, sm.bigOpacity, floor, look))
         out.push(`beat ${k}: ${f}`);
     }
@@ -367,44 +397,63 @@ async function beatFaults(page: Page, w: number, k: string): Promise<string[]> {
   return out;
 }
 
-/** Wait until every scrubbed trigger has caught up; on timeout, say which ones are off. */
+/**
+ * What the page reports about its own settling, evaluated in the page. Self-contained: it is injected as source
+ * (addInitScript), so the page never builds code at run time (the production policy has no unsafe-eval).
+ */
+function t47Probe(sel: string): { missing: string | null; off: unknown[]; busy: number } {
+  const w = window as unknown as Record<string, any>;
+  const none = (missing: string) => ({ missing, off: [], busy: 0 });
+  if (typeof w.__scrubOff !== "function") return none("the settle script was not injected");
+  if (!w.gsap) return none("window.gsap is missing");
+  if (!w.ScrollTrigger) return none("window.ScrollTrigger is missing");
+  const scope = document.querySelector(sel);
+  if (!scope) return none(`no ${sel} element to scope the settle check to`);
+  const off = w.__scrubOff(w.ScrollTrigger.getAll(), 0.005, scope) as unknown[];
+  // a tween on the line that runs on the clock (a phone's, or a reveal) has to finish too; the pin's own scrubbed
+  // children belong to a timeline, which the scrub check covers
+  const busy = (w.gsap.getTweensOf(".pb-big") as any[]).filter(
+    (t) => t.parent === w.gsap.globalTimeline && t.isActive(),
+  ).length;
+  return { missing: null, off, busy };
+}
+
+/** Put the settle check into every page this test opens. Call before the first navigation. */
+async function installSettle(page: Page): Promise<void> {
+  await page.addInitScript({
+    content:
+      "window.__scrubOff=" + String(scrubOff) + ";window.__t47Probe=" + String(t47Probe) + ";",
+  });
+}
+
+/** Wait until every scrubbed trigger in the section has caught up and the line's clock tweens are done. */
 async function settle(page: Page, sectionSel: string): Promise<void> {
-  const arg = { src: String(scrubOff), sel: sectionSel };
   try {
     await page.waitForFunction(
-      (a) => {
-        const st = (window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }).ScrollTrigger;
-        const scope = document.querySelector(a.sel);
-        if (!st || !scope) return false;
-        const fn = new Function("return " + a.src)() as (
-          t: unknown[],
-          tol: number,
-          sc: Element,
-        ) => unknown[];
-        return fn(st.getAll(), 0.005, scope).length === 0;
+      (sel) => {
+        const p = (window as unknown as { __t47Probe?: (s: string) => ReturnType<typeof t47Probe> })
+          .__t47Probe;
+        if (typeof p !== "function") return false;
+        const r = p(sel);
+        return !r.missing && r.off.length === 0 && r.busy === 0;
       },
-      arg,
+      sectionSel,
       { timeout: 20_000 },
     );
   } catch (e) {
-    const off = await page.evaluate((a) => {
-      const st = (window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }).ScrollTrigger;
-      const scope = document.querySelector(a.sel);
-      if (!st || !scope) return null;
-      const fn = new Function("return " + a.src)() as (
-        t: unknown[],
-        tol: number,
-        sc: Element,
-      ) => unknown[];
-      return fn(st.getAll(), 0.005, scope);
-    }, arg);
-    throw new Error(
-      "the scrubbed triggers did not catch up in 20 s: " +
-        (off ? JSON.stringify(off) : "window.ScrollTrigger is missing") +
-        " (" +
-        String(e) +
-        ")",
-    );
+    const r = await page.evaluate((sel) => {
+      const p = (window as unknown as { __t47Probe?: (s: string) => ReturnType<typeof t47Probe> })
+        .__t47Probe;
+      return typeof p === "function" ? p(sel) : null;
+    }, sectionSel);
+    const why = !r
+      ? "the settle script was not injected into the page (call installSettle before open)"
+      : r.missing
+        ? r.missing
+        : r.off.length > 0
+          ? "scrubbed triggers that did not catch up: " + JSON.stringify(r.off)
+          : `${r.busy} clock tween(s) on .pb-big still running`;
+    throw new Error(`the problem section did not settle in 20 s: ${why} (${String(e)})`);
   }
 }
 
@@ -449,24 +498,87 @@ test("T47 settle check: scrub-only, and it names the trigger that lags (no brows
 });
 
 test("T47 overlap rule K1 over the composited opacities (no browser)", () => {
-  const ink = parseRgb("#0E1726");
-  const white = parseRgb("#FFFFFF");
+  // the palette file's colours, never typed
+  const pal = (
+    JSON.parse(
+      fs.readFileSync(
+        path.resolve(__dirname, "../../../packages/types/brand/palette.json"),
+        "utf8",
+      ),
+    ) as { color: Record<string, string> }
+  ).color;
+  const ink = parseRgb(pal.ink as string);
+  const white = parseRgb(pal.white as string);
   // INVOICE: ink on a white card over an ink panel
   const invoice = { text: ink, card: white, panel: ink, white };
-  // the sender heading: steel on a bone card over the same panel
-  const from = { text: parseRgb("#5A6675"), card: parseRgb("#F6F4F0"), panel: ink, white };
-  // the reviewer's window at a phone: 4.39 is under 4.5
-  expect(overlapFaults("invoice", 0.72, 0.3, 4.5, invoice)).not.toEqual([]);
-  expect(overlapFaults("invoice", 0.72, 0.3, 3, invoice)).toEqual([]);
-  expect(overlapFaults("invoice", 0.72, 0.15, 4.5, invoice)).toEqual([]);
-  // both layers shown at once
-  expect(overlapFaults("invoice", 0.5, 0.5, 3, invoice)).not.toEqual([]);
-  // the line has taken over; both below 0.5 is a transition beat
-  expect(overlapFaults("invoice", 0.3, 0.7, 4.5, invoice)).toEqual([]);
-  expect(overlapFaults("invoice", 0.4, 0.4, 4.5, invoice)).toEqual([]);
-  // the sender heading is small text: p 1 with a 0.1 ghost is 4.29 and fails, 0.05 is 4.77 and passes
-  expect(overlapFaults("from", 1, 0.1, 4.5, from)).not.toEqual([]);
-  expect(overlapFaults("from", 1, 0.05, 4.5, from)).toEqual([]);
+  // the sender heading as the rule was first worked out (steel on a bone card); the page's real card is read at run time
+  const from = {
+    text: parseRgb(pal.steel as string),
+    card: parseRgb(pal.bone as string),
+    panel: ink,
+    white,
+  };
+  // exact fault lists: one case per branch and per boundary, so a dropped branch or a moved >= fails
+  const cases: Array<[string, number, number, number, typeof invoice, string[]]> = [
+    [
+      "invoice",
+      0.72,
+      0.3,
+      4.5,
+      invoice,
+      ["invoice contrast 4.39 is under 4.5 (picture 0.72, line 0.3)"],
+    ],
+    ["invoice", 0.72, 0.3, 3, invoice, []],
+    ["invoice", 0.72, 0.15, 4.5, invoice, []],
+    [
+      "invoice",
+      0.3,
+      0.5,
+      3,
+      invoice,
+      ["the big line over invoice contrast 2.99 is under 3 (picture 0.3, line 0.5)"],
+    ],
+    [
+      "invoice",
+      1,
+      0.7,
+      3,
+      invoice,
+      [
+        "invoice contrast 1.96 is under 3 (picture 1, line 0.7)",
+        "the big line over invoice contrast 1.00 is under 3 (picture 1, line 0.7)",
+      ],
+    ],
+    [
+      "invoice",
+      0.5,
+      0.49,
+      3,
+      invoice,
+      ["invoice contrast 2.02 is under 3 (picture 0.5, line 0.49)"],
+    ],
+    ["invoice", 0.49, 0.49, 3, invoice, []],
+    [
+      "invoice",
+      0.5,
+      0.5,
+      3,
+      invoice,
+      [
+        "invoice contrast 1.98 is under 3 (picture 0.5, line 0.5)",
+        "the big line over invoice contrast 1.98 is under 3 (picture 0.5, line 0.5)",
+      ],
+    ],
+    ["invoice", 0.3, 0.7, 4.5, invoice, []],
+    ["invoice", 0.4, 0.4, 4.5, invoice, []],
+    // the sender heading is small text: p 1 with a 0.1 ghost is 4.29 and fails, 0.05 is 4.77 and passes
+    ["from", 1, 0.1, 4.5, from, ["from contrast 4.29 is under 4.5 (picture 1, line 0.1)"]],
+    ["from", 1, 0.05, 4.5, from, []],
+  ];
+  for (const [name, p, l, floor, look, want] of cases)
+    expect(overlapFaults(name, p, l, floor, look), `${name} p ${p} l ${l} floor ${floor}`).toEqual(
+      want,
+    );
   // large text starts at 24px, or 18.66px and bold (700)
   expect(floorFor(19, 700)).toBe(3);
   expect(floorFor(16, 700)).toBe(4.5);
@@ -499,6 +611,7 @@ for (const { w, h } of [
     page,
   }) => {
     test.setTimeout(180_000);
+    await installSettle(page);
     await open(page, w, h);
     // the pin runs 170% of the window on a desktop; a phone has no pin, so the section's own height is the run
     const { top, run } = await page.evaluate(
