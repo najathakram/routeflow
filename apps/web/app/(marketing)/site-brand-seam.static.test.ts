@@ -139,6 +139,7 @@ const FIXTURE_SURFACE: typeof SURFACE = [{ name: "fixtures", dir: FIXTURES_DIR, 
 const FX_BOTH = `${FIXTURES_DIR}/hex-and-name.html`;
 const FX_CLEAN = `${FIXTURES_DIR}/clean.html`;
 const FX_HEX_ONLY = `${FIXTURES_DIR}/hex-only.html`;
+const FX_NAME_IN_COMMENT = `${FIXTURES_DIR}/name-in-comment.html`;
 const mkRow = (p: string, scope: Exemption["scope"]): Exemption => ({
   path: p,
   scope,
@@ -223,6 +224,19 @@ describe("T35: the brand seam", () => {
     }
     const deadTwin = mkRow(FX_CLEAN, "file");
     expect(isStale(deadTwin, [deadTwin], surface)).toBe(true);
+  });
+
+  it("a comments row is judged by the name, not by the hex or the file", () => {
+    const surface = [...SURFACE, ...FIXTURE_SURFACE];
+    // hex but no name: the comments row exempts nothing.
+    const onHexOnly = mkRow(FX_HEX_ONLY, "comments");
+    expect(isStale(onHexOnly, [onHexOnly], surface)).toBe(true);
+    // the name sits only in a comment: the comments scope strips it, unscoped it is seen.
+    const commentsRow = mkRow(FX_NAME_IN_COMMENT, "comments");
+    expect(scanFile(FX_NAME_IN_COMMENT, [commentsRow]).map((f) => f.what)).not.toContain(
+      "brand literal",
+    );
+    expect(scanFile(FX_NAME_IN_COMMENT, []).map((f) => f.what)).toContain("brand literal");
   });
 
   it("the eight inner pages, the frame, lib/site, lib/metadata, the og route and umami-tag are in the surface and not file-exempt", () => {
