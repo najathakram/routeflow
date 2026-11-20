@@ -19,13 +19,14 @@ function undeclaredVarReads(
 ): Array<{ file: string; prop: string }> {
   const set = new Set<string>();
   for (const text of declared) {
-    for (const m of text.matchAll(/(--[a-z0-9-]+)\s*:/gi)) set.add(m[1] as string);
-    for (const m of text.matchAll(/setProperty\(\s*["'](--[a-z0-9-]+)/g)) set.add(m[1] as string);
+    const bare = text.replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const m of bare.matchAll(/(--[a-z0-9_-]+)\s*:/gi)) set.add(m[1] as string);
+    for (const m of bare.matchAll(/setProperty\(\s*["'](--[a-z0-9_-]+)/g)) set.add(m[1] as string);
   }
   const out: Array<{ file: string; prop: string }> = [];
   let reads = 0;
   for (const [file, text] of Object.entries(readers)) {
-    for (const m of text.matchAll(/var\(\s*(--[a-z0-9-]+)\s*([,)])/gi)) {
+    for (const m of text.matchAll(/var\(\s*(--[a-z0-9_-]+)\s*([,)])/gi)) {
       reads++;
       if (m[2] === ",") continue; // has a fallback
       if (!set.has(m[1] as string)) out.push({ file, prop: m[1] as string });
@@ -65,6 +66,11 @@ describe("K5: no var() read names a property nothing sets", () => {
     expect(undeclaredVarReads(bad, ['<li style="--pc:#fff">'])).toEqual([]);
     expect(undeclaredVarReads(bad, ['el.style.setProperty("--pc", v)'])).toEqual([]);
     expect(() => undeclaredVarReads({ "a.css": "a{b:c}" }, [""])).toThrow(/no var\(\) reads/);
+    // a name only inside a comment is not a setter; a name with an underscore is read in full
+    expect(undeclaredVarReads(bad, ["/* --pc: old */"])).toEqual([{ file: "a.css", prop: "--pc" }]);
+    const under = { "a.css": "a{b:var(--a_b)}" };
+    expect(undeclaredVarReads(under, ["x{--a_b:1}"])).toEqual([]);
+    expect(undeclaredVarReads(under, ["x{--a:1}"])).toEqual([{ file: "a.css", prop: "--a_b" }]);
   });
 
   it("home.css, home-up.css and home-color.css read only properties the site sets", () => {
@@ -93,10 +99,20 @@ describe("K5: no var() read names a property nothing sets", () => {
 describe("one observer owns the header trial pill", () => {
   const site = read("js/site.js");
 
-  it("site.js toggles hero-btn-in, from the trial buttons outside the header and the phone menu", () => {
-    expect(site.match(/toggle\("hero-btn-in"/g)).toHaveLength(1);
-    expect(site).toMatch(/\.btn\[href\^="\/signup"\]/);
-    expect(site).toMatch(/closest\("\.site-header, #mobile-menu/);
+  it("site.js observes the trial buttons outside the header and the phone menu, and sets the class from all of them", () => {
+    const src = site.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    // the trial buttons: a selector on the sign-up links, in any quote style
+    expect(src).toMatch(/\.btn\[href\^=\\?["']?\/signup/);
+    // the header and the phone menu are left out, in any order
+    const closest = [...src.matchAll(/closest\(\s*(["'])(.*?)\1\s*\)/g)].map((m) => m[2] as string);
+    expect(closest.some((c) => c.includes(".site-header") && c.includes("#mobile-menu"))).toBe(
+      true,
+    );
+    // the class goes through classList (toggle, add or remove), from an IntersectionObserver
+    expect(src).toMatch(/classList\.(toggle|add|remove)\(\s*["']hero-btn-in["']/);
+    expect(src).toContain("IntersectionObserver");
+    // never decided by the last entry of a batch (the old single-button logic)
+    expect(src).not.toMatch(/\w+\[\s*\w+\.length\s*-\s*1\s*\]/);
   });
 
   it("home-up.js no longer toggles it", () => {
@@ -159,6 +175,12 @@ describe("P01 and the band line", () => {
     expect(css).not.toMatch(/\.pgrid\{[^}]*align-items:start/);
     expect(css).toMatch(/\.pcard \.checks\{[^}]*margin-top:auto/);
     expect(css).toMatch(/\.pbtn\{[^}]*margin-top:0/);
+    // the gap from a list's last text to its button stays under 32 px with the half-leading (the e2e measures it)
+    expect(Number(css.match(/\.pcard \.checks\{margin-bottom:(\d+)px/)?.[1])).toBeLessThanOrEqual(
+      23,
+    );
+    // home's cards hold a .pm meter, not a list: it takes the leftover space
+    expect(read("css/home-up.css")).toMatch(/\.pm\{[^}]*margin:auto 0/);
   });
 
   it("band-line closes a band with the one-pixel line, next to the band roles", () => {

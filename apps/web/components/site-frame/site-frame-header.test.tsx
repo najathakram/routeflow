@@ -26,6 +26,12 @@ describe("SiteFrameHeader: the trial button", () => {
     expect(trialLinks(container)).toEqual([]);
   });
 
+  it("a path that only starts like sign-up (/signupX) keeps the trial buttons", () => {
+    mockPath = "/signupX";
+    const { container } = render(<SiteFrameHeader />);
+    expect(trialLinks(container)).toHaveLength(2);
+  });
+
   it("keeps Sign in in the header and the menu on /signup", () => {
     mockPath = "/signup";
     const { container } = render(<SiteFrameHeader />);

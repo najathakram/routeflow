@@ -256,8 +256,10 @@ describe("T35d: no palette value typed outside the injected style", () => {
   /** Colours typed as %23rrggbb inside a url() (a data-URI cannot read a variable). */
   const uriHexesIn = (text: string): string[] => {
     const found: string[] = [];
-    for (const u of text.matchAll(/url\(([^)]*)\)/g)) {
-      for (const m of (u[1] as string).matchAll(/%23([0-9a-f]+)(?![0-9a-f])/gi)) {
+    // A quoted url() body runs to its closing quote, so a ) inside it (rotate(45)) does not end the scan.
+    for (const u of text.matchAll(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/g)) {
+      const body = u[1] ?? u[2] ?? u[3] ?? "";
+      for (const m of body.matchAll(/%23([0-9a-f]+)(?![0-9a-f])/gi)) {
         found.push(`#${(m[1] as string).toLowerCase()}`);
       }
     }
@@ -269,6 +271,10 @@ describe("T35d: no palette value typed outside the injected style", () => {
       "#4caed9",
     ]);
     expect(uriHexesIn("a{content:'%23123456'}")).toEqual([]);
+    // a ) inside the data-URI (rotate(45)) does not end the scan
+    expect(
+      uriHexesIn('a{b:url("data:x,%3Cg transform=%27rotate(45)%27 fill=%27%23abcdef%27/%3E")}'),
+    ).toEqual(["#abcdef"]);
   });
 
   it.each(FILES)("%s: every colour typed as %%23hex inside a url() is a palette value", (file) => {

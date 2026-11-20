@@ -25,11 +25,15 @@ test("T48a at 390x844, while another trial button is on screen, the header pill 
   page,
 }) => {
   await open(page, "/", 390, 844);
-  const total = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
+  const { total, step } = await page.evaluate(() => ({
+    total: document.documentElement.scrollHeight - innerHeight,
+    step: 0.1 * innerHeight,
+  }));
   const bad: string[] = [];
-  let sampled = 0;
-  for (let i = 0; i <= 10; i++) {
-    await page.evaluate((y) => window.scrollTo({ top: y, behavior: "instant" }), (total * i) / 10);
+  let withOthers = 0;
+  let withoutOthers = 0;
+  for (let y = 0; y <= total + step; y += step) {
+    await page.evaluate((top) => window.scrollTo({ top, behavior: "instant" }), Math.min(y, total));
     await page.evaluate(
       () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
     );
@@ -46,17 +50,28 @@ test("T48a at 390x844, while another trial button is on screen, the header pill 
           r.top < innerHeight
         );
       };
+      // The wheel's own button counts once the wheel says it is clickable and on screen.
+      const wheelLive = !!document.querySelector(".rfw.rfw-go-on.rfw-go-in");
       const others = Array.from(document.querySelectorAll('a.btn[href^="/signup"]')).filter(
-        (b) => !b.closest(".site-header, #mobile-menu") && inView(b),
+        (b) =>
+          !b.closest(".site-header, #mobile-menu") &&
+          (wheelLive || !b.closest(".rfw")) &&
+          inView(b),
       );
       const head = document.querySelector(pill);
       return { others: others.length, pill: !!head && inView(head) };
     }, HEADER_PILL);
-    sampled++;
-    if (state.others > 0 && state.pill)
-      bad.push(`scroll ${i}/10: ${state.others} other, pill shown`);
+    if (state.others > 0) {
+      withOthers++;
+      if (state.pill) bad.push(`scroll ${Math.round(y)}: ${state.others} other, pill shown`);
+    } else {
+      // The positive control: with no other trial button on screen the pill is there (a dead observer hides it for good).
+      withoutOthers++;
+      if (!state.pill) bad.push(`scroll ${Math.round(y)}: no other trial button, pill hidden`);
+    }
   }
-  expect(sampled, "the sweep sampled the page").toBeGreaterThan(5);
+  expect(withOthers, "some sample had another trial button on screen").toBeGreaterThan(0);
+  expect(withoutOthers, "some sample had none (the positive control ran)").toBeGreaterThan(0);
   expect(bad).toEqual([]);
 });
 
@@ -99,7 +114,12 @@ for (const route of ["/company", "/privacy"]) {
     nonEmpty(rows.out, "menu actions");
     const hidden = rows.out.filter((r) => !r.shown || r.top < 0 || r.bottom > rows.h);
     expect(hidden, JSON.stringify(rows.out)).toEqual([]);
-    expect(rows.out.map((r) => r.what)).toContain("Start free trial");
+    const names = rows.out.map((r) => r.what);
+    expect(names).toContain("Start free trial");
+    expect(
+      names.some((n) => n === "Sign in" || n === "Open dashboard"),
+      "Sign in is in the menu",
+    ).toBe(true);
   });
 }
 
@@ -165,6 +185,7 @@ for (const { route, scope } of [
           name: (c.querySelector("h2,h3")?.textContent ?? "plan").trim(),
           top: Math.round(c.getBoundingClientRect().top + scrollY),
           bottom: c.getBoundingClientRect().bottom + scrollY,
+          btn: (c.querySelector(".pbtn")?.getBoundingClientRect().bottom ?? NaN) + scrollY,
         }));
     }, scope);
     nonEmpty(cards, `plan cards on ${route}`);
@@ -176,6 +197,10 @@ for (const { route, scope } of [
       const lo = Math.min(...row.map((c) => c.bottom));
       const hi = Math.max(...row.map((c) => c.bottom));
       if (hi - lo > 1) bad.push(row.map((c) => `${c.name} ${c.bottom.toFixed(0)}`).join(", "));
+      const bl = Math.min(...row.map((c) => c.btn));
+      const bh = Math.max(...row.map((c) => c.btn));
+      if (!(bh - bl <= 1))
+        bad.push(`buttons: ${row.map((c) => `${c.name} ${c.btn.toFixed(0)}`).join(", ")}`);
     }
     expect(bad).toEqual([]);
   });

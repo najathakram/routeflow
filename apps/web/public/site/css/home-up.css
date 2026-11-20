@@ -73,7 +73,7 @@
 }
 
 /* ---------- plans: each card shows its one difference ---------- */
-.pm{margin:18px 0 26px}
+.pm{margin:auto 0 26px;padding-top:18px}
 .pm-n{font-size:17px;line-height:1.3}
 .pm-n b{font-weight:650;font-variant-numeric:tabular-nums}
 .pm-bar{display:block;height:8px;margin-top:10px;border-radius:4px;background:var(--rf-soft);overflow:hidden}

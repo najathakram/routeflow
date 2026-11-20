@@ -48,7 +48,8 @@ export function SiteFrameHeader({ current }: { current?: string }) {
   }, []);
 
   // The sign-up page is the trial: no second trial button in its header or menu.
-  const showTrial = !(pathname ?? "").startsWith("/signup");
+  const p = pathname ?? "";
+  const showTrial = !(p === "/signup" || p.startsWith("/signup/"));
   const signIn = dashboard ?? "/login";
   const signInLabel = dashboard ? "Open dashboard" : "Sign in";
 
