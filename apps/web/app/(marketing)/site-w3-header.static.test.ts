@@ -7,6 +7,8 @@
 // property nothing sets (SA-1186 K5). Every scan asserts it found its targets (L-202).
 import * as fs from "fs";
 import * as path from "path";
+import { JSDOM } from "jsdom";
+import { readServedSitePage } from "@/lib/read-site-page";
 
 const WEB = path.resolve(__dirname, "../..");
 const SITE = path.join(WEB, "public/site");
@@ -183,6 +185,32 @@ describe("P01 and the band line", () => {
     );
     // home's cards hold a .pm meter, not a list: it does not push itself apart from the text above it either
     expect(read("css/home-up.css")).not.toMatch(/\.pm\{[^}]*margin:auto/);
+  });
+
+  it("the card rows come from the grid: no typed min-height on .pfor outside the no-subgrid fallback (SA-1200 K1)", () => {
+    // Everything that is not inside an `@supports not (grid-template-rows:subgrid){...}` block.
+    const fallback = /@supports not \(grid-template-rows:subgrid\)\{(?:[^{}]|\{[^}]*\})*\}/g;
+    const blocks = css.match(fallback) ?? [];
+    expect(blocks.length).toBe(1);
+    expect(blocks[0]).toMatch(/\.pgrid--4 \.pfor\{min-height:4\.6em\}/);
+    const outside = css.replace(fallback, "");
+    expect(outside).not.toMatch(/\.pgrid--4 \.pfor\{[^}]*min-height:(?!0[;}])/);
+    expect(css).toMatch(
+      /@supports \(grid-template-rows:subgrid\)\{\.pgrid--4 \.pcard\{[^}]*grid-template-rows:subgrid/,
+    );
+  });
+
+  it("the card spans as many rows as the card has children, on / and /pricing (SA-1200 K1)", () => {
+    const span = Number(css.match(/\.pgrid--4 \.pcard\{[^}]*grid-row:span (\d+)/)?.[1]);
+    expect(span).toBeGreaterThan(0);
+    const counts: number[] = [];
+    for (const page of ["home", "pricing"] as const) {
+      const doc = new JSDOM(readServedSitePage(page, { websiteId: undefined })).window.document;
+      const cards = Array.from(doc.querySelectorAll(".pgrid--4 > .pcard"));
+      expect(cards.length).toBe(4);
+      for (const c of cards) counts.push(c.children.length);
+    }
+    expect(counts).toEqual(Array(8).fill(span));
   });
 
   it("band-line closes a band with the one-pixel line, next to the band roles", () => {

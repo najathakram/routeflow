@@ -246,6 +246,14 @@ for (const { route, scope } of [
   });
 }
 
+/**
+ * The element that paints a plan card (SA-1200 K2), the one row definition for K3.
+ * 900 and up: .pcard. Under 900 the grid is hidden (css/site.css .pgrid--4) and the phone card is .pl-wrap: it alone
+ * carries the white background and the ring (css/site.css, the max-width:899.98px block: `.pl-wrap{... background:var(--rf-white);box-shadow:var(--rf-ring)}`);
+ * table.pl inside it paints nothing.
+ */
+const planCardBox = (w: number): string => (w < 900 ? ".pl-wrap" : ".pcard");
+
 // SA-1189 K3: no empty band anywhere inside a plan card (the leftover space of a row sits under the shorter cards).
 for (const { route, scope } of [
   { route: "/pricing", scope: "#pricing" },
@@ -259,23 +267,60 @@ for (const { route, scope } of [
       page,
     }) => {
       await open(page, route, w, h);
-      // One row definition, scoped by breakpoint (SA-1196 A3-2): each plan card at 900 and up; under 900 the grid is hidden
-      // (css/site.css .pgrid--4) and the phone plan block, .pl-wrap through .pl-more (the notes and the trial button
-      // where a page has them), is one scope. Both go through the same empty-band helper.
-      const bands = await emptyBands(
-        page,
-        w < 900
-          ? {
-              name: "phone plan block",
-              // from .pl-wrap and its shown siblings after it, through .pl-more or .pl-go; nothing above .pl-wrap
-              from: scope + " .pl-wrap",
-              through: ".pl-more, .pl-go",
-            }
-          : { each: scope + " .pcard" },
-      );
-      nonEmpty(bands, "plan blocks on " + route);
+      // SA-1200 K2: the scope is each plan card's own box at every width. Content outside the card (.pl-why, .pg-notes,
+      // .pl-go, .pl-more) is page rhythm and outside K3.
+      const bands = await emptyBands(page, { each: scope + " " + planCardBox(w) });
+      nonEmpty(bands, "plan cards on " + route);
       const bad = bands.filter((g) => g.gap > 32);
       expect(bad, bad.map((g) => g.where + " " + g.gap.toFixed(0) + "px").join("; ")).toEqual([]);
+    });
+  }
+}
+
+// SA-1200 K1: the card rows come from the grid (css/site.css, .pgrid--4 .pcard subgrid), so a row reads across: the price
+// and the button of the four cards sit at one top. Two widths, both four columns (the grid is two columns at 1080 and under):
+// 1440, where every description wraps to 2 lines, and a width where the descriptions wrap unevenly. The uneven width is
+// computed, not measured: text column = (w - 96) / 4 - 48 = 203px at 1100; the longest description (50 characters, 17px,
+// about 8.5px a character) needs about 425px, which is over two lines of 203px, so it takes 3 lines while the others take 2.
+// UNPROVEN until a browser run: change PLAN_ALIGN_WIDTHS here, nowhere else, if the descriptions do not wrap unevenly.
+const PLAN_ALIGN_WIDTHS = [1440, 1100] as const;
+for (const route of ["/pricing", "/"] as const) {
+  for (const w of PLAN_ALIGN_WIDTHS) {
+    test(`K1 the prices and buttons of a plan row share one top: ${route} @${w}x900`, async ({
+      page,
+    }) => {
+      await open(page, route, w, 900);
+      const read = await page.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll("#pricing .pgrid--4 .pcard")).filter(
+          (c) => c.getBoundingClientRect().height > 0,
+        );
+        const top = (c: Element, sel: string) => {
+          const el = c.querySelector(sel);
+          if (!el) throw new Error(`no ${sel} in a plan card`);
+          return el.getBoundingClientRect().top + scrollY;
+        };
+        return cards.map((c) => ({
+          name: (c.querySelector("h2,h3")?.textContent ?? "plan").trim(),
+          price: top(c, ".pprice"),
+          button: top(c, ".pbtn"),
+          forHeight: c.querySelector(".pfor")?.getBoundingClientRect().height ?? 0,
+        }));
+      });
+      nonEmpty(read, `plan cards on ${route}`);
+      expect(read.length).toBe(4);
+      const bad: string[] = [];
+      for (const key of ["price", "button"] as const) {
+        const tops = read.map((c) => c[key]);
+        if (Math.max(...tops) - Math.min(...tops) > 1) {
+          bad.push(
+            `${key} tops: ` +
+              read
+                .map((c) => `${c.name} ${c[key].toFixed(1)} (text ${c.forHeight.toFixed(0)}px)`)
+                .join(", "),
+          );
+        }
+      }
+      expect(bad).toEqual([]);
     });
   }
 }
