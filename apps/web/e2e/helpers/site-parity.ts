@@ -62,8 +62,17 @@ export function normaliseRow(raw: string, brand: ParityBrand): string {
 /** The brand as the file holds it now; never typed here. */
 function readBrand(): ParityBrand {
   const file = path.join(__dirname, "../../../../packages/types/brand/brand.json");
-  const b = JSON.parse(fs.readFileSync(file, "utf8")) as ParityBrand;
-  return { name: b.name, formerly: b.formerly };
+  return parseBrand(JSON.parse(fs.readFileSync(file, "utf8")) as Partial<ParityBrand>);
+}
+
+/** An empty name would make an empty pattern that matches everywhere: refuse it. */
+export function parseBrand(b: Partial<ParityBrand>): ParityBrand {
+  for (const key of ["name", "formerly"] as const) {
+    if (typeof b[key] !== "string" || b[key] === "") {
+      throw new Error(`brand.json: "${key}" must be a non-empty string`);
+    }
+  }
+  return { name: b.name as string, formerly: b.formerly as string };
 }
 
 /** Everything reachable on the page now. Runs inside the browser. */
