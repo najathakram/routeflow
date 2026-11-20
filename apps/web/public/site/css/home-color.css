@@ -15,7 +15,6 @@
 .home #sell .kick,.home #journey .kick,.home #counter .kick{background:var(--rf-white);box-shadow:var(--rf-ring)}
 
 /* ---------- bands: white and bone, alternating ---------- */
-.home .sl{background:var(--rf-soft)}
 .home .jr{background:var(--rf-soft)}
 .home .st{background:var(--rf-white)}
 .home .ct{background:var(--rf-soft)}
@@ -48,6 +47,9 @@
   .home .inc-i p{padding:0 8px 14px 44px}
   .home .inc-more .cap{margin-left:44px}
 }
+
+/* The dot before a use-case example's name is the accent. */
+.home .uc-t h3::before{background:var(--rf-accent)}
 
 /* Small grey text on the bands is the steel job colour. */
 .home .sy-list span,.home .sy-eye,.home .uc-t p,.home .hx-cap,.home .hx-note,.home .rfw-keys li span,.home .rfw-keyh,.home .rfw--static .rfw-eye,.home .sl-prod{color:var(--rf-text-2)}

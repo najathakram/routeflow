@@ -170,10 +170,10 @@ describe("the colour is decoration, not a new claim", () => {
     expect(css).toContain(".home #use-cases .kick::before{");
   });
 
-  it("all twenty-two use-case cards still carry the inline --pc/--pi pair (kept for the 2.3 lanes; the CSS no longer reads it)", () => {
-    const cards =
-      home.match(/<li class="inc-i" style="--pc:#[0-9a-f]{6};--pi:#[0-9a-f]{3,6}"/gi) ?? [];
+  it("all twenty-two use-case cards are there and the page sets no --pc/--pi anywhere (lane 2.3-home took them out)", () => {
+    const cards = home.match(/<li class="inc-i"[^>]*>/gi) ?? [];
     expect(cards).toHaveLength(22);
+    expect(home).not.toMatch(/--p[ci]\s*:/);
   });
 
   it("the FAQ delivery van is hidden from assistive tech and holds only a question mark glyph", () => {
