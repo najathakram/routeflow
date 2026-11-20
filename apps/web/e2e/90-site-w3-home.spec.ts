@@ -650,7 +650,10 @@ function paletteLooks() {
 test("T47 no-harm rule: the model's fail rows R1-R6, pass rows G1-G4 and E1 (no browser)", () => {
   const { ink, white, steel } = paletteLooks();
   const on = (text: Rgb) => ({ text, card: white, panel: ink, white });
-  // SA-1191-composite-model.cjs, K3's table: each row's solo and comp as the script prints them (2 dp). INVOICE and the
+  // Golden rows, SA-1191 K3 (A2-a): printed by local-assets/lead-2026-11-14/sa/SA-1191-composite-model.cjs (blob 631c3ac9e0;
+  // reprint with `node <file>`). They are an independent oracle for overlapRatios and verdict, so the model is never
+  // imported here. Compared at 2 dp; do not tighten. Changing the palette or the formula reprints them under a new SA
+  // amendment. INVOICE and the
   // sender heading are texts on a white card; "line" is the big line over the white paper (solo: over the panel alone).
   // null: the record gives only "below 3" for that row, so the test pins the verdict and the floor.
   type Row = [
@@ -755,7 +758,7 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
     roles: { invoiceText: css(ink), invoiceCard: css(white), fromText: css(steel) },
   });
   const clean = judgeRead(make(0.5, 1, R(120, 300, 640, 560)), tok);
-  expect(clean).toEqual({ harm: [], window: [], gutter: [], other: [] });
+  expect(clean).toEqual({ harm: [], window: [], gutter: [], other: [], cross: [] });
   // R5: the line over a blank part of the paper (no text under it) is white on white
   const blank = judgeRead(make(0.5, 1, R(1100, 650, 1280, 780)), tok);
   expect(blank.harm).toEqual([
@@ -796,6 +799,48 @@ test("T47 geometry and the judge over a page read (no browser)", () => {
   expect(judgeRead(wrong, tok).other).toEqual([
     "the sender heading is rgb(14, 23, 38), not the steel token",
   ]);
+  // A2-d: text over text. The line crossing a heading that is readable alone is a fault; a heading in its own fade is not
+  const heading = (opacity: number, rect: Rect): ProblemRead["texts"][number] => ({
+    name: "Prices in your head.",
+    inArt: false,
+    inBig: false,
+    color: css(white),
+    backdrop: css(ink),
+    opacity,
+    fontPx: 60,
+    weight: 650,
+    rects: [rect],
+  });
+  const crossing = (headingOpacity: number, lineOpacity: number, headRect: Rect) => ({
+    ...make(lineOpacity, 1, R(100, 400, 600, 480)),
+    texts: [heading(headingOpacity, headRect)],
+  });
+  const both2 = judgeRead(crossing(1, 0.4, R(100, 440, 560, 520)), tok, { cross: true }).cross;
+  // both are readable alone (the line is held from 0.331), so each is crossed by the other
+  expect(both2).toHaveLength(2);
+  expect(both2[0]).toContain('"the big line" (');
+  expect(both2[0]).toContain('is crossed by "Prices in your head."');
+  expect(both2[1]).toContain('"Prices in your head." (');
+  expect(both2[1]).toContain('is crossed by "the big line"');
+  // the line is not held while it is below its floor alone (0.2 is under 3), so only the heading is held
+  expect(
+    judgeRead(crossing(1, 0.2, R(100, 440, 560, 520)), tok, { cross: true }).cross,
+  ).toHaveLength(1);
+  // the heading in its own fade (0.1) is not held, and the line below its floor is not held either
+  expect(judgeRead(crossing(0.1, 0.2, R(100, 440, 560, 520)), tok, { cross: true }).cross).toEqual(
+    [],
+  );
+  expect(judgeRead(crossing(1, 0.04, R(100, 440, 560, 520)), tok, { cross: true }).cross).toEqual(
+    [],
+  );
+  // leading slivers are not crossings; clear of the line is not a crossing; the rule is off unless asked for
+  expect(judgeRead(crossing(1, 0.4, R(100, 478, 560, 560)), tok, { cross: true }).cross).toEqual(
+    [],
+  );
+  expect(judgeRead(crossing(1, 0.4, R(700, 440, 900, 520)), tok, { cross: true }).cross).toEqual(
+    [],
+  );
+  expect(judgeRead(crossing(1, 0.4, R(100, 440, 560, 520)), tok).cross).toEqual([]);
   // the calibration: a window no fault beat falls in is reported
   expect(
     missedWindows(
@@ -1000,6 +1045,34 @@ for (const { w, h } of MOTION_SIZES) {
     }
     console.log(
       `T47 seek ${w}x${h}: ${steps.length} steps, ${faults.length} faults; the line above ${SEEN}: leftmost ${minLeft.toFixed(1)} px, rightmost ${maxRight.toFixed(1)} of ${w}, nearest picture box ${minGap.toFixed(1)} px`,
+    );
+    expect(faults).toEqual([]);
+  });
+}
+
+// SA-1191 A2-d: text over text, at every seek step. Its own row, so a red here is not read as a contrast or window fault.
+for (const { w, h } of MOTION_SIZES) {
+  test(`T47 seek 0.640-0.920: no text crosses a text that is readable alone @${w}x${h}`, async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    const { steps, tok } = await seek(page, w, h);
+    assertSweepSees(steps, w);
+    const faults: string[] = [];
+    const ks: number[] = [];
+    let pairs = 0;
+    for (const s of steps) {
+      const f = judgeRead(s.read, tok, { cross: true, window: false, gutter: 0 });
+      pairs += s.read.texts.length;
+      if (f.cross.length > 0) ks.push(s.k);
+      faults.push(...f.cross.map((c) => `beat ${s.k.toFixed(3)}: ${c}`));
+    }
+    // the sweep must have had other texts to cross: the heading lines are under #problem, not only the picture
+    if (pairs === 0) throw new Error(`${w}: no other texts were read`);
+    console.log(
+      `T47 cross ${w}x${h}: ${faults.length} crossings at ${ks.length} steps${
+        ks.length ? `, k ${Math.min(...ks).toFixed(3)} to ${Math.max(...ks).toFixed(3)}` : ""
+      }; first: ${faults[0] ?? "none"}`,
     );
     expect(faults).toEqual([]);
   });

@@ -214,6 +214,8 @@ export type Faults = {
   gutter: string[];
   /** structure and colour roles */
   other: string[];
+  /** SA-1191 A2-d: a text readable alone, crossed by another visible text (only when asked for) */
+  cross: string[];
 };
 
 const same = (a: Rgb, b: Rgb) => a.every((v, i) => v === b[i]);
@@ -309,7 +311,46 @@ export function roleFaults(read: ProblemRead, tokens: Tokens): string[] {
   return out;
 }
 
+/**
+ * SA-1191 A2-d, text over text. For each text E in .pb (the line and every text found by query, not only the picture's)
+ * whose solo contrast is at or above its floor, no other text with effective opacity above SEEN may cross E's glyph rects.
+ * A text already below its floor alone is in its own fade and is not held (as E1). Two texts cross when their glyph rects
+ * share at least 2 px of width and a quarter of the shorter rect's height: the line boxes of tight leading overlap by a
+ * sliver without any glyph touching, which is not a crossing.
+ */
+export function crossFaults(read: ProblemRead): string[] {
+  const out: string[] = [];
+  const panel = parseRgb(read.panel);
+  const white = parseRgb(read.line.color);
+  const all = [read.line, ...read.texts];
+  const crosses = (a: Rect, b: Rect): boolean => {
+    const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+    const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    return w >= 2 && h >= 0.25 * Math.min(a.bottom - a.top, b.bottom - b.top);
+  };
+  for (const e of all) {
+    const solo = overlapRatios(e.opacity, 0, {
+      text: parseRgb(e.color),
+      card: parseRgb(e.backdrop),
+      panel,
+      white,
+    }).headingSolo;
+    const floor = floorFor(e.fontPx, e.weight);
+    if (solo < floor) continue;
+    for (const f of all) {
+      if (f === e || f.opacity <= SEEN) continue;
+      if (e.rects.some((a) => f.rects.some((b) => crosses(a, b))))
+        out.push(
+          `"${e.name}" (${fmt(solo)} alone, floor ${floor}, opacity ${e.opacity.toFixed(3)}) is crossed by "${f.name}" (opacity ${f.opacity.toFixed(3)})`,
+        );
+    }
+  }
+  return out;
+}
+
 export type JudgeOptions = {
+  /** run SA-1191 A2-d, text over text (default false: the seek tests ask for it) */
+  cross?: boolean;
   /** run A1-K1 (default true) */
   window?: boolean;
   /** run A1-K2 with this many px (default 24); 0 skips it */
@@ -324,11 +365,14 @@ export function judgeRead(read: ProblemRead, tokens: Tokens, opts: JudgeOptions 
     window: opts.window === false ? [] : windowFaults(read),
     gutter: gutter > 0 ? gutterFaults(read, gutter) : [],
     other: roleFaults(read, tokens),
+    cross: opts.cross ? crossFaults(read) : [],
   };
 }
 
 export function flatFaults(f: Faults, k: string): string[] {
-  return [...f.other, ...f.harm, ...f.window, ...f.gutter].map((s) => `beat ${k}: ${s}`);
+  return [...f.other, ...f.harm, ...f.window, ...f.gutter, ...f.cross].map(
+    (s) => `beat ${k}: ${s}`,
+  );
 }
 
 /**
