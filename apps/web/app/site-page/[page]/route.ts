@@ -1,8 +1,9 @@
 // Serves the ready-made pages (public/site/<page>.html) at their own addresses. next.config.mjs
 // rewrites "/", "/pricing", "/product" and the rest here, after the middleware, so the signed-in
 // redirect on "/" still comes first. The route is built once: the page is the file with its brand
-// tokens filled in and, when NEXT_PUBLIC_UMAMI_WEBSITE_ID is set, the visit-count tags
-// (lib/read-site-page.ts, lib/static-site-page.ts). Everything else in the file is served as it is.
+// tokens filled in, the first-touch tag on every page and, when NEXT_PUBLIC_UMAMI_WEBSITE_ID is
+// set, the visit-count tags (lib/read-site-page.ts, lib/static-site-page.ts). Everything else in
+// the file is served as it is.
 import { readServedSitePage } from "@/lib/read-site-page";
 import { STATIC_SITE_PAGE_NAMES, type StaticSitePage } from "@/lib/static-site-page";
 
