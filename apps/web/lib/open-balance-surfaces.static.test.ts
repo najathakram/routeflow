@@ -101,6 +101,15 @@ describe("U21: the open-balance figure is only printed inside OpenBalanceButton"
   });
 });
 
+describe("SA-1197 A3: the invoice page hands the block its customer", () => {
+  // delta-2 L-a: without it the Open balance figure stays plain and every render test is still green
+  it("page.tsx passes invoice.customerId to InvoiceTotalsSummary", () => {
+    expect(read("app/(dashboard)/invoices/[id]/page.tsx")).toMatch(
+      /<InvoiceTotalsSummary\b[^>]*?\bcustomerId=\{invoice\.customerId\}/,
+    );
+  });
+});
+
 function gitFreeEnv(): NodeJS.ProcessEnv {
   return Object.fromEntries(
     Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")),

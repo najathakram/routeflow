@@ -69,7 +69,7 @@ const ROWS: {
   {
     key: "showAccountBalance",
     label: "Show open balance on invoices",
-    help: "Prints the customer's other unpaid invoices and open balance under Balance Due, on the PDF, the email and the invoice page. Appears only when another invoice is unpaid. Not on walk-in or counter sales paid at the till. With Balance Due off, prints just the open balance.",
+    help: "Adds the customer's other unpaid invoices and open balance under Balance Due, on the invoice page, the PDF and the email. Appears only when another invoice is unpaid. Not on walk-in or counter sales paid at the till, or on reminders. With Balance Due off, shows just the open balance.",
     doneDescription: "Open balance display updated.",
   },
 ];

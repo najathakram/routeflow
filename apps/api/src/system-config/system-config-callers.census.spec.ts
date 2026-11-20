@@ -105,7 +105,7 @@ const TABLE: Record<string, Row> = {
     "REQUEST",
   ),
   "system-config/settings.controller.ts": R(
-    43,
+    44, // SA-1197: +1, the invoice layout's showAccountBalance set
     "SettingsController (@Roles, tenant JWT); receiptFooter already refuses without a tenant",
     "REQUEST",
   ),

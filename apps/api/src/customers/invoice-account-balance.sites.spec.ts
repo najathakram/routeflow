@@ -127,11 +127,12 @@ describe("one account read per send (SA-1197 C4, T3)", () => {
  * A new caller fails here until it is listed with its policy.
  */
 describe("invoice PDF callers and their account policy (SA-1197 A2-2)", () => {
-  const CALL = /([\w.]+)\.(getOrGenerate|generateAndUpload)\(/g;
+  // delta-1 L1: ?. calls, chains split over lines and .bind aliases count too
+  const CALL = /([\w.]+)\??\s*\.\s*(getOrGenerate|generateAndUpload)\b/g;
   const policyOf = (args: string) =>
     /\baccount:\s*\{\s*show:\s*false\s*\}/.test(args)
       ? "show:false"
-      : /\baccount\b/.test(args)
+      : /\baccount\s*(?:[,})]|:\s*(?!undefined\b|null\b)\w)/.test(args) // L2: account: undefined reads
         ? "handed"
         : "reads";
 
@@ -139,7 +140,6 @@ describe("invoice PDF callers and their account policy (SA-1197 A2-2)", () => {
     const found: Record<string, string[]> = {};
     for (const f of walk(API_SRC)) {
       const rel = path.relative(API_SRC, f).split(path.sep).join("/");
-      if (rel === "invoices/invoice-pdf.service.ts") continue; // its own getOrGenerate -> generateAndUpload hop
       const src = strip(fs.readFileSync(f, "utf8"));
       for (const m of src.matchAll(CALL)) {
         if (/statementPdf/i.test(m[1])) continue; // the statement PDF is another service
@@ -150,6 +150,7 @@ describe("invoice PDF callers and their account policy (SA-1197 A2-2)", () => {
       }
     }
     expect(found).toEqual({
+      "invoices/invoice-pdf.service.ts": ["handed"], // its own getOrGenerate -> generateAndUpload hop forwards opts.account
       "invoices/invoices.service.ts": ["handed"], // the send: ONE read for the PDF and the email (C4)
       "invoices/invoice-reminder-email.ts": ["show:false"], // C13: the reminder carries none
       "invoices/invoices.controller.ts": ["reads"], // the staff download
