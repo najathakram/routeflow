@@ -167,12 +167,9 @@ export interface PlanChangePreview {
    *  schedule KEEP_CURRENT would cancel), never a hard block. */
   warning?: string;
   /** B1371: ALWAYS false (no plan has a seat limit; a downgrade never touches a login). Kept for one release
-   *  because the web and the e2e suite still read it; remove it later. Was: TRUE only when the DOWNGRADE
-   *  seat-cap check found the active team over the target plan's `seatsIncluded`. ALWAYS present, so
-   *  the chooser gates its "these users will be deactivated" acknowledgement on THIS flag and
-   *  never on `warning` being non-empty — `warning` composes unrelated notices (a revoked
-   *  cancellation, a cycle switch), and inferring the seat consequence from its mere presence
-   *  made the UI demand consent to a deactivation that would never happen. */
+   *  because the web and the e2e suite still read it; remove it later. It was TRUE only when the old
+   *  DOWNGRADE seat-cap check found the team over the target plan's `seatsIncluded`, and the chooser's
+   *  acknowledgement keyed on it, never on `warning` (which composes unrelated notices). */
   seatAckRequired: boolean;
   /** UPGRADE only (SA-786): the add-ons the target plan newly includes - free from commit, still ON. */
   includedAddons?: { sku: string; name: string }[];
@@ -1100,6 +1097,7 @@ export class SubscriptionMutationService {
           stripeSubId: true, // R2: a trialing / past_due / unpaid subscription quotes 0
           externalPayment: true, // SA-786 S6: the add-on billing mode (the sentence names the charge per mode)
           couponFull: true,
+          billingInterval: true, // #4393 read B M-1: an annual Stripe subscription's add-ons stay unbilled
         },
       }),
     ]);
@@ -1407,7 +1405,8 @@ export class SubscriptionMutationService {
     const { def } = await targetVersionFor(this.catalog, pinned, toKey);
     const override = priceOverrideOf(sub);
     const monthly = override ?? (def.monthlyPrice != null ? Number(def.monthlyPrice) : null);
-    const price = billingIntervalOf(sub) === "month" ? monthly : null; // #4393 L-4/N-1: annual is not paid monthly
+    // #4393 L-4/N-1: annual is not paid monthly; read B L-4: a 100% coupon pays nothing.
+    const price = billingIntervalOf(sub) === "month" && !sub.couponFull ? monthly : null;
     const addons = await this.previewRepricedAddons({
       tenantId,
       priorSub: sub,
@@ -1435,6 +1434,8 @@ export class SubscriptionMutationService {
       stripeSubId?: string | null;
       externalPayment?: boolean | null;
       couponFull?: boolean | null;
+      billingInterval?: string | null;
+      cycle?: string | null;
     };
     fromKey: string;
     toKey: string;
@@ -1442,7 +1443,9 @@ export class SubscriptionMutationService {
     warnings: string[];
   }): Promise<{ sku: string; name: string; monthlyPrice: number }[]> {
     const mode = addonBillingModeOf(this.stripe.isConfigured, a.priorSub);
-    if (mode === "UNBILLED") return [];
+    // #4393 read B M-1: billAddonsLeavingInclusion leaves an annual Stripe subscription's add-ons unbilled by policy,
+    // so neither the preview nor the email may say they start billing.
+    if (mode === "UNBILLED" || isAnnualStripeBilled(mode, a.priorSub)) return [];
     const { version: target, def: targetDef } = await targetVersionFor(
       this.catalog,
       a.pinned,

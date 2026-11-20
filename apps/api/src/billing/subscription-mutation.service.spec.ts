@@ -4262,6 +4262,88 @@ describe("B1371 — downgrade preview, schedule and notice carry no seat consequ
     );
   });
 
+  // #4393 read B M-1: billAddonsLeavingInclusion skips an annual Stripe subscription ("unbilled by policy"), so
+  // neither the email nor the preview may say the bundled add-on starts billing.
+  it("PIN: a card-paid annual tenant's bundled add-on leaving inclusion gets no 'billed at' line", async () => {
+    const { periodEnd } = activePeriod();
+    const sub = {
+      planKey: "BUSINESS",
+      cycle: "MONTHLY",
+      billingInterval: "year",
+      stripeSubId: "sub_1",
+      periodEnd,
+    };
+    const buyerPortal = {
+      id: "a2",
+      addonKey: "BUYER_PORTAL",
+      sku: "BUYER_PORTAL",
+      quantity: 1,
+      priceSnapshot: 0,
+      stripeItemId: null,
+    };
+    const email = make({ sub, catalog: catalogWithCustomers(), priorAddons: [buyerPortal] });
+    await email.svc.downgrade("t1", "STARTER", [], "admin");
+    expect(email.billingNotification.notifyDowngradeScheduled).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      periodEnd,
+      expect.objectContaining({ addons: [] }),
+    );
+    const preview = make({ sub, catalog: catalogWithCustomers(), priorAddons: [buyerPortal] });
+    const res = (await preview.svc.planChangePreview("t1", "STARTER", "MONTHLY")) as any;
+    expect(String(res.warning ?? "")).not.toMatch(/billed at/);
+    expect(res.repricedAddons ?? []).toEqual([]);
+  });
+
+  // #4393 read B L-4: a 100% coupon (couponFull) pays nothing, so "Starter is $59 a month" is not what they pay.
+  it("PIN: a monthly tenant on a 100% coupon gets no plan price line", async () => {
+    const { periodEnd } = activePeriod();
+    const { svc, billingNotification } = make({
+      sub: {
+        planKey: "BUSINESS",
+        cycle: "MONTHLY",
+        stripeSubId: "sub_1",
+        couponFull: true,
+        periodEnd,
+      },
+    });
+    await svc.downgrade("t1", "STARTER", [], "admin");
+    expect(billingNotification.notifyDowngradeScheduled).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      periodEnd,
+      expect.objectContaining({ newMonthlyPrice: null }),
+    );
+  });
+
+  it("guard: the same add-on on a MONTHLY card-paid tenant still gets its 'billed at' line", async () => {
+    const { periodEnd } = activePeriod();
+    const { svc, billingNotification } = make({
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", stripeSubId: "sub_1", periodEnd },
+      catalog: catalogWithCustomers(),
+      priorAddons: [
+        {
+          id: "a2",
+          addonKey: "BUYER_PORTAL",
+          sku: "BUYER_PORTAL",
+          quantity: 1,
+          priceSnapshot: 0,
+          stripeItemId: null,
+        },
+      ],
+    });
+    await svc.downgrade("t1", "STARTER", [], "admin");
+    expect(billingNotification.notifyDowngradeScheduled).toHaveBeenCalledWith(
+      "t1",
+      expect.any(String),
+      expect.any(String),
+      periodEnd,
+      expect.objectContaining({ addons: [{ name: "Buyer portal", monthlyPrice: 49 }] }),
+    );
+  });
+
   it("PIN: with no customers over and no add-ons the notice still goes, with empty details", async () => {
     const { periodEnd } = activePeriod();
     const { svc, billingNotification, tx } = make({
