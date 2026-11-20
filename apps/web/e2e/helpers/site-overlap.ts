@@ -87,34 +87,49 @@ export function contrast(a: Rgb, b: Rgb): number {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
-export type OverlapRatios = { invoice: number; line: number };
+/** The colours and type of one heading and of what it sits on, as the page computes them. */
+export type HeadingLook = { text: Rgb; card: Rgb; panel: Rgb; white: Rgb };
+
+export type OverlapRatios = { heading: number; line: number };
 
 /**
- * The two ratios at one beat where the big line's box overlaps INVOICE's box. The panel and the heading are ink, the
- * picture's card is white at opacity p over the panel, the big line is white at opacity l on top.
- * invoice: the heading against its card, both under the line. line: the line's colour against the card under it.
+ * The two ratios at one beat where the big line's box overlaps a heading's box. The picture (the heading on its card)
+ * sits at opacity p over the panel, and the big line is white at opacity l on top of both.
+ * heading: the heading against its card, both under the line. line: the line's colour against the card under it.
  */
-export function overlapRatios(p: number, l: number, ink: Rgb, white: Rgb): OverlapRatios {
-  const card = mix(white, ink, p);
-  const text = ink; // ink on the panel, at any picture opacity
-  const bg = mix(white, card, l);
-  const fg = mix(white, text, l);
-  return { invoice: contrast(fg, bg), line: contrast(mix(white, card, l), card) };
+export function overlapRatios(p: number, l: number, look: HeadingLook): OverlapRatios {
+  const card = mix(look.card, look.panel, p);
+  const text = mix(look.text, look.panel, p);
+  const bg = mix(look.white, card, l);
+  const fg = mix(look.white, text, l);
+  return { heading: contrast(fg, bg), line: contrast(mix(look.white, card, l), card) };
+}
+
+/** WCAG 1.4.3 large text: 24px, or 18.66px and bold (700). The floor is 3 for large text, 4.5 for the rest. */
+export function floorFor(fontPx: number, weight: number): number {
+  return fontPx >= 24 || (fontPx >= 18.66 && weight >= 700) ? 3 : 4.5;
 }
 
 /**
- * K1. Faults for one beat at which the big line overlaps INVOICE. floor is 3 at 1440 (19px bold, large) and 4.5 at 393
- * (16px bold). Picture at or above 0.5: INVOICE must meet the floor. Line at or above 0.5: the line must meet 3.
- * Both below 0.5 is a transition beat, no assertion.
+ * K1 (SA-1190, A1). Faults for one beat at which the big line overlaps a heading. Picture at or above 0.5: the heading
+ * must meet its floor. Line at or above 0.5: the line must meet 3. Both below 0.5 is a transition beat, no assertion.
  */
-export function overlapFaults(p: number, l: number, floor: number, ink: Rgb, white: Rgb): string[] {
-  const r = overlapRatios(p, l, ink, white);
+export function overlapFaults(
+  name: string,
+  p: number,
+  l: number,
+  floor: number,
+  look: HeadingLook,
+): string[] {
+  const r = overlapRatios(p, l, look);
   const out: string[] = [];
-  if (p >= 0.5 && r.invoice < floor)
+  if (p >= 0.5 && r.heading < floor)
     out.push(
-      `INVOICE contrast ${r.invoice.toFixed(2)} is under ${floor} (picture ${p}, line ${l})`,
+      `${name} contrast ${r.heading.toFixed(2)} is under ${floor} (picture ${p}, line ${l})`,
     );
   if (l >= 0.5 && r.line < 3)
-    out.push(`the big line contrast ${r.line.toFixed(2)} is under 3 (picture ${p}, line ${l})`);
+    out.push(
+      `the big line over ${name} contrast ${r.line.toFixed(2)} is under 3 (picture ${p}, line ${l})`,
+    );
   return out;
 }

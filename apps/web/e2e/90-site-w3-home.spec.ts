@@ -9,6 +9,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { blockAnalytics, frames, nonEmpty } from "./helpers/site-proof";
 import {
+  floorFor,
   overlapFaults,
   overlapRatios,
   parseRgb,
@@ -256,7 +257,18 @@ test("T47 the invoice box of the problem picture sits inside its frame @1440x900
  * invoice's "Invoice" heading), and the opacities and overlap of the big line against each heading, as data. The pass
  * or fail of the overlap is decided in node by overlapFaults (SA-1190 K1), not here.
  */
-type BeatSample = { name: string; bigOpacity: number; artOpacity: number; overlap: boolean };
+type BeatSample = {
+  name: string;
+  bigOpacity: number;
+  artOpacity: number;
+  overlap: boolean;
+  // as the page computes them: the heading's colour, what it sits on, the panel behind the picture, its type
+  text: string;
+  card: string;
+  panel: string;
+  fontPx: number;
+  weight: number;
+};
 
 async function problemBeat(page: Page): Promise<{ faults: string[]; samples: BeatSample[] }> {
   return page.evaluate(() => {
@@ -275,7 +287,22 @@ async function problemBeat(page: Page): Promise<{ faults: string[]; samples: Bea
       bigOpacity: number;
       artOpacity: number;
       overlap: boolean;
+      text: string;
+      card: string;
+      panel: string;
+      fontPx: number;
+      weight: number;
     }> = [];
+    // the first opaque background at or above an element: what a heading is painted on
+    const paint = (from: Element | null): string => {
+      for (let e = from; e; e = e.parentElement) {
+        const bg = getComputedStyle(e).backgroundColor;
+        const m = /^rgba?\([^)]*?(?:,\s*([\d.]+))?\)$/.exec(bg);
+        if (m && (m[1] === undefined || Number(m[1]) > 0)) return bg;
+      }
+      throw new Error("no opaque background above the heading");
+    };
+    const panel = paint(q(".pb-art").parentElement);
     const pairs: Array<[string, string, string]> = [
       ["phone", ".pb-ph", ".pb-ph .pb-from"],
       ["invoice", ".pb-paper", ".pb-paper .pp-h"],
@@ -293,25 +320,44 @@ async function problemBeat(page: Page): Promise<{ faults: string[]; samples: Bea
         out.push(name + " heading leaves its box");
       if (headEl.scrollWidth > headEl.clientWidth + 1) out.push(name + " heading is clipped");
       const hit = bb.left < h.right && bb.right > h.left && bb.top < h.bottom && bb.bottom > h.top;
-      samples.push({ name, bigOpacity, artOpacity, overlap: hit });
+      const cs = getComputedStyle(headEl);
+      samples.push({
+        name,
+        bigOpacity,
+        artOpacity,
+        overlap: hit,
+        text: cs.color,
+        card: paint(headEl),
+        panel,
+        fontPx: parseFloat(cs.fontSize),
+        weight: Number(cs.fontWeight),
+      });
     }
     return { faults: out, samples };
   });
 }
 
-/** Every fault at one beat: the structural ones, and K1 for the invoice heading (3:1 at 1440, 4.5:1 at 393). */
-async function beatFaults(page: Page, w: number, k: string, floor: number): Promise<string[]> {
-  const colours = await roles(page);
-  const ink = parseRgb(colours.ink);
-  const white = parseRgb(colours.white);
+/**
+ * Every fault at one beat: the structural ones, and K1 for both headings (SA-1190 A1). Each heading's floor comes from
+ * its own computed size and weight (3 for large text, 4.5 otherwise), never typed.
+ */
+async function beatFaults(page: Page, w: number, k: string): Promise<string[]> {
+  const white = parseRgb((await roles(page)).white);
   const beat = await problemBeat(page);
   const out = beat.faults.map((f) => `beat ${k}: ${f}`);
   for (const sm of beat.samples) {
     let note = "";
-    if (sm.name === "invoice" && sm.overlap) {
-      const r = overlapRatios(sm.artOpacity, sm.bigOpacity, ink, white);
-      note = `, INVOICE ratio ${r.invoice.toFixed(2)}, line ratio ${r.line.toFixed(2)}`;
-      for (const f of overlapFaults(sm.artOpacity, sm.bigOpacity, floor, ink, white))
+    if (sm.overlap) {
+      const look = {
+        text: parseRgb(sm.text),
+        card: parseRgb(sm.card),
+        panel: parseRgb(sm.panel),
+        white,
+      };
+      const floor = floorFor(sm.fontPx, sm.weight);
+      const r = overlapRatios(sm.artOpacity, sm.bigOpacity, look);
+      note = `, heading ratio ${r.heading.toFixed(2)} (floor ${floor}, ${sm.fontPx}px ${sm.weight}), line ratio ${r.line.toFixed(2)}`;
+      for (const f of overlapFaults(sm.name, sm.artOpacity, sm.bigOpacity, floor, look))
         out.push(`beat ${k}: ${f}`);
     }
     console.log(
@@ -405,15 +451,26 @@ test("T47 settle check: scrub-only, and it names the trigger that lags (no brows
 test("T47 overlap rule K1 over the composited opacities (no browser)", () => {
   const ink = parseRgb("#0E1726");
   const white = parseRgb("#FFFFFF");
+  // INVOICE: ink on a white card over an ink panel
+  const invoice = { text: ink, card: white, panel: ink, white };
+  // the sender heading: steel on a bone card over the same panel
+  const from = { text: parseRgb("#5A6675"), card: parseRgb("#F6F4F0"), panel: ink, white };
   // the reviewer's window at a phone: 4.39 is under 4.5
-  expect(overlapFaults(0.72, 0.3, 4.5, ink, white)).not.toEqual([]);
-  expect(overlapFaults(0.72, 0.3, 3, ink, white)).toEqual([]);
-  expect(overlapFaults(0.72, 0.15, 4.5, ink, white)).toEqual([]);
+  expect(overlapFaults("invoice", 0.72, 0.3, 4.5, invoice)).not.toEqual([]);
+  expect(overlapFaults("invoice", 0.72, 0.3, 3, invoice)).toEqual([]);
+  expect(overlapFaults("invoice", 0.72, 0.15, 4.5, invoice)).toEqual([]);
   // both layers shown at once
-  expect(overlapFaults(0.5, 0.5, 3, ink, white)).not.toEqual([]);
+  expect(overlapFaults("invoice", 0.5, 0.5, 3, invoice)).not.toEqual([]);
   // the line has taken over; both below 0.5 is a transition beat
-  expect(overlapFaults(0.3, 0.7, 4.5, ink, white)).toEqual([]);
-  expect(overlapFaults(0.4, 0.4, 4.5, ink, white)).toEqual([]);
+  expect(overlapFaults("invoice", 0.3, 0.7, 4.5, invoice)).toEqual([]);
+  expect(overlapFaults("invoice", 0.4, 0.4, 4.5, invoice)).toEqual([]);
+  // the sender heading is small text: p 1 with a 0.1 ghost is 4.29 and fails, 0.05 is 4.77 and passes
+  expect(overlapFaults("from", 1, 0.1, 4.5, from)).not.toEqual([]);
+  expect(overlapFaults("from", 1, 0.05, 4.5, from)).toEqual([]);
+  // large text starts at 24px, or 18.66px and bold (700)
+  expect(floorFor(19, 700)).toBe(3);
+  expect(floorFor(16, 700)).toBe(4.5);
+  expect(floorFor(14, 650)).toBe(4.5);
 });
 
 test("T47 when home-up.js fails to load, the big line paints over neither heading @1440x900", async ({
@@ -431,12 +488,12 @@ test("T47 when home-up.js fails to load, the big line paints over neither headin
     if (!s) throw new Error("no #problem section");
     window.scrollTo(0, s.getBoundingClientRect().top + window.scrollY);
   });
-  expect(await beatFaults(page, 1440, "no-script", 3)).toEqual([]);
+  expect(await beatFaults(page, 1440, "no-script")).toEqual([]);
 });
 
-for (const { w, h, floor } of [
-  { w: 1440, h: 900, floor: 3 },
-  { w: 393, h: 844, floor: 4.5 },
+for (const { w, h } of [
+  { w: 1440, h: 900 },
+  { w: 393, h: 844 },
 ]) {
   test(`T47 from first paint to settle, at every beat of the problem section @${w}x${h}`, async ({
     page,
@@ -457,11 +514,13 @@ for (const { w, h, floor } of [
     );
     const beats: string[] = [];
     const faults: string[] = [];
-    // before the section, eleven even steps through it, and past its end
+    // before the section, eleven even steps through it, and past its end; then the observed fine sweep of the
+    // hand-over (SA-1190 A2): every 0.02 of a window from 1.02 to 1.36, 18 beats
     const steps = [
       -0.5 * h,
       ...Array.from({ length: 11 }, (_, i) => (i * run) / 10),
       run + 0.3 * h,
+      ...Array.from({ length: 18 }, (_, i) => (1.02 + 0.02 * i) * h),
     ];
     for (const dy of steps) {
       const y = Math.max(0, Math.round(top + dy));
@@ -473,7 +532,7 @@ for (const { w, h, floor } of [
       await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
       const k = (dy / h).toFixed(2);
       beats.push(k);
-      faults.push(...(await beatFaults(page, w, k, floor)));
+      faults.push(...(await beatFaults(page, w, k)));
     }
     expect(beats.length).toBeGreaterThanOrEqual(12);
     expect(faults).toEqual([]);
