@@ -211,12 +211,37 @@ for (const [route, bands] of Object.entries(BANDS)) {
       })),
       loadsPrices: !!document.querySelector('script[src$="/prices.js"]'),
       hasPlans: !!document.querySelector("[data-plan]"),
+      cards: Array.from(document.querySelectorAll(".pd-tile")).map((el) => {
+        const chip = el.querySelector(".pd-ic");
+        const probe = document.createElement("i");
+        probe.style.color = "var(--rf-text)";
+        document.body.appendChild(probe);
+        const ink = getComputedStyle(probe).color;
+        probe.remove();
+        return {
+          card: getComputedStyle(el).backgroundColor,
+          ring: getComputedStyle(el).boxShadow,
+          chip: chip ? getComputedStyle(chip).backgroundColor : "",
+          icon: chip ? getComputedStyle(chip).color : "",
+          ink,
+        };
+      }),
     }));
     const problems: string[] = [];
     if (r.typed) problems.push(`${r.typed} elements still carry --pc or --pi`);
     if (TILE_PAGES.has(route)) nonEmpty(r.tiles, `.pd-ic tiles on ${route}`);
     for (const t of r.tiles) {
       if (t.own !== roles.white && t.own !== roles.bone) problems.push(`tile paints ${t.own}`);
+    }
+    // Tiles are white on a line, the icon chip is bone, the icon is ink.
+    for (const c of r.cards) {
+      if (c.card !== roles.white) problems.push(`tile card paints ${c.card}, not white`);
+      if (c.ring === "none") problems.push("tile card has no ring");
+      if (c.chip !== roles.bone) problems.push(`tile chip paints ${c.chip}, not bone`);
+      if (c.icon !== c.ink) problems.push(`tile icon is ${c.icon}, not ink ${c.ink}`);
+    }
+    if (route === "/product" || route === "/does-and-doesnt") {
+      nonEmpty(r.cards, `.pd-tile cards on ${route}`);
     }
     if (r.loadsPrices !== r.hasPlans) {
       problems.push(`prices.js loaded=${r.loadsPrices}, [data-plan] present=${r.hasPlans}`);
@@ -238,6 +263,7 @@ test("P15 markup: the last two words of #pd-h sit in one no-break span", async (
     };
   });
   const problems: string[] = [];
+  if (h.words < 3) problems.push(`#pd-h holds ${h.words} words`);
   if (h.nbWords !== 2) problems.push(`.nb holds ${h.nbWords} words, not 2`);
   if (!h.nbTail) problems.push(".nb is not the tail of the headline");
   if (h.wrap !== "nowrap") problems.push(`.nb white-space is "${h.wrap}"`);

@@ -42,10 +42,10 @@
 .pd-all{padding:clamp(40px,5vw,72px) 0 clamp(72px,8vw,112px)}
 .pd-all h2{text-align:center;margin-bottom:clamp(28px,4vw,52px)}
 .pd-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;list-style:none;margin:0;padding:0}
-.pd-tile{display:flex;flex-direction:column;align-items:flex-start;gap:4px;height:100%;padding:clamp(16px,1.8vw,24px);border-radius:var(--r);background:var(--rf-soft);color:var(--rf-text);text-decoration:none}
-.pd-tile:hover{background:var(--rf-white);box-shadow:var(--rf-ring)}
-.pd-tile .pd-ic{background:var(--rf-white)}
-.pd-tile:hover .pd-ic{background:var(--rf-soft)}
+.pd-tile{display:flex;flex-direction:column;align-items:flex-start;gap:4px;height:100%;padding:clamp(16px,1.8vw,24px);border-radius:var(--r);background:var(--rf-white);box-shadow:var(--rf-ring);color:var(--rf-text);text-decoration:none}
+.pd-tile:hover{background:var(--rf-soft)}
+.pd-tile .pd-ic{background:var(--rf-soft)}
+.pd-tile:hover .pd-ic{background:var(--rf-white)}
 .pd-tile .pd-ic{margin-bottom:10px}
 .pd-tile span{font-size:16px;line-height:1.35;color:var(--rf-text-2)}
 
@@ -170,3 +170,4 @@
   .pd-t tbody th{font-size:18px}
 }
 @media (max-width:359.98px){.pd-two{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:899.98px){#pd-h .nb{white-space:normal}}
