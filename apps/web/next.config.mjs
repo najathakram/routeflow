@@ -46,6 +46,20 @@ export function readSiteHosts() {
 // anchors a header value as a whole-string pattern, hence the dots.
 const SHELL_USER_AGENT = ".*RouteFlowShell.*";
 
+// A signed-in visitor's presence cookies (lib/presence-cookies.ts OP_PRESENCE_COOKIE and
+// BUYER_PRESENCE_COOKIE; this file cannot import TypeScript, so the test pins these two names to
+// the imported constants). A visitor who has one stays on the old host, where the middleware reads
+// it and sends them into the app. One list for every host rule.
+const PRESENCE_COOKIES = ["rf-op-auth", "rf-buyer-auth"];
+
+/** The `missing` list every host rule carries: not the phone shell, not signed in. */
+function hostRuleMissing() {
+  return [
+    { type: "header", key: "user-agent", value: SHELL_USER_AGENT },
+    ...PRESENCE_COOKIES.map((key) => ({ type: "cookie", key })),
+  ];
+}
+
 // Public addresses: the ready-made pages plus the two React pages (privacy, terms). Sign-in, sign-up
 // and the reset pages are not here on purpose: they keep working on the old host.
 const PUBLIC_PATHS = [...Object.values(SITE_PAGES), "/privacy", "/terms"];
@@ -64,8 +78,8 @@ export function buildSiteHostRedirects({ origin, oldOrigin }, aliases) {
   if (to.host === from.host) return [];
   const rule = (source, destPath) => ({
     source,
-    has: [{ type: "host", value: from.host }],
-    missing: [{ type: "header", key: "user-agent", value: SHELL_USER_AGENT }],
+    has: [{ type: "host", value: from.hostname.replace(/\./g, "\\.") }],
+    missing: hostRuleMissing(),
     destination: `${to.origin}${destPath === "/" ? "" : destPath}`,
     permanent: false,
   });
@@ -100,10 +114,16 @@ const LEGACY_ALIASES = [
   { source: "/quickbooks", destination: "/#faq", permanent: false },
 ];
 
+// Every page's raw file address, which on the old host goes straight to the new host's page too.
+const RAW_PAGE_ALIASES = Object.entries(SITE_PAGES).map(([page, destination]) => ({
+  source: `/site/${page}.html`,
+  destination,
+}));
+
 /** The whole redirect list for a pair of hosts (redirects() reads them from the brand seam). */
 export function buildRedirects(hosts) {
   return [
-    ...buildSiteHostRedirects(hosts, LEGACY_ALIASES),
+    ...buildSiteHostRedirects(hosts, [...LEGACY_ALIASES, ...RAW_PAGE_ALIASES]),
     {
       source: "/route-runs/:id",
       destination: "/routes/:id",

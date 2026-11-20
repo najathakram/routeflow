@@ -14,6 +14,7 @@ import { pathToFileURL } from "url";
 import { SHELL_UA_PRODUCT, shellUserAgentToken } from "@routeflow/ui/shell-bridge";
 import { STATIC_SITE_PAGE_NAMES } from "@/lib/static-site-page";
 import { STATIC_SITE_PATHS } from "@/lib/umami-tag";
+import { BUYER_PRESENCE_COOKIE, OP_PRESENCE_COOKIE } from "@/lib/presence-cookies";
 import { site } from "./lib/site";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
@@ -23,13 +24,14 @@ interface Rule {
   destination: string;
   permanent: boolean;
   has?: Array<{ type: string; value: string }>;
-  missing?: Array<{ type: string; key: string; value: string }>;
+  missing?: Array<{ type: string; key: string; value?: string }>;
 }
 
 interface Loaded {
   SITE_PAGES: Record<string, string>;
   hosts: { origin: string; oldOrigin: string };
   today: Rule[];
+  todayFromHosts: Rule[];
   rewrites: Array<{ source: string; destination: string }>;
   split: Rule[];
 }
@@ -42,6 +44,7 @@ function load(): Loaded {
   const script =
     `const m = await import(${JSON.stringify(configUrl)});` +
     `process.stdout.write(JSON.stringify({ SITE_PAGES: m.SITE_PAGES, hosts: m.readSiteHosts(),` +
+    ` todayFromHosts: m.buildRedirects(m.readSiteHosts()),` +
     ` today: await m.default.redirects(),` +
     ` rewrites: (await m.default.rewrites()).beforeFiles,` +
     ` split: m.buildRedirects(${JSON.stringify(SPLIT)}) }));`;
@@ -65,7 +68,58 @@ const AUTH_PATHS = [
   "/buyer/reset-password",
 ];
 const NEW_HOST = new URL(SPLIT.origin).host;
-const OLD_HOST = new URL(SPLIT.oldOrigin).host;
+// Next reads a host value as a pattern, so the dots are escaped; it matches the name without a port.
+const OLD_HOST = new URL(SPLIT.oldOrigin).hostname.replace(/\./g, "\\.");
+const OLD_HOSTNAME = new URL(SPLIT.oldOrigin).hostname;
+const RAW_PATHS = Object.keys(cfg.SITE_PAGES ?? {}).map((page) => `/site/${page}.html`);
+const LEGACY_SOURCES = [
+  "/wholesalers",
+  "/distributors",
+  "/retailers",
+  "/buyer",
+  "/book-a-demo",
+  "/demo",
+  "/about",
+  "/features",
+  "/faq",
+  "/integrations",
+  "/quickbooks",
+];
+
+// A request for `url` on `host` and `userAgent`, answered the way Next answers it: the first rule
+// whose source, host pattern and missing-header pattern all fit; a same-host destination continues,
+// a destination on another host ends the walk. The request's query is carried over (Next's own
+// behaviour for a redirect whose destination names none).
+function follow(
+  rules: Rule[],
+  host: string,
+  url: string,
+  userAgent: string,
+  cookies: string[] = [],
+) {
+  let at = new URL(url, `https://${host}`);
+  const seen: string[] = [];
+  for (;;) {
+    const rule = rules.find(
+      (r) =>
+        r.source === at.pathname &&
+        (r.has ?? []).every((h) => new RegExp(`^${h.value}$`).test(at.hostname)) &&
+        (r.missing ?? []).every((m) =>
+          m.type === "cookie"
+            ? !cookies.includes(m.key)
+            : !new RegExp(`^${m.value}$`).test(userAgent),
+        ),
+    );
+    if (!rule) return { at, seen };
+    expect(rule.destination).not.toContain("?");
+    const next = new URL(rule.destination, at.origin);
+    next.search = at.search;
+    seen.push(`${at.host}${at.pathname} -> ${next.host}${next.pathname}`);
+    expect(seen.length).toBeLessThan(5);
+    at = next;
+  }
+}
+const BROWSER = "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0 Safari/537.36";
 const pathOf = (destination: string) =>
   destination.replace(/^https:\/\/[^/]+/, "").replace(/#.*$/, "") || "/";
 const hostRules = cfg.split.filter((r) => r.has?.some((h) => h.type === "host"));
@@ -117,9 +171,8 @@ describe("T30: the values differ (switch day)", () => {
   it("the installed phone app is never redirected", () => {
     expect(hostRules.length).toBeGreaterThan(0);
     for (const rule of hostRules) {
-      expect(rule.missing).toHaveLength(1);
-      const [m] = rule.missing!;
-      expect([m.type, m.key]).toEqual(["header", "user-agent"]);
+      const m = rule.missing!.find((x) => x.type === "header")!;
+      expect(m.key).toBe("user-agent");
       expect(m.value).toContain(SHELL_UA_PRODUCT);
       const re = new RegExp(`^${m.value}$`);
       expect(re.test(`Mozilla/5.0 (Linux; Android 14) ${shellUserAgentToken("1.2.3")}`)).toBe(true);
@@ -150,7 +203,6 @@ describe("T30: the values differ (switch day)", () => {
     const aliases = cfg.split.filter(
       (r) =>
         !r.has &&
-        !r.source.startsWith("/site/") &&
         !r.destination.startsWith("https://") &&
         PUBLIC_PATHS.includes(pathOf(r.destination)),
     );
@@ -164,6 +216,98 @@ describe("T30: the values differ (switch day)", () => {
       );
       expect(rule.permanent).toBe(false);
       expect(cfg.split.indexOf(alias)).toBeGreaterThan(first);
+    }
+  });
+});
+
+describe("one hop: every old-host address that ends on a public page", () => {
+  const SOURCES = [...PUBLIC_PATHS, ...LEGACY_SOURCES, ...RAW_PATHS];
+
+  it.each(SOURCES)("%s reaches the new host in exactly one hop, query kept", (source) => {
+    const { at, seen } = follow(cfg.split, OLD_HOSTNAME, `${source}?utm_source=x`, BROWSER);
+    expect(seen).toHaveLength(1);
+    expect(at.host).toBe(NEW_HOST);
+    expect(PUBLIC_PATHS).toContain(at.pathname);
+    expect(at.search).toBe("?utm_source=x");
+  });
+
+  it("the ten raw page addresses are all covered", () => {
+    expect(RAW_PATHS).toHaveLength(10);
+  });
+
+  it("the same addresses on the new host take no hop to the other host", () => {
+    for (const source of SOURCES) {
+      const { at } = follow(cfg.split, NEW_HOST, source, BROWSER);
+      expect(at.host).toBe(NEW_HOST);
+    }
+  });
+
+  it("the phone shell stays on the old host for every public address", () => {
+    const shell = `Mozilla/5.0 ${shellUserAgentToken("1.0.0")}`;
+    for (const source of PUBLIC_PATHS) {
+      expect(follow(cfg.split, OLD_HOSTNAME, source, shell).at.host).toBe(OLD_HOSTNAME);
+    }
+  });
+});
+
+describe("T38: a signed-in visitor is never redirected", () => {
+  const PRESENCE = [OP_PRESENCE_COOKIE, BUYER_PRESENCE_COOKIE];
+
+  it("every host rule has a missing entry for both presence cookies", () => {
+    expect(hostRules.length).toBeGreaterThan(0);
+    for (const rule of hostRules) {
+      const cookies = (rule.missing ?? []).filter((m) => m.type === "cookie").map((m) => m.key);
+      expect(cookies.sort()).toEqual([...PRESENCE].sort());
+    }
+  });
+
+  it.each(PUBLIC_PATHS)("%s: operator or buyer cookie present means no redirect", (source) => {
+    for (const cookies of [[OP_PRESENCE_COOKIE], [BUYER_PRESENCE_COOKIE], PRESENCE]) {
+      const { at, seen } = follow(cfg.split, OLD_HOSTNAME, source, BROWSER, cookies);
+      expect(seen).toEqual([]);
+      expect(at.host).toBe(OLD_HOSTNAME);
+    }
+  });
+
+  it.each(PUBLIC_PATHS)("%s: both cookies absent means the redirect fires", (source) => {
+    const { at, seen } = follow(cfg.split, OLD_HOSTNAME, source, BROWSER, []);
+    expect(seen).toHaveLength(1);
+    expect(at.host).toBe(NEW_HOST);
+  });
+
+  it.each([[OP_PRESENCE_COOKIE], [BUYER_PRESENCE_COOKIE]])(
+    "the old host's / with the %s cookie is not redirected",
+    (cookie) => {
+      const { at, seen } = follow(cfg.split, OLD_HOSTNAME, "/", BROWSER, [cookie]);
+      expect(seen).toEqual([]);
+      expect(at.host).toBe(OLD_HOSTNAME);
+    },
+  );
+
+  it("a legacy alias and a raw page address are held back too", () => {
+    for (const source of [...LEGACY_SOURCES, ...RAW_PATHS]) {
+      const { at } = follow(cfg.split, OLD_HOSTNAME, source, BROWSER, [OP_PRESENCE_COOKIE]);
+      expect(at.host).toBe(OLD_HOSTNAME);
+    }
+  });
+});
+
+describe("the host rules are exactly the public addresses", () => {
+  it("redirects() takes its hosts from readSiteHosts()", () => {
+    const source = fs.readFileSync(path.join(WEB_ROOT, "next.config.mjs"), "utf8");
+    expect(source).toMatch(
+      /async redirects\(\)\s*\{\s*return buildRedirects\(readSiteHosts\(\)\);\s*\}/,
+    );
+    expect(cfg.today).toEqual(cfg.todayFromHosts);
+  });
+
+  it("their sources are the public paths, the legacy aliases and the raw page files, nothing else", () => {
+    expect(hostRules.map((r) => r.source).sort()).toEqual(
+      [...PUBLIC_PATHS, ...LEGACY_SOURCES, ...RAW_PATHS].sort(),
+    );
+    for (const rule of hostRules) {
+      expect(rule.source).not.toMatch(/^\/(dashboard|api)(\/|$)/);
+      expect(AUTH_PATHS).not.toContain(rule.source);
     }
   });
 });
