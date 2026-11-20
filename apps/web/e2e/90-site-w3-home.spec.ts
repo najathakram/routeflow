@@ -651,3 +651,73 @@ for (const { w, h } of [
     expect(faults).toEqual([]);
   });
 }
+
+/**
+ * SA-1190 A3-K2 (a). Over the whole motion range, the big line's box overlaps no text box of the problem picture (every
+ * element with text of its own under .pb-art, which holds the phone, the notes and the invoice), at every 0.02 beat of
+ * the hand-over. K1 (above) still asserts contrast at any beat where this fails.
+ */
+async function pictureTextOverlaps(page: Page): Promise<{ boxes: number; hits: string[] }> {
+  return page.evaluate(() => {
+    const big = document.querySelector(".pb-big") as HTMLElement | null;
+    const art = document.querySelector(".pb-art") as HTMLElement | null;
+    if (!big || !art) throw new Error("the problem section is missing .pb-big or .pb-art");
+    const bb = big.getBoundingClientRect();
+    const hits: string[] = [];
+    let boxes = 0;
+    const walker = document.createTreeWalker(art, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const text = (n.textContent ?? "").trim();
+      if (!text) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      for (const r of Array.from(range.getClientRects())) {
+        if (r.width < 1 || r.height < 1) continue;
+        boxes++;
+        if (bb.left < r.right && bb.right > r.left && bb.top < r.bottom && bb.bottom > r.top)
+          hits.push(`"${text.slice(0, 24)}" at ${Math.round(r.left)},${Math.round(r.top)}`);
+      }
+    }
+    return { boxes, hits };
+  });
+}
+
+for (const { w, h } of [
+  { w: 900, h: 700 },
+  { w: 1024, h: 768 },
+  { w: 1180, h: 800 },
+  { w: 1280, h: 800 },
+  { w: 1440, h: 900 },
+  { w: 1920, h: 1080 },
+]) {
+  test(`T47 the big line overlaps no text of the problem picture, every 0.02 of the hand-over @${w}x${h}`, async ({
+    page,
+  }) => {
+    test.setTimeout(180_000);
+    await installSettle(page);
+    await open(page, w, h);
+    const top = await page.evaluate(() => {
+      const s = document.querySelector("#problem") as HTMLElement | null;
+      if (!s) throw new Error("no #problem section");
+      return s.getBoundingClientRect().top + window.scrollY;
+    });
+    const hits: string[] = [];
+    let beats = 0;
+    for (let i = 0; i < 18; i++) {
+      const k = 1.02 + 0.02 * i;
+      const y = Math.round(top + k * h);
+      await page.evaluate((yy) => window.scrollTo(0, yy), y);
+      await page.waitForFunction((yy) => Math.abs(window.scrollY - yy) <= 1, y);
+      await settle(page, "#problem");
+      await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+      const r = await pictureTextOverlaps(page);
+      // a sweep that finds no text boxes proves nothing (L-202)
+      if (r.boxes === 0) throw new Error("the picture has no text boxes to test against");
+      beats++;
+      console.log(`T47 text overlap ${w} ${k.toFixed(2)}: ${r.boxes} boxes, ${r.hits.length} hit`);
+      for (const hit of r.hits) hits.push(`beat ${k.toFixed(2)}: the big line covers ${hit}`);
+    }
+    expect(beats).toBe(18);
+    expect(hits).toEqual([]);
+  });
+}
