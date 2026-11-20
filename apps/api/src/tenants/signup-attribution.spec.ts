@@ -65,7 +65,7 @@ describe("normalizeSignupAttribution", () => {
     });
   });
 
-  it("caps lengths: utm 200, click ids 255, path 200, host 253", () => {
+  it("caps lengths: utm 200, click ids 255, path 200; a host past 253 is dropped, never cut (SA-1179 K3)", () => {
     const out = normalizeSignupAttribution(
       {
         utmSource: "a".repeat(300),
@@ -79,8 +79,39 @@ describe("normalizeSignupAttribution", () => {
     expect(out.landingPath).toHaveLength(200);
     const host = Array.from({ length: 6 }, () => "a".repeat(50)).join(".");
     expect(host.length).toBeGreaterThan(253);
-    expect(normalizeSignupAttribution({ referrerHost: host }, NOW)).toEqual({
-      referrerHost: host.slice(0, 253),
+    // A cut name is a different site's name, so it is dropped whole.
+    expect(normalizeSignupAttribution({ referrerHost: host, utmSource: "x" }, NOW)).toEqual({
+      utmSource: "x",
+    });
+    const longest = [61, 63, 63, 63].map((n) => "a".repeat(n)).join(".");
+    expect(longest).toHaveLength(253);
+    expect(normalizeSignupAttribution({ referrerHost: longest }, NOW)).toEqual({
+      referrerHost: longest,
+    });
+  });
+
+  it("drops a utm value that looks like an email address, keeping the rest (SA-1179 K3)", () => {
+    expect(
+      normalizeSignupAttribution(
+        {
+          utmSource: "newsletter",
+          utmMedium: "email",
+          utmCampaign: "jane.doe@acme.test",
+          utmTerm: "to: ops@acme.test now",
+          utmContent: "a@b",
+        },
+        NOW,
+      ),
+    ).toEqual({ utmSource: "newsletter", utmMedium: "email", utmContent: "a@b" });
+    expect(normalizeSignupAttribution({ utmSource: "x@acme.test" }, NOW)).toBeNull();
+  });
+
+  it("refuses a landing path that starts with a slash and a backslash (SA-1179 K3)", () => {
+    expect(
+      normalizeSignupAttribution({ landingPath: "/\\evil.example/x", utmSource: "a" }, NOW),
+    ).toEqual({ utmSource: "a" });
+    expect(normalizeSignupAttribution({ landingPath: "/pricing\\x" }, NOW)).toEqual({
+      landingPath: "/pricing\\x",
     });
   });
 

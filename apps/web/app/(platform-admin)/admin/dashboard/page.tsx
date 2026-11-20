@@ -110,7 +110,8 @@ const SOURCE_COLUMNS: Array<[keyof Omit<SourceRow, "source">, string]> = [
   ["firstOrder", "First order"],
   ["firstInvoiceSent", "First invoice issued"],
   ["firstPayment", "First payment"],
-  ["payingNow", "Paying now"],
+  // ACTIVE today, comped and hand-set plans included, so not "paying" (SA-1179 K4).
+  ["payingNow", "On a plan now"],
 ];
 
 const SOURCE_CARD_TITLE = "Sign-ups by source, last 8 weeks";
@@ -120,6 +121,13 @@ function SignupsBySourceCard({ data }: { data: NonNullable<PlatformStats["signup
     return (
       <AdminCard title={SOURCE_CARD_TITLE}>
         <p className="text-sm text-slate-400">These numbers can&apos;t be shown right now.</p>
+      </AdminCard>
+    );
+  }
+  if (data.rows.length === 0) {
+    return (
+      <AdminCard title={SOURCE_CARD_TITLE}>
+        <p className="text-sm text-slate-400">No sign-ups in the last 8 weeks.</p>
       </AdminCard>
     );
   }

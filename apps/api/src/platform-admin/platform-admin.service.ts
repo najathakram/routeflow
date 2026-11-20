@@ -151,7 +151,11 @@ import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
 import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
-import { signupSourceLabel, type SignupSourceFields } from "./signup-source-label";
+import {
+  bySignupsThenLabel,
+  signupSourceLabel,
+  type SignupSourceFields,
+} from "./signup-source-label";
 
 /** 409 TENANT_TRIAL_EXTEND_NOT_ALLOWED: an ACTIVE tenant is never moved to TRIAL. */
 function activeTenantTrialRefusal(): ConflictException {
@@ -2365,7 +2369,8 @@ export class PlatformAdminService {
   /**
    * Phase 1: the sign-up cohort (live tenants created in the eight weeks) grouped by where each came
    * from. Each count is per tenant and uses the weekly funnel's own definitions through the shared
-   * reads. `payingNow` is the tenant's status being ACTIVE today. Biggest source first.
+   * reads. `payingNow` is the tenant's status being ACTIVE today (comped and hand-set plans too, so the card
+   * says "On a plan now"). Biggest source first, a tie by label (SA-1179 K4).
    */
   private async _signupsBySource(
     now: Date,
@@ -2417,7 +2422,7 @@ export class PlatformAdminService {
       if (inWindow(cohort.firstPayment.get(t.id))) row.firstPayment += 1;
       if (t.status === "ACTIVE") row.payingNow += 1;
     }
-    return { rows: [...bySource.values()].sort((a, b) => b.signups - a.signups) };
+    return { rows: [...bySource.values()].sort(bySignupsThenLabel) };
   }
 
   private async _signupsBySourceOrUnavailable(

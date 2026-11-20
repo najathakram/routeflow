@@ -95,7 +95,10 @@ function fromReferrer(referrer: string, origin: string): SignupAttribution {
     const first = url.pathname.split("/")[1];
     return { ...fromParams(url.searchParams), ...(first ? { landingPath: `/${first}` } : {}) };
   }
-  return url.hostname ? { referrerHost: url.hostname } : {};
+  // Web pages only: an app referrer (android-app://com.google.android.gm/ is the Gmail app) names an
+  // app, not a site, and must never read as a search (SA-1179 K2).
+  const web = url.protocol === "http:" || url.protocol === "https:";
+  return web && url.hostname ? { referrerHost: url.hostname } : {};
 }
 
 export function buildSignupAttribution(input: {

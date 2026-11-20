@@ -84,6 +84,20 @@ describe("buildSignupAttribution", () => {
     expect(out).toEqual({ referrerHost: "www.google.com" });
   });
 
+  it("keeps a referrer host only from an http or https page (SA-1179 K2)", () => {
+    for (const referrer of [
+      "android-app://com.google.android.gm/",
+      "android-app://com.google.android.googlequicksearchbox/",
+      "ftp://www.google.com/x",
+      "file:///C:/x.html",
+    ]) {
+      expect(buildSignupAttribution({ ...base, referrer })).toBeUndefined();
+    }
+    expect(buildSignupAttribution({ ...base, referrer: "http://www.bing.com/" })).toEqual({
+      referrerHost: "www.bing.com",
+    });
+  });
+
   it("lets the first-touch record and the URL win over the referrer", () => {
     expect(
       buildSignupAttribution({

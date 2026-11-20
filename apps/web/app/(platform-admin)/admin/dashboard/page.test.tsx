@@ -228,7 +228,7 @@ describe("AdminDashboardPage — sign-ups by source (Phase 1)", () => {
       "First order",
       "First invoice issued",
       "First payment",
-      "Paying now",
+      "On a plan now",
     ]);
     expect(
       within(region)
@@ -250,6 +250,18 @@ describe("AdminDashboardPage — sign-ups by source (Phase 1)", () => {
         "Each sign-up from the last 8 weeks counts once, so Verified can differ from the weekly table.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("says so in one line when there were no sign-ups, with no empty table (SA-1179 K4)", async () => {
+    mockStatsAndGrowth(baseStats({ signupsBySource: { rows: [] } }));
+
+    render(<AdminDashboardPage />);
+
+    expect(await screen.findByText("Sign-ups by source, last 8 weeks")).toBeInTheDocument();
+    expect(screen.getByText("No sign-ups in the last 8 weeks.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Sign-ups by source, last 8 weeks" }),
+    ).not.toBeInTheDocument();
   });
 
   it("says the numbers can't be shown when the read failed, and the page still loads", async () => {
