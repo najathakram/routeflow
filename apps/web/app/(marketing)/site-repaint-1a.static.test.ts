@@ -46,9 +46,7 @@ const ALIASES =
 const refs = (file: string, re: RegExp) => [...new Set(stripComments(read(file)).match(re) ?? [])];
 
 // Files outside this lane that still reference a retired name today (scanned 2026-11-14).
-const T14B_ROWS: Array<{ file: string; lane: string; wave: string }> = [
-  { file: "public/site/graphics/rf-graphics.css", lane: "2.1b-last", wave: "W2" },
-];
+const T14B_ROWS: Array<{ file: string; lane: string; wave: string }> = [];
 
 // Files outside this lane that still hold a gradient, blur, glow or non-ring shadow today.
 const T18A_ROWS: Array<{ file: string; lane: string; wave: string }> = [];
@@ -72,12 +70,15 @@ describe("T14b scoped: no retired token in this lane's files", () => {
     expect(refs(file, ALIASES)).toEqual([]);
   });
 
-  it.each(T14B_ROWS.map((r) => [r.file, r.lane, r.wave]))(
-    "%s still references a retired name (owned by %s, %s): a clean file loses its row",
-    (file) => {
-      expect(refs(file, RETIRED).length).toBeGreaterThan(0);
-    },
-  );
+  // An empty table is fine (every file is clean): it.each throws on no rows, so the block is conditional.
+  if (T14B_ROWS.length > 0) {
+    it.each(T14B_ROWS.map((r) => [r.file, r.lane, r.wave]))(
+      "%s still references a retired name (owned by %s, %s): a clean file loses its row",
+      (file) => {
+        expect(refs(file, RETIRED).length).toBeGreaterThan(0);
+      },
+    );
+  }
 
   it("no other site CSS file references a retired name without a row", () => {
     const rows = new Set(T14B_ROWS.map((r) => r.file));
