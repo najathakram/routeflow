@@ -64,6 +64,10 @@ interface Loaded {
   sitemapGen: { ok?: string[]; error?: string };
   sitemapConst: { ok?: string[]; error?: string };
   iconGen: { ok?: string[]; error?: string };
+  sitemapDestructured: { ok?: string[]; error?: string };
+  sitemapList: { ok?: string[]; error?: string };
+  sitemapLet: { ok?: string[]; error?: string };
+  iconVar: { ok?: string[]; error?: string };
   iconPlain: { ok?: string[]; error?: string };
   ogPlain: { ok?: string[]; error?: string };
   helpersOk: { ok?: unknown; error?: string };
@@ -154,6 +158,10 @@ function load(): Loaded {
     ` sitemapGen: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export async function generateSitemaps() { return []; }" })))),` +
     ` sitemapConst: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export const generateSitemaps = async () => [];" })))),` +
     ` iconGen: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null }), src({ "icon.tsx": "export function generateImageMetadata() { return []; } export default function Icon() {}" })))),` +
+    ` sitemapDestructured: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export const { generateSitemaps } = mod;" })))),` +
+    ` sitemapList: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "const generateSitemaps = async () => []; export { generateSitemaps };" })))),` +
+    ` sitemapLet: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "sitemap.ts": null }), src({ "sitemap.ts": "export let generateSitemaps = async () => [];" })))),` +
+    ` iconVar: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null }), src({ "icon.tsx": "export var generateImageMetadata = () => [];" })))),` +
     ` iconPlain: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "icon.tsx": null }), src({ "icon.tsx": "export default function Icon() {}" })))),` +
     ` ogPlain: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "opengraph-image.tsx": null }), src({ "opengraph-image.tsx": "export default function Og() {}" })))),` +
     ` helpersOk: attempt(() => l.assertNextHelpers(l.NEXT_HELPERS)),` +
@@ -396,6 +404,10 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
     expect(cfg.sitemapGen.error).toMatch(/generateSitemaps/);
     expect(cfg.sitemapConst.error).toMatch(/generateSitemaps/);
     expect(cfg.iconGen.error).toMatch(/generateImageMetadata/);
+    expect(cfg.sitemapDestructured.error).toMatch(/generateSitemaps/);
+    expect(cfg.sitemapList.error).toMatch(/generateSitemaps/);
+    expect(cfg.sitemapLet.error).toMatch(/generateSitemaps/);
+    expect(cfg.iconVar.error).toMatch(/generateImageMetadata/);
     expect(cfg.iconPlain).toEqual({ ok: ["/icon"] });
     expect(cfg.ogPlain).toEqual({ ok: ["/opengraph-image"] });
   });
