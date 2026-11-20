@@ -35,14 +35,6 @@ const PENDING_WAVE: Record<string, { wave: string; reason: string }> = {
       },
     ]),
   ),
-  ...Object.fromEntries(
-    ["getting-started", "does-and-doesnt", "data-in-and-out", "security", "company", "contact"].map(
-      (p): [string, { wave: string; reason: string }] => [
-        `prices-js-only-with-plans:${p}`,
-        { wave: "W3 2.3-inner", reason: "prices.js is loaded but the page has no [data-plan]" },
-      ],
-    ),
-  ),
 };
 
 const kb = (bytes: number): number => bytes / 1024;
