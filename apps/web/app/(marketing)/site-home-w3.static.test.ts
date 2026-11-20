@@ -116,7 +116,7 @@ describe("the page's still is the script's still", () => {
 
 describe("SA-1180 (2): a status colour marks a status", () => {
   const css = read("css/home.css");
-  /** The selectors of the status marks (Paid, Pending, Overdue): a pill each, . */
+  /** The selectors of the status marks (Paid, Pending, Overdue): a pill each. */
   const STATUS_MARKS = [".a-pill--ok", ".a-pill--warn", ".a-pill--bad"];
   const STATUS = /var\(--rf-(?:paid|pending|overdue)(?:-bg)?\)/;
 
@@ -172,18 +172,27 @@ describe("SA-1185: soft is a surface, pills say their status", () => {
   it("the price change is large text, or reads the link colour where it is smaller", () => {
     const rs = rulesOf(css).filter((r) => r.selectors.includes(".c-chg b"));
     expect(rs.length).toBeGreaterThan(0);
-    const weights = rs.flatMap((r) =>
-      [...r.body.matchAll(/font-weight:\s*(\d+)/g)].map((m) => Number(m[1])),
-    );
-    const weight = weights.length ? (weights[weights.length - 1] as number) : 400;
-    const sized = rs.filter((r) => /font-size:/.test(r.body));
-    expect(sized.length).toBeGreaterThan(0);
-    for (const r of sized) {
-      const raw = /font-size:\s*([^;]+)/.exec(r.body)?.[1] as string;
+    // The cascade in source order: each rule reads its own weight (font-weight, or the font shorthand), else the
+    // one a rule before it set (a breakpoint rule that only changes the size keeps the weight above it).
+    let weight = 400;
+    let checked = 0;
+    for (const r of rs) {
+      const body = r.body;
+      const short = /(?:^|[;\s])font:\s*([^;]+)/.exec(body)?.[1];
+      const w =
+        /font-weight:\s*(bold|\d+)/.exec(body)?.[1] ??
+        (short ? /(?:^|\s)(bold|[1-9]00)(?=\s)/.exec(short)?.[1] : undefined);
+      if (w !== undefined) weight = w === "bold" ? 700 : Number(w);
+      const raw =
+        /font-size:\s*([^;]+)/.exec(body)?.[1] ??
+        (short ? /(?:^|\s)([\d.]+(?:px|rem|em))(?=[\s/])/.exec(short)?.[1] : undefined);
+      if (raw === undefined) continue;
       const size = px(raw);
       if (size === null) throw new Error("cannot read the size " + raw);
-      if (!largeText(size, weight)) expect(r.body).toContain("--rf-link");
+      checked += 1;
+      if (!largeText(size, weight)) expect(body).toContain("--rf-link");
     }
+    expect(checked).toBeGreaterThan(0);
   });
 
   it("the large-text rule reads rem, em and clamp, and the weight (fixtures)", () => {

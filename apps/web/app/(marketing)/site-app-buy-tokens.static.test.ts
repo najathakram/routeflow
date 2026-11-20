@@ -32,18 +32,27 @@ const paletteTokens = (): Set<string> => {
   return out;
 };
 
-/** The picture-token :root block (it follows the "Pictures of the product only" comment), colours only: the font and mono stacks are not colours. */
-const block = (): Array<{ name: string; value: string }> => {
+/** A font stack: a comma list ending in a generic family, or the one var() of the --rf-font token; never a colour. */
+const isFontStack = (v: string) =>
+  v === "var(--rf-font)" ||
+  (v.includes(",") && /(?:sans-serif|serif|monospace)$/.test(v) && !v.includes("#"));
+
+/** The picture-token :root block (it follows the "Pictures of the product only" comment); `--app` and `--mono` must be font stacks and are returned apart from the colours. */
+const blockAll = (): Array<{ name: string; value: string }> => {
   const raw = fs.readFileSync(path.join(SITE, "graphics/rf-graphics.css"), "utf8");
   const at = raw.indexOf("Pictures of the product only");
   const open = at < 0 ? -1 : raw.indexOf(":root{", at);
   const close = open < 0 ? -1 : raw.indexOf("\n}", open);
   if (close < 0) throw new Error("the picture-token :root block was not found");
   const text = raw.slice(open, close).replace(/\/\*[\s\S]*?\*\//g, "");
-  return [...text.matchAll(/(?<![\w-])(--[\w-]+)\s*:\s*([^;}]+)/g)]
-    .map((m) => ({ name: m[1] as string, value: (m[2] as string).trim() }))
-    .filter((d) => d.name !== "--app" && d.name !== "--mono");
+  return [...text.matchAll(/(?<![\w-])(--[\w-]+)\s*:\s*([^;}]+)/g)].map((m) => ({
+    name: m[1] as string,
+    value: (m[2] as string).trim(),
+  }));
 };
+const isFontToken = (d: { name: string }) => d.name === "--app" || d.name === "--mono";
+const fonts = () => blockAll().filter(isFontToken);
+const block = () => blockAll().filter((d) => !isFontToken(d));
 
 /** Every picture token: the whole block whatever its prefix, plus the --app-/--buy- overrides outside it. */
 const picture = () => {
@@ -64,11 +73,19 @@ describe("T21: the product pictures' colours are palette or status values", () =
     expect(found.some((d) => d.name.startsWith("--buy-"))).toBe(true);
   });
 
-  it("no --app-* or --buy-* declaration holds a # literal", () => {
+  it("--app and --mono are font stacks, not colours", () => {
+    const found = fonts();
+    expect(found.map((d) => d.name).sort()).toEqual(["--app", "--mono"]);
+    expect(found.filter((d) => !isFontStack(d.value)).map((d) => `${d.name}: ${d.value}`)).toEqual(
+      [],
+    );
+  });
+
+  it("no picture-token declaration holds a # literal", () => {
     expect(picture().filter((d) => d.value.includes("#"))).toEqual([]);
   });
 
-  it("every --app-* and --buy-* declaration is one var() of a palette or status token (or of another picture token)", () => {
+  it("every picture-token declaration is one var() of a palette or status token (or of another picture token)", () => {
     const ok = paletteTokens();
     const bad = picture().filter((d) => {
       const m = /^var\(\s*(--[\w-]+)\s*\)$/.exec(d.value);
