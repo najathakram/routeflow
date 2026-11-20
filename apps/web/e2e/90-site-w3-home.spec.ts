@@ -1,23 +1,36 @@
 /**
  * Wave 3, lane 2.3-home (the home page), project "site-waves": T20 (home's 14 bands hold the white, bone or ink role at
  * 1440x900 and 390x844), T15 (every opaque background covering a quarter of the window is white, bone or ink), T47 (the
- * problem section's invoice box sits inside its frame at 1440x900, P05). Signed out, desktop Chrome, against a running
- * stack (baseURL as in the other site specs). The three colours are read from the page's own token style
- * (--brand-white, --brand-bone, --brand-ink), never typed. Each test gathers every problem and asserts once; a sweep
- * that finds nothing throws (L-202); nothing sleeps.
+ * problem section: its invoice box sits inside its frame at 1440x900, P05; and the hand-over of the picture to the big
+ * line, SA-1191: the no-harm contrast rule, A1-K1 the line stays in the window, A1-K2 the line keeps a 24 px gutter from
+ * every painted picture box). Signed out, desktop Chrome, against a running stack (baseURL as in the other site specs).
+ * The three colours are read from the page's own token style (--brand-white, --brand-bone, --brand-ink), never typed;
+ * every colour, opacity and box of T47's hand-over is read from the page at the beat. Each test gathers every problem
+ * and asserts once; a sweep that finds nothing throws (L-202); nothing sleeps.
  */
 import { test, expect, type Page } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
 import { blockAnalytics, frames, nonEmpty } from "./helpers/site-proof";
 import {
+  SEEN,
+  flatFaults,
   floorFor,
-  overlapFaults,
+  judgeRead,
+  missedWindows,
   overlapRatios,
   parseRgb,
+  rectGap,
   scrubOff,
   scrubSettled,
+  verdict,
+  type BoxRead,
+  type JudgeOptions,
+  type ProblemRead,
+  type Rect,
   type Rgb,
+  type TextRead,
+  type Tokens,
   type TriggerLike,
 } from "./helpers/site-overlap";
 
@@ -256,89 +269,158 @@ test("T47 the invoice box of the problem picture sits inside its frame @1440x900
 });
 
 /**
- * What T47 measures at one beat: each problem-picture heading against its own box (the phone's sender line and the
- * invoice's "Invoice" heading), and the opacities and overlap of the big line against each heading, as data. The pass
- * or fail of the overlap is decided in node by overlapFaults (SA-1190 K1), not here.
+ * What T47 reads at one beat, evaluated in the page (SA-1191 K2). Every colour, opacity, size and box comes from
+ * getComputedStyle, getBoundingClientRect or Range rects at that beat, never from a table. Text is found by walking
+ * #problem, not from a selector list; the line's boxes are its glyph rects. Self-contained: it is injected as source
+ * (addInitScript), so the page never builds code at run time (the production policy has no unsafe-eval).
  */
-type BeatSample = {
-  name: string;
-  bigOpacity: number;
-  artOpacity: number;
-  overlap: boolean;
-  // as the page computes them: the heading's colour, what it sits on, the panel behind the picture, its type
-  text: string;
-  card: string;
-  panel: string;
-  bigColor: string;
-  fontPx: number;
-  weight: number;
-};
-
-async function problemBeat(page: Page): Promise<{ faults: string[]; samples: BeatSample[] }> {
-  return page.evaluate(() => {
-    const q = (sel: string) => {
-      const el = document.querySelector(sel) as HTMLElement | null;
-      if (!el) throw new Error("the problem picture is missing " + sel);
-      return el;
-    };
-    // an element's effective opacity: its own times every ancestor's, up to and including the section
-    const chain = (from: Element | null): number => {
-      let o = 1;
-      for (let e = from; e; e = e.parentElement) {
-        o *= Number(getComputedStyle(e).opacity);
-        if (e.id === "problem") break;
-      }
-      return o;
-    };
-    const big = q(".pb-big");
-    const bb = big.getBoundingClientRect();
-    const bigOpacity = chain(big);
-    const bigColor = getComputedStyle(big).color;
-    const out: string[] = [];
-    const samples: BeatSample[] = [];
-    // the first opaque background at or above an element: what a heading is painted on
-    const paint = (from: Element | null): string => {
-      for (let e = from; e; e = e.parentElement) {
-        const bg = getComputedStyle(e).backgroundColor;
-        const m = /^rgba?\([^)]*?(?:,\s*([\d.]+))?\)$/.exec(bg);
-        if (m && (m[1] === undefined || Number(m[1]) > 0)) return bg;
-      }
-      throw new Error("no opaque background above the heading");
-    };
-    const panel = paint(q(".pb-art").parentElement);
-    const pairs: Array<[string, string, string]> = [
-      ["phone", ".pb-ph", ".pb-ph .pb-from"],
-      ["invoice", ".pb-paper", ".pb-paper .pp-h"],
-    ];
-    for (const [name, boxSel, headSel] of pairs) {
-      const box = q(boxSel).getBoundingClientRect();
-      const headEl = q(headSel);
-      const h = headEl.getBoundingClientRect();
-      if (!(
-        h.left >= box.left - 2 &&
-        h.right <= box.right + 2 &&
-        h.top >= box.top - 2 &&
-        h.bottom <= box.bottom + 2
-      ))
-        out.push(name + " heading leaves its box");
-      if (headEl.scrollWidth > headEl.clientWidth + 1) out.push(name + " heading is clipped");
-      const hit = bb.left < h.right && bb.right > h.left && bb.top < h.bottom && bb.bottom > h.top;
-      const cs = getComputedStyle(headEl);
-      samples.push({
-        name,
-        bigOpacity,
-        artOpacity: chain(headEl),
-        overlap: hit,
-        text: cs.color,
-        card: paint(headEl),
-        panel,
-        bigColor,
-        fontPx: parseFloat(cs.fontSize),
-        weight: Number(cs.fontWeight),
-      });
-    }
-    return { faults: out, samples };
+function t47Read(): ProblemRead {
+  const q = (sel: string): HTMLElement => {
+    const el = document.querySelector(sel) as HTMLElement | null;
+    if (!el) throw new Error("the problem picture is missing " + sel);
+    return el;
+  };
+  const sec = q("#problem");
+  const round = (v: number) => Math.round(v * 100) / 100;
+  const box = (r: DOMRect | DOMRectReadOnly): Rect => ({
+    left: round(r.left),
+    top: round(r.top),
+    right: round(r.right),
+    bottom: round(r.bottom),
   });
+  // an element's effective opacity: its own times every ancestor's, up to and including the section
+  const chain = (from: Element | null): number => {
+    let o = 1;
+    for (let e = from; e; e = e.parentElement) {
+      o *= Number(getComputedStyle(e).opacity);
+      if (e === sec) break;
+    }
+    return o;
+  };
+  const painted = (e: Element): boolean => {
+    const m = /^rgba?\(([^)]*)\)$/.exec(getComputedStyle(e).backgroundColor);
+    if (!m) return false;
+    const parts = (m[1] as string).split(",");
+    return parts.length < 4 || Number(parts[3]) > 0;
+  };
+  // the first painted background at or above an element: what a text is painted on
+  const paint = (from: Element | null): string => {
+    for (let e = from; e; e = e.parentElement) {
+      if (painted(e)) return getComputedStyle(e).backgroundColor;
+      if (e === sec) break;
+    }
+    throw new Error("no painted background above a text of the problem section");
+  };
+  const texts: TextRead[] = [];
+  const walker = document.createTreeWalker(sec, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const name = (n.textContent || "").trim();
+    const el = n.parentElement;
+    if (!name || !el) continue;
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    const rects = Array.from(range.getClientRects())
+      .filter((r) => r.width >= 1 && r.height >= 1)
+      .map(box);
+    if (rects.length === 0) continue; // display:none, or collapsed: nothing painted
+    const cs = getComputedStyle(el);
+    texts.push({
+      name: name.slice(0, 28),
+      inArt: !!el.closest(".pb-art"),
+      inBig: !!el.closest(".pb-big"),
+      color: cs.color,
+      backdrop: paint(el),
+      opacity: chain(el),
+      fontPx: parseFloat(cs.fontSize),
+      weight: Number(cs.fontWeight),
+      rects,
+    });
+  }
+  const bigs = texts.filter((t) => t.inBig);
+  if (bigs.length === 0) throw new Error("the big line has no glyph rects");
+  // the line is one text with one look; its glyph rects are every rect of its text nodes (no spread: this is injected as source)
+  const first = bigs[0] as TextRead;
+  const lineRects: Rect[] = [];
+  for (const t of bigs) for (const r of t.rects) lineRects.push(r);
+  const line: TextRead = {
+    name: "the big line",
+    inArt: first.inArt,
+    inBig: true,
+    color: first.color,
+    backdrop: first.backdrop,
+    opacity: first.opacity,
+    fontPx: first.fontPx,
+    weight: first.weight,
+    rects: lineRects,
+  };
+  // every painted box of the picture: the bezel, the screen, the bubbles, the notes, the paper
+  const art = q(".pb-art");
+  const boxes: BoxRead[] = [];
+  for (const e of Array.from(art.querySelectorAll("*"))) {
+    if (!painted(e)) continue;
+    const r = e.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) continue;
+    boxes.push({
+      name: e.tagName.toLowerCase() + "." + String(e.className).trim().split(/\s+/).join("."),
+      bg: getComputedStyle(e).backgroundColor,
+      opacity: chain(e),
+      rect: box(r),
+    });
+  }
+  // each heading of the picture against its own box
+  const structural: string[] = [];
+  const pairs: Array<[string, string, string]> = [
+    ["phone", ".pb-ph", ".pb-ph .pb-from"],
+    ["invoice", ".pb-paper", ".pb-paper .pp-h"],
+  ];
+  for (const [name, boxSel, headSel] of pairs) {
+    const b = q(boxSel).getBoundingClientRect();
+    const headEl = q(headSel);
+    const h = headEl.getBoundingClientRect();
+    if (!(
+      h.left >= b.left - 2 &&
+      h.right <= b.right + 2 &&
+      h.top >= b.top - 2 &&
+      h.bottom <= b.bottom + 2
+    ))
+      structural.push(name + " heading leaves its box");
+    if (headEl.scrollWidth > headEl.clientWidth + 1) structural.push(name + " heading is clipped");
+  }
+  const inv = q(".pb-paper .pp-h");
+  return {
+    vw: window.innerWidth,
+    vh: window.innerHeight,
+    panel: paint(art.parentElement),
+    line,
+    texts: texts.filter((t) => !t.inBig),
+    boxes,
+    structural,
+    roles: {
+      invoiceText: getComputedStyle(inv).color,
+      invoiceCard: paint(inv),
+      fromText: getComputedStyle(q(".pb-ph .pb-from")).color,
+    },
+  };
+}
+
+/**
+ * The pinned timeline of the problem section, reached from the page the way the settle check reaches its triggers:
+ * ScrollTrigger.getAll(), the one scrubbed trigger whose element is inside #problem, and its animation. No test hook is
+ * needed in home-up.js. Self-contained, injected as source.
+ */
+function t47Find(): { st?: any; tl?: any; error?: string } {
+  const w = window as unknown as Record<string, any>;
+  if (!w.ScrollTrigger) return { error: "window.ScrollTrigger is missing" };
+  const sec = document.querySelector("#problem");
+  if (!sec) return { error: "no #problem section" };
+  const hits = (w.ScrollTrigger.getAll() as any[]).filter(
+    (t) => t.animation && t.vars && t.vars.scrub && t.trigger && sec.contains(t.trigger),
+  );
+  if (hits.length !== 1)
+    return {
+      error: `${hits.length} scrubbed triggers inside #problem, expected the one pinned timeline`,
+    };
+  return { st: hits[0], tl: hits[0].animation };
 }
 
 /** A brand token as the page's token style defines it, as channels. */
@@ -351,50 +433,88 @@ async function token(page: Page, key: string): Promise<Rgb> {
   );
 }
 
-const same = (a: Rgb, b: Rgb) => a.every((v, i) => v === b[i]);
+async function tokens(page: Page): Promise<Tokens> {
+  return {
+    white: await token(page, "white"),
+    ink: await token(page, "ink"),
+    steel: await token(page, "steel"),
+  };
+}
 
 /**
- * Every fault at one beat: the structural ones, the colour roles the K1 maths assumes (checked against the page's
- * tokens, not assumed), and K1 for both headings (SA-1190 A1). Each heading's floor comes from its own computed size and
- * weight (3 for large text, 4.5 otherwise), never typed. The card is the heading's real computed background.
+ * Every fault at one beat of a real scroll: the structural ones, the colour roles the maths assumes (checked against the
+ * page's tokens, not assumed), and the no-harm rule and the two guards over what the page reports at that beat.
  */
-async function beatFaults(page: Page, w: number, k: string): Promise<string[]> {
-  const white = await token(page, "white");
-  const ink = await token(page, "ink");
-  const steel = await token(page, "steel");
-  const beat = await problemBeat(page);
-  const out = beat.faults.map((f) => `beat ${k}: ${f}`);
-  for (const sm of beat.samples) {
-    const look = {
-      text: parseRgb(sm.text),
-      card: parseRgb(sm.card),
-      panel: parseRgb(sm.panel),
-      white,
-    };
-    const roleFaults: string[] = [];
-    if (!same(look.panel, ink)) roleFaults.push(`the panel is ${sm.panel}, not the ink token`);
-    if (!same(parseRgb(sm.bigColor), white))
-      roleFaults.push(`the big line is ${sm.bigColor}, not the white token`);
-    if (sm.name === "invoice") {
-      if (!same(look.card, white)) roleFaults.push(`the invoice card is ${sm.card}, not white`);
-      if (!same(look.text, ink)) roleFaults.push(`INVOICE is ${sm.text}, not ink`);
-    } else if (!same(look.text, steel)) {
-      roleFaults.push(`the sender heading is ${sm.text}, not the steel token`);
-    }
-    for (const f of roleFaults) out.push(`beat ${k}: ${sm.name}: ${f}`);
-    let note = `, card ${sm.card}`;
-    if (sm.overlap) {
-      const floor = floorFor(sm.fontPx, sm.weight);
-      const r = overlapRatios(sm.artOpacity, sm.bigOpacity, look);
-      note += `, heading ratio ${r.heading.toFixed(2)} (floor ${floor}, ${sm.fontPx}px ${sm.weight}), line ratio ${r.line.toFixed(2)}`;
-      for (const f of overlapFaults(sm.name, sm.artOpacity, sm.bigOpacity, floor, look))
-        out.push(`beat ${k}: ${f}`);
-    }
-    console.log(
-      `T47 beat ${w} ${k} ${sm.name}: big opacity ${sm.bigOpacity}, picture opacity ${sm.artOpacity}, overlap ${sm.overlap}${note}`,
+async function beatFaults(
+  page: Page,
+  w: number,
+  k: string,
+  opts: JudgeOptions = {},
+): Promise<string[]> {
+  const tok = await tokens(page);
+  const read = await page.evaluate(() =>
+    (window as unknown as { __t47Read: () => ProblemRead }).__t47Read(),
+  );
+  const f = judgeRead(read, tok, opts);
+  console.log(
+    `T47 beat ${w} ${k}: line ${read.line.opacity.toFixed(3)}, ${read.texts.length} texts, ${read.boxes.length} boxes, ${f.harm.length} harm, ${f.window.length} window, ${f.gutter.length} gutter`,
+  );
+  return flatFaults(f, k);
+}
+
+/** Wait until the pinned timeline is there, then say where it runs: the scroll positions and its length. */
+async function pinInfo(page: Page): Promise<{ start: number; end: number }> {
+  const find = () =>
+    page.evaluate(() => {
+      const f = (window as unknown as { __t47Find: () => ReturnType<typeof t47Find> }).__t47Find();
+      return f.error
+        ? { error: f.error }
+        : { start: f.st.start as number, end: f.st.end as number, error: "" };
+    });
+  try {
+    await page.waitForFunction(
+      () => {
+        const f = (window as unknown as { __t47Find?: () => ReturnType<typeof t47Find> }).__t47Find;
+        return typeof f === "function" && !f().error;
+      },
+      undefined,
+      { timeout: 20_000 },
+    );
+  } catch (e) {
+    const r = await find();
+    throw new Error(
+      `the problem timeline cannot be reached from the page: ${r.error} (${String(e)})`,
     );
   }
-  return out;
+  const r = await find();
+  if (r.error) throw new Error(r.error);
+  return { start: r.start as number, end: r.end as number };
+}
+
+/** Wait until the timeline's progress has not moved for `ms`, by the page's own clock (SCRUB 0.8 is a lag, not a delay). */
+async function stillFor(page: Page, ms: number): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__t47Still = null;
+  });
+  await page.waitForFunction(
+    (hold) => {
+      const w = window as unknown as {
+        __t47Find: () => ReturnType<typeof t47Find>;
+        __t47Still: { v: number; since: number } | null;
+      };
+      const f = w.__t47Find();
+      if (f.error) throw new Error(f.error);
+      const v = f.tl.progress() as number;
+      const now = performance.now();
+      if (!w.__t47Still || w.__t47Still.v !== v) {
+        w.__t47Still = { v, since: now };
+        return false;
+      }
+      return now - w.__t47Still.since >= hold;
+    },
+    ms,
+    { polling: "raf", timeout: 20_000 },
+  );
 }
 
 /**
@@ -418,11 +538,22 @@ function t47Probe(sel: string): { missing: string | null; off: unknown[]; busy: 
   return { missing: null, off, busy };
 }
 
-/** Put the settle check into every page this test opens. Call before the first navigation. */
+/**
+ * Put the settle check, the page reader and the timeline finder into every page this test opens. Call before the first
+ * navigation. All four are self-contained functions injected as source.
+ */
 async function installSettle(page: Page): Promise<void> {
   await page.addInitScript({
     content:
-      "window.__scrubOff=" + String(scrubOff) + ";window.__t47Probe=" + String(t47Probe) + ";",
+      "window.__scrubOff=" +
+      String(scrubOff) +
+      ";window.__t47Probe=" +
+      String(t47Probe) +
+      ";window.__t47Read=" +
+      String(t47Read) +
+      ";window.__t47Find=" +
+      String(t47Find) +
+      ";",
   });
 }
 
@@ -497,8 +628,10 @@ test("T47 settle check: scrub-only, and it names the trigger that lags (no brows
   expect(scrubSettled([pinLag, elsewhere], 0.005, scope)).toBe(false);
 });
 
-test("T47 overlap rule K1 over the composited opacities (no browser)", () => {
-  // the palette file's colours, never typed
+/**
+ * The palette file's colours, never typed: the three the model uses (ink, white, steel).
+ */
+function paletteLooks() {
   const pal = (
     JSON.parse(
       fs.readFileSync(
@@ -507,88 +640,191 @@ test("T47 overlap rule K1 over the composited opacities (no browser)", () => {
       ),
     ) as { color: Record<string, string> }
   ).color;
-  const ink = parseRgb(pal.ink as string);
-  const white = parseRgb(pal.white as string);
-  // INVOICE: ink on a white card over an ink panel
-  const invoice = { text: ink, card: white, panel: ink, white };
-  // the sender heading as the rule was first worked out (steel on a bone card); the page's real card is read at run time
-  const from = {
-    text: parseRgb(pal.steel as string),
-    card: parseRgb(pal.bone as string),
-    panel: ink,
-    white,
+  return {
+    ink: parseRgb(pal.ink as string),
+    white: parseRgb(pal.white as string),
+    steel: parseRgb(pal.steel as string),
   };
-  // exact fault lists: one case per branch and per boundary, so a dropped branch or a moved >= fails
-  const cases: Array<[string, number, number, number, typeof invoice, string[]]> = [
-    [
-      "invoice",
-      0.72,
-      0.3,
-      4.5,
-      invoice,
-      ["invoice contrast 4.39 is under 4.5 (picture 0.72, line 0.3)"],
-    ],
-    ["invoice", 0.72, 0.3, 3, invoice, []],
-    ["invoice", 0.72, 0.15, 4.5, invoice, []],
-    [
-      "invoice",
-      0.3,
-      0.5,
-      3,
-      invoice,
-      ["the big line over invoice contrast 2.99 is under 3 (picture 0.3, line 0.5)"],
-    ],
-    [
-      "invoice",
-      1,
-      0.7,
-      3,
-      invoice,
-      [
-        "invoice contrast 1.96 is under 3 (picture 1, line 0.7)",
-        "the big line over invoice contrast 1.00 is under 3 (picture 1, line 0.7)",
-      ],
-    ],
-    [
-      "invoice",
-      0.5,
-      0.49,
-      3,
-      invoice,
-      ["invoice contrast 2.02 is under 3 (picture 0.5, line 0.49)"],
-    ],
-    ["invoice", 0.49, 0.49, 3, invoice, []],
-    [
-      "invoice",
-      0.5,
-      0.5,
-      3,
-      invoice,
-      [
-        "invoice contrast 1.98 is under 3 (picture 0.5, line 0.5)",
-        "the big line over invoice contrast 1.98 is under 3 (picture 0.5, line 0.5)",
-      ],
-    ],
-    ["invoice", 0.3, 0.7, 4.5, invoice, []],
-    ["invoice", 0.4, 0.4, 4.5, invoice, []],
-    // the sender heading is small text: p 1 with a 0.1 ghost is 4.29 and fails, 0.05 is 4.77 and passes
-    ["from", 1, 0.1, 4.5, from, ["from contrast 4.29 is under 4.5 (picture 1, line 0.1)"]],
-    ["from", 1, 0.05, 4.5, from, []],
+}
+
+test("T47 no-harm rule: the model's fail rows R1-R6, pass rows G1-G4 and E1 (no browser)", () => {
+  const { ink, white, steel } = paletteLooks();
+  const on = (text: Rgb) => ({ text, card: white, panel: ink, white });
+  // SA-1191-composite-model.cjs, K3's table: each row's solo and comp as the script prints them (2 dp). INVOICE and the
+  // sender heading are texts on a white card; "line" is the big line over the white paper (solo: over the panel alone).
+  // null: the record gives only "below 3" for that row, so the test pins the verdict and the floor.
+  type Row = [
+    string,
+    "invoice" | "line" | "from",
+    number,
+    number,
+    number,
+    number | null,
+    number | null,
+    boolean,
+    boolean,
   ];
-  for (const [name, p, l, floor, look, want] of cases)
-    expect(overlapFaults(name, p, l, floor, look), `${name} p ${p} l ${l} floor ${floor}`).toEqual(
-      want,
-    );
+  const rows: Row[] = [
+    // id, who, floor, p, l, solo, comp, held, harmed
+    ["R1 INVOICE", "invoice", 3, 0.559, 0.395, 6.25, 2.66, true, true],
+    ["R2 line over the paper", "line", 3, 0.559, 0.395, 3.74, 1.59, true, true],
+    ["R3 INVOICE", "invoice", 3, 0.42, 0.53, 4.07, 1.71, true, true],
+    ["R4 line over the paper", "line", 3, 0.42, 0.53, 5.74, 2.41, true, true],
+    ["R5 line over the paper (white on white)", "line", 3, 1, 0.5, 5.25, 1.0, true, true],
+    ["R6 sender heading", "from", 4.5, 1, 0.3, 5.85, 3.07, true, true],
+    ["G1 INVOICE", "invoice", 3, 0.69, 0.236, 8.94, 5.02, true, false],
+    ["G1 line (not held)", "line", 3, 0.69, 0.236, 2.13, 1.2, false, false],
+    ["G2 line", "line", 3, 0.298, 0.647, 7.99, 3.91, true, false],
+    ["G2 INVOICE (below 3, not held)", "invoice", 3, 0.298, 0.647, null, null, false, false],
+    ["G3 INVOICE at 1440 (floor 3)", "invoice", 3, 1, 0.5, 17.96, 3.42, true, false],
+    ["G3 INVOICE at 393 (floor 4.5)", "invoice", 4.5, 1, 0.5, 17.96, 3.42, true, true],
+    ["G4 sender heading", "from", 4.5, 1, 0.1, 5.85, 4.66, true, false],
+    ["E1 sender heading in its own fade", "from", 4.5, 0.72, 0, 4.41, 4.41, false, false],
+  ];
+  for (const [id, who, floor, p, l, solo, comp, held, harmed] of rows) {
+    const r = overlapRatios(p, l, on(who === "from" ? steel : ink));
+    const v =
+      who === "line"
+        ? verdict(r.lineSolo, r.line, floor)
+        : verdict(r.headingSolo, r.heading, floor);
+    if (solo !== null) expect(v.solo.toFixed(2), `${id} solo`).toBe(solo.toFixed(2));
+    if (comp !== null) expect(v.comp.toFixed(2), `${id} comp`).toBe(comp.toFixed(2));
+    expect(v.held, `${id} held`).toBe(held);
+    expect(v.harmed, `${id} harmed`).toBe(harmed);
+  }
+  // the model's thresholds, on the 0.001 grid it scans
+  const from = (fn: (x: number) => number, floor: number) => {
+    for (let i = 0; i <= 1000; i++) if (fn(i / 1000) >= floor) return (i / 1000).toFixed(3);
+    return "never";
+  };
+  const inv = (p: number) => overlapRatios(p, 0, on(ink)).headingSolo;
+  expect(from(inv, 3)).toBe("0.331");
+  expect(from(inv, 4.5)).toBe("0.452");
+  expect(from((p) => overlapRatios(p, 0, on(steel)).headingSolo, 4.5)).toBe("0.738");
+  expect(from((l) => overlapRatios(0, l, on(ink)).lineSolo, 3)).toBe("0.331");
   // large text starts at 24px, or 18.66px and bold (700)
   expect(floorFor(19, 700)).toBe(3);
   expect(floorFor(16, 700)).toBe(4.5);
   expect(floorFor(14, 650)).toBe(4.5);
+  expect(floorFor(36, 650)).toBe(3);
+});
+
+test("T47 geometry and the judge over a page read (no browser)", () => {
+  const { ink, white, steel } = paletteLooks();
+  const css = (c: Rgb) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  const tok: Tokens = { white, ink, steel };
+  const R = (left: number, top: number, right: number, bottom: number): Rect => ({
+    left,
+    top,
+    right,
+    bottom,
+  });
+  // the page reports the line at (1440x900) and a paper with its INVOICE heading; each case moves one thing
+  const make = (l: number, p: number, lineRect: Rect): ProblemRead => ({
+    vw: 1440,
+    vh: 900,
+    panel: css(ink),
+    line: {
+      name: "the big line",
+      inArt: false,
+      inBig: true,
+      color: css(white),
+      backdrop: css(ink),
+      opacity: l,
+      fontPx: 66,
+      weight: 650,
+      rects: [lineRect],
+    },
+    texts: [
+      {
+        name: "Invoice",
+        inArt: true,
+        inBig: false,
+        color: css(ink),
+        backdrop: css(white),
+        opacity: p,
+        fontPx: 19,
+        weight: 700,
+        rects: [R(1000, 600, 1080, 624)],
+      },
+    ],
+    boxes: [
+      { name: "div.pb-obj.pb-paper", bg: css(white), opacity: p, rect: R(980, 560, 1300, 800) },
+    ],
+    structural: [],
+    roles: { invoiceText: css(ink), invoiceCard: css(white), fromText: css(steel) },
+  });
+  const clean = judgeRead(make(0.5, 1, R(120, 300, 640, 560)), tok);
+  expect(clean).toEqual({ harm: [], window: [], gutter: [], other: [] });
+  // R5: the line over a blank part of the paper (no text under it) is white on white
+  const blank = judgeRead(make(0.5, 1, R(1100, 650, 1280, 780)), tok);
+  expect(blank.harm).toEqual([
+    "the line is 1.00 over div.pb-obj.pb-paper, 5.25 alone, floor 3 (picture 1.000, line 0.500)",
+  ]);
+  // R1 and R2 together: the line over INVOICE and the paper at the model's beat
+  const both = judgeRead(make(0.395, 0.559, R(990, 590, 1200, 640)), tok);
+  expect(both.harm).toEqual([
+    '"Invoice" is 2.66 under the line, 6.25 alone, floor 3 (picture 0.559, line 0.395)',
+    "the line is 1.59 over div.pb-obj.pb-paper, 3.74 alone, floor 3 (picture 0.559, line 0.395)",
+  ]);
+  // E1: a text below its floor on its own is in its own fade; the line over it is not that text's harm
+  const fade = judgeRead(make(0, 0.1, R(990, 590, 1200, 640)), tok);
+  expect(fade.harm).toEqual([]);
+  // A1-K1: a glyph rect left of the window at a visible line, not at 0.05 or below
+  expect(judgeRead(make(0.3, 1, R(-12, 300, 500, 560)), tok).window).toEqual([
+    '"the big line" leaves the window (left -12.0; opacity 0.300)',
+  ]);
+  expect(judgeRead(make(0.05, 1, R(-12, 300, 500, 560)), tok).window).toEqual([]);
+  expect(judgeRead(make(0.3, 1, R(900, 300, 1445, 560)), tok).window).toHaveLength(1);
+  expect(judgeRead(make(0.3, 1, R(0, 300, 500, 905)), tok).window).toHaveLength(1);
+  expect(judgeRead(make(0.3, 1, R(0, 0, 1440, 900)), tok).window).toEqual([]);
+  // A1-K2: 20 px clear of the paper is a fault, 24 is clear; at 0.05 or below nothing is held to the gutter
+  const near = (gap: number) => make(0.3, 1, R(700, 600, 980 - gap, 700));
+  expect(judgeRead(near(20), tok).gutter).toEqual([
+    "the line is 20.0 px from div.pb-obj.pb-paper, needs 24 (line 0.300)",
+  ]);
+  expect(judgeRead(near(24), tok).gutter).toEqual([]);
+  expect(judgeRead({ ...near(20), line: { ...near(20).line, opacity: 0.05 } }, tok).gutter).toEqual(
+    [],
+  );
+  // the gap is the straight distance, so a corner counts
+  expect(rectGap(R(0, 0, 10, 10), R(13, 14, 20, 20))).toBe(5);
+  expect(rectGap(R(0, 0, 10, 10), R(5, 5, 20, 20))).toBe(0);
+  // colour roles are checked against the page's own tokens
+  const wrong = make(0.3, 1, R(120, 300, 640, 560));
+  wrong.roles.fromText = css(ink);
+  expect(judgeRead(wrong, tok).other).toEqual([
+    "the sender heading is rgb(14, 23, 38), not the steel token",
+  ]);
+  // the calibration: a window no fault beat falls in is reported
+  expect(
+    missedWindows(
+      [1.2185, 1.25],
+      [
+        [1.217, 1.223],
+        [1.248, 1.252],
+      ],
+      0.002,
+    ),
+  ).toEqual([]);
+  expect(
+    missedWindows(
+      [1.2185],
+      [
+        [1.217, 1.223],
+        [1.248, 1.252],
+      ],
+      0.002,
+    ),
+  ).toEqual([[1.248, 1.252]]);
+  expect(missedWindows([], [[1.217, 1.223]], 0.002)).toEqual([[1.217, 1.223]]);
 });
 
 test("T47 when home-up.js fails to load, the big line paints over neither heading @1440x900", async ({
   page,
 }) => {
   test.setTimeout(120_000);
+  await installSettle(page);
   // the head script has set js-motion, the motion script never runs: the state of a reload or a deep link before GSAP
   await page.route("**/home-up.js*", (route) => route.abort());
   await open(page, 1440, 900);
@@ -600,7 +836,7 @@ test("T47 when home-up.js fails to load, the big line paints over neither headin
     if (!s) throw new Error("no #problem section");
     window.scrollTo(0, s.getBoundingClientRect().top + window.scrollY);
   });
-  expect(await beatFaults(page, 1440, "no-script")).toEqual([]);
+  expect(await beatFaults(page, 1440, "no-script", { window: false, gutter: 0 })).toEqual([]);
 });
 
 for (const { w, h } of [
@@ -627,13 +863,11 @@ for (const { w, h } of [
     );
     const beats: string[] = [];
     const faults: string[] = [];
-    // before the section, eleven even steps through it, and past its end; then the observed fine sweep of the
-    // hand-over (SA-1190 A2): every 0.02 of a window from 1.02 to 1.36, 18 beats
+    // before the section, eleven even steps through it, and past its end (the fine hand-over steps are the seek tests)
     const steps = [
       -0.5 * h,
       ...Array.from({ length: 11 }, (_, i) => (i * run) / 10),
       run + 0.3 * h,
-      ...Array.from({ length: 18 }, (_, i) => (1.02 + 0.02 * i) * h),
     ];
     for (const dy of steps) {
       const y = Math.max(0, Math.round(top + dy));
@@ -645,79 +879,253 @@ for (const { w, h } of [
       await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
       const k = (dy / h).toFixed(2);
       beats.push(k);
-      faults.push(...(await beatFaults(page, w, k)));
+      // the window rule is the seek tests' (a beat above or below the pin is not in the window); a phone has no gutter rule
+      faults.push(
+        ...(await beatFaults(page, w, k, { window: false, gutter: w >= 900 ? undefined : 0 })),
+      );
     }
     expect(beats.length).toBeGreaterThanOrEqual(12);
     expect(faults).toEqual([]);
   });
 }
 
-/**
- * SA-1190 A3-K2 (a). Over the whole motion range, the big line's box overlaps no text box of the problem picture (every
- * element with text of its own under .pb-art, which holds the phone, the notes and the invoice), at every 0.02 beat of
- * the hand-over. K1 (above) still asserts contrast at any beat where this fails.
- */
-async function pictureTextOverlaps(page: Page): Promise<{ boxes: number; hits: string[] }> {
-  return page.evaluate(() => {
-    const big = document.querySelector(".pb-big") as HTMLElement | null;
-    const art = document.querySelector(".pb-art") as HTMLElement | null;
-    if (!big || !art) throw new Error("the problem section is missing .pb-big or .pb-art");
-    const bb = big.getBoundingClientRect();
-    const hits: string[] = [];
-    let boxes = 0;
-    const walker = document.createTreeWalker(art, NodeFilter.SHOW_TEXT);
-    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      const text = (n.textContent ?? "").trim();
-      if (!text) continue;
-      const range = document.createRange();
-      range.selectNodeContents(n);
-      for (const r of Array.from(range.getClientRects())) {
-        if (r.width < 1 || r.height < 1) continue;
-        boxes++;
-        if (bb.left < r.right && bb.right > r.left && bb.top < r.bottom && bb.bottom > r.top)
-          hits.push(`"${text.slice(0, 24)}" at ${Math.round(r.left)},${Math.round(r.top)}`);
-      }
-    }
-    return { boxes, hits };
-  });
-}
+// ─── SA-1191 K4: the timeline seek, the scroll spot check, the phone at rest ────────────────────────────────────────
 
-for (const { w, h } of [
+/** The six motion sizes (SA-1190 A3-K2, kept). */
+const MOTION_SIZES = [
   { w: 900, h: 700 },
   { w: 1024, h: 768 },
   { w: 1180, h: 800 },
   { w: 1280, h: 800 },
   { w: 1440, h: 900 },
   { w: 1920, h: 1080 },
-]) {
-  test(`T47 the big line overlaps no text of the problem picture, every 0.02 of the hand-over @${w}x${h}`, async ({
+] as const;
+
+/** K4 (i): progress 0.640 to 0.920 in 0.001 steps, 281 seeks (F5: the picture fades 0.642-0.789, the line 0.688-0.908). */
+const SEEK_FROM = 640;
+const SEEK_COUNT = 281;
+
+/** The two hand-over windows known at 407f308294, 1440x900, in window heights (SA-1191 K4 i). */
+const KNOWN_WINDOWS = [
+  [1.217, 1.223],
+  [1.248, 1.252],
+] as const;
+
+type SeekStep = { x: number; k: number; read: ProblemRead };
+
+/**
+ * Seek the pinned timeline through the page, one read per step. The page is parked at the pin's start with the scrub
+ * settled, so no scroll event moves the timeline between a seek and its read; each seek is read back to prove that.
+ */
+async function seek(page: Page, w: number, h: number): Promise<{ steps: SeekStep[]; tok: Tokens }> {
+  await installSettle(page);
+  await open(page, w, h);
+  const top = await page.evaluate(() => {
+    const s = document.querySelector("#problem") as HTMLElement | null;
+    if (!s) throw new Error("no #problem section");
+    return s.getBoundingClientRect().top + window.scrollY;
+  });
+  const tok = await tokens(page);
+  const pin = await pinInfo(page);
+  const y = Math.ceil(pin.start);
+  await page.evaluate((yy) => window.scrollTo(0, yy), y);
+  await page.waitForFunction((yy) => Math.abs(window.scrollY - yy) <= 1, y);
+  await settle(page, "#problem");
+  const again = await pinInfo(page);
+  if (Math.abs(again.start - pin.start) > 2)
+    throw new Error(`the pin moved from ${pin.start} to ${again.start}`);
+  const steps = await page.evaluate(
+    ({ from, count, sectionTop, vh }) => {
+      const win = window as unknown as {
+        __t47Find: () => ReturnType<typeof t47Find>;
+        __t47Read: () => ProblemRead;
+      };
+      const f = win.__t47Find();
+      if (f.error) throw new Error(f.error);
+      const out: SeekStep[] = [];
+      for (let i = 0; i < count; i++) {
+        const x = (from + i) / 1000;
+        f.tl.progress(x);
+        const back = f.tl.progress() as number;
+        if (Math.abs(back - x) > 1e-6)
+          throw new Error(`the scrub moved the timeline off ${x} (it reads ${back})`);
+        const k = (f.st.start + x * (f.st.end - f.st.start) - sectionTop) / vh;
+        out.push({ x, k, read: win.__t47Read() });
+      }
+      return out;
+    },
+    { from: SEEK_FROM, count: SEEK_COUNT, sectionTop: top, vh: h },
+  );
+  return { steps, tok };
+}
+
+/** A sweep that finds nothing proves nothing (L-202): the line, the picture's texts and its boxes are all there. */
+function assertSweepSees(steps: SeekStep[], w: number): void {
+  if (steps.length !== SEEK_COUNT)
+    throw new Error(`${w}: ${steps.length} steps, expected ${SEEK_COUNT}`);
+  const lit = steps.filter((s) => s.read.line.opacity > SEEN).length;
+  if (lit < 200)
+    throw new Error(
+      `${w}: the line is above ${SEEN} at only ${lit} steps, the sweep tests nothing`,
+    );
+  for (const s of steps) {
+    const art = s.read.texts.filter((t) => t.inArt).length;
+    if (art < 10 || s.read.boxes.length < 6 || s.read.line.rects.length < 1)
+      throw new Error(
+        `${w} step ${s.x}: ${art} picture texts, ${s.read.boxes.length} boxes, ${s.read.line.rects.length} line rects`,
+      );
+  }
+}
+
+for (const { w, h } of MOTION_SIZES) {
+  test(`T47 seek 0.640-0.920 in 0.001 steps: no harm, inside the window, 24 px clear @${w}x${h}`, async ({
     page,
   }) => {
     test.setTimeout(180_000);
-    await installSettle(page);
-    await open(page, w, h);
-    const top = await page.evaluate(() => {
-      const s = document.querySelector("#problem") as HTMLElement | null;
-      if (!s) throw new Error("no #problem section");
-      return s.getBoundingClientRect().top + window.scrollY;
-    });
-    const hits: string[] = [];
-    let beats = 0;
-    for (let i = 0; i < 18; i++) {
-      const k = 1.02 + 0.02 * i;
-      const y = Math.round(top + k * h);
-      await page.evaluate((yy) => window.scrollTo(0, yy), y);
-      await page.waitForFunction((yy) => Math.abs(window.scrollY - yy) <= 1, y);
-      await settle(page, "#problem");
-      await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
-      const r = await pictureTextOverlaps(page);
-      // a sweep that finds no text boxes proves nothing (L-202)
-      if (r.boxes === 0) throw new Error("the picture has no text boxes to test against");
-      beats++;
-      console.log(`T47 text overlap ${w} ${k.toFixed(2)}: ${r.boxes} boxes, ${r.hits.length} hit`);
-      for (const hit of r.hits) hits.push(`beat ${k.toFixed(2)}: the big line covers ${hit}`);
+    const { steps, tok } = await seek(page, w, h);
+    assertSweepSees(steps, w);
+    const faults: string[] = [];
+    let minLeft = Infinity;
+    let maxRight = -Infinity;
+    let minGap = Infinity;
+    for (const s of steps) {
+      faults.push(...flatFaults(judgeRead(s.read, tok), s.k.toFixed(3)));
+      if (s.read.line.opacity > SEEN) {
+        for (const r of s.read.line.rects) {
+          minLeft = Math.min(minLeft, r.left);
+          maxRight = Math.max(maxRight, r.right);
+          for (const b of s.read.boxes) minGap = Math.min(minGap, rectGap(r, b.rect));
+        }
+      }
     }
-    expect(beats).toBe(18);
-    expect(hits).toEqual([]);
+    console.log(
+      `T47 seek ${w}x${h}: ${steps.length} steps, ${faults.length} faults; the line above ${SEEN}: leftmost ${minLeft.toFixed(1)} px, rightmost ${maxRight.toFixed(1)} of ${w}, nearest picture box ${minGap.toFixed(1)} px`,
+    );
+    expect(faults).toEqual([]);
   });
 }
+
+// The step is valid only where it finds the two windows the records measured at 407f308294. Run with
+// T47_CALIBRATION=1 against that placement (home.css from 407f308294); any other time this test skips.
+test("T47 calibration: the 0.001 step finds both known windows at the old placement @1440x900", async ({
+  page,
+}) => {
+  test.skip(!process.env.T47_CALIBRATION, "set T47_CALIBRATION=1 with home.css from 407f308294");
+  test.setTimeout(180_000);
+  const { steps, tok } = await seek(page, 1440, 900);
+  assertSweepSees(steps, 1440);
+  const harmKs = steps.filter((s) => judgeRead(s.read, tok).harm.length > 0).map((s) => s.k);
+  if (harmKs.length === 0)
+    throw new Error("the seek found no harm beat at all: the step is not valid");
+  console.log(
+    `T47 calibration: harm at ${harmKs.length} steps, k ${Math.min(...harmKs).toFixed(3)} to ${Math.max(...harmKs).toFixed(3)}; ${harmKs.map((k) => k.toFixed(3)).join(" ")}`,
+  );
+  // one step is 0.001 of the run, 0.0017 window heights
+  expect(missedWindows(harmKs, KNOWN_WINDOWS, 0.002)).toEqual([]);
+});
+
+test("T47 scroll spot check: the two hand-over beats once the scrub has settled @1440x900", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const w = 1440;
+  const h = 900;
+  await installSettle(page);
+  await open(page, w, h);
+  const top = await page.evaluate(() => {
+    const s = document.querySelector("#problem") as HTMLElement | null;
+    if (!s) throw new Error("no #problem section");
+    return s.getBoundingClientRect().top + window.scrollY;
+  });
+  const tok = await tokens(page);
+  const pin = await pinInfo(page);
+  const faults: string[] = [];
+  let harm = 0;
+  for (const k of [1.22, 1.25]) {
+    const y = Math.round(top + k * h);
+    const mapped = Math.min(1, Math.max(0, (y - pin.start) / (pin.end - pin.start)));
+    await page.evaluate((yy) => window.scrollTo(0, yy), y);
+    await page.waitForFunction((yy) => Math.abs(window.scrollY - yy) <= 1, y);
+    // the scrub catches up; wait on the timeline's own progress, then until it has not moved for 300 ms
+    await page.waitForFunction(
+      (m) => {
+        const f = (
+          window as unknown as { __t47Find: () => ReturnType<typeof t47Find> }
+        ).__t47Find();
+        return !f.error && Math.abs(f.tl.progress() - m) <= 0.002;
+      },
+      mapped,
+      { timeout: 20_000 },
+    );
+    await stillFor(page, 300);
+    const got = await page.evaluate(() => {
+      const win = window as unknown as {
+        __t47Find: () => ReturnType<typeof t47Find>;
+        __t47Read: () => ProblemRead;
+      };
+      return { progress: win.__t47Find().tl.progress() as number, read: win.__t47Read() };
+    });
+    expect(Math.abs(got.progress - mapped), `progress at ${k}`).toBeLessThanOrEqual(0.002);
+    const f = judgeRead(got.read, tok);
+    harm += f.harm.length;
+    console.log(
+      `T47 spot ${k}: progress ${got.progress.toFixed(4)} (mapped ${mapped.toFixed(4)}), line ${got.read.line.opacity.toFixed(3)}; harm: ${f.harm.join(" | ") || "none"}`,
+    );
+    faults.push(...flatFaults(f, k.toFixed(2)));
+  }
+  // with T47_CALIBRATION the old placement is the target: the real scroll must show the harm the seek found
+  if (process.env.T47_CALIBRATION) expect(harm).toBeGreaterThan(0);
+  else expect(faults).toEqual([]);
+});
+
+test("T47 a phone at rest: the big line overlaps no picture box @393x844", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installSettle(page);
+  await open(page, 393, 844);
+  const tok = await tokens(page);
+  // a phone has no pinned timeline (c.desk is false)
+  const pinned = await page.evaluate(
+    () => (window as unknown as { __t47Find: () => ReturnType<typeof t47Find> }).__t47Find().error,
+  );
+  expect(pinned, "a phone has no pinned problem timeline").toMatch(
+    /expected the one pinned timeline/,
+  );
+  // walk down through the section so every reveal has fired, then rest on the big line
+  const { top, bottom } = await page.evaluate(() => {
+    const s = document.querySelector("#problem") as HTMLElement | null;
+    if (!s) throw new Error("no #problem section");
+    const r = s.getBoundingClientRect();
+    return { top: r.top + window.scrollY, bottom: r.bottom + window.scrollY };
+  });
+  for (let y = Math.round(top); y < bottom; y += 300) {
+    await page.evaluate((yy) => window.scrollTo(0, yy), y);
+    await page.waitForFunction((yy) => Math.abs(window.scrollY - yy) <= 1, y);
+  }
+  await page.evaluate(() => {
+    const b = document.querySelector(".pb-big") as HTMLElement | null;
+    if (!b) throw new Error("no .pb-big");
+    const r = b.getBoundingClientRect();
+    window.scrollTo(0, r.top + window.scrollY - (window.innerHeight - r.height) / 2);
+  });
+  await page.waitForFunction(() =>
+    Array.from(document.querySelectorAll(".pb-obj, .pb-big")).every(
+      (e) => Number(getComputedStyle(e).opacity) >= 0.99,
+    ),
+  );
+  await settle(page, "#problem");
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+  const read = await page.evaluate(() =>
+    (window as unknown as { __t47Read: () => ProblemRead }).__t47Read(),
+  );
+  // a sweep that finds nothing proves nothing (L-202)
+  expect(read.line.rects.length, "the line's glyph rects").toBeGreaterThan(0);
+  expect(read.boxes.length, "the picture's painted boxes").toBeGreaterThanOrEqual(6);
+  // no overlap: every glyph rect of the line is clear of every painted box by at least a pixel
+  const f = judgeRead(read, tok, { window: false, gutter: 1 });
+  console.log(
+    `T47 phone at rest: line ${read.line.opacity.toFixed(3)}, ${read.line.rects.length} rects, nearest box ${Math.min(
+      ...read.boxes.flatMap((b) => read.line.rects.map((r) => rectGap(r, b.rect))),
+    ).toFixed(1)} px`,
+  );
+  expect([...f.other, ...f.harm, ...f.gutter]).toEqual([]);
+});
