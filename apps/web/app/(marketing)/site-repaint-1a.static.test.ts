@@ -8,6 +8,7 @@
 import { JSDOM } from "jsdom";
 import * as fs from "fs";
 import * as path from "path";
+import { closestIllustration } from "../../e2e/helpers/site-figure-scope";
 import { readServedSitePage } from "@/lib/read-site-page";
 import { STATIC_SITE_PAGE_NAMES } from "@/lib/static-site-page";
 
@@ -316,7 +317,8 @@ const COPPER_HEXES = Object.entries(PALETTE)
   .map(([, v]) => v.replace("#", "").toLowerCase());
 
 const toRgb = (hex: string): [number, number, number] => {
-  const h = hex.length === 3 ? [...hex].map((c) => c + c).join("") : hex;
+  // 3 and 4 digits double up (the 4th is alpha); 6 and 8 digits keep the first six (the last two are alpha)
+  const h = hex.length <= 4 ? [...hex.slice(0, 3)].map((c) => c + c).join("") : hex.slice(0, 6);
   return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];
 };
 const hslToRgb = (h: number, s: number, l: number): [number, number, number] => {
@@ -342,7 +344,9 @@ const PALETTE_COPPER_RGB = COPPER_HEXES.map(toRgb);
 /** Colour literals in a value, as rgb triples. */
 const literalsOf = (v: string): Array<[number, number, number]> => {
   const out: Array<[number, number, number]> = [];
-  for (const m of v.matchAll(/(?:#|%23)([0-9a-f]{6}|[0-9a-f]{3})(?![0-9a-z])/gi))
+  for (const m of v.matchAll(
+    /(?:#|%23)([0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-z])/gi,
+  ))
     out.push(toRgb(m[1]));
   for (const m of v.matchAll(/rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/gi))
     out.push([Number(m[1]), Number(m[2]), Number(m[3])]);
@@ -368,9 +372,12 @@ const copperSources = (): CopperRule[] => {
     for (const r of rulesOf(read(f)))
       out.push({ source: f.replace("public/site/", ""), selectors: r.selectors, decls: r.decls });
   for (const { name, html } of siteHtml()) {
-    for (const m of html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi))
-      for (const r of rulesOf(m[1]))
+    for (const m of html.matchAll(/<style([^>]*)>([\s\S]*?)<\/style>/gi)) {
+      // the injected palette block is the source of the --brand-* values, not a use of them
+      if (/\sid="brand-tokens"/.test(m[1])) continue;
+      for (const r of rulesOf(m[2]))
         out.push({ source: `${name} <style>`, selectors: r.selectors, decls: r.decls });
+    }
     for (const m of html.matchAll(/\sstyle="([^"]*)"/g)) {
       const decls: Record<string, string> = {};
       for (const d of m[1].split(";")) {
@@ -409,7 +416,7 @@ function copperScan() {
   const seen = new Set<string>();
   for (const r of rules)
     for (const [p, v] of Object.entries(r.decls)) {
-      if (p.startsWith("--") || !hasCopper(v)) continue;
+      if (!hasCopper(v)) continue;
       const key = `${r.source} :: ${r.selectors.join(", ")} :: ${p}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -424,9 +431,12 @@ const copperUses = (): string[] => copperScan().uses.map((u) => u.key);
 const STATUS_WORDS =
   /(?:^|[^a-z])(?:status|success|ok|paid|pending|overdue|late|warn(?:ing)?|error|danger|fail(?:ed|ure)?|alert|invalid|valid|bad)(?![a-z])/i;
 const STATUS_TOKEN = /var\(\s*--(?:rf|brand)-(?:paid|pending|overdue)/;
+// The :root block defines every token, status and copper alike, so "it also uses a status token" cannot
+// apply to it; its tokens are judged by property name (STATUS_WORDS on the property) and by value.
 const isStatusRule = (r: { selectors: string[]; decls: Record<string, string> }) =>
   r.selectors.some((s) => STATUS_WORDS.test(s)) ||
-  Object.values(r.decls).some((v) => STATUS_TOKEN.test(v));
+  (!r.selectors.every((s) => s === ":root") &&
+    Object.values(r.decls).some((v) => STATUS_TOKEN.test(v)));
 
 // R17's jobs (run spec.md:84), and the one the owner added for pictures of the app (SA-1203 A4, 2026-11-21).
 const R17_JOBS = [
@@ -439,7 +449,6 @@ const R17_JOBS = [
   "text links",
 ] as const;
 const PICTURE = "picture of the app (owner, 2026-11-21, SA-1203 A4)";
-const ALLOWED_TAGS: readonly string[] = [...R17_JOBS, PICTURE];
 
 const [LOGO, WHEEL, STEP, BARS, DOT, NOTE, LINK] = R17_JOBS;
 const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, tag: string]> = [
@@ -467,31 +476,99 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ["css/home-up.css", ".featured .pm-bar i", "background", BARS],
   ["css/home-up.css", ".pm-bar i", "background", BARS],
   ["css/home-up.css", "#founder .kick", "color", "no R17 job: eyebrow label text (not the dot)"],
-  ["css/home.css", ".a-av", "color", PICTURE],
-  ["css/home.css", ".a-link2", "color", PICTURE],
-  ["css/home.css", ".a-nav li.on", "border-left", PICTURE],
-  ["css/home.css", ".a-nav li.on .ico", "color", PICTURE],
-  ["css/home.css", ".ans-i--p .ans-bar", "background", PICTURE],
-  ["css/home.css", ".b-nav li.on", "border-left", PICTURE],
-  ["css/home.css", ".b-nav li.on .ico", "color", PICTURE],
-  ["css/home.css", ".c-chg b", "color", PICTURE],
-  ["css/home.css", ".bi-3::before", "background", PICTURE],
+  [
+    "css/home.css",
+    ".a-av",
+    "color",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "css/home.css",
+    ".a-link2",
+    "color",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "css/home.css",
+    ".a-nav li.on",
+    "border-left",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "css/home.css",
+    ".a-nav li.on .ico",
+    "color",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "css/home.css",
+    ".ans-i--p .ans-bar",
+    "background",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "css/home.css",
+    ".b-nav li.on",
+    "border-left",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "css/home.css",
+    ".b-nav li.on .ico",
+    "color",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "css/home.css",
+    ".bi-3::before",
+    "background",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
   ["css/home.css", ".bx-f", "fill", "no R17 job: box art outside the pictures"],
   ["css/home.css", ".bx-s", "fill", "no R17 job: box art outside the pictures"],
+  [
+    "css/home.css",
+    ".c-chg b",
+    "color",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
   ["css/home.css", ".dv-go", "background", "no R17 job: dead rule, no element uses it"],
+  ["css/home.css", ".end", "--rf-focus", "no R17 job: focus ring"],
   ["css/home.css", ".end-mail a", "color", LINK],
   ["css/home.css", ".fd-more", "color", LINK],
   ["css/home.css", ".fd-note a", "color", LINK],
+  [
+    "css/home.css",
+    ".home",
+    "--c-pay",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
   ["css/home.css", ".home .fq a", "color", LINK],
   ["css/home.css", ".home #pricing .pl-inc a", "color", LINK],
   ["css/home.css", ".hx-more", "color", LINK],
   ["css/home.css", ".inc-plus", "color", "no R17 job: link-coloured or check-mark icon"],
   ["css/home.css", ".n3", "background", NOTE],
+  ["css/home.css", ".pb", "--rf-focus", "no R17 job: focus ring"],
   ["css/home.css", ".rt-d--now", "fill", STEP],
   ["css/home.css", ".sp-all", "color", LINK],
-  ["css/home.css", ".sp-q em", "color", PICTURE],
-  ["css/home.css", ".sp-q i", "color", PICTURE],
-  ["css/home.css", ".sp-top span", "color", PICTURE],
+  [
+    "css/home.css",
+    ".sp-q em",
+    "color",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "css/home.css",
+    ".sp-q i",
+    "color",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "css/home.css",
+    ".sp-top span",
+    "color",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
   ["css/home.css", ".st .kick", "color", "no R17 job: eyebrow label text (not the dot)"],
   ["css/product.css", ".pd main a:not(.btn):not(.pd-tile):not(.link):not(.pd-go)", "color", LINK],
   ["css/product.css", ".pd-go", "color", LINK],
@@ -517,6 +594,59 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ],
   ["css/site.css", ".pg-top .eyebrow::before", "background", DOT],
   ["css/start.css", ".gs-step a:not(.link)", "color", LINK],
+  [
+    "graphics/rf-graphics.css",
+    ":root",
+    "--app-deep",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "graphics/rf-graphics.css",
+    ":root",
+    "--app-on",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "graphics/rf-graphics.css",
+    ":root",
+    "--buy-deep",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  [
+    "graphics/rf-graphics.css",
+    ":root",
+    "--buy-on",
+    "no R17 job: picture of the app, no app cite (the app has no copper)",
+  ],
+  ["graphics/rf-graphics.css", ":root", "--rf-accent", "no R17 job: token with several jobs"],
+  [
+    "graphics/rf-graphics.css",
+    ":root",
+    "--rf-accent-on-panel",
+    "no R17 job: token with several jobs",
+  ],
+  ["graphics/rf-graphics.css", ":root", "--rf-box-front", "no R17 job: box art"],
+  ["graphics/rf-graphics.css", ":root", "--rf-box-side", "no R17 job: box art"],
+  ["graphics/rf-graphics.css", ":root", "--rf-copper", "no R17 job: token with several jobs"],
+  ["graphics/rf-graphics.css", ":root", "--rf-copper-dark", "no R17 job: token with several jobs"],
+  ["graphics/rf-graphics.css", ":root", "--rf-copper-light", "no R17 job: token with several jobs"],
+  ["graphics/rf-graphics.css", ":root", "--rf-focus", "no R17 job: focus ring"],
+  ["graphics/rf-graphics.css", ":root", "--rf-link", LINK],
+  ["graphics/rf-graphics.css", ":root", "--rf-link-on-panel", LINK],
+  [
+    "graphics/rf-graphics.css",
+    ":root",
+    "--rf-skin-b",
+    "no R17 job: typed skin tone with a copper hue (unused token, not copper by intent)",
+  ],
+  [
+    "graphics/rf-graphics.css",
+    ":root",
+    "--rf-skin-c",
+    "no R17 job: typed skin tone with a copper hue (unused token, not copper by intent)",
+  ],
+  ["graphics/rf-graphics.css", ":root", "--rf-wh-focus", WHEEL],
+  ["graphics/rf-graphics.css", ":root", "--rf-wh-focus-wall", WHEEL],
   ["graphics/rf-graphics.css", ".rf-hit:focus-visible", "outline-color", "no R17 job: focus ring"],
   ["graphics/rf-wheel-up.css", ".rfw-hint", "color", "no R17 job: link-coloured hint text"],
   ["graphics/rf-wheel-up.css", ".rfw-t .rfw-eye::before", "background", DOT],
@@ -524,17 +654,76 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ["graphics/rf-wheel-up.css", ".rfw-w.f", "stroke", WHEEL],
   ['home.html style=""', "style", "fill", "no R17 job: inline truck illustration fills"],
   ["landing.html <style>", ":focus-visible", "outline", "no R17 job: focus ring"],
-  ["landing.html <style>", ".f-box", "fill", "no R17 job: landing box art"],
-  ["landing.html <style>", ".f-flap", "fill", "no R17 job: landing box art"],
+  ["landing.html <style>", ":root", "--rf-accent", "no R17 job: token with several jobs"],
+  ["landing.html <style>", ":root", "--rf-accent-on-panel", "no R17 job: token with several jobs"],
+  ["landing.html <style>", ":root", "--rf-copper", "no R17 job: token with several jobs"],
+  ["landing.html <style>", ":root", "--rf-copper-dark", "no R17 job: token with several jobs"],
+  ["landing.html <style>", ":root", "--rf-copper-light", "no R17 job: token with several jobs"],
+  ["landing.html <style>", ":root", "--rf-focus", "no R17 job: focus ring"],
+  ["landing.html <style>", ":root", "--rf-link", LINK],
+  ["landing.html <style>", ":root", "--rf-link-on-panel", LINK],
+  ["landing.html <style>", ":root", "--rf-wh-focus", WHEEL],
+  ["landing.html <style>", ":root", "--rf-wh-focus-wall", WHEEL],
+  ["landing.html <style>", ".f-box", "fill", "no R17 job: box art outside the pictures"],
+  ["landing.html <style>", ".f-flap", "fill", "no R17 job: box art outside the pictures"],
   ["landing.html <style>", ".foot a", "color", LINK],
   ["landing.html <style>", ".price :focus-visible", "outline-color", "no R17 job: focus ring"],
 ];
 const copperKey = (source: string, selectors: string, property: string) =>
   `${source} :: ${selectors} :: ${property}`;
 
-const FIGURE_SCOPE = 'figure[role="img"][aria-label]:not([aria-label=""])';
 const stripState = (sel: string) =>
   sel.replace(/::?(?:before|after|hover|focus-visible|focus|active)\b/g, "");
+
+// A picture row's tag is PICTURE plus " @ <repo path>:<line>", the line in the app that shows the same
+// copper (SA-1203 A5). The cited line must exist and must name a copper (the word, or a palette hex).
+const repoRoot = path.join(WEB, "../..");
+function citeOk(tag: string): boolean {
+  if (!tag.startsWith(`${PICTURE} @ `)) return false;
+  const m = /@ (\S+):(\d+)$/.exec(tag);
+  if (!m) return false;
+  const file = path.join(repoRoot, m[1]);
+  if (!fs.existsSync(file)) return false;
+  const line = fs.readFileSync(file, "utf8").split("\n")[Number(m[2]) - 1] ?? "";
+  return /copper/i.test(line) || COPPER_HEXES.some((h) => line.toLowerCase().includes(h));
+}
+const isAllowedTag = (tag: string) => (R17_JOBS as readonly string[]).includes(tag) || citeOk(tag);
+
+type UseInfo = { nonApp: boolean };
+/** Why each picture row fails, if it does: no app cite, not the app's copper, not a css rule, or not
+ *  inside a labelled illustration figure (the one rule T10 uses). */
+function pictureOffences(
+  rows: Array<[string, string, string, string]>,
+  uses: Map<string, UseInfo>,
+  docs: Document[],
+): string[] {
+  const offenders: string[] = [];
+  for (const [source, selectors, property, tag] of rows) {
+    if (!tag.startsWith(PICTURE)) continue;
+    const key = copperKey(source, selectors, property);
+    if (!citeOk(tag)) offenders.push(`${key} (no app file:line that shows the copper)`);
+    const use = uses.get(key);
+    if (!use || use.nonApp) offenders.push(`${key} (not the app's copper)`);
+    if (!source.endsWith(".css")) offenders.push(`${key} (only a css rule can be a picture row)`);
+    let matched = 0;
+    for (const sel of selectors.split(", ")) {
+      for (const d of docs) {
+        let els: Element[] = [];
+        try {
+          els = [...d.querySelectorAll(stripState(sel))];
+        } catch {
+          offenders.push(`${key} (selector not readable)`);
+        }
+        for (const el of els) {
+          matched++;
+          if (!closestIllustration(el)) offenders.push(`${key} (outside a figure: ${sel})`);
+        }
+      }
+    }
+    if (matched === 0) offenders.push(`${key} (matches nothing)`);
+  }
+  return [...new Set(offenders)];
+}
 
 describe("T17 static: copper only in listed jobs, never a status", () => {
   it("(a) every copper use is on the allow-list, and every allow-list row is still a copper use", () => {
@@ -545,51 +734,85 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
     expect(allowed.filter((a) => !uses.includes(a))).toEqual([]);
   });
 
-  it("(a) the scan reads <style> blocks and inline style, and sees rgb() and hsl() coppers", () => {
+  it("(a) the scan reads <style> blocks, inline style, custom properties, and every colour form", () => {
     const keys = copperUses();
     expect(keys.some((k) => k.startsWith("landing.html <style> ::"))).toBe(true);
     expect(keys.some((k) => k.startsWith('home.html style="" ::'))).toBe(true);
+    expect(keys.some((k) => k.endsWith(":: --rf-link"))).toBe(true);
     const [r, g, b] = toRgb(COPPER_HEXES[0]);
     expect(literalsOf(`color: rgb(${r}, ${g}, ${b})`).some(isAppCopper)).toBe(true);
     expect(literalsOf("fill: hsl(23 52% 47%)").some(copperLike)).toBe(true);
     expect(literalsOf("color:#c0733f").some((c) => copperLike(c) && !isAppCopper(c))).toBe(true);
     expect(literalsOf("color:#0e1726").some(copperLike)).toBe(false);
+    // 8- and 4-digit hex carry alpha; the colour is the same
+    expect(literalsOf(`color:#${COPPER_HEXES[0]}80`).some(isAppCopper)).toBe(true);
+    expect(literalsOf("background:url(x%23" + COPPER_HEXES[0] + "80)").some(isAppCopper)).toBe(
+      true,
+    );
+    const short = literalsOf("color:#c738");
+    expect(short).toHaveLength(1);
   });
 
-  it("(a) a picture row sits only inside a figure[role=img] with a label, and uses only the app's copper", () => {
+  it("(a) the picture guard accepts a cited, app-copper rule inside a labelled figure", () => {
+    const docs = [
+      new JSDOM('<figure role="img" aria-label="An app screen."><p class="in">x</p></figure>')
+        .window.document,
+    ];
+    const cite = `${PICTURE} @ apps/web/app/(marketing)/opengraph-image/route.tsx:30`;
+    const rows: Array<[string, string, string, string]> = [["css/x.css", ".in", "color", cite]];
+    const uses = new Map([[copperKey("css/x.css", ".in", "color"), { nonApp: false }]]);
+    expect(pictureOffences(rows, uses, docs)).toEqual([]);
+  });
+
+  it("(a) the picture guard fails a rule outside a figure, a non-app copper, a missing cite, and a bare figure", () => {
+    const cite = `${PICTURE} @ apps/web/app/(marketing)/opengraph-image/route.tsx:30`;
+    const inFigure = [
+      new JSDOM('<figure role="img" aria-label="Screen."><p class="in">x</p></figure>').window
+        .document,
+    ];
+    const one = (tag: string, nonApp: boolean, docs: Document[], sel = ".in") =>
+      pictureOffences(
+        [["css/x.css", sel, "color", tag]],
+        new Map([[copperKey("css/x.css", sel, "color"), { nonApp }]]),
+        docs,
+      );
+    // outside a figure
+    const outside = [new JSDOM('<p class="out">x</p>').window.document];
+    expect(one(cite, false, outside, ".out").join()).toContain("outside a figure");
+    // a data- look-alike and a blank label are not a figure
+    const fake = [
+      new JSDOM('<figure data-role="img" aria-label="S"><p class="in">x</p></figure>').window
+        .document,
+    ];
+    expect(one(cite, false, fake).join()).toContain("outside a figure");
+    const blank = [
+      new JSDOM('<figure role="img" aria-label="  "><p class="in">x</p></figure>').window.document,
+    ];
+    expect(one(cite, false, blank).join()).toContain("outside a figure");
+    // a copper the app does not use
+    expect(one(cite, true, inFigure).join()).toContain("not the app's copper");
+    // no cite, or a cite to a line with no copper
+    expect(one(PICTURE, false, inFigure).join()).toContain("no app file:line");
+    expect(
+      one(
+        `${PICTURE} @ apps/web/app/(marketing)/opengraph-image/route.tsx:1`,
+        false,
+        inFigure,
+      ).join(),
+    ).toContain("no app file:line");
+  });
+
+  it("(a) the picture rows that stand are valid", () => {
     const docs = siteHtml().map((p) => new JSDOM(p.html).window.document);
-    const { uses } = copperScan();
-    const byKey = new Map(uses.map((u) => [u.key, u]));
-    const offenders: string[] = [];
-    for (const [source, selectors, property, tag] of COPPER_ALLOW) {
-      if (tag !== PICTURE) continue;
-      const key = copperKey(source, selectors, property);
-      const use = byKey.get(key);
-      if (!use || use.nonApp) offenders.push(`${key} (not the app's copper)`);
-      if (!source.endsWith(".css")) offenders.push(`${key} (only a css rule can be a picture row)`);
-      let matched = 0;
-      for (const sel of selectors.split(", ")) {
-        for (const d of docs) {
-          let els: Element[] = [];
-          try {
-            els = [...d.querySelectorAll(stripState(sel))];
-          } catch {
-            offenders.push(`${key} (selector not readable)`);
-          }
-          for (const el of els) {
-            matched++;
-            if (!el.closest(FIGURE_SCOPE)) offenders.push(`${key} (outside a figure: ${sel})`);
-          }
-        }
-      }
-      if (matched === 0) offenders.push(`${key} (matches nothing)`);
-    }
-    expect([...new Set(offenders)]).toEqual([]);
+    const byKey = new Map(copperScan().uses.map((u) => [u.key, { nonApp: u.nonApp }]));
+    expect(pictureOffences(COPPER_ALLOW, byKey, docs)).toEqual([]);
   });
 
-  it("(b) no status rule references copper", () => {
+  it("(b) no status rule, and no status-named property, references copper", () => {
     const { uses } = copperScan();
-    expect(uses.filter((u) => isStatusRule(u.rule)).map((u) => u.key)).toEqual([]);
+    expect(
+      uses.filter((u) => isStatusRule(u.rule) || STATUS_WORDS.test(u.prop)).map((u) => u.key),
+    ).toEqual([]);
   });
 
   it("(b) the status rules are found by selector or by status token", () => {
@@ -600,6 +823,7 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
     expect(isStatusRule(find(".a-pill--bad")!)).toBe(true);
     expect(isStatusRule(find(".rfw-tk path")!)).toBe(true);
     expect(isStatusRule(find(".link")!)).toBe(false);
+    expect(STATUS_WORDS.test("--error-c")).toBe(true);
   });
 
   it("(b) the status tokens resolve to the status palette, not to copper", () => {
