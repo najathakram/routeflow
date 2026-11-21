@@ -33,12 +33,13 @@
 --rf-btn:var(--rf-ink);--rf-btn-press:var(--rf-ink-press);--rf-btn-fg:var(--rf-white);
 --rf-panel:var(--rf-ink);--rf-on-panel:var(--rf-white);--rf-on-panel-2:var(--rf-bone);
 --rf-soft:var(--rf-bone);
---rf-link:var(--rf-copper-dark);--rf-link-on-panel:var(--rf-copper-light);--rf-focus:var(--rf-accent);
+--rf-link:var(--rf-copper-dark);--rf-link-on-panel:var(--rf-copper-light);--rf-focus:var(--rf-text);
 --rf-accent:var(--rf-copper);--rf-accent-on-panel:var(--rf-copper-light);
 --rf-paid-bg:var(--brand-paid-bg);--rf-paid:var(--brand-paid-text);--rf-pending-bg:var(--brand-pending-bg);--rf-pending:var(--brand-pending-text);--rf-overdue-bg:var(--brand-overdue-bg);--rf-overdue:var(--brand-overdue-text);
 --rf-wh-work:#E9E4DB;--rf-wh-work-2:#DCD6CB;--rf-wh-work-wall:#C2BBAE;
 --rf-wh-sell:#1B2638;--rf-wh-sell-2:#27364C;--rf-wh-sell-wall:#04070D;
 --rf-wh-focus:var(--brand-copper);--rf-wh-focus-wall:var(--brand-copper-dark);
+--rf-box-front:#9A8260;--rf-box-side:#6E5A40;
 --rf-ring:0 0 0 1px var(--rf-line);
 --rf-font:"Geist","Geist Fallback",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
 --rf-h1:clamp(44px,5vw,72px);--rf-h1-tr:-.04em;
@@ -60,7 +61,7 @@ ul,ol{padding:0;list-style:none}
 svg{display:block;width:100%;height:auto}
 a{color:inherit;-webkit-tap-highlight-color:transparent}
 :focus-visible{outline:3px solid var(--rf-focus);outline-offset:3px;border-radius:8px}
-.price :focus-visible{outline-color:var(--rf-accent-on-panel)}
+.price :focus-visible{outline-color:var(--rf-focus)}
 .skip{position:absolute;left:-999px;top:8px;background:var(--rf-white);padding:8px 12px;border-radius:12px;font-size:16px;z-index:30}
 .skip:focus{left:auto;right:8px}
 .w{width:min(1200px,100% - 48px);margin-inline:auto}
@@ -90,7 +91,7 @@ mark{color:inherit;background:none}
 .use svg{margin-bottom:12px}
 .use h3{font-size:19px;line-height:1.25;min-height:2.5em;font-weight:650;letter-spacing:-.012em;margin-bottom:8px}
 .use p{font-size:16px;line-height:1.38;color:var(--rf-text-2)}
-.price{padding:72px 0 0;color:var(--rf-on-panel);text-align:center}
+.price{padding:72px 0 0;color:var(--rf-on-panel);text-align:center;--rf-focus:var(--rf-on-panel)}
 .price h2{font-size:var(--rf-h2);line-height:var(--rf-h2-lh);font-weight:650;letter-spacing:var(--rf-h2-tr);text-wrap:balance}
 .price p{margin-top:14px;font-size:20px;font-weight:500;letter-spacing:-.012em}
 .price .cta{background:var(--rf-on-panel);color:var(--rf-panel)}
@@ -105,8 +106,8 @@ mark{color:inherit;background:none}
 .f-soft{fill:var(--rf-soft)}
 .f-steel{fill:var(--rf-steel)}
 .f-paid{fill:var(--rf-paid)}
-.f-box{fill:var(--rf-copper)}
-.f-flap{fill:var(--rf-copper-dark)}
+.f-box{fill:var(--rf-box-front)}
+.f-flap{fill:var(--rf-box-side)}
 .s-ink{stroke:var(--rf-ink)}
 .s-paper{stroke:var(--rf-white)}
 .s-steel{stroke:var(--rf-steel)}

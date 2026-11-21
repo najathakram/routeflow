@@ -206,6 +206,8 @@ How to read it
 | GS-10 | getting-started.html:182-190 | "Getting your people on." staff, drivers, stores | KEEP | | CLAIM |
 | GS-11 | getting-started.html:196-219 | FAQ: trial length, no plan, change answer, who sets it up, help | KEEP | 203, 207 repeat 167-175 | CLAIM, EMAIL |
 | GS-12 | getting-started.html:230 | "Try RouteFlow free. 14 days free. No card needed." | As PR-21 | "free" twice | NAME |
+| GS-13 | getting-started.html:115 | "Click the link in your email" (step 2 heading) | "Open the link in your email" | R11 (no "click"), SA-1203 A3 1b; applied mechanically, no change of meaning or claim; cleared by the lead 2026-11-21 ~03:10Z | |
+| GS-14 | getting-started.html:116 | "We email you a link. It works for 24 hours. Click it, and your account opens on your dashboard." | "We email you a link. It works for 24 hours. Open it to go to your dashboard." | R11 (no "click"), SA-1203 A3 1b; same claim (24 hours, dashboard); cleared by the lead 2026-11-21 ~03:10Z | CLAIM |
 
 ## SC. security.html
 
@@ -306,10 +308,26 @@ How to read it
 | LG-11 | (marketing)/terms/page.tsx:234-245 | Sub-processor sentence incl. a mail fallback and Google Calendar | KEEP | Verify it still matches what runs | LEGAL, CLAIM |
 | LG-12 | (marketing)/terms/page.tsx:397 | "Return to RouteFlow" | KEEP | | LEGAL, NAME |
 
+## Design rows (R17, copper)
+
+Used here because the UX ledger (ux-ledger-p12-p16.md) holds P-rows for layout defects, not colour rulings. Each row turns a copper use ink, citing R17 (copper only in its listed jobs) and SA-1203 A3 and A4.
+
+| ID | Where | Was | Now | Why |
+|---|---|---|---|---|
+| DS-01 | css/mobile.css:36 `.home .hx-up .hx-over` (decorative rings) | two copper strokes | ink strokes | R17 has no decorative job (SA-1203 A4 2) |
+| DS-02 | css/home.css:252 `.st-note` (second note, stores section) | copper | ink (`--rf-text`) | R17 allows exactly one problem-section note (SA-1203 A4 2) |
+| DS-03 | css/home.css `.c-chg b` (change amount) and the stock marks | copper | ink (`--rf-text`) | the change amount is plain text in the app, not a copper job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
+| DS-04 | css/home-color.css:52 `.uc-t h3::before` and :83 `.inc-ic` hover tile (use-case dot and tile) | copper | ink | not the eyebrow dot, no R17 job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
+| DS-05 | css/home-up.css `#founder .kick`, css/home.css `.st .kick`, css/site.css `.eyebrow,.kick` (label text) | copper | ink, or on-panel on dark bands; the dot stays copper | eyebrow label text is not the dot (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
+| DS-06 | css/home.css `.inc-plus`, css/site.css `.faq summary .ico` and `.pcard.featured .checks .ico` | copper | ink, or on-panel on the featured card | icons and check marks have no R17 job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
+| DS-07 | graphics/rf-wheel-up.css:26 `.rfw-hint` | copper | `--rf-text-2` | hint text has no R17 job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
+| DS-08 | `--rf-focus` (rf-graphics.css contract block, landing.html token block, `.pb`, `.end`, `.price`) | copper | `--rf-text` at the root, `--rf-on-panel` on the dark panels | one token change for the focus ring; contrast is measured later in the slot (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
+| DS-09 | `--rf-box-front`, `--rf-box-side` (box art), home.html truck inline fills, landing `.f-box` `.f-flap` | copper-tinted | kraft #9A8260 and #6E5A40; no box value equals a copper token value (pinned) | box and truck art have no R17 job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
+
 ## Counts
 
-- Rows: 216. Changes proposed: 53. KEEP: 160. Flag-only or pointer rows (no proposal): 3 (HM-04, LG-07, LG-10).
-- Rows by flag (all rows / rows with a proposed change): NAME 62 / 15, EMAIL 21 / 6, PRICE 18 / 6, CLAIM 77 / 13, HOST 6 / 0, LEGAL 14 / 0.
+- Rows: 218 (GS-13, GS-14 added). Changes proposed: 55. KEEP: 160. Flag-only or pointer rows (no proposal): 3 (HM-04, LG-07, LG-10).
+- Rows by flag (all rows / rows with a proposed change): NAME 62 / 15, EMAIL 21 / 6, PRICE 18 / 6, CLAIM 78 / 14, HOST 6 / 0, LEGAL 14 / 0.
 - Name census (count of "RouteFlow" / "routeflow.info" / "hello@routeflow.info" per file): home.html 31/25/15; company 18/10/6; product 21/8/4; does-and-doesnt 24/6/2; data-in-and-out 17/7/3; pricing 16/12/8; security 16/8/4; contact 12/12/8; getting-started 10/10/6; landing 8/6/2; privacy page 56/13/0; terms page 26/4/0. The "routeflow.info" counts include canonical, og:url and sitemap links; the mailto links inside `lib/site.ts` and the `SITE_EMAIL` copy in `site-frame-nav.ts` are the only two code sources. Most address text on the static pages is typed, not read from a source.
 - Typed prices (PRICE, typed instead of read from `js/prices.js`): `pricing.html:7,13,21` ("$99"); `landing.html:57-58` ("$99", "$249", "$499"); `lib/site.ts:44` (pricing meta "$99"). Everything else on pricing, home and product is read from `prices.js` through `data-plan` and `data-addon` spans. "14 days" is typed 44 times in the static pages while `prices.js` holds `trialDays: 14`.
 

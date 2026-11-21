@@ -67,7 +67,7 @@ Consoles (one C2 row each, read back at D0): Railway, registrar, Google OAuth (o
 | 2 | Sign-in, Stripe and mailbox returns land on the other host; the shell allows only the old host | #4307: exact list, return to the session's origin, `returnUrlsOffBase` takes the list, empty `WEB_ORIGINS` changes nothing | T34, T40 |
 | 3 | Old emailed links | app paths never redirect; Program C forwards 1:1 from launch + 12 months | T33 |
 | 4 | Rollback after new-host emails | `xrovio` DNS kept; revert + `WEB_URL` old + `WEB_ORIGINS` new; 307 for 7 days | rehearsal re-runs T32 |
-| 5 | Service worker / PWA | pages network-first (`sw.js:69-72`); PWA starts at `/dashboard`; brand files only under `/site/` (`sw.js:40-55`) | NEW T39 |
+| 5 | Service worker / PWA | pages network-first (`sw.js:69-72`); PWA starts at `/dashboard`; brand files under `/brand/` (cache-first); each switch-day key gets a new file name, the old files stay (SA-1203 A3, A4); T39 pins the strategy | NEW T39 |
 | 6 | Tenant hosts or apex redirected | `has: host` = exactly `www.routeflow.info` | T30 negative |
 | 7 | Cookies | none names a domain (E34); one sign-in on the new host, in the notice | T32 |
 | 8 | SEO | 307 → 308 at launch + 7 days; canonical/sitemap/robots from `BRAND`; pre-launch canonical to the old host | T30, T31 |

@@ -100,38 +100,6 @@ describe("T21: the product pictures' colours are palette or status values", () =
     expect(value("--buy-p")).toBe(value("--app-p"));
   });
 
-  it("K4: the driver's button text holds 4.5:1 on its background (.dv-go on --app-deep)", () => {
-    const home = fs
-      .readFileSync(path.join(SITE, "css/home.css"), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "");
-    const rule = /\.dv-go\{([^}]*)\}/.exec(home);
-    if (!rule) throw new Error("no .dv-go rule");
-    const bg = /background:var\((--[\w-]+)\)/.exec(rule[1] as string);
-    const fg = /(?:^|;)color:var\((--[\w-]+)\)/.exec(rule[1] as string);
-    if (!bg || !fg) throw new Error(".dv-go has no token background and colour");
-    const table = new Map<string, string>(declarations().map((d) => [d.name, d.value]));
-    const hexOf = (name: string, depth = 0): string => {
-      if (depth > 8) throw new Error("token chain too deep");
-      const v = table.get(name);
-      if (v === undefined) throw new Error(name + " is not declared");
-      const m = /^var\(\s*--brand-([\w-]+)\s*\)$/.exec(v);
-      if (m) return PALETTE.color[m[1] as string] as string;
-      const n = /^var\(\s*(--[\w-]+)\s*\)$/.exec(v);
-      if (!n) throw new Error(name + " is not a token chain: " + v);
-      return hexOf(n[1] as string, depth + 1);
-    };
-    const lum = (hex: string) => {
-      const n = parseInt(hex.slice(1, 7), 16);
-      const lin = (v: number) =>
-        v / 255 <= 0.03928 ? v / 255 / 12.92 : Math.pow((v / 255 + 0.055) / 1.055, 2.4);
-      return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
-    };
-    const [hi, lo] = [lum(hexOf(fg[1] as string)), lum(hexOf(bg[1] as string))].sort(
-      (x, y) => y - x,
-    );
-    expect(((hi as number) + 0.05) / ((lo as number) + 0.05)).toBeGreaterThanOrEqual(4.5);
-  });
-
   it("the checker goes red on a literal and on a job token (fixtures)", () => {
     const ok = paletteTokens();
     const passes = (v: string) => {

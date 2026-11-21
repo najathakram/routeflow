@@ -57,7 +57,7 @@ ul,ol{padding:0;list-style:none}
 .link:hover .ico{transform:translateX(4px)}
 
 /* ---------- type ---------- */
-.eyebrow,.kick{font-size:17px;font-weight:600;color:var(--rf-link);letter-spacing:-.01em;margin-bottom:14px}
+.eyebrow,.kick{font-size:17px;font-weight:600;color:var(--rf-text);letter-spacing:-.01em;margin-bottom:14px}
 h1{font-size:var(--rf-h1);line-height:1.03;font-weight:650;letter-spacing:var(--rf-h1-tr);text-wrap:balance}
 h2{font-size:var(--rf-h2);line-height:var(--rf-h2-lh);font-weight:650;letter-spacing:var(--rf-h2-tr);text-wrap:balance}
 h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em}
@@ -82,7 +82,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 .band-bone{background:var(--rf-soft);color:var(--rf-text)}
 .band-ink{background:var(--rf-panel);color:var(--rf-on-panel)}
 .band-line{border-bottom:1px solid var(--rf-line)}
-.band-ink .eyebrow,.band-ink .kick{color:var(--rf-link-on-panel)}
+.band-ink .eyebrow,.band-ink .kick{color:var(--rf-on-panel)}
 .band-ink .lede,.band-ink .sub,.band-ink p{color:var(--rf-on-panel-2)}
 .band-ink a:not(.btn){color:var(--rf-link-on-panel)}
 .band-ink .btn-primary{background:var(--rf-white);color:var(--rf-text)}
@@ -112,7 +112,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 .pfor{font-size:17px;color:var(--rf-text-2);min-height:3.1em}
 .pcard .checks{margin-top:22px;gap:12px}
 .pcard .checks li{font-size:17px}
-.pcard.featured .checks .ico{color:var(--rf-accent-on-panel)}
+.pcard.featured .checks .ico{color:var(--rf-on-panel)}
 .pcard b{font-weight:650}
 
 /* ---------- faq ---------- */
@@ -120,7 +120,7 @@ h3{font-size:var(--rf-h4);line-height:1.15;font-weight:650;letter-spacing:-.02em
 .faq details{border-bottom:1px solid var(--rf-line)}
 .faq summary{display:flex;justify-content:space-between;align-items:center;gap:20px;min-height:64px;padding:18px 0;font-size:21px;font-weight:600;cursor:pointer;list-style:none}
 .faq summary::-webkit-details-marker{display:none}
-.faq summary .ico{transition:transform .3s var(--ease);color:var(--rf-link)}
+.faq summary .ico{transition:transform .3s var(--ease);color:var(--rf-text)}
 .faq details[open] summary .ico{transform:rotate(45deg)}
 .faq details p{padding:0 0 24px;color:var(--rf-text-2);font-size:19px;max-width:36em}
 

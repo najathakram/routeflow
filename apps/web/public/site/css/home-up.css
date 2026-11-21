@@ -55,7 +55,7 @@
 /* ---------- founder: a wall of grey text on white becomes a stage, the quote on one side and the story on the other ---------- */
 #founder{background:var(--rf-white);padding-block:0 clamp(56px,7vw,96px)}
 #founder .fd-in{width:min(1200px,100% - 48px);max-width:none;margin-inline:auto;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.04fr);grid-template-rows:auto auto 1fr;column-gap:clamp(40px,5vw,88px);align-items:start;padding:clamp(56px,6.4vw,96px) clamp(28px,4.2vw,56px);border-radius:var(--rf-r-stage);background:var(--rf-panel);color:var(--rf-on-panel)}
-#founder .kick{grid-column:1;color:var(--rf-link-on-panel)}
+#founder .kick{grid-column:1;color:var(--rf-on-panel)}
 #founder .fd-q{grid-column:1;grid-row:2;font-size:clamp(40px,4.5vw,68px);line-height:1.06;color:var(--rf-on-panel);transform-origin:0 60%}
 #founder .fd-note,#founder .fd-short,#founder .fd-more,#founder .fd-sig{grid-column:2}
 #founder .fd-note{grid-row:1/span 3;margin-top:0;max-width:none;font-size:clamp(17px,1.32vw,19px);line-height:1.58;color:var(--rf-on-panel-2)}

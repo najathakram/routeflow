@@ -81,6 +81,9 @@ describe("T14a: the contract block of rf-graphics.css", () => {
     "--rf-wh-sell": "#1B2638",
     "--rf-wh-sell-2": "#27364C",
     "--rf-wh-sell-wall": "#04070D",
+    // SA-1203 A5: box art is kraft, not a copper tint
+    "--rf-box-front": "#9A8260",
+    "--rf-box-side": "#6E5A40",
   };
   /** The old names are gone (lane 2.1b-last): nothing typed in the block may be a legacy alias. */
   const LEGACY_TYPED = new Set<string>();
@@ -145,7 +148,8 @@ describe("T14a: the contract block of rf-graphics.css", () => {
       "--rf-soft": "var(--rf-bone)",
       "--rf-link": "var(--rf-copper-dark)",
       "--rf-link-on-panel": "var(--rf-copper-light)",
-      "--rf-focus": "var(--rf-accent)",
+      // SA-1203 A5: the ring is ink, not the accent.
+      "--rf-focus": "var(--rf-text)",
       "--rf-accent": "var(--rf-copper)",
       "--rf-accent-on-panel": "var(--rf-copper-light)",
       "--rf-ring": "0 0 0 1px var(--rf-line)",
@@ -296,5 +300,36 @@ describe("T35d: no palette value typed outside the injected style", () => {
     expect(read("app/(marketing)/opengraph-image/route.tsx")).not.toMatch(
       /#[0-9a-f]{3,8}(?![0-9a-f])/i,
     );
+  });
+});
+
+describe("T14a: the two kraft box values (SA-1203 A6 4b)", () => {
+  const KRAFT = ["#9a8260", "#6e5a40"];
+  const cssFiles = (dir: string): string[] =>
+    fs.readdirSync(path.join(WEB, dir), { withFileTypes: true }).flatMap((e) => {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) return cssFiles(rel);
+      return e.name.endsWith(".css") ? [rel] : [];
+    });
+  const texts = () => [
+    ...cssFiles("public/site").map((f) => [f, read(f)] as const),
+    ...STATIC_SITE_PAGE_NAMES.map(
+      (p) => [`${p}.html`, readServedSitePage(p, { websiteId: undefined })] as const,
+    ),
+  ];
+
+  it("appear only as the value of --rf-box-front and --rf-box-side, once per place that defines them", () => {
+    const hits: string[] = [];
+    for (const [name, text] of texts())
+      for (const m of text.matchAll(/(--[a-z0-9-]+)?\s*:?\s*(#[0-9a-f]{6})\b/gi)) {
+        if (KRAFT.includes((m[2] as string).toLowerCase()))
+          hits.push(`${name} ${m[1] ?? "(none)"}`);
+      }
+    expect(hits.sort()).toEqual([
+      "landing.html --rf-box-front",
+      "landing.html --rf-box-side",
+      "public/site/graphics/rf-graphics.css --rf-box-front",
+      "public/site/graphics/rf-graphics.css --rf-box-side",
+    ]);
   });
 });

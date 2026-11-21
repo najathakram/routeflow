@@ -49,7 +49,7 @@
 }
 
 /* The dot before a use-case example's name is the accent. */
-.home .uc-t h3::before{background:var(--rf-accent)}
+.home .uc-t h3::before{background:var(--rf-text)}
 
 /* Small grey text on the bands is the steel job colour. */
 .home .sy-list span,.home .sy-eye,.home .uc-t p,.home .hx-cap,.home .hx-note,.home .rfw-keys li span,.home .rfw-keyh,.home .rfw--static .rfw-eye,.home .sl-prod{color:var(--rf-text-2)}
@@ -80,7 +80,7 @@
 .btn:active{transform:scale(.965)}
 @media (min-width:900px) and (hover:hover){
   .home .inc-i:hover{transform:translateY(-4px);outline:1px solid var(--rf-text);outline-offset:-1px}
-  .home .inc-i:hover .inc-ic{transform:rotate(-6deg) scale(1.06);background:var(--rf-accent);color:var(--rf-white)}
+  .home .inc-i:hover .inc-ic{transform:rotate(-6deg) scale(1.06);background:var(--rf-text);color:var(--rf-white)}
 }
 .home .inc-i{transition:transform .35s var(--ease)}
 .home .inc-i .inc-ic{transition:transform .35s var(--ease),background .35s var(--ease),color .35s var(--ease)}
