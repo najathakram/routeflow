@@ -8,9 +8,11 @@
 import { JSDOM } from "jsdom";
 import * as fs from "fs";
 import * as path from "path";
+import { createHash } from "crypto";
 import { closestIllustration } from "../../e2e/helpers/site-figure-scope";
 import { readServedSitePage } from "@/lib/read-site-page";
-import { STATIC_SITE_PAGE_NAMES } from "@/lib/static-site-page";
+import { brandTokensTag, STATIC_SITE_PAGE_NAMES } from "@/lib/static-site-page";
+import { loadPalette } from "@routeflow/types/brand";
 import { KNOWN_AT_RULES, readCss, readStyleAttr, type CssRule } from "./site-css-rules";
 
 const WEB = path.resolve(__dirname, "../..");
@@ -350,53 +352,447 @@ const siteHtml = (): Array<{ name: string; html: string }> =>
     html: readServedSitePage(p, { websiteId: undefined }),
   }));
 
-// Inline style="" attributes of one page, one rule each.
+// Inline style="" attributes of one page, one rule each, read from a parsed document (never by regex).
 const inlineStyleRules = (name: string, html: string): CopperRule[] =>
-  [...html.matchAll(/\sstyle=(?:"([^"]*)"|'([^']*)')/g)].flatMap((m) =>
-    readStyleAttr(m[1] ?? m[2], `${name} style=""`).rules.map(toCopper),
+  [...new JSDOM(html).window.document.querySelectorAll("[style]")].flatMap((el) =>
+    readStyleAttr(el.getAttribute("style") ?? "", `${name} style=""`).rules.map(toCopper),
   );
 
-/** Every site CSS source, read once: each stylesheet, each <style> block of each served page, and each
- *  style="" attribute (SA-1203 A20 R4). The injected palette block is the source of the --brand-* values,
- *  not a use of them, so it is counted and left out. */
-type SiteRead = {
-  rules: CopperRule[];
-  problems: string[];
-  census: { stylesheets: number; styleBlocks: number; paletteBlocks: number; styleAttrs: number };
+// ---- The served sources, read through one front end (SA-1203 A24, round 4) ----------------------------
+// JSDOM with node locations parses each page and each svg file; every css text (a <style> block's text, a
+// style="" value, a stylesheet) goes through the shared postcss reader. Nothing is read from raw bytes, and
+// anything the parser leaves open is a red with `file:line:col  form=  found=  rule=  Fix:`.
+const FIX_RAISE = "stop, raise with the lead; on approval pin file + form + ruling id.";
+const mkRed = (
+  file: string,
+  line: number,
+  col: number,
+  form: string,
+  found: string,
+  rule: string,
+  fix = FIX_RAISE,
+) => `${file}:${line}:${col}  form=${form}  found=${found.slice(0, 80)}  rule=${rule}  Fix: ${fix}`;
+
+/** Reds the owner or lead has approved: file + form + text + ruling + the file's full sha256, each matching
+ *  exactly once (the A21 shape). A one-byte change to the file breaks the hash and the red comes back. */
+type LegitRed = { file: string; form: string; text: string; ruling: string; sha256: string };
+const LEGIT_REDS: LegitRed[] = [
+  {
+    file: "public/site/img/brand/favicon.svg",
+    form: "svg-attr",
+    text: "#000000",
+    ruling: "SA-1203 A25 R-c",
+    sha256: "555edc8e719e0528173fd4c6e77624d569d6d8f538a23aa986ec251662277813",
+  },
+];
+const applyLegitReds = (
+  reds: string[],
+  hashOf: (file: string) => string | null,
+  legit: LegitRed[] = LEGIT_REDS,
+): string[] => {
+  const left = [...reds];
+  const extra: string[] = [];
+  for (const l of legit) {
+    const hits = left.filter(
+      (r) => r.startsWith(l.file + ":") && r.includes("form=" + l.form) && r.includes(l.text),
+    );
+    if (hashOf(l.file) !== l.sha256) {
+      extra.push(
+        mkRed(
+          l.file,
+          0,
+          0,
+          l.form,
+          l.text,
+          "legit-red-hash",
+          "the file changed: stop, raise with the lead.",
+        ),
+      );
+    } else if (hits.length !== 1)
+      extra.push(
+        mkRed(l.file, 0, 0, l.form, l.text, "legit-red-not-once", "an allowed red must match once"),
+      );
+    else left.splice(left.indexOf(hits[0]), 1);
+  }
+  return [...left, ...extra];
 };
-let siteReadCache: SiteRead | null = null;
-const siteRead = (): SiteRead => {
-  if (siteReadCache) return siteReadCache;
+
+type Page = { name: string; html: string };
+type TextFile = { path: string; text: string };
+type SourceInputs = { pages: Page[]; sheets: TextFile[]; svgs: TextFile[] };
+type SourceCensus = {
+  stylesheets: number;
+  styleBlocks: number;
+  paletteBlocks: number;
+  styleAttrs: number;
+  svgFiles: number;
+  templates: number;
+  svgStyles: number;
+  dataUrls: number;
+  escapes: number;
+  inlineSvg: number;
+  noscript: number;
+  inlineScripts: number;
+};
+type SiteRead = { rules: CopperRule[]; problems: string[]; census: SourceCensus };
+
+// The logo key: the brand folder plus the one reversed mark directly in img/ (named once, here).
+const BRAND_SVG_DIR = "public/site/img/brand/";
+const NAMED_REVERSED_MARK = "public/site/img/routeflow-mark-reversed.svg";
+const SVG_COLOUR_ATTRS = ["fill", "stroke", "stop-color", "flood-color", "lighting-color", "color"];
+const SVG_ANIMATE_ATTRS = ["from", "to", "by", "values"];
+const hexKey = (v: string): string | null => {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(v.trim());
+  if (!m) return null;
+  const h = m[1].toLowerCase();
+  return h.length === 3 ? [...h].map((c) => c + c).join("") : h;
+};
+const PALETTE_HEX_SET = new Set(
+  Object.values(PALETTE)
+    .map((v) => hexKey(v))
+    .filter((v): v is string => v !== null),
+);
+const NEUTRAL_PAINT = /^(?:none|currentcolor|url\(\s*#[\w-]+\s*\))$/i;
+const PALETTE_VAR = /^var\(\s*--(?:rf|brand)-[\w-]+\s*\)$/;
+const paintOk = (value: string, inLogoKey: boolean): boolean => {
+  const v = value.trim();
+  if (NEUTRAL_PAINT.test(v)) return true;
+  if (inLogoKey) {
+    const h = hexKey(v);
+    return h !== null && PALETTE_HEX_SET.has(h);
+  }
+  return PALETTE_VAR.test(v);
+};
+
+/** Colour attributes of one element, and the colour-valued animation attributes. */
+const colourAttrsOf = (el: Element): Array<[string, string]> => {
+  const out: Array<[string, string]> = [];
+  for (const a of SVG_COLOUR_ATTRS) {
+    const v = el.getAttribute(a);
+    if (v !== null) out.push([a, v]);
+  }
+  const tag = el.tagName.toLowerCase();
+  if (
+    (tag === "animate" || tag === "set") &&
+    SVG_COLOUR_ATTRS.includes(el.getAttribute("attributeName") ?? "")
+  ) {
+    for (const a of SVG_ANIMATE_ATTRS) {
+      const v = el.getAttribute(a);
+      if (v !== null) for (const part of a === "values" ? v.split(";") : [v]) out.push([a, part]);
+    }
+  }
+  return out;
+};
+
+// whitespace in a value is not a difference (postcss keeps it for custom properties)
+const palettePageSignature = (css: string) =>
+  JSON.stringify(
+    readCss(css, "palette").rules.map((r) => [
+      r.at,
+      r.selectors,
+      Object.fromEntries(
+        Object.entries(r.decls).map(([k, v]) => [k, v.replace(/s+/g, " ").trim()]),
+      ),
+    ]),
+  );
+let paletteSignatureCache: string | null = null;
+const expectedPaletteSignature = () => {
+  if (paletteSignatureCache) return paletteSignatureCache;
+  const tag = new JSDOM(brandTokensTag(loadPalette())).window.document.querySelector("style");
+  return (paletteSignatureCache = palettePageSignature(tag?.textContent ?? ""));
+};
+
+const sheetPathOf = (href: string): string => {
+  const clean = href.split(/[?#]/)[0];
+  return clean.startsWith("/") ? "public" + clean : "public/site/" + clean;
+};
+
+/** A CSS `url(...)` with its address, quoted or not. */
+const CSS_URL = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s][^)]*?))\s*\)/gi;
+const NONCOPPER_PALETTE_HEX = new Set(
+  Object.entries(PALETTE)
+    .filter(([k]) => !k.startsWith("copper"))
+    .map(([, v]) => hexKey(v))
+    .filter((v): v is string => v !== null),
+);
+
+/** A CSS data: URL, read as svg source (SA-1203 A25 R-a): decoded, parsed as XML, and every colour in it
+ *  scanned. Anything the reader cannot open fails closed as an unread container. */
+function readDataUrlSvg(uri: string, source: string, line: number): string[] {
+  const red = (found: string, rule: string, fix?: string) =>
+    mkRed(source, line, 0, "data-url", found, rule, fix);
+  const comma = uri.indexOf(",");
+  if (comma < 0) return [red(uri, "unread-container")];
+  const parts = uri
+    .slice(5, comma)
+    .split(";")
+    .map((s) => s.trim().toLowerCase());
+  if (parts.includes("base64")) return [red(";base64", "unread-container")];
+  if (parts[0] !== "image/svg+xml") return [red(parts[0] || "(no media type)", "unread-container")];
+  let text: string;
+  try {
+    text = decodeURIComponent(uri.slice(comma + 1));
+  } catch {
+    return [red("decode error", "unread-container")];
+  }
+  let doc: Document;
+  try {
+    doc = new JSDOM(text, { contentType: "image/svg+xml" }).window.document;
+  } catch {
+    return [red("xml parse error", "unread-container")];
+  }
+  const reds: string[] = [];
+  if (/var\(/i.test(text)) reds.push(red("var()", "unread-container"));
+  if (literalsOf(text).some((c) => copperLike(c) || isAppCopper(c)))
+    reds.push(red("a copper colour", "copper-in-data-url"));
+  for (const el of doc.querySelectorAll("*")) {
+    const tag = el.tagName.toLowerCase();
+    if (["style", "image", "use"].includes(tag)) reds.push(red(`<${tag}>`, "unread-container"));
+    for (const a of el.getAttributeNames()) {
+      const n = a.toLowerCase();
+      if (n === "style" || n === "href" || n.endsWith(":href"))
+        reds.push(red(`${n} attribute`, "unread-container"));
+    }
+    for (const [a, v] of colourAttrsOf(el)) {
+      const h = hexKey(v);
+      if (/^(?:none|currentcolor)$/i.test(v.trim()) || (h !== null && NONCOPPER_PALETTE_HEX.has(h)))
+        continue;
+      const rgb = literalsOf(v);
+      const copper = rgb.some((c) => copperLike(c) || isAppCopper(c));
+      reds.push(red(`${a}="${v}"`, copper ? "copper-in-data-url" : "data-url-off-palette"));
+    }
+  }
+  return [...new Set(reds)];
+}
+
+/** Read every served source. */
+function readSources(inp: SourceInputs): SiteRead {
   const rules: CopperRule[] = [];
   const problems: string[] = [];
-  const census = { stylesheets: 0, styleBlocks: 0, paletteBlocks: 0, styleAttrs: 0 };
-  for (const f of allSiteCss()) {
-    census.stylesheets++;
-    const r = readCss(read(f), f.replace("public/site/", ""));
+  const census: SourceCensus = {
+    stylesheets: 0,
+    styleBlocks: 0,
+    paletteBlocks: 0,
+    styleAttrs: 0,
+    svgFiles: 0,
+    templates: 0,
+    svgStyles: 0,
+    dataUrls: 0,
+    escapes: 0,
+    inlineSvg: 0,
+    noscript: 0,
+    inlineScripts: 0,
+  };
+  // a data URL is counted once per rule (a prefixed and an unprefixed declaration share one)
+  const seenData = new Set<string>();
+  const takeCss = (r: ReturnType<typeof readCss>) => {
     rules.push(...r.rules.map(toCopper));
     problems.push(...r.problems);
-  }
-  for (const { name, html } of siteHtml()) {
-    for (const m of html.matchAll(/<style([^>]*)>([\s\S]*?)<\/style>/gi)) {
-      if (/\sid="brand-tokens"/.test(m[1])) {
-        census.paletteBlocks++;
-        continue;
+    census.escapes += r.problems.filter((p) => p.includes("rule=escape-outside-string")).length;
+    for (const d of r.decls)
+      for (const m of d.value.matchAll(CSS_URL)) {
+        const uri = (m[1] ?? m[2] ?? m[3] ?? "").trim();
+        if (!/^data:/i.test(uri)) continue;
+        const key = `${d.source}:${d.line}:${uri}`;
+        if (seenData.has(key)) continue;
+        seenData.add(key);
+        census.dataUrls++;
+        problems.push(...readDataUrlSvg(uri, d.source, d.line));
       }
-      census.styleBlocks++;
-      const offset = html.slice(0, (m.index ?? 0) + m[0].indexOf(">") + 1).split("\n").length - 1;
-      const r = readCss(m[2], `${name} <style>`, offset);
-      rules.push(...r.rules.map(toCopper));
-      problems.push(...r.problems);
-    }
-    for (const m of html.matchAll(/\sstyle=(?:"([^"]*)"|'([^']*)')/g)) {
-      census.styleAttrs++;
-      const r = readStyleAttr(m[1] ?? m[2], `${name} style=""`);
-      rules.push(...r.rules.map(toCopper));
-      problems.push(...r.problems);
-    }
+  };
+  const sheetSet = new Set(allSiteCss());
+
+  for (const sh of inp.sheets) {
+    census.stylesheets++;
+    takeCss(readCss(sh.text, sh.path.replace("public/site/", "")));
   }
-  return (siteReadCache = { rules, problems, census });
+
+  // one parsed document (page or svg file): the checks they share, applied to the document and, with the
+  // same rules, to the content of every <template> in it (SA-1203 A25 R-b)
+  const checkDoc = (dom: JSDOM, file: string, label: string, isSvgFile: boolean) => {
+    const doc = dom.window.document;
+    const loc = (el: Element) => {
+      const l = dom.nodeLocation(el) as { startLine?: number; startCol?: number } | null;
+      return [l?.startLine ?? 0, l?.startCol ?? 0] as const;
+    };
+    const red = (el: Element, form: string, found: string, rule: string, fix?: string) => {
+      const [line, col] = loc(el);
+      problems.push(mkRed(file, line, col, form, found, rule, fix));
+    };
+    let palette = 0;
+    const scan = (root: ParentNode) => {
+      for (const el of root.querySelectorAll("style")) {
+        if (isSvgFile || el.closest("svg")) {
+          census.svgStyles++;
+          red(el, "svg-style", "<style> in svg", "unread-container");
+          continue;
+        }
+        if (el.getAttribute("id") === "brand-tokens") {
+          palette++;
+          census.paletteBlocks++;
+          if (palettePageSignature(el.textContent ?? "") !== expectedPaletteSignature())
+            red(
+              el,
+              "palette-block",
+              (el.textContent ?? "").slice(0, 40),
+              "palette-content-mismatch",
+            );
+          continue;
+        }
+        census.styleBlocks++;
+        const l = dom.nodeLocation(el) as { startTag?: { endLine?: number } } | null;
+        takeCss(readCss(el.textContent ?? "", `${label} <style>`, (l?.startTag?.endLine ?? 1) - 1));
+      }
+      for (const el of root.querySelectorAll("[style]")) {
+        census.styleAttrs++;
+        const l = dom.nodeLocation(el) as { attrs?: Record<string, { startLine: number }> } | null;
+        takeCss(
+          readStyleAttr(
+            el.getAttribute("style") ?? "",
+            `${label} style=""`,
+            (l?.attrs?.style?.startLine ?? 1) - 1,
+          ),
+        );
+      }
+      for (const el of root.querySelectorAll("template")) {
+        census.templates++;
+        const content = (el as HTMLTemplateElement).content;
+        if (!content || content.nodeType !== 11)
+          red(el, "template", "<template> without content", "unread-container");
+        else scan(content);
+      }
+      for (const el of root.querySelectorAll("iframe[srcdoc], object, embed"))
+        red(el, el.tagName.toLowerCase(), `<${el.tagName.toLowerCase()}>`, "unread-container");
+      for (const el of root.querySelectorAll("noscript")) {
+        census.noscript++;
+        if (
+          el.querySelector("style, [style], link") ||
+          /<(?:style|link)\b|\sstyle\s*=/i.test(el.textContent ?? "")
+        )
+          red(el, "noscript", "<noscript> with style or link", "unread-container");
+      }
+      for (const el of root.querySelectorAll("link")) {
+        const href = el.getAttribute("href") ?? "";
+        if (/^\s*data:/i.test(href)) {
+          census.dataUrls++;
+          red(el, "data-url", href, "unread-container");
+        } else if (
+          (el.getAttribute("rel") ?? "").toLowerCase().split(/\s+/).includes("stylesheet")
+        ) {
+          if (!sheetSet.has(sheetPathOf(href)))
+            red(el, "link-stylesheet", href, "unread-container");
+        }
+      }
+      for (const el of root.querySelectorAll("*"))
+        for (const a of ["href", "xlink:href"]) {
+          const v = el.getAttribute(a);
+          if (
+            v !== null &&
+            /^\s*data:/i.test(v) &&
+            el.tagName.toLowerCase() !== "link" &&
+            (el.closest("svg") || isSvgFile)
+          ) {
+            census.dataUrls++;
+            red(el, "data-url", v, "unread-container");
+          }
+        }
+      if (isSvgFile) return;
+      census.inlineScripts += [...root.querySelectorAll("script")].filter(
+        (s) => !s.hasAttribute("src"),
+      ).length;
+      for (const svg of root.querySelectorAll("svg")) {
+        census.inlineSvg++;
+        for (const el of [svg, ...svg.querySelectorAll("*")])
+          for (const [a, v] of colourAttrsOf(el))
+            if (!paintOk(v, false)) {
+              const [line, col] = loc(el);
+              problems.push(
+                mkRed(
+                  file,
+                  line,
+                  col,
+                  "svg-attr",
+                  `${a}="${v}"`,
+                  "svg-colour-attr",
+                  "stop, raise with the lead; the inline svg takes only none, currentColor, url(#id) or var(--palette token).",
+                ),
+              );
+            }
+      }
+    };
+    scan(doc);
+    if (!isSvgFile && palette !== 1)
+      problems.push(
+        mkRed(
+          file,
+          0,
+          0,
+          "palette-block",
+          `${palette} blocks`,
+          "palette-content-mismatch",
+          "each page has exactly one palette block",
+        ),
+      );
+    return doc;
+  };
+
+  for (const page of inp.pages) {
+    checkDoc(new JSDOM(page.html, { includeNodeLocations: true }), page.name, page.name, false);
+  }
+
+  for (const svgFile of inp.svgs) {
+    census.svgFiles++;
+    try {
+      new JSDOM(svgFile.text, { contentType: "image/svg+xml" });
+    } catch (e) {
+      problems.push(mkRed(svgFile.path, 0, 0, "svg-xml", String(e), "svg-not-well-formed"));
+    }
+    const dom = new JSDOM(svgFile.text, { includeNodeLocations: true });
+    const doc = checkDoc(dom, svgFile.path, svgFile.path, true);
+    const inLogoKey =
+      svgFile.path.startsWith(BRAND_SVG_DIR) || svgFile.path === NAMED_REVERSED_MARK;
+    for (const el of doc.querySelectorAll("*"))
+      for (const [a, v] of colourAttrsOf(el))
+        if (!paintOk(v, inLogoKey)) {
+          const l = dom.nodeLocation(el) as { startLine?: number; startCol?: number } | null;
+          problems.push(
+            mkRed(
+              svgFile.path,
+              l?.startLine ?? 0,
+              l?.startCol ?? 0,
+              "svg-attr",
+              `${a}="${v}"`,
+              inLogoKey ? "logo-off-palette" : "svg-colour-attr",
+              inLogoKey
+                ? "stop, raise with the lead; a logo file may carry palette hexes only."
+                : "stop, raise with the lead; an svg takes only none, currentColor, url(#id) or var(--palette token).",
+            ),
+          );
+        }
+  }
+  return { rules, problems, census };
+}
+
+const siteSvgFiles = (): TextFile[] => {
+  const out: TextFile[] = [];
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(path.join(WEB, dir), { withFileTypes: true })) {
+      const rel = dir + "/" + e.name;
+      if (e.isDirectory()) walk(rel);
+      else if (e.name.endsWith(".svg")) out.push({ path: rel, text: read(rel) });
+    }
+  };
+  walk("public/site");
+  return out.sort((a, b) => a.path.localeCompare(b.path));
 };
+const realInputs = (): SourceInputs => ({
+  pages: siteHtml(),
+  sheets: allSiteCss().map((f) => ({ path: f, text: read(f) })),
+  svgs: siteSvgFiles(),
+});
+
+let siteReadCache: SiteRead | null = null;
+const siteRead = (): SiteRead => (siteReadCache ??= readSources(realInputs()));
 const copperSources = (): CopperRule[] => siteRead().rules;
 
 const COPPER_SEEDS = ["--brand-copper", "--brand-copper-light", "--brand-copper-dark"];
@@ -721,7 +1117,6 @@ function aliasOffences(
     out.push(`copper alias rows are not ${COPPER_ALIAS_COUNT}`);
   return [...new Set(out)];
 }
-/** Site scripts and the page text outside <style> and style="": a reader found here is never tagged. */
 /** A custom-property name built by concatenation or a template (SA-1203 A20 R7). */
 const dynamicPropertyNames = (text: string): string[] =>
   [
@@ -729,28 +1124,126 @@ const dynamicPropertyNames = (text: string): string[] =>
     ...text.matchAll(/\+\s*["']--/g),
     ...text.matchAll(/`[^`]*--\$\{/g),
   ].map((m) => m[0]);
-// The pinned source census (R4); a new stylesheet, <style> block or style attribute is a reviewed diff.
-// Third-party minified scripts are not site code; the one that builds names is pinned by its own test.
-const VENDOR_JS = "public/site/js/vendor/";
-const CENSUS_NOW = { stylesheets: 13, styleBlocks: 1, paletteBlocks: 10, styleAttrs: 24 };
-const aliasTexts = (): Array<{ name: string; text: string }> => {
-  const out: Array<{ name: string; text: string }> = [];
+
+// R7's one vendor exclusion (SA-1203 A21): a third-party file the site does not edit, named by path and full
+// sha256, and holding exactly one name-building setProperty, whose value is an index number. Never a folder.
+const SPLITTEXT_PATH = "public/site/js/vendor/SplitText.min.js";
+const SPLITTEXT_SHA256 = "419f7027a5f086a12cb7988736d8fdd3a6ed2200229661de25b6628ca7ced344";
+const R7_EXCLUDED: Array<{ path: string; sha256: string }> = [
+  { path: SPLITTEXT_PATH, sha256: SPLITTEXT_SHA256 },
+];
+const sha256Of = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+const NAME_SETPROPERTY = /setProperty\(\s*["']--["']\s*\+/g;
+type JsFile = { name: string; bytes: Buffer };
+const r7Reds = (files: JsFile[], excluded = R7_EXCLUDED): string[] => {
+  const reds: string[] = [];
+  for (const f of files) {
+    const text = f.bytes.toString("utf8");
+    const ex = excluded.find((e) => e.path === f.name);
+    if (ex) {
+      const matches = (text.match(NAME_SETPROPERTY) ?? []).length;
+      if (sha256Of(f.bytes) !== ex.sha256 || matches !== 1)
+        reds.push(
+          mkRed(
+            f.name,
+            0,
+            0,
+            "vendor-pin",
+            `sha256 ${sha256Of(f.bytes).slice(0, 16)}, ${matches} matches`,
+            "r7-vendor-pin",
+          ),
+        );
+      continue;
+    }
+    for (const h of dynamicPropertyNames(text))
+      reds.push(mkRed(f.name, 0, 0, "js-name", h, "r7-runtime-name"));
+  }
+  return reds;
+};
+const siteJsFiles = (): JsFile[] => {
+  const out: JsFile[] = [];
   const walk = (dir: string) => {
     for (const e of fs.readdirSync(path.join(WEB, dir), { withFileTypes: true })) {
       const rel = dir + "/" + e.name;
       if (e.isDirectory()) walk(rel);
-      else if (e.name.endsWith(".js")) out.push({ name: rel, text: read(rel) });
+      else if (e.name.endsWith(".js"))
+        out.push({ name: rel, bytes: fs.readFileSync(path.join(WEB, rel)) });
     }
   };
   walk("public/site");
-  for (const { name, html } of siteHtml())
-    out.push({
-      name,
-      text: html
-        .replace(/<style[\s\S]*?<\/style>/gi, "")
-        .replace(/\sstyle=(?:"[^"]*"|'[^']*')/g, ""),
-    });
   return out;
+};
+
+// The pinned source census (A20 R4, A24 item 7): a new source is a reviewed diff, never a re-pin.
+const CENSUS_NOW: SourceCensus = {
+  stylesheets: 13,
+  styleBlocks: 1,
+  paletteBlocks: 10,
+  styleAttrs: 24,
+  svgFiles: 8,
+  templates: 1,
+  svgStyles: 0,
+  dataUrls: 7,
+  escapes: 0,
+  inlineSvg: 268,
+  noscript: 0,
+  inlineScripts: 11,
+};
+const censusReds = (census: SourceCensus): string[] =>
+  (Object.keys(CENSUS_NOW) as Array<keyof SourceCensus>)
+    .filter((k) => census[k] !== CENSUS_NOW[k])
+    .map((k) =>
+      k === "inlineScripts"
+        ? mkRed(
+            "site",
+            0,
+            0,
+            "script",
+            `${census[k]} inline scripts, pinned ${CENSUS_NOW[k]}`,
+            "inline-script-count",
+            "stop, raise with the lead; M4 is not yet read.",
+          )
+        : mkRed("site", 0, 0, "census", `${k}=${census[k]}, pinned ${CENSUS_NOW[k]}`, "census-pin"),
+    );
+
+/** Site scripts and the page text outside <style> and style="": a reader found here is never tagged. */
+const aliasTexts = (): Array<{ name: string; text: string }> => {
+  const out = siteJsFiles().map((f) => ({ name: f.name, text: f.bytes.toString("utf8") }));
+  for (const { name, html } of siteHtml()) {
+    const doc = new JSDOM(html).window.document;
+    for (const el of doc.querySelectorAll("style")) el.remove();
+    for (const el of doc.querySelectorAll("[style]")) el.removeAttribute("style");
+    out.push({ name, text: doc.documentElement.outerHTML });
+  }
+  return out;
+};
+
+/** Everything the guards check at once, for the real tree or for a planted copy. */
+const auditSources = (inp: SourceInputs): string[] => {
+  const read1 = readSources(inp);
+  const allowed = new Set(COPPER_ALLOW.map(([s, sel, p]) => copperKey(s, sel, p)));
+  const scan = copperScan(read1.rules);
+  const copper = scan.uses
+    .filter((u) => !allowed.has(u.key))
+    .map((u) =>
+      mkRed(
+        u.key,
+        u.rule.line ?? 0,
+        0,
+        "copper-use",
+        u.rule.decls[u.prop],
+        "copper-not-allowed",
+        "give it a row under an R17 job, or remove it.",
+      ),
+    );
+  const hashOf = (f: string) => {
+    const svg = inp.svgs.find((x) => x.path === f);
+    return svg ? sha256Of(Buffer.from(svg.text)) : null;
+  };
+  return applyLegitReds(
+    [...read1.problems, ...censusReds(read1.census), ...copper, ...scan.dupes],
+    hashOf,
+  );
 };
 /** The guards' view of copperScan: every copper use, grouped by the row key (no at-rule chain), so a rule
  *  in an @media block or a later rule with the same key is checked as well as the first. */
@@ -916,28 +1409,272 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
     expect(copperScan().dupes).toEqual([]);
   });
 
-  it("(a) the site css reads clean: no unknown at-rule, no nested rule, no syntax error (R2, R3)", () => {
+  it("(a) the site css and html read clean: no unknown at-rule, nested rule, escape or unread container (R2, R3, M1-M3)", () => {
     expect(KNOWN_AT_RULES).toHaveLength(5);
-    expect(siteRead().problems).toEqual([]);
+    expect(LEGIT_REDS).toHaveLength(1);
+    const realHash = (f: string) => sha256Of(fs.readFileSync(path.join(WEB, f)));
+    expect(applyLegitReds(siteRead().problems, realHash)).toEqual([]);
   });
 
-  it("(a) the source census is pinned: a new stylesheet, <style> block or style attribute is reviewed (R4)", () => {
+  it("(a) the source census is pinned: a new source is a reviewed diff, never a re-pin (R4, A24 item 7)", () => {
     expect(siteRead().census).toEqual(CENSUS_NOW);
   });
 
-  it("(a) the vendored script that builds a custom-property name is the one reviewed file (R7)", () => {
-    const hits = aliasTexts()
-      .filter((t) => t.name.startsWith(VENDOR_JS) && dynamicPropertyNames(t.text).length > 0)
-      .map((t) => t.name);
-    expect(hits).toEqual(["public/site/js/vendor/SplitText.min.js"]);
+  it("(a) R7 over every site script: the one vendored exclusion is by path and full hash (A21)", () => {
+    expect(R7_EXCLUDED).toHaveLength(1);
+    expect(r7Reds(siteJsFiles())).toEqual([]);
+    const names = siteJsFiles().map((f) => f.name);
+    for (const n of ["gsap.min.js", "ScrollTrigger.min.js", "SplitText.min.js"])
+      expect(names).toContain("public/site/js/vendor/" + n);
   });
 
-  it("(a) no site script builds a custom-property name at run time (R7)", () => {
-    const bad = aliasTexts()
-      .filter((t) => t.name.endsWith(".js"))
-      .filter((t) => !t.name.startsWith(VENDOR_JS))
-      .flatMap((t) => dynamicPropertyNames(t.text).map((m) => t.name + ": " + m));
-    expect(bad).toEqual([]);
+  describe("planted vendor fixtures (SA-1203 A21)", () => {
+    const real = () => siteJsFiles();
+    it("a one-byte edit of the vendored file is red", () => {
+      const files = real().map((f) =>
+        f.name === SPLITTEXT_PATH ? { ...f, bytes: Buffer.concat([f.bytes, Buffer.from(" ")]) } : f,
+      );
+      expect(r7Reds(files).join()).toContain("rule=r7-vendor-pin");
+    });
+    it("a second name-building match is red even with the hash unchanged", () => {
+      const bytes = Buffer.from(
+        real()
+          .find((f) => f.name === SPLITTEXT_PATH)!
+          .bytes.toString("utf8") + ';m.style.setProperty("--"+y,1)',
+      );
+      const files = [{ name: SPLITTEXT_PATH, bytes }];
+      const pin = [{ path: SPLITTEXT_PATH, sha256: sha256Of(bytes) }];
+      expect(r7Reds(files, pin).join()).toContain("rule=r7-vendor-pin");
+    });
+    it("a new vendor file with a name-building call is red; gsap and ScrollTrigger are green", () => {
+      const bytes = Buffer.from('el.style.setProperty("--"+x, 1)');
+      const files = [...real(), { name: "public/site/js/vendor/other.min.js", bytes }];
+      const reds = r7Reds(files);
+      expect(reds.join()).toContain("other.min.js");
+      expect(reds.join()).toContain("rule=r7-runtime-name");
+      expect(reds.join()).not.toMatch(/gsap\.min|ScrollTrigger\.min/);
+    });
+  });
+
+  describe("planted source fixtures (SA-1203 A24 plants 0-26)", () => {
+    const withHome = (f: (html: string) => string): SourceInputs => {
+      const inp = realInputs();
+      return {
+        ...inp,
+        pages: inp.pages.map((p) => (p.name === "home.html" ? { ...p, html: f(p.html) } : p)),
+      };
+    };
+    const inject = (snippet: string) =>
+      withHome((h) =>
+        h.includes("</body>") ? h.replace("</body>", snippet + "</body>") : h + snippet,
+      );
+    const withSheet = (file: string, add: string): SourceInputs => {
+      const inp = realInputs();
+      return {
+        ...inp,
+        sheets: inp.sheets.map((s) => (s.path.endsWith(file) ? { ...s, text: s.text + add } : s)),
+      };
+    };
+    const withSvg = (file: string, f: (t: string) => string): SourceInputs => {
+      const inp = realInputs();
+      return {
+        ...inp,
+        svgs: inp.svgs.map((s) => (s.path.endsWith(file) ? { ...s, text: f(s.text) } : s)),
+      };
+    };
+    const rules = (inp: SourceInputs) => auditSources(inp).join("\n");
+    const COPPER = "#B5683A";
+
+    it("0: the untouched tip is green with every pin equal", () => {
+      expect(auditSources(realInputs())).toEqual([]);
+    });
+    it("1: an upper-case STYLE attribute with copper is red", () => {
+      expect(rules(inject(`<p STYLE="color:${COPPER}">x</p>`))).toContain(
+        "rule=copper-not-allowed",
+      );
+    });
+    it("2: spaces around = in a style attribute are red", () => {
+      expect(rules(inject(`<p style = "color:${COPPER}">x</p>`))).toContain(
+        "rule=copper-not-allowed",
+      );
+    });
+    it("3: an unquoted style attribute is red", () => {
+      expect(rules(inject(`<p style=color:${COPPER}>x</p>`))).toContain("rule=copper-not-allowed");
+    });
+    it("4: p/style= is a style attribute to the parser, and red", () => {
+      expect(rules(inject(`<p/style="color:${COPPER}">x</p>`))).toContain(
+        "rule=copper-not-allowed",
+      );
+    });
+    it("5: a numeric entity with no semicolon is decoded, and red", () => {
+      expect(rules(inject('<p style="color:&#35B5683A">x</p>'))).toContain(
+        "rule=copper-not-allowed",
+      );
+    });
+    it("6: <style > and <STYLE> blocks with copper are red", () => {
+      const out = auditSources(
+        inject(`<style >.zz{color:${COPPER}}</style ><STYLE>.yy{color:${COPPER}}</STYLE>`),
+      );
+      expect(
+        out.filter((r) => r.includes("rule=copper-not-allowed")).length,
+      ).toBeGreaterThanOrEqual(2);
+    });
+    it("7: a CSS escape outside a string in a sheet is red", () => {
+      expect(rules(withSheet("css/home.css", ".zz{color:var(\\2d\\2drf-copper)}"))).toContain(
+        "rule=escape-outside-string",
+      );
+    });
+    it("8: a CSS escape in a style attribute is red", () => {
+      expect(rules(inject('<p style="color:#\\42 5683A">x</p>'))).toContain(
+        "rule=escape-outside-string",
+      );
+    });
+    it("9: copper added to the palette block is a palette mismatch", () => {
+      const inp = withHome((h) =>
+        h.replace(
+          /(<style id="brand-tokens">[\s\S]*?)(<\/style>)/,
+          "$1h1{color:var(--rf-copper)}$2",
+        ),
+      );
+      expect(rules(inp)).toContain("rule=palette-content-mismatch");
+    });
+    it("10: one changed palette value is a palette mismatch", () => {
+      const inp = withHome((h) =>
+        h.replace(
+          /(<style id="brand-tokens">[^#]*#)([0-9a-fA-F])/,
+          (_m, a, d) => a + (d === "0" ? "1" : "0"),
+        ),
+      );
+      expect(rules(inp)).toContain("rule=palette-content-mismatch");
+    });
+    it("11: a new svg file with a copper fill is red", () => {
+      const inp = realInputs();
+      inp.svgs.push({
+        path: "public/site/img/hero.svg",
+        text: `<svg xmlns="http://www.w3.org/2000/svg"><path fill="${COPPER}" d="M0 0"/></svg>`,
+      });
+      expect(rules(inp)).toContain("rule=svg-colour-attr");
+    });
+    it("12: an inline path with a copper fill is red", () => {
+      expect(rules(inject(`<svg><path fill="${COPPER}" d="M0 0"/></svg>`))).toContain(
+        "rule=svg-colour-attr",
+      );
+    });
+    it("13: an inline stop-color is red", () => {
+      const s = `<svg><defs><linearGradient id="g"><stop offset="0" stop-color="#b5683a"/></linearGradient></defs></svg>`;
+      expect(rules(inject(s))).toContain("rule=svg-colour-attr");
+    });
+    it("14: animate and set to a copper colour are red", () => {
+      const s = `<svg><rect><animate attributeName="fill" to="${COPPER}"/></rect><rect><set attributeName="fill" to="${COPPER}"/></rect></svg>`;
+      const out = auditSources(inject(s));
+      expect(out.filter((r) => r.includes("rule=svg-colour-attr")).length).toBeGreaterThanOrEqual(
+        2,
+      );
+    });
+    it("15: a template holding a copper style is red under the copper rule", () => {
+      expect(rules(inject(`<template><p style="color:${COPPER}">x</p></template>`))).toContain(
+        "rule=copper-not-allowed",
+      );
+    });
+    it("16: a style inside a brand svg file is an unread container", () => {
+      const inp = withSvg("img/brand/symbol.svg", (t) =>
+        t.replace("</svg>", `<style>.a{fill:${COPPER}}</style></svg>`),
+      );
+      expect(rules(inp)).toContain("rule=unread-container");
+    });
+    it("17: a style inside an inline svg is an unread container", () => {
+      expect(rules(inject(`<svg><style>.a{fill:${COPPER}}</style></svg>`))).toContain(
+        "rule=unread-container",
+      );
+    });
+    it("18: a noscript holding a copper style is an unread container", () => {
+      expect(rules(inject(`<noscript><p style="color:${COPPER}">x</p></noscript>`))).toContain(
+        "rule=unread-container",
+      );
+    });
+    it("19: a link outside the census and a data: link are unread containers", () => {
+      const a = auditSources(inject('<link rel="stylesheet" href="/site/css/evil.css">'));
+      const b = auditSources(inject('<link rel="stylesheet" href="data:text/css,a{}">'));
+      expect(a.join("\n")).toContain("form=link-stylesheet");
+      expect(b.join("\n")).toContain("form=data-url");
+      expect(a.join("\n") + b.join("\n")).toContain("rule=unread-container");
+    });
+    it("20: an iframe srcdoc is an unread container", () => {
+      expect(rules(inject('<iframe srcdoc="&lt;p&gt;x&lt;/p&gt;"></iframe>'))).toContain(
+        "rule=unread-container",
+      );
+    });
+    it("21: a non-palette hex in symbol.svg is off the logo palette", () => {
+      const inp = withSvg("img/brand/symbol.svg", (t) =>
+        t.replace(/(fill|stroke)="#[0-9a-fA-F]{3,6}"/, '$1="#123456"'),
+      );
+      expect(rules(inp)).toContain("rule=logo-off-palette");
+    });
+    it("22: one extra inline script trips the script-count pin", () => {
+      expect(rules(inject("<script>var a=1</script>"))).toContain("rule=inline-script-count");
+    });
+    it("23: a quoted backslash escape is green", () => {
+      expect(auditSources(withSheet("css/home.css", '.zz::after{content:"\\201C"}'))).toEqual([]);
+    });
+    it("24: a palette block equal by parse with other whitespace is green", () => {
+      const inp = withHome((h) =>
+        h.replace(
+          /(<style id="brand-tokens">)([\s\S]*?)(<\/style>)/,
+          (_m, a, b, c) => a + "\n  " + b.replace(/\{/g, " {\n ").replace(/;/g, " ;\n ") + "\n" + c,
+        ),
+      );
+      expect(auditSources(inp)).toEqual([]);
+    });
+    it("25: the unchanged copper logos are green", () => {
+      const out = auditSources(realInputs()).join("\n");
+      expect(out).not.toContain("symbol.svg");
+      expect(out).not.toContain("routeflow-mark-reversed.svg");
+      const files = realInputs().svgs.map((s) => s.path);
+      expect(files).toContain("public/site/img/brand/symbol.svg");
+      expect(files).toContain("public/site/img/routeflow-mark-reversed.svg");
+    });
+    const dataSvg = (inner: string) =>
+      `.zz{background:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27%3E${inner}%3C/svg%3E")}`;
+    it("27: copper in a percent-encoded data-url svg is red", () => {
+      const css = dataSvg("%3Cpath fill=%27%23B5683A%27/%3E");
+      expect(rules(withSheet("css/home.css", css))).toContain("rule=copper-in-data-url");
+    });
+    it("28: a base64 data url is an unread container", () => {
+      const css = '.zz{background:url("data:image/svg+xml;base64,PHN2Zy8+")}';
+      expect(rules(withSheet("css/home.css", css))).toContain("rule=unread-container");
+    });
+    it("29: a data:image/png url is an unread container", () => {
+      const css = '.zz{background:url("data:image/png,abc")}';
+      expect(rules(withSheet("css/home.css", css))).toContain("rule=unread-container");
+    });
+    it("30: a style attribute inside a decoded data-url svg is an unread container", () => {
+      const css = dataSvg("%3Cpath style=%27fill:red%27/%3E");
+      expect(rules(withSheet("css/home.css", css))).toContain("rule=unread-container");
+    });
+    it("31: a copper style block inside a template is red under the copper rule", () => {
+      expect(rules(inject(`<template><style>.zz{color:${COPPER}}</style></template>`))).toContain(
+        "rule=copper-not-allowed",
+      );
+    });
+    it("32: a one-byte edit of favicon.svg is red by the hash", () => {
+      const inp = withSvg("img/brand/favicon.svg", (t) => t + "\n");
+      expect(rules(inp)).toContain("rule=legit-red-hash");
+    });
+    it("33: an eighth colourless css data url is a census red only", () => {
+      const out = auditSources(withSheet("css/home.css", dataSvg("%3Crect width=%271%27/%3E")));
+      expect(out.length).toBeGreaterThan(0);
+      expect(out.every((r) => r.includes("rule=census-pin"))).toBe(true);
+    });
+    it("26: a ninth palette-hex logo in img/brand is a census red only", () => {
+      const inp = realInputs();
+      inp.svgs.push({
+        path: "public/site/img/brand/ninth.svg",
+        text: `<svg xmlns="http://www.w3.org/2000/svg"><path fill="${COPPER}" d="M0 0"/></svg>`,
+      });
+      const out = auditSources(inp);
+      expect(out.length).toBeGreaterThan(0);
+      expect(out.every((r) => r.includes("rule=census-pin"))).toBe(true);
+    });
   });
 
   describe("planted reader fixtures (SA-1203 A20 X1-X8)", () => {

@@ -43,6 +43,21 @@ export type CssRead = { decls: CssDecl[]; rules: CssRule[]; problems: string[] }
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 
+/** The index of the first backslash outside a string, or -1. A backslash inside a quoted string is
+ *  ordinary text, as in a content string; anywhere else it starts a CSS escape the matchers cannot see. */
+export function escapeOutsideString(text: string): number {
+  let quote = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = "";
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === "\\") return i;
+  }
+  return -1;
+}
+
 /** Read one stylesheet text. `lineOffset` is added to every line (for a <style> block inside a page). */
 export function readCss(css: string, source: string, lineOffset = 0): CssRead {
   const out: CssRead = { decls: [], rules: [], problems: [] };
@@ -57,13 +72,26 @@ export function readCss(css: string, source: string, lineOffset = 0): CssRead {
     return out;
   }
   const lineOf = (n: ChildNode) => (n.source?.start?.line ?? 0) + lineOffset;
+  // M1 (SA-1203 A24): an escape outside a string is not decoded, so it is a problem, never a silent pass.
+  const checkEscape = (text: string, n: ChildNode) => {
+    const at = escapeOutsideString(text);
+    if (at < 0) return;
+    const where = `${source}:${lineOf(n)}:${n.source?.start?.column ?? 0}`;
+    const found = text.slice(Math.max(0, at - 6), at + 8);
+    out.problems.push(
+      `${where}  form=css-escape  found=${found}  rule=escape-outside-string  Fix: stop, raise with the lead; on approval pin file + form + ruling id.`,
+    );
+  };
 
   const addRule = (rule: Rule, chain: string[], selectors: string[]) => {
     const at = chain.join(" > ");
+    checkEscape(rule.selector, rule);
     let body: CssRule | null = null;
     for (const child of rule.nodes ?? []) {
       if (child.type === "decl") {
         const d = child as Declaration;
+        checkEscape(d.prop, d);
+        checkEscape(d.value, d);
         out.decls.push({
           source,
           line: lineOf(d),
@@ -89,6 +117,7 @@ export function readCss(css: string, source: string, lineOffset = 0): CssRead {
       } else if (node.type === "atrule") {
         const at = node as AtRule;
         const name = at.name.toLowerCase();
+        checkEscape(at.params, at);
         if (!(KNOWN_AT_RULES as readonly string[]).includes(name)) {
           out.problems.push(`unknown at-rule @${at.name} at ${source}:${lineOf(at)}`);
         } else if (name === "media" || name === "supports") {
