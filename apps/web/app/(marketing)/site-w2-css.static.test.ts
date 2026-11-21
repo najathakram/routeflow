@@ -228,7 +228,7 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
     expect(sels.filter((s) => s.includes(":focus-visible"))).toEqual([":focus-visible"]);
   });
 
-  it("outside :root only the two dark panels set --rf-focus, to the on-panel text token", () => {
+  it("outside :root only the two dark panels and the landing price band set --rf-focus, to the on-panel text token", () => {
     const setters: Array<{ sel: string; value: string }> = [];
     const GRAPHICS = "public/site/graphics/rf-graphics.css";
     for (const f of CSS_FILES()) {
@@ -239,7 +239,21 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
         if (v !== undefined) for (const sel of r.selectors) setters.push({ sel, value: v });
       }
     }
-    expect(setters.map((x) => x.sel).sort()).toEqual([".end", ".pb"]);
+    // The <style> blocks of the served pages too (SA-1203 A6 follow-up): the landing token block's own bare
+    // :root is the contract copy and may set it; any other setter is one of the allowed scopes or a failure.
+    for (const name of STATIC_SITE_PAGE_NAMES) {
+      const html = readServedSitePage(name, { websiteId: undefined });
+      for (const m of html.matchAll(/<style([^>]*)>([\s\S]*?)<\/style>/gi)) {
+        if (/\sid="brand-tokens"/.test(m[1] as string)) continue;
+        for (const r of rulesOf(strip(m[2] as string))) {
+          if (name === "landing" && r.selectors.length === 1 && r.selectors[0] === ":root")
+            continue;
+          const v = r.decls["--rf-focus"];
+          if (v !== undefined) for (const sel of r.selectors) setters.push({ sel, value: v });
+        }
+      }
+    }
+    expect(setters.map((x) => x.sel).sort()).toEqual([".end", ".pb", ".price"]);
     for (const x of setters) expect(x.value).toBe("var(--rf-on-panel)");
   });
 

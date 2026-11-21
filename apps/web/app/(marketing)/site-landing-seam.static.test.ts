@@ -417,7 +417,7 @@ describe("review fixes: phone bar, art contrast, art tokens", () => {
     expect(ratio(colourOf(cls, prop), resolve(STAGES[stage]))).toBeGreaterThanOrEqual(3);
   });
 
-  it("a typed copper hex is refused, bare or behind a non-box token", () => {
+  it("a bare typed copper hex is refused, and the box tokens never resolve to copper", () => {
     expect(() => resolve("#B5683A")).toThrow(/cannot resolve/);
     expect(() => resolve(`var(--rf-text)`)).not.toThrow();
     for (const c of ["f-box", "f-flap"]) expect(colourOf(c, "fill")).not.toMatch(/^#b5683a$/i);

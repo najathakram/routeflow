@@ -316,13 +316,14 @@ Used here because the UX ledger (ux-ledger-p12-p16.md) holds P-rows for layout d
 |---|---|---|---|---|
 | DS-01 | css/mobile.css:36 `.home .hx-up .hx-over` (decorative rings) | two copper strokes | ink strokes | R17 has no decorative job (SA-1203 A4 2) |
 | DS-02 | css/home.css:252 `.st-note` (second note, stores section) | copper | ink (`--rf-text`) | R17 allows exactly one problem-section note (SA-1203 A4 2) |
-| DS-03 | css/home.css `.c-chg b` (change amount) and the stock marks | copper | ink (`--rf-text`) | the change amount is plain text in the app, not a copper job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
+| DS-03 | css/home.css `.c-chg b` (change amount; the stock marks were already ink) | copper | ink (`--rf-text`) | the change amount is plain text in the app, not a copper job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
 | DS-04 | css/home-color.css:52 `.uc-t h3::before` and :83 `.inc-ic` hover tile (use-case dot and tile) | copper | ink | not the eyebrow dot, no R17 job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
 | DS-05 | css/home-up.css `#founder .kick`, css/home.css `.st .kick`, css/site.css `.eyebrow,.kick` (label text) | copper | ink, or on-panel on dark bands; the dot stays copper | eyebrow label text is not the dot (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
 | DS-06 | css/home.css `.inc-plus`, css/site.css `.faq summary .ico` and `.pcard.featured .checks .ico` | copper | ink, or on-panel on the featured card | icons and check marks have no R17 job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
 | DS-07 | graphics/rf-wheel-up.css:26 `.rfw-hint` | copper | `--rf-text-2` | hint text has no R17 job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
 | DS-08 | `--rf-focus` (rf-graphics.css contract block, landing.html token block, `.pb`, `.end`, `.price`) | copper | `--rf-text` at the root, `--rf-on-panel` on the dark panels | one token change for the focus ring; contrast is measured later in the slot (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
 | DS-09 | `--rf-box-front`, `--rf-box-side` (box art), home.html truck inline fills, landing `.f-box` `.f-flap` | copper-tinted | kraft #9A8260 and #6E5A40; no box value equals a copper token value (pinned) | box and truck art have no R17 job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
+| DS-10 | graphics/rf-graphics.css:42 `--rf-skin-b`, `--rf-skin-c` (unused skin tones) | typed tones with a copper hue, no reader | deleted with their allow-list rows (7c8634b3c9) | no reader anywhere; F39 (R17, SA-1203 A6 3; lead clearance, lead, 2026-11-21) |
 
 ## Counts
 
