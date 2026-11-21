@@ -421,7 +421,8 @@ export function MakePaymentPanel({
         </div>
       ) : (
         <>
-          <div className="mb-1">
+          {/* The oldest-first line below carries the gap; with a chosen invoice it is hidden, so this does. */}
+          <div className={fromInvoiceId ? "mb-4" : "mb-1"}>
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
               Balance due
             </p>
