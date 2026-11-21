@@ -744,6 +744,8 @@ export const TENANT_PLAN_VALUES = [
   "GROWTH",
   "SCALE",
   "LITE",
+  "CORE",
+  "ALL_IN",
 ] as const;
 export type TenantPlanValue = (typeof TENANT_PLAN_VALUES)[number];
 
