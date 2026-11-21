@@ -13,7 +13,7 @@
 // The file is read raw for the scans and through readServedSitePage() for what a visitor gets.
 import * as fs from "fs";
 import * as path from "path";
-import { BRAND, loadBrand } from "@routeflow/types/brand";
+import { BRAND, footerLine, loadBrand } from "@routeflow/types/brand";
 import { readServedSitePage } from "@/lib/read-site-page";
 import {
   CURRENT_BRAND,
@@ -151,7 +151,13 @@ describe("T45 (landing alone): a fixture brand shows nothing of the real one", (
   const html = served(fx);
 
   it("has none of the current brand and none of the planned name", () => {
-    expect(html).not.toMatch(CURRENT_BRAND);
+    // SA-1203 A1: the one footer line names the previous name (the current brand here); remove it exactly
+    const footer = footerLine(2026, fx)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/"/g, "&quot;");
+    expect(html.split(footer)).toHaveLength(2);
+    expect(html.replace(footer, "")).not.toMatch(CURRENT_BRAND);
     expect(html).not.toMatch(/rovio/i);
   });
 

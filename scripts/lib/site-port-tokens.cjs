@@ -23,6 +23,18 @@ function tokenise(html, brand) {
     new RegExp(`${escapeRe(brand.titleSeparator)}${escapeRe(brand.name)}(?=</title>|">)`, "g"),
     "{{brand:titleSeparator}}{{brand:name}}",
   );
+  // The footer line while the previous name is named (SA-1203 A2): the whole line, year kept, only
+  // when the previous name differs from the name. Before the bare-name rule so the name inside it
+  // is not tokenised first; a body sentence that merely holds the previous name stays literal.
+  if (brand.formerly && brand.formerly !== brand.name) {
+    h = h.replace(
+      new RegExp(
+        `© (\\d{4}) ${escapeRe(brand.name)}, formerly ${escapeRe(brand.formerly)}(?!\\w)`,
+        "g",
+      ),
+      "© $1 {{brand:name}}, formerly {{brand:formerly}}",
+    );
+  }
   // The bare name: whole words only. Not after a letter, digit, dot, @ or slash (a host, an address,
   // a path) and not before a letter, digit or a dot-and-letter (an identifier that starts with the
   // name, a host).

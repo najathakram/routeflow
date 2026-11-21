@@ -147,3 +147,27 @@ describe("home.html structured data (SA-1178)", () => {
     expect(unsafeJsonLdKeys({ ...real, titleSeparator: " &'\" " })).toEqual([]);
   });
 });
+
+describe("the footer line", () => {
+  const b = loadBrand();
+
+  // SA-1203 A2 (P5a): the D5 footer becomes the token form, the year kept
+  it("the filled D5 footer tokenises to name and formerly tokens, keeping its year", () => {
+    expect(tokenise(`<span>© 2031 ${b.name}, formerly ${b.formerly}</span>`, b)).toBe(
+      "<span>© 2031 {{brand:name}}, formerly {{brand:formerly}}</span>",
+    );
+  });
+
+  // SA-1203 A2 (P5b): a body sentence is not a footer; the previous name there stays literal
+  it("the previous name in a body sentence stays literal", () => {
+    expect(tokenise(`<p>see ${b.formerly} here</p>`, b)).toBe(`<p>see ${b.formerly} here</p>`);
+  });
+
+  // SA-1203 A2 (P5c): with formerly equal to name the line is bare and only the name is tokenised
+  it("formerly equal to name gives the bare line with only the name tokenised", () => {
+    const same = { ...b, formerly: b.name };
+    expect(tokenise(`<span>© 2026 ${b.name}</span>`, same)).toBe(
+      "<span>© 2026 {{brand:name}}</span>",
+    );
+  });
+});

@@ -141,7 +141,10 @@ describe("the pages", () => {
         return JSON.stringify(ld);
       });
     }
-    expect(rest).not.toContain(FIXTURE.formerly);
+    // SA-1203 A1: the one footer line names the previous name; it is removed exactly, and the rest is checked
+    const footer = esc(footerLine());
+    expect(rest.split(footer)).toHaveLength(2);
+    expect(rest.replace(footer, "")).not.toContain(FIXTURE.formerly);
   });
 });
 
@@ -283,7 +286,7 @@ describe("the reader", () => {
     expect(BRAND.name).toBe(FIXTURE.name);
     expect(BRAND.formerly).toBe(FIXTURE.formerly);
     expect(footerLine()).toContain(BRAND.name);
-    expect(footerLine()).not.toContain(BRAND.formerly);
+    expect(footerLine()).toContain(BRAND.formerly);
     expect(pageTitle("Pricing")).toBe(`Pricing${FIXTURE.titleSeparator}${FIXTURE.name}`);
   });
 
