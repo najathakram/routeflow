@@ -1302,7 +1302,7 @@ export class EmailService {
       result = {
         delivered: false,
         transport: "none",
-        error: (err as Error)?.message ?? "Email send failed",
+        error: redactAddresses((err as Error)?.message ?? "Email send failed"),
       };
     }
     try {

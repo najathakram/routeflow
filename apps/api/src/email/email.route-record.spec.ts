@@ -127,6 +127,19 @@ describe("C5: send() records the route it took", () => {
   });
 });
 
+describe("a thrown internal error reaches the caller without an address", () => {
+  it("send() result.error is redacted when the pipeline throws", async () => {
+    const mailbox = {
+      trySend: jest.fn().mockRejectedValue(new Error("boom for private.person@example.org here")),
+    };
+    const { svc } = make({ mailbox });
+    const res = await svc.send({ ...mail, delivery: ctx });
+    expect(res.delivered).toBe(false);
+    expect(res.error).toBeDefined();
+    expect(res.error).not.toContain("private.person@example.org");
+  });
+});
+
 describe("C29 / T30: the fallback keeps its class and nothing else", () => {
   it("a tenant-SMTP login failure that falls back stores AUTH, no provider text, no address", async () => {
     const tenantSend = jest.fn().mockRejectedValue(
