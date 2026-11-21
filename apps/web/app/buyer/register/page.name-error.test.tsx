@@ -8,6 +8,7 @@ import BuyerRegisterPage from "./page";
  */
 const registerMock = jest.fn();
 jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
