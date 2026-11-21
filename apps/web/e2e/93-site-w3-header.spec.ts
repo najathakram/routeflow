@@ -8,7 +8,6 @@ import * as fs from "fs";
 import * as path from "path";
 import { test, expect, type Page } from "@playwright/test";
 import { SCRIPT_GZIP_KB } from "./helpers/site-speed-budget";
-import { emptyBands } from "./helpers/empty-bands";
 import { readPillSettled, settleMotion } from "./helpers/header-pill";
 import { blockAnalytics, nonEmpty } from "./helpers/site-proof";
 
@@ -248,36 +247,8 @@ for (const { route, scope } of [
   });
 }
 
-/**
- * The element that paints a plan card (SA-1200 K2), the one row definition for K3.
- * 900 and up: .pcard. Under 900 the grid is hidden (css/site.css .pgrid--4) and the phone card is .pl-wrap: it alone
- * carries the white background and the ring (css/site.css, the max-width:899.98px block: `.pl-wrap{... background:var(--rf-white);box-shadow:var(--rf-ring)}`);
- * table.pl inside it paints nothing.
- */
-const planCardBox = (w: number): string => (w < 900 ? ".pl-wrap" : ".pcard");
-
-// SA-1189 K3: no empty band anywhere inside a plan card (the leftover space of a row sits under the shorter cards).
-for (const { route, scope } of [
-  { route: "/pricing", scope: "#pricing" },
-  { route: "/", scope: "#pricing" },
-] as const) {
-  for (const { w, h } of [
-    { w: 1440, h: 900 },
-    { w: 393, h: 844 },
-  ] as const) {
-    test(`K3 no empty band over 32px inside a plan: ${route} ${scope} @${w}x${h}`, async ({
-      page,
-    }) => {
-      await open(page, route, w, h);
-      // SA-1200 K2: the scope is each plan card's own box at every width. Content outside the card (.pl-why, .pg-notes,
-      // .pl-go, .pl-more) is page rhythm and outside K3.
-      const bands = await emptyBands(page, { each: scope + " " + planCardBox(w) });
-      nonEmpty(bands, "plan cards on " + route);
-      const bad = bands.filter((g) => g.gap > 32);
-      expect(bad, bad.map((g) => g.where + " " + g.gap.toFixed(0) + "px").join("; ")).toEqual([]);
-    });
-  }
-}
+// SA-1200 A3 (owner answer A): the K3 empty-band row is retired. Its intent (no hole inside a plan card) is carried
+// by the two exact checks below: the list tops of a row start level (K1), and each button sits right after its own list (A).
 
 // SA-1200 K1 / A1 M1: the card rows come from the grid (css/site.css, .pgrid--4 .pcard subgrid), so a row reads across: the
 // lists of the four cards start at one top. Only the list tops are pinned. The prices cannot see a wrapping description

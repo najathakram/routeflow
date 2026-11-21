@@ -235,7 +235,7 @@ describe("no typed header height (SA-1199 P5)", () => {
 // calc(100vh|100svh|100dvh|100lvh - …) carrying a px literal equal to the header height is a typed copy. Width and font
 // declarations are out of scope (an icon or a type size may equal it by chance), and so are generic margins and
 // paddings (A2-2: they would flag unrelated spacing).
-describe("no typed header offset in the site css (SA-1199 A1)", () => {
+describe("no typed header offset in the site css (SA-1199 A1, A2)", () => {
   const H = headerHeights[0] as string;
   const LIT = `(?<![\\d.])${H}(?:\\.\\d+)?px`;
   const OFFSET_PROPS = new Set([
@@ -276,7 +276,7 @@ describe("no typed header offset in the site css (SA-1199 A1)", () => {
     expect(offsetHits(`.x{height:calc(100lvh - ${H}px)}`)).toHaveLength(1);
     // A2-2 refused: a generic margin or padding of the same size is unrelated spacing.
     expect(
-      offsetHits(`.x{margin-top:${H}px;padding-top:${H}px;scroll-padding-inline:20px}`),
+      offsetHits(`.x{margin-top:${H}px;padding-top:${H}px;scroll-padding-inline:${H}px}`),
     ).toHaveLength(0);
     expect(offsetHits(`.x{width:${H}px;font-size:clamp(40px,4.5vw,${H}px)}`)).toHaveLength(0);
     expect(offsetHits(`.x{top:1${H}px;top:var(--rf-header-h)}`)).toHaveLength(0);
