@@ -3,7 +3,7 @@
    sit above it, in the page. The default here is the final state too: no JS shows the words and the still wheel. */
 
 /* ---------- 1. Hero ---------- */
-.hx-up{--hx-bar:68px;--hx-gy:clamp(8px,2.2vh,24px);--hx-pad:clamp(28px,4.2vw,56px)}
+.hx-up{--hx-bar:var(--rf-header-h);--hx-gy:clamp(8px,2.2vh,24px);--hx-pad:clamp(28px,4.2vw,56px)}
 .hx-lay{width:min(1200px,100% - 48px);margin-inline:auto;padding-block:24px 20px}
 @media (min-width:900px),(max-width:899.98px) and (max-height:599.98px) and (min-aspect-ratio:1/1){
   .js-motion .hx-over{position:sticky;top:var(--hx-bar);height:0;z-index:5;pointer-events:none}
@@ -35,12 +35,10 @@
 .a-btn--off{background:var(--app-sunken);border-color:var(--app-sunken);color:var(--app-ink-3);box-shadow:none;cursor:default}
 .a-why{font-size:13.5px;color:var(--app-ink-3)}
 
-/* ---------- use cases: each one wears the colour of its piece of the wheel ---------- */
+/* ---------- use cases ---------- */
 /* What the wheel no longer stops on: its words and its sample card. */
 .uc{list-style:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:clamp(48px,6vw,80px) 0 0;padding:0}
 .uc-i{display:grid;grid-template-columns:minmax(0,.62fr) minmax(0,1fr);gap:clamp(16px,2vw,28px);align-items:center;padding:clamp(20px,2.2vw,30px);border-radius:var(--r);background:var(--rf-soft)}
-.uc-t h3{display:flex;align-items:center;gap:9px}
-.uc-t h3::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--pc)}
 .uc-t p{margin-top:8px;font-size:16px;line-height:1.42;color:var(--rf-text-2);text-wrap:pretty}
 @media (max-width:1080px){
   .uc-i{grid-template-columns:minmax(0,1fr)}
@@ -89,19 +87,8 @@
 @media (max-width:1080px){.pl-all .checks{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:899.98px){.pl-all{display:none}}
 
-/* ---------- phone header: Pricing instead of a second trial button while the hero button shows ---------- */
-@media (max-width:899.98px){
-  .js .site-header.hero-btn-in .nav-price{display:inline-flex}
-  .js body:has(.rfw.rfw-go-on.rfw-go-in) .site-header .nav-price{display:inline-flex}
-  .js .site-header.hero-btn-in .btn-sm{display:none}
-  .js body:has(.rfw.rfw-go-on.rfw-go-in) .site-header .btn-sm{display:none}
-  /* the open menu lists Pricing itself, so the header pill steps aside */
-  .js body.menu-open .site-header.hero-btn-in .nav-price{display:none}
-  .js body.menu-open:has(.rfw.rfw-go-on.rfw-go-in) .site-header .nav-price{display:none}
-}
-
 /* ---------- header and footer links land clear of the fixed header ---------- */
-#stores,#founder,#faq{scroll-margin-top:68px}
+#stores,#founder,#faq{scroll-margin-top:var(--rf-header-h)}
 
 /* ---------- under the wheel: what each part does (the moving wheel names only three; the still version already lists all fifteen) ---------- */
 .sy-parts{display:none}

@@ -1,5 +1,5 @@
 /* The site behaviour, design preview 2026-11-01. Shared by every page.
-   Menu, prices, and GSAP motion (ported from the Grok baseline's M1/M2/M4 patterns).
+   Prices and GSAP motion (ported from the Grok baseline's M1/M2/M4 patterns).
    Rules: transform + opacity only; one matchMedia; no-JS shows the final state (the motion always runs, owner ruling 2026-11-03); pins only >= 900px; no snap. */
 (function () {
   "use strict";
@@ -21,33 +21,7 @@
     if (ad[el.dataset.field] != null) el.textContent = ad[el.dataset.field];
   });
 
-  /* Analytics hook: names only. Nothing is sent anywhere. */
-  window.dataLayer = window.dataLayer || [];
-  document.addEventListener("click", function (e) {
-    var el = e.target.closest("[data-track]");
-    if (el) window.dataLayer.push({ event: el.getAttribute("data-track"), page: location.pathname });
-  });
-
-  /* Header shadow, mobile menu */
-  var header = $(".site-header");
-  if (header) { var onS = function () { header.classList.toggle("scrolled", window.scrollY > 8); }; onS(); window.addEventListener("scroll", onS, { passive: true }); }
-  var btn = $(".menu-btn"), menu = $("#mobile-menu");
-  if (btn && menu) {
-    var mUse = $("use", btn);
-    var setOpen = function (open) {
-      btn.setAttribute("aria-expanded", String(open)); btn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
-      if (mUse) mUse.setAttribute("href", open ? "#i-x" : "#i-menu");
-      menu.classList.toggle("open", open); document.body.classList.toggle("menu-open", open);
-    };
-    btn.addEventListener("click", function () { setOpen(btn.getAttribute("aria-expanded") !== "true"); });
-    menu.addEventListener("click", function (e) { if (e.target.closest("a")) setOpen(false); });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
-    window.addEventListener("resize", function () { if (window.innerWidth > 1080) setOpen(false); });
-  }
-
-  /* Sticky mobile CTA (landing) */
-  var sticky = $(".sticky-cta"), heroEl = $(".hero");
-  if (sticky && heroEl && "IntersectionObserver" in window) new IntersectionObserver(function (en) { sticky.classList.toggle("show", !en[0].isIntersecting); }).observe(heroEl);
+  /* The page chrome (analytics hook, header shadow, menu, header pill) is js/chrome.js. */
 
   if (!window.gsap) { doc.classList.remove("js-motion"); return; }
   gsap.registerPlugin.apply(gsap, [window.ScrollTrigger, window.SplitText, window.DrawSVGPlugin, window.MotionPathPlugin].filter(Boolean));

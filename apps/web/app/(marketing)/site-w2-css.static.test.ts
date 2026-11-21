@@ -175,9 +175,10 @@ describe("P15 (CSS half): .nb holds a phrase on one line at every width", () => 
   });
 });
 
-describe("P01: a plan card is as tall as its own content, so no empty fill sits above its button", () => {
-  it("the plan grid aligns its cards to the start", () => {
-    expect(declOf(SITE, ".pgrid", "align-items")).toEqual(["start"]);
+describe("P01: the plan cards in a row are the same height, and nothing inside a card is pushed apart", () => {
+  it("the plan grid stretches its cards, and no list is pushed down by an auto margin", () => {
+    expect(declOf(SITE, ".pgrid", "align-items")).toEqual(["stretch"]);
+    expect(declOf(SITE, ".pcard .checks", "margin-top")).not.toContain("auto");
   });
 });
 

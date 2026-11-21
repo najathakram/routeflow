@@ -123,6 +123,27 @@ async function planGaps(page: Page, scope: string): Promise<Gap[]> {
         if (shown(n)) return n;
       return null;
     };
+    // The bottom of the last text line in a block (its box may stretch past the words), else the box.
+    const textBottom = (el: Element): number => {
+      let b = -Infinity;
+      const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        if (!(n.textContent ?? "").trim()) continue;
+        const r = document.createRange();
+        r.selectNodeContents(n);
+        for (const q of Array.from(r.getClientRects())) if (q.height > 0) b = Math.max(b, q.bottom);
+      }
+      // Painted leaves with no text of their own (an svg, an img, an empty bar) are seen too.
+      for (const leaf of Array.from(el.querySelectorAll("*"))) {
+        const isSvg = leaf.tagName.toLowerCase() === "svg";
+        if (!isSvg && leaf.closest("svg")) continue;
+        const empty = leaf.children.length === 0 && !(leaf.textContent ?? "").trim();
+        if (!isSvg && leaf.tagName.toLowerCase() !== "img" && !empty) continue;
+        const r = leaf.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) b = Math.max(b, r.bottom);
+      }
+      return b === -Infinity ? el.getBoundingClientRect().bottom : b;
+    };
     // Cards (wide) first; the phone list's one button when no card shows.
     for (const card of Array.from(base.querySelectorAll(".pcard")).filter(shown)) {
       const btn = card.querySelector(".pbtn");
@@ -132,7 +153,7 @@ async function planGaps(page: Page, scope: string): Promise<Gap[]> {
       const name = (card.querySelector("h2,h3")?.textContent ?? "plan").trim();
       out.push({
         where: name,
-        gap: btn.getBoundingClientRect().top - above.getBoundingClientRect().bottom,
+        gap: btn.getBoundingClientRect().top - textBottom(above),
       });
     }
     if (!out.length) {
@@ -145,7 +166,7 @@ async function planGaps(page: Page, scope: string): Promise<Gap[]> {
         if (!above) continue;
         out.push({
           where: (btn.textContent ?? "button").trim(),
-          gap: btn.getBoundingClientRect().top - above.getBoundingClientRect().bottom,
+          gap: btn.getBoundingClientRect().top - textBottom(above),
         });
       }
     }

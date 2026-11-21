@@ -1,5 +1,5 @@
 /* The home page (index.html), the wheel in the hero. Replaces js/site.js on this page only. Edited by hand.
-   Chrome first (prices, tracking, header, menu), then motion.
+   Prices and home-only chrome first (the shared chrome is js/chrome.js), then motion.
    Motion: GSAP + ScrollTrigger. One init per section: initX(scope) builds that section inside gsap.matchMedia(scope)
    and returns a cleanup (gsap.context style), so each one ports to useGSAP({ scope }) as it is.
    Rules kept here: transforms and opacity only; triggers are made top to bottom; no layout reads in onUpdate; will-change
@@ -34,35 +34,7 @@
       if (v != null) el.textContent = v;
     });
   }
-  /* Analytics hook: names only. Nothing is sent anywhere. */
-  W.dataLayer = W.dataLayer || [];
-  d.addEventListener("click", function (e) {
-    var el = e.target.closest && e.target.closest("[data-track]");
-    if (el) W.dataLayer.push({ event: el.getAttribute("data-track"), where: el.getAttribute("data-where") || "", page: location.pathname });
-  });
-  var header = $(".site-header");
-  if (header) {
-    var onS = function () { header.classList.toggle("scrolled", W.scrollY > 8); };
-    onS(); W.addEventListener("scroll", onS, { passive: true });
-  }
-  var mBtn = $(".menu-btn"), menu = $("#mobile-menu");
-  if (mBtn && menu) {
-    var mUse = $("use", mBtn);
-    var setOpen = function (open) {
-      mBtn.setAttribute("aria-expanded", String(open)); mBtn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
-      if (mUse) mUse.setAttribute("href", open ? "#i-x" : "#i-menu");
-      menu.classList.toggle("open", open); d.body.classList.toggle("menu-open", open);
-    };
-    mBtn.addEventListener("click", function () { setOpen(mBtn.getAttribute("aria-expanded") !== "true"); });
-    menu.addEventListener("click", function (e) { if (e.target.closest && e.target.closest("a")) setOpen(false); });
-    d.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
-    W.addEventListener("resize", function () { if (W.innerWidth > 1080) setOpen(false); });
-  }
-  /* Phones: while the hero button is on screen, the header offers Pricing instead of a second Start free trial. */
-  var heroBtn = $(".hx-cta .btn"), siteHead = $(".site-header");
-  if (heroBtn && siteHead && "IntersectionObserver" in W) {
-    new W.IntersectionObserver(function (es) { siteHead.classList.toggle("hero-btn-in", es[es.length - 1].isIntersecting); }, { rootMargin: "-68px 0px 0px 0px" }).observe(heroBtn);
-  }
+  var header = $(".site-header"); // the shared chrome (hook, shadow, menu) is js/chrome.js
   /* The header turns dark over a dark section. A thin strip at header height decides; no scroll reads. */
   var darks = $$(".pb, .end");
   if (header && darks.length && "IntersectionObserver" in W) {
@@ -394,8 +366,8 @@
     var setStep = function (i) { steps.forEach(function (li, k) { li.classList.toggle("on", k === i); }); };
     var goTo = function (i) { if (i === cur) return; cur = i; setStep(i); tl.tweenTo(L[i], { duration: 0.8, ease: "power1.inOut", overwrite: true }); };
     var idx = function (p) { return p < 1 / 3 ? 0 : p < 2 / 3 ? 1 : 2; };
-    /* start and end match the CSS sticky range: the section's top at the header, its bottom at the screen's bottom. */
-    ST.create({ trigger: s, start: "top 68px", end: "bottom bottom", onUpdate: function (x) { goTo(idx(x.progress)); }, onRefresh: function (x) { goTo(idx(x.progress)); } });
+    /* start and end match the CSS sticky range: the section's top at the header (its height read live), its bottom at the screen's bottom. */
+    ST.create({ trigger: s, start: function () { var h = $(".site-header"); return "top " + (h ? h.getBoundingClientRect().height : 0) + "px"; }, end: "bottom bottom", onUpdate: function (x) { goTo(idx(x.progress)); }, onRefresh: function (x) { goTo(idx(x.progress)); } });
   }
 
   /* ---------- the real Orders screen: wide screens only, after the pain and the answer ---------- */

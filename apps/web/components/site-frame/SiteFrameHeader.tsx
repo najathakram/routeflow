@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { BRAND } from "@routeflow/types/brand";
 import { hasBuyerPresence, hasOpPresence, readLastPortalCookie } from "@/lib/presence-cookies";
 import { resolveLandingTarget } from "@/lib/portal-routing";
@@ -12,6 +13,7 @@ import { MENU_LINKS, NAV_LINKS } from "./site-frame-nav";
 // the phone menu, and "Sign in" becoming "Open dashboard" when a presence cookie says someone is
 // signed in (the rule is resolveLandingTarget, the one public/site/js/auth-nav.js mirrors).
 export function SiteFrameHeader({ current }: { current?: string }) {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [dashboard, setDashboard] = useState<string | null>(null);
 
@@ -45,12 +47,15 @@ export function SiteFrameHeader({ current }: { current?: string }) {
     };
   }, []);
 
+  // The sign-up page is the trial: no second trial button in its header or menu.
+  const p = pathname ?? "";
+  const showTrial = !(p === "/signup" || p.startsWith("/signup/"));
   const signIn = dashboard ?? "/login";
   const signInLabel = dashboard ? "Open dashboard" : "Sign in";
 
   return (
     <>
-      <header className="site-header hero-btn-in">
+      <header className="site-header">
         <div className="wrap nav">
           <Link className="brand" href="/" aria-label={`${BRAND.name} home`}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -75,9 +80,11 @@ export function SiteFrameHeader({ current }: { current?: string }) {
             <Link className="nav-signin" href={signIn}>
               {signInLabel}
             </Link>
-            <Link className="btn btn-primary btn-sm" href="/signup">
-              Start free trial
-            </Link>
+            {showTrial && (
+              <Link className="btn btn-primary btn-sm" href="/signup">
+                Start free trial
+              </Link>
+            )}
             <button
               className="menu-btn"
               type="button"
@@ -107,9 +114,11 @@ export function SiteFrameHeader({ current }: { current?: string }) {
             </Link>
           ))}
           <Link href={signIn}>{signInLabel}</Link>
-          <Link className="btn btn-primary btn-lg" href="/signup">
-            Start free trial
-          </Link>
+          {showTrial && (
+            <Link className="btn btn-primary btn-lg" href="/signup">
+              Start free trial
+            </Link>
+          )}
         </nav>
       </div>
     </>

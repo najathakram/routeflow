@@ -348,7 +348,7 @@
 .ct-note{margin-top:16px;font-size:17px;font-weight:600;color:var(--ink)}
 
 /* ---------- 8b. Use cases, by name ---------- */
-.inc{background:var(--rf-white);padding:clamp(100px,11vw,150px) 0 clamp(64px,7vw,96px);scroll-margin-top:68px}
+.inc{background:var(--rf-white);padding:clamp(100px,11vw,150px) 0 clamp(64px,7vw,96px);scroll-margin-top:var(--rf-header-h)}
 .inc-head{text-align:center;margin-bottom:clamp(48px,6vw,80px)}
 .inc-head .sub{margin-inline:auto}
 .inc-grid,.inc-more{list-style:none;margin:0;padding:0}
@@ -618,7 +618,7 @@
 /* ---------- the answer, pinned: a phone or tablet held upright, with motion. One card in one place. ---------- */
 @media (max-width:899.98px) and (min-height:600px){
   .js-motion .jr{height:220vh;height:220svh}
-  .js-motion .jr-pin{position:sticky;top:68px;height:calc(100vh - 68px);height:calc(100svh - 68px);padding:clamp(8px,1.8vh,24px) 0 clamp(6px,1.4vh,16px);display:flex;flex-direction:column}
+  .js-motion .jr-pin{position:sticky;top:var(--rf-header-h);height:calc(100vh - var(--rf-header-h));height:calc(100svh - var(--rf-header-h));padding:clamp(8px,1.8vh,24px) 0 clamp(6px,1.4vh,16px);display:flex;flex-direction:column}
   .js-motion .jr-head h2{font-size:clamp(27px,8.2vw,44px);line-height:1.06}
   .js-motion .jr-head .sub{margin-top:4px;font-size:18px}
   .js-motion .ans{flex:1;min-height:0;margin:0 auto;display:flex;flex-direction:column;justify-content:center}
