@@ -123,7 +123,7 @@ describe("EntitlementsService.resolve", () => {
     const e = await svc.resolve("t1");
     expect(e.planKey).toBe("STARTER");
     expect(e.flags).toEqual(["addon.ocr"]);
-    expect(e.caps).toEqual({ seats: 1, routes: 1, scans: 20, msgs: 200, customers: 100 });
+    expect(e.caps).toEqual({ seats: null, routes: 1, scans: 20, msgs: 200, customers: 100 });
     expect(e.addons).toEqual([]);
   });
 
@@ -132,7 +132,7 @@ describe("EntitlementsService.resolve", () => {
     const e = await svc.resolve("t1");
     expect(e.planKey).toBe("BUSINESS");
     expect(e.flags).toContain("flag.analytics");
-    expect(e.caps.seats).toBe(15);
+    expect(e.caps.seats).toBeNull(); // B1371: no seat limit
     expect(e.caps.routes).toBeNull(); // Business = unlimited routes
   });
 
@@ -143,7 +143,7 @@ describe("EntitlementsService.resolve", () => {
     expect(e.flags).toEqual(expect.arrayContaining(["flag.dispatch_live", "flag.returns"]));
   });
 
-  it("adds SEAT_EXTRA quantity to the seat cap", async () => {
+  it("a SEAT_EXTRA add-on never puts a cap on seats (B1371)", async () => {
     const { svc } = makeService(
       tenantFixture({
         plan: "STARTER",
@@ -151,7 +151,7 @@ describe("EntitlementsService.resolve", () => {
       }),
     );
     const e = await svc.resolve("t1");
-    expect(e.caps.seats).toBe(4); // 1 included + 3 extra
+    expect(e.caps.seats).toBeNull(); // the catalog says 1 included, yet there is no limit
     expect(e.addons).toEqual(["SEAT_EXTRA"]);
   });
 
@@ -296,7 +296,7 @@ describe("EntitlementsService.resolve", () => {
       plan: "STARTER",
       flags: ["addon.ocr"],
       addons: [],
-      seats: 1,
+      seats: null,
       trialEnds: trialEndsAt.toISOString(),
     });
   });
@@ -323,7 +323,7 @@ describe("EntitlementsService.resolve", () => {
     const e = await svc.resolve("t1");
     // planKey/caps/flags stay internally consistent — never a BUSINESS claim on STARTER caps.
     expect(e.planKey).toBe("STARTER");
-    expect(e.caps).toEqual({ seats: 1, routes: 1, scans: 20, msgs: 200, customers: 100 });
+    expect(e.caps).toEqual({ seats: null, routes: 1, scans: 20, msgs: 200, customers: 100 });
     expect(e.flags).toEqual(["addon.ocr"]);
   });
 
@@ -359,7 +359,7 @@ describe("EntitlementsService.resolve", () => {
     const e = await svc.resolve("t1");
     // NOT a silent downgrade to STARTER — the renamed twin is the tenant's own row.
     expect(e.planKey).toBe("GROWTH");
-    expect(e.caps).toEqual({ seats: 10, routes: 3, scans: 100, msgs: 200, customers: 250 });
+    expect(e.caps).toEqual({ seats: null, routes: 3, scans: 100, msgs: 200, customers: 250 });
     expect(e.flags).toContain("flag.analytics");
   });
 
@@ -435,7 +435,7 @@ describe("EntitlementsService — #2700 (SA-559(2)): feature flags gain forward"
     const e = await svc.resolve("t1");
     expect(e.flags).toEqual(expect.arrayContaining(["addon.ocr", "flag.returns", "flag.later"]));
     expect(e.planVersionId).toBe("planver_v7"); // never re-pinned
-    expect(e.caps.seats).toBe(1); // v7's STARTER, not v13's 99
+    expect(e.caps.seats).toBeNull(); // B1371: no seat limit, whatever the pinned version says
   });
 
   it("a flag the published plan DROPPED is never removed from a grandfathered tenant (a union)", async () => {
@@ -508,7 +508,7 @@ describe("EntitlementsService — #2700: the REAL v11 → v12 gain at compute le
     for (const flag of v12.NEW_PLAN_FLAGS) expect(e.flags).toContain(flag);
     for (const flag of v11Growth.featureFlags) expect(e.flags).toContain(flag);
     expect(e.planVersionId).toBe("planver_v11");
-    expect(e.caps.seats).toBe(v11Growth.seatsIncluded);
+    expect(e.caps.seats).toBeNull(); // B1371: no seat limit
     expect(e.caps.customers).toBe(v11Growth.customersIncluded);
   });
 });

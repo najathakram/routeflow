@@ -40,14 +40,11 @@ apps/api/src/auth/permissions/staff-capabilities.ts | OperatorPermissionGroup | 
 apps/api/src/auth/permissions/staff-capabilities.ts | UserRole | 2 | pending:B7 | array+union {OPERATOR,TENANT_ADMIN,SUPER_ADMIN}
 apps/api/src/authorizations/authorizations.service.ts | AuthorizationStatus | 1 | pending:B7 | union {NONE,PENDING_REVIEW,VERIFIED,EXPIRED,REJECTED}
 apps/api/src/billing/auto-lock-gate.ts | TenantClass | 1 | pending:B7 | array {TEST,DEMO,INTERNAL}
-apps/api/src/billing/billing-cron.service.ts | UserRole | 1 | pending:B7 | array {TENANT_ADMIN,OPERATOR,DRIVER}
 apps/api/src/billing/billing.service.ts | TenantStatus | 1 | pending:B7 | union {ACTIVE,CANCELLED,SUSPENDED,READ_ONLY}
-apps/api/src/billing/entitlements.service.ts | MeterKey | 1 | pending:B7 | object {SEATS,ROUTES,SCANS,MSGS,CUSTOMERS}
 apps/api/src/billing/meter.service.ts | MeterKey | 2 | pending:B7 | array+chain {SEATS,ROUTES,SCANS,MSGS,CUSTOMERS}
 apps/api/src/billing/meter.service.ts | UserRole | 1 | pending:B7 | array {TENANT_ADMIN,OPERATOR,DRIVER}
 apps/api/src/billing/plan-catalog.constants.ts | MeterKey | 1 | pending:B7 | array {SEATS,ROUTES,SCANS,MSGS,CUSTOMERS}
 apps/api/src/billing/plan-catalog.constants.ts | TenantPlan | 4 | pending:B7 | array+object+union {LITE,STARTER,GROWTH,SCALE,ENTERPRISE}
-apps/api/src/billing/subscription-mutation.service.ts | UserRole | 1 | pending:B7 | array {TENANT_ADMIN,OPERATOR,DRIVER}
 apps/api/src/bookkeeping/bookkeeping.controller.ts | ExpenseStatus | 1 | pending:B7 | union {PENDING,RECEIVED,PAID,VOID}
 apps/api/src/bookkeeping/bookkeeping.service.ts | ExpenseStatus | 1 | pending:B7 | union {PENDING,RECEIVED,PAID,VOID}
 apps/api/src/bookkeeping/dto/create-expense.dto.ts | ExpenseStatus | 2 | pending:B7 | array+union {PENDING,RECEIVED,PAID,VOID}

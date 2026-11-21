@@ -15,6 +15,9 @@ import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.servi
 import { ProrationService } from "./proration.service";
 import { SubscriptionService } from "./subscription.service";
 import { EntitlementsService } from "./entitlements.service";
+import { MeterService } from "./meter.service";
+import { downgradeCustomerSentence, type DowngradeNoticeDetails } from "./downgrade-customer-note";
+import { customerAllowanceOf } from "./addon-capacity";
 import { BillingEventService } from "./billing-event.service";
 import { StripeService } from "./stripe.service";
 import { isStripeResourceMissing } from "./addon.service";
@@ -60,6 +63,7 @@ import {
   addonSkuCode,
   isSelfServiceAddon,
   isInviteOnlyPlanKey,
+  PlanNotInCatalogError,
 } from "./plan-catalog.constants";
 import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
@@ -162,12 +166,10 @@ export interface PlanChangePreview {
   /** Set for an edge case worth surfacing (e.g. a cycle switch, or a pending
    *  schedule KEEP_CURRENT would cancel), never a hard block. */
   warning?: string;
-  /** TRUE only when committing this change WOULD deactivate staff: the DOWNGRADE seat-cap
-   *  check found the active team over the target plan's `seatsIncluded`. ALWAYS present, so
-   *  the chooser gates its "these users will be deactivated" acknowledgement on THIS flag and
-   *  never on `warning` being non-empty — `warning` composes unrelated notices (a revoked
-   *  cancellation, a cycle switch), and inferring the seat consequence from its mere presence
-   *  made the UI demand consent to a deactivation that would never happen. */
+  /** B1371: ALWAYS false (no plan has a seat limit; a downgrade never touches a login). Kept for one release
+   *  because the web and the e2e suite still read it; remove it later. It was TRUE only when the old
+   *  DOWNGRADE seat-cap check found the team over the target plan's `seatsIncluded`, and the chooser's
+   *  acknowledgement keyed on it, never on `warning` (which composes unrelated notices). */
   seatAckRequired: boolean;
   /** UPGRADE only (SA-786): the add-ons the target plan newly includes - free from commit, still ON. */
   includedAddons?: { sku: string; name: string }[];
@@ -314,8 +316,12 @@ function isAnnualStripeBilled(
   } | null,
 ): boolean {
   if (mode !== "STRIPE" || !sub?.stripeSubId) return false;
-  const interval = sub.billingInterval ?? (sub.cycle === "ANNUAL" ? "year" : "month");
-  return interval !== "month";
+  return billingIntervalOf(sub) !== "month";
+}
+
+/** The billing interval: `billingInterval` (a Stripe checkout stamps it; `cycle` stays MONTHLY), else the cycle. */
+function billingIntervalOf(sub: { billingInterval?: string | null; cycle?: unknown }): string {
+  return sub.billingInterval ?? (sub.cycle === "ANNUAL" ? "year" : "month");
 }
 
 /**
@@ -387,6 +393,9 @@ export class SubscriptionMutationService {
     // is the preview's `after` side. Last and optional, like `authority`; EntitlementsModule provides it. Absent, the
     // check warns and the sale goes ahead (never refuse on a guess).
     @Optional() private readonly preview?: FeaturePreviewService,
+    // B1371: the customer count the downgrade preview and notice compare to the target's allowance (the meter's own
+    // where-clause, never a copy). Last and optional; EntitlementsModule provides it. Absent, the customer line is omitted.
+    @Optional() private readonly meter?: MeterService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
@@ -1088,6 +1097,7 @@ export class SubscriptionMutationService {
           stripeSubId: true, // R2: a trialing / past_due / unpaid subscription quotes 0
           externalPayment: true, // SA-786 S6: the add-on billing mode (the sentence names the charge per mode)
           couponFull: true,
+          billingInterval: true, // #4393 read B M-1: an annual Stripe subscription's add-ons stay unbilled
         },
       }),
     ]);
@@ -1252,45 +1262,15 @@ export class SubscriptionMutationService {
         ...(notes.length ? { warning: notes.join(" ") } : {}),
       };
     }
-    // Seat consequence, surfaced at the decision point: a scheduled downgrade is applied by
-    // billing-cron.service.ts `applyScheduledDowngrades`, which — when the active team is over
-    // the target plan's cap — deactivates every OPERATOR/DRIVER not in `retainedUserIds` (the
-    // self-service path schedules with an empty list). BOTH sides of the warning read the cron's
-    // sources: the same activeTeam where-clause, and the same catalog version — the tenant's
-    // PINNED `planVersionId` via `getVersionForTenant` (grandfathering), never the published one,
-    // which for a tenant pinned to an older version quotes a different seat cap than the sweep
-    // enforces. So the warning fires exactly when the sweep would, with that version's numbers.
+    // B1371: there is no seat limit on any plan, so a downgrade never touches a login and the preview says nothing
+    // about staff. The catalog version is still the PINNED one the cron reads (grandfathering), via `inclusionCatalogFor`.
     const downgradeVersion = await inclusionCatalogFor(this.catalog, priorSub, tenant);
-    const targetDef = findPlanDefinition(downgradeVersion.definitions, toKey);
-    const seatsIncluded = targetDef?.seatsIncluded ?? null;
     // downgrade() writes `cancelAtPeriodEnd: false` — the same silent revocation the UPGRADE
     // branch warns about. Both notices can apply at once, so they are composed, never traded.
     const warnings: string[] = [];
-    // The seat consequence as its OWN signal: true only here, so a preview carrying an
-    // unrelated warning (a revoked cancellation) never reads as "staff will be deactivated".
-    let seatAckRequired = false;
     if (priorSub.cancelAtPeriodEnd) warnings.push(CANCELLATION_REVOKED_WARNING);
     // #2223 / SA-444c (iii): the scheduled downgrade moves the plan, not a negotiated fee.
     if (priceOverrideOf(priorSub) != null) warnings.push(CUSTOM_FEE_UNCHANGED);
-    if (seatsIncluded != null) {
-      const activeTeam = await this.prisma.user.count({
-        where: {
-          tenantId,
-          role: { in: ["TENANT_ADMIN", "OPERATOR", "DRIVER"] },
-          status: "ACTIVE",
-          deletedAt: null,
-        },
-      });
-      if (activeTeam > seatsIncluded) {
-        seatAckRequired = true;
-        warnings.push(
-          `Your team has ${activeTeam} active users but the ${targetDef?.name ?? planKey} plan ` +
-            `includes ${seatsIncluded} seats — every operator and driver account will be ` +
-            `deactivated when the downgrade takes effect. Contact support before then to choose ` +
-            `which users to keep.`,
-        );
-      }
-    }
     // SA-786 S6: the add-ons the target plan stops including start to bill at the TARGET version's catalog price,
     // named at the decision point. Priced from the same version the 02:00 sweep re-pins to (`targetVersionFor`).
     const repricedAddons = await this.previewRepricedAddons({
@@ -1301,13 +1281,16 @@ export class SubscriptionMutationService {
       pinned: downgradeVersion,
       warnings,
     });
+    // B1371 K3: the customers over the target's allowance, read from the version the cron applies.
+    const customerNote = await this.downgradeCustomerNote(tenantId, downgradeVersion, toKey);
+    if (customerNote) warnings.push(customerNote);
     return {
       action: "DOWNGRADE",
       proratedNow: null,
       effectiveAt: priorSub.periodEnd,
       keepsRenewalAt: null,
       fromPlanKey: fromKey,
-      seatAckRequired,
+      seatAckRequired: false,
       repricedAddons,
       ...(warnings.length ? { warning: warnings.join(" ") } : {}),
     };
@@ -1371,6 +1354,75 @@ export class SubscriptionMutationService {
   }
 
   /**
+   * B1371 K3: the customer sentence when the tenant's customers exceed what the TARGET plan includes (plus its active
+   * Customer packs), else null. The target is resolved exactly as billing-cron does (`targetVersionFor`: the pinned
+   * version, else the published one), and the count is MeterService's own. Null with no meter wired, an unlisted target
+   * or an unlimited allowance (no count is read then).
+   */
+  private async downgradeCustomerNote(
+    tenantId: string,
+    pinned: PlanVersionWithCatalog,
+    toKey: string,
+  ): Promise<string | null> {
+    if (!this.meter) return null;
+    let target: Awaited<ReturnType<typeof targetVersionFor>>;
+    try {
+      target = await targetVersionFor(this.catalog, pinned, toKey);
+    } catch (e) {
+      if (e instanceof PlanNotInCatalogError) return null;
+      throw e;
+    }
+    // The cap the cron's re-pin leaves: entitlements resolves a SKU from the new pin, else the published catalog.
+    const published = await this.catalog.getPublishedCatalog();
+    const skuIn = (v: PlanVersionWithCatalog, code: string) =>
+      v.addonSkus.find((s) => s.sku === code);
+    const cap = customerAllowanceOf(
+      target.def,
+      await readActiveRows(this.prisma, tenantId),
+      (code) => skuIn(target.version, code) ?? skuIn(published, code),
+    );
+    if (cap == null) return null;
+    return downgradeCustomerSentence(
+      await this.meter.customersUsed(tenantId),
+      target.def.name,
+      cap,
+    );
+  }
+
+  /** B1371 K9: what the "downgrade scheduled" email states: the new price, the add-ons that start billing, the customer sentence. */
+  private async downgradeNoticeDetails(
+    tenantId: string,
+    sub: Parameters<SubscriptionMutationService["previewRepricedAddons"]>[0]["priorSub"] & {
+      priceOverrideMonthly?: unknown;
+      cycle?: unknown;
+      billingInterval?: string | null;
+    },
+    tenant: Parameters<typeof inclusionCatalogFor>[2],
+    fromKey: string,
+    toKey: string,
+  ): Promise<DowngradeNoticeDetails> {
+    const pinned = await inclusionCatalogFor(this.catalog, sub as never, tenant);
+    const { def } = await targetVersionFor(this.catalog, pinned, toKey);
+    const override = priceOverrideOf(sub);
+    const monthly = override ?? (def.monthlyPrice != null ? Number(def.monthlyPrice) : null);
+    // #4393 L-4/N-1: annual is not paid monthly; read B L-4: a 100% coupon pays nothing.
+    const price = billingIntervalOf(sub) === "month" && !sub.couponFull ? monthly : null;
+    const addons = await this.previewRepricedAddons({
+      tenantId,
+      priorSub: sub,
+      fromKey,
+      toKey,
+      pinned,
+      warnings: [],
+    });
+    return {
+      newMonthlyPrice: price == null ? null : roundMoney(price),
+      addons: addons.map((a) => ({ name: a.name, monthlyPrice: a.monthlyPrice })),
+      customerNote: await this.downgradeCustomerNote(tenantId, pinned, toKey),
+    };
+  }
+
+  /**
    * SA-786 S6: the downgrade preview's add-on list and sentences (appended to `warnings`). One sentence per
    * add-on, by billing mode; UNBILLED has none because nothing is billed. A held add-on whose catalog
    * `includedAtPlan` names no plan fails the preview closed (409, B1102).
@@ -1382,6 +1434,8 @@ export class SubscriptionMutationService {
       stripeSubId?: string | null;
       externalPayment?: boolean | null;
       couponFull?: boolean | null;
+      billingInterval?: string | null;
+      cycle?: string | null;
     };
     fromKey: string;
     toKey: string;
@@ -1389,7 +1443,9 @@ export class SubscriptionMutationService {
     warnings: string[];
   }): Promise<{ sku: string; name: string; monthlyPrice: number }[]> {
     const mode = addonBillingModeOf(this.stripe.isConfigured, a.priorSub);
-    if (mode === "UNBILLED") return [];
+    // #4393 read B M-1: billAddonsLeavingInclusion leaves an annual Stripe subscription's add-ons unbilled by policy,
+    // so neither the preview nor the email may say they start billing.
+    if (mode === "UNBILLED" || isAnnualStripeBilled(mode, a.priorSub)) return [];
     const { version: target, def: targetDef } = await targetVersionFor(
       this.catalog,
       a.pinned,
@@ -1700,7 +1756,7 @@ export class SubscriptionMutationService {
       this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
       this.prisma.tenant.findUnique({
         where: { id: tenantId },
-        select: { plan: true, status: true },
+        select: { plan: true, status: true, planVersionId: true },
       }),
     ]);
     const fromKey = this.resolveFromPlanKey(sub?.planKey, tenant?.plan);
@@ -1735,7 +1791,9 @@ export class SubscriptionMutationService {
         data: {
           downgradeToPlanKey: targetPlanKey,
           downgradeEffectiveAt: sub.periodEnd,
-          retainedUserIds,
+          // B1371: no seat limit, so no login is ever kept or cut; the argument is accepted and ignored
+          // (the column is dropped in a later release).
+          retainedUserIds: [],
           // Exactly one transition may be armed: scheduling a downgrade replaces a pending
           // cancellation rather than stacking on top of it.
           cancelAtPeriodEnd: false,
@@ -1744,7 +1802,7 @@ export class SubscriptionMutationService {
       await this.events.emit(
         tenantId,
         BILLING_EVENTS.PLAN_DOWNGRADE_SCHEDULED,
-        { toPlan: targetPlanKey, effectiveAt: sub.periodEnd, retainedUserIds },
+        { toPlan: targetPlanKey, effectiveAt: sub.periodEnd, retainedUserIds: [] },
         { amountDelta: 0, actorId, tx },
       );
     });
@@ -1755,11 +1813,26 @@ export class SubscriptionMutationService {
     // N3: best-effort admin notification, never blocks the schedule write above.
     const fromDefDown = version.definitions.find((d) => d.planKey === fromKey);
     try {
+      // K9: the notice states the price, the add-ons that start billing and the customer sentence; a failure to
+      // read them never blocks the email, which then goes with the dates alone.
+      let details: DowngradeNoticeDetails = {
+        newMonthlyPrice: null,
+        addons: [],
+        customerNote: null,
+      };
+      try {
+        details = await this.downgradeNoticeDetails(tenantId, sub, tenant, fromKey, targetPlanKey);
+      } catch (e) {
+        this.logger.warn(
+          `N3 downgrade notice details unavailable for tenant ${tenantId}: ${(e as Error).message}`,
+        );
+      }
       await this.billingNotification.notifyDowngradeScheduled(
         tenantId,
         fromDefDown?.name ?? fromKey,
         def.name,
         sub.periodEnd,
+        details,
       );
     } catch (e) {
       this.logger.error(

@@ -305,8 +305,8 @@ export class SubscriptionService {
   /**
    * Usage-fit recommendation for choose-plan: for each plan, whether current usage
    * fits its caps + the over-cap deltas, and the cheapest fitting plan. Cap-based
-   * (seats/routes/scans/msgs are metered; feature-flag usage is not), so it's a
-   * lower bound — the UI still shows per-card consequences before the user picks.
+   * (customers and msgs are the enforced caps; seats, routes and scans are not limited, B1371;
+   * feature-flag usage is not metered), so it's a lower bound — the UI still shows per-card consequences before the user picks.
    */
   async getRecommendation(tenantId: string) {
     const [usageReadings, version, ent] = await Promise.all([
@@ -330,16 +330,17 @@ export class SubscriptionService {
         name: def.name,
         monthly: def.monthlyPrice != null ? Number(def.monthlyPrice) : null,
         isCustom: def.isCustom,
+        // B1371: only the enforced caps (customers, messages) decide a fit. Seats, routes and scans
+        // carry no limit; their `over` keys stay at 0 because the web reads them.
         fits:
-          fits(used.SEATS ?? 0, def.seatsIncluded) &&
-          fits(used.ROUTES ?? 0, def.routesConcurrent) &&
-          fits(used.SCANS ?? 0, def.scansIncluded) &&
+          fits(used.CUSTOMERS ?? 0, def.customersIncluded) &&
           fits(used.MSGS ?? 0, def.msgsIncluded),
         over: {
-          seats: overBy(used.SEATS ?? 0, def.seatsIncluded),
-          routes: overBy(used.ROUTES ?? 0, def.routesConcurrent),
-          scans: overBy(used.SCANS ?? 0, def.scansIncluded),
+          seats: 0,
+          routes: 0,
+          scans: 0,
           msgs: overBy(used.MSGS ?? 0, def.msgsIncluded),
+          customers: overBy(used.CUSTOMERS ?? 0, def.customersIncluded),
         },
       }));
 

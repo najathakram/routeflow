@@ -169,6 +169,8 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
     "TARGET: the previewed plan; the plan LEFT is judged by pinnedVersionOf",
   "billing/subscription-mutation.service.ts#pinnedSkuOf.getPublishedCatalog":
     "LIST: existence + the fallback of a self-serve row's SKU; its price and inclusion are the pinned catalog's (judgeAddon -> pricedAddonSku)",
+  "billing/subscription-mutation.service.ts#downgradeCustomerNote.getPublishedCatalog":
+    "LIST: the fallback of a Customer-pack SKU the target pin predates, as entitlements resolves it (B1371 K3 allowance)",
   "billing/subscription-mutation.service.ts#upgradeLocked.getPublishedCatalog":
     "TARGET: the plan the upgrade lands on; the plan LEFT is judged by pinnedVersionOf",
   "billing/subscription-mutation.service.ts#downgrade.getPublishedCatalog":
@@ -242,6 +244,7 @@ describe("SA-815a P3 - the named sites read through the resolver", () => {
         "billing/addon.service.ts#uncompAddon",
         "billing/billing-cron.service.ts#applyScheduledDowngrades",
         "billing/subscription-mutation.service.ts#addonPricingCatalog",
+        "billing/subscription-mutation.service.ts#downgradeNoticeDetails",
         "billing/subscription-mutation.service.ts#inclusionCatalog",
         "billing/subscription-mutation.service.ts#judgeAddon",
         "billing/subscription-mutation.service.ts#pinnedVersionOf",

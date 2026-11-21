@@ -9,6 +9,7 @@ const DEFS = [
     routesConcurrent: 1,
     scansIncluded: 20,
     msgsIncluded: 200,
+    customersIncluded: 100,
     isCustom: false,
     sortOrder: 0,
   },
@@ -20,6 +21,7 @@ const DEFS = [
     routesConcurrent: 3,
     scansIncluded: 100,
     msgsIncluded: 200,
+    customersIncluded: 250,
     isCustom: false,
     sortOrder: 1,
   },
@@ -31,6 +33,7 @@ const DEFS = [
     routesConcurrent: null,
     scansIncluded: 300,
     msgsIncluded: 200,
+    customersIncluded: 1000,
     isCustom: false,
     sortOrder: 2,
   },
@@ -42,15 +45,22 @@ const DEFS = [
     routesConcurrent: null,
     scansIncluded: null,
     msgsIncluded: 200,
+    customersIncluded: null,
     isCustom: true,
     sortOrder: 3,
   },
 ];
 
-function makeService(usage: { SEATS: number; ROUTES: number; SCANS: number; MSGS: number }) {
-  const readings = (["SEATS", "ROUTES", "SCANS", "MSGS"] as const).map((m) => ({
+function makeService(usage: {
+  SEATS: number;
+  ROUTES: number;
+  SCANS: number;
+  MSGS: number;
+  CUSTOMERS?: number;
+}) {
+  const readings = (["SEATS", "ROUTES", "SCANS", "MSGS", "CUSTOMERS"] as const).map((m) => ({
     meter: m,
-    used: usage[m],
+    used: usage[m] ?? 0,
     included: null,
     remaining: null,
     resetsAt: null,
@@ -75,13 +85,33 @@ describe("SubscriptionService.getRecommendation", () => {
     expect(r.perPlan.find((p) => p.planKey === "STARTER")!.fits).toBe(true);
   });
 
-  it("steps up to Team when seats exceed the Starter cap", async () => {
-    const r = await makeService({ SEATS: 3, ROUTES: 1, SCANS: 5, MSGS: 10 }).getRecommendation(
-      "t1",
-    );
+  it("steps up to Team when customers exceed the Starter cap", async () => {
+    const r = await makeService({
+      SEATS: 1,
+      ROUTES: 1,
+      SCANS: 5,
+      MSGS: 10,
+      CUSTOMERS: 150,
+    }).getRecommendation("t1");
     expect(r.perPlan.find((p) => p.planKey === "STARTER")!.fits).toBe(false);
-    expect(r.perPlan.find((p) => p.planKey === "STARTER")!.over.seats).toBe(2);
+    expect(r.perPlan.find((p) => p.planKey === "STARTER")!.over.customers).toBe(50);
     expect(r.recommendedPlanKey).toBe("TEAM");
+  });
+
+  it("a tenant over the old seat, route and scan counts but within customers is a fit (B1371)", async () => {
+    const r = await makeService({
+      SEATS: 40,
+      ROUTES: 9,
+      SCANS: 5000,
+      MSGS: 10,
+      CUSTOMERS: 50,
+    }).getRecommendation("t1");
+    const starter = r.perPlan.find((p) => p.planKey === "STARTER")!;
+    expect(starter.fits).toBe(true);
+    // The shape the web reads stays: the dropped meters report 0, never a missing key.
+    expect(starter.over).toMatchObject({ seats: 0, routes: 0, scans: 0, msgs: 0 });
+    expect(r.recommendedPlanKey).toBe("STARTER");
+    expect(r.usage.seats).toBe(40); // the live team count still shows, with no limit
   });
 
   it("treats unlimited (null) caps as always-fitting and lands on Enterprise for huge usage", async () => {
@@ -90,21 +120,11 @@ describe("SubscriptionService.getRecommendation", () => {
       ROUTES: 999,
       SCANS: 9999,
       MSGS: 9999,
+      CUSTOMERS: 99999,
     }).getRecommendation("t1");
-    // Business has unlimited routes but finite seats(15)/scans(300) → doesn't fit; only Enterprise fits.
+    // Business caps msgs (200) and customers (1000) → doesn't fit; only Enterprise's null customers does.
     expect(r.perPlan.find((p) => p.planKey === "BUSINESS")!.fits).toBe(false);
     expect(r.recommendedPlanKey).toBe("ENTERPRISE");
-  });
-
-  it("reports over-cap deltas as 0 for unlimited caps", async () => {
-    const r = await makeService({
-      SEATS: 999,
-      ROUTES: 999,
-      SCANS: 100,
-      MSGS: 100,
-    }).getRecommendation("t1");
-    // Business.routesConcurrent is null (unlimited) → over.routes must be 0 despite 999 usage.
-    expect(r.perPlan.find((p) => p.planKey === "BUSINESS")!.over.routes).toBe(0);
   });
 });
 
