@@ -20,14 +20,11 @@
  * (playwright.config.ts).
  */
 import { test, expect, devices, type BrowserContext, type Page, webkit } from "@playwright/test";
-import * as fs from "fs";
-import * as path from "path";
+import brandFile from "../../../packages/types/brand/brand.json";
 import { wheelBox } from "./helpers/site-proof";
 
 // The everyday name and the title separator come from the brand file, never typed here.
-const BRAND_FILE = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, "../../../packages/types/brand/brand.json"), "utf8"),
-) as { name: string; titleSeparator: string };
+const BRAND_FILE = brandFile as { name: string; titleSeparator: string };
 const escapeRe = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const NAME_RE = escapeRe(BRAND_FILE.name);
 /** A ready-made page title: "<page><separator><name>". */
