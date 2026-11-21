@@ -1,8 +1,9 @@
 /**
  * Wave 4, lane 2.5a, project "site-waves": K4 (the plan buttons line up). On /pricing every plan card's button
  * sits right after its price and its "for" line, so within one grid row all `.pcard .pbtn` tops are equal within
- * 1 px, at 1440x900 and 393x844. Signed out, desktop Chrome, against a running stack. A sweep that finds nothing
- * throws (L-202).
+ * 1 px, at 1440x900, 1100x900 (where the "for" lines wrap unevenly) and 393x844 (the table shows, no cards).
+ * SA-1200 A4 kept this order over the list-then-button wrapper. Signed out, desktop Chrome, against a running
+ * stack. A sweep that finds nothing throws (L-202).
  */
 import { test, expect } from "@playwright/test";
 import { blockAnalytics } from "./helpers/site-proof";
@@ -13,6 +14,7 @@ test.beforeEach(async ({ context }) => {
 
 const SCREENS = [
   { w: 1440, h: 900 },
+  { w: 1100, h: 900 },
   { w: 393, h: 844 },
 ] as const;
 
