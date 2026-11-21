@@ -169,7 +169,7 @@ function load(): Loaded {
     ` helpersOk: attempt(() => l.assertNextHelpers(l.NEXT_HELPERS)),` +
     ` helpersMissing: attempt(() => l.assertNextHelpers({ ...l.NEXT_HELPERS, normalizeMetadataRoute: undefined })),` +
     ` helpersNoSegment: attempt(() => l.assertNextHelpers({ ...l.NEXT_HELPERS, isGroupSegment: undefined })),` +
-    ` notMetadata: attempt(() => l.listAppRoutes("/mem", mk({ "favicon.png": null, "twitter-image.svg": null, "robots.json": null, "icon.gif": null })).map((r) => r.file)),` +
+    ` notMetadata: attempt(() => l.listAppRoutes("/mem", mk({ "favicon.jpg": null, "twitter-image.svg": null, "robots.json": null, "icon.gif": null })).map((r) => r.file)),` +
     ` served: attempt(() => Object.fromEntries(l.listAppRoutes("/mem", mk(${JSON.stringify(ROOT_META)}), src({})).map((r) => [r.file, r.path]))),` +
     ` faviconMarketing: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ "(marketing)": { x: { "favicon.ico": null } } })))),` +
     ` faviconElsewhere: attempt(() => l.placeStays(l.listAppRoutes("/mem", mk({ a: { "favicon.ico": null } })))),` +
@@ -421,7 +421,7 @@ describe("K5 2: census, every app route goes to the old host in one 307 hop", ()
     expect(cfg.helpersNoSegment.error).toMatch(/isGroupSegment/);
   });
 
-  it("the extensions are Next's own: favicon.png, twitter-image.svg, robots.json are not metadata", () => {
+  it("the extensions are Next's own: favicon.jpg, twitter-image.svg, robots.json are not metadata", () => {
     expect(cfg.notMetadata).toEqual({ ok: [] });
   });
 
