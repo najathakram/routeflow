@@ -3,7 +3,11 @@ import { MessageChannel, MeterKey, NotificationEvent, UserRole, UserStatus } fro
 import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
 import { isInternalEmail } from "../common/internal-email";
-import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
+import {
+  MESSAGE_PROVIDER,
+  type MessageEntity,
+  type MessageProvider,
+} from "./providers/message-provider.interface";
 import {
   DEFAULT_ON,
   DEFAULT_TEMPLATES,
@@ -71,6 +75,8 @@ export interface SendMessageInput {
   templateName?: string;
   /** N1: email subject — see SendInput.subject. Ignored by non-EMAIL channels. */
   subject?: string;
+  /** W-1286 (SA-1202 C7): see SendInput.entity. */
+  entity?: MessageEntity;
 }
 
 /**
@@ -205,6 +211,7 @@ export class MessagingService {
         body,
         templateName: input.templateName,
         subject: input.subject,
+        entity: input.entity,
       });
       if (res.status === "failed") {
         return { channel, outcome: "failed", reason: "SEND_FAILED", wouldBeQuiet };
@@ -253,6 +260,8 @@ export class MessagingService {
       channels?: MessageChannel[];
       /** Optional: skip these channels. Omitted = none skipped (all existing callers). */
       exceptChannels?: MessageChannel[];
+      /** W-1286 (SA-1202 C7): the record the message is about; an EMAIL send writes its delivery row for it. */
+      entity?: MessageEntity;
     },
   ): Promise<SendOutcome[]> {
     const db = this.prisma.forTenant();
@@ -307,6 +316,7 @@ export class MessagingService {
           // already shows for this event (DEFAULT_TEMPLATES[eventKey].label).
           // Ignored by every non-EMAIL channel.
           subject: DEFAULT_TEMPLATES[eventKey].label,
+          entity: args.entity,
         }),
       );
     }
@@ -414,6 +424,7 @@ export class MessagingService {
       vars?: Record<string, string | number>;
       channels?: MessageChannel[];
       exceptChannels?: MessageChannel[];
+      entity?: MessageEntity;
     },
   ): Promise<SendOutcome[] | void> {
     try {
@@ -437,6 +448,7 @@ export class MessagingService {
         vars,
         channels: args.channels,
         exceptChannels: args.exceptChannels,
+        ...(args.entity ? { entity: args.entity } : {}),
       });
     } catch (err) {
       this.logger.warn(

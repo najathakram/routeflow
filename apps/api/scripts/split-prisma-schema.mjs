@@ -280,6 +280,8 @@ const MODEL_DOMAIN = {
   IntakeAccessToken: "platform",
   OrderAcceptance: "platform",
   EmailDelivery: "platform",
+  EmailBounceNotice: "platform",
+  EmailBounceSourceState: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",

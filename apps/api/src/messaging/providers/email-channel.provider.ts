@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { MessageChannel } from "@prisma/client";
 import { EmailService } from "../../email/email.service";
+import { logRecipient } from "../../email/redact-addresses";
 import { MessageProvider, SendInput, SendResult } from "./message-provider.interface";
 import { buildNotificationEmailBody } from "./email-notification-template";
 
@@ -58,10 +59,21 @@ export class EmailChannelProvider implements MessageProvider {
             ? `This is an automated message from ${brandName}.`
             : "This is an automated message.",
         },
+        // W-1286 (SA-1202 C7): an order-status email records its delivery row, so a later bounce can be matched.
+        ...(input.entity && input.tenantId
+          ? {
+              delivery: {
+                tenantId: input.tenantId,
+                kind: "ORDER_STATUS" as const,
+                entityType: input.entity.type,
+                entityId: input.entity.id,
+              },
+            }
+          : {}),
       });
       if (!result.delivered) {
         this.logger.warn(
-          `send to ${input.to} not delivered (transport=${result.transport}): ` +
+          `send to ${logRecipient(input.to)} not delivered (transport=${result.transport}): ` +
             `${result.error ?? "no reason given"}`,
         );
         return { providerMsgId: result.id ?? `email-failed-${Date.now()}`, status: "failed" };

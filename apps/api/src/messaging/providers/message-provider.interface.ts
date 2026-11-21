@@ -14,6 +14,17 @@ export interface SendInput {
    * non-EMAIL provider/channel.
    */
   subject?: string;
+  /**
+   * W-1286 (SA-1202 C7): the record this message is about (an order-status email: `Order`). When set, an EMAIL send
+   * writes one delivery row for it, so a later bounce can be matched. Ignored by every non-EMAIL channel.
+   */
+  entity?: MessageEntity;
+}
+
+/** What a message is about, for its delivery row. App-level: only `Order` is threaded today. */
+export interface MessageEntity {
+  type: "Order";
+  id: string;
 }
 
 export interface SendResult {
