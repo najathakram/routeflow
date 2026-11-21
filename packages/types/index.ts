@@ -150,6 +150,7 @@ export * from "./order-line-backorder";
 export * from "./invoice-line-code";
 export * from "./piece-synonyms";
 export * from "./api/enums";
+export * from "./api/invoice-account"; // SA-1197: the invoice account block rows + its one label map
 export * from "./api/product-count";
 export * from "./api/billing";
 export * from "./api/billing-status";

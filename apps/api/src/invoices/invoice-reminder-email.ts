@@ -93,7 +93,7 @@ export async function sendReminder(deps: ReminderEmailDeps, id: string, override
   let pdfUrl: string | undefined;
   let attachment: InvoiceEmailAttachment | undefined;
   try {
-    pdfUrl = await deps.pdfService.getOrGenerate(id);
+    pdfUrl = await deps.pdfService.getOrGenerate(id, { account: { show: false } }); // SA-1197 C13: no account block
     if (pdfUrl) {
       const dl = deps.storage.download.bind(deps.storage);
       attachment = await buildInvoiceEmailAttachment(dl, deps.logger, id, inv.invoiceNumber);

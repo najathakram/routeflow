@@ -500,7 +500,8 @@ describe("SettingsController — GET/PATCH /settings/invoice hidePerPiece", () =
 });
 
 // R6a (T10a): invoice.hideAmountPaid / invoice.hideBalanceDue, read through readInvoiceLayout (absent = shown).
-describe.each(["hideAmountPaid", "hideBalanceDue"] as const)(
+// SA-1197 (Q9, T12): invoice.showAccountBalance rides the same parse, so absent = off.
+describe.each(["hideAmountPaid", "hideBalanceDue", "showAccountBalance"] as const)(
   "SettingsController — GET/PATCH /settings/invoice %s",
   (field) => {
     const key = `invoice.${field}`;

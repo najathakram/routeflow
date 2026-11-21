@@ -5,7 +5,12 @@ import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
 import { InvoiceLayoutPreview } from "./InvoiceLayoutPreview";
 
 type LayoutKey =
-  "hideOriginalPrice" | "hideBarcodes" | "hidePerPiece" | "hideAmountPaid" | "hideBalanceDue";
+  | "hideOriginalPrice"
+  | "hideBarcodes"
+  | "hidePerPiece"
+  | "hideAmountPaid"
+  | "hideBalanceDue"
+  | "showAccountBalance";
 type LayoutSettings = Pick<InvoiceSettings, LayoutKey>;
 
 interface MutateOptions {
@@ -21,6 +26,9 @@ interface Props {
   onToggle: (body: Partial<InvoiceSettings>, options: MutateOptions) => void;
   disabled: boolean;
 }
+
+/** A hide* key is on when absent (the box shows its inverse); the one show* key (SA-1197) is off when absent. */
+const isShowKey = (key: LayoutKey) => key.startsWith("show");
 
 const ROWS: {
   key: LayoutKey;
@@ -58,6 +66,12 @@ const ROWS: {
     help: "Prints the Balance Due line on the PDF and the email. Reminders always show it.",
     doneDescription: "Balance due display updated.",
   },
+  {
+    key: "showAccountBalance",
+    label: "Show open balance on invoices",
+    help: "Adds the customer's other unpaid invoices and open balance under Balance Due, on the invoice page, the PDF and the email. Appears only when another invoice is unpaid. Not on walk-in or counter sales paid at the till, or on reminders. With Balance Due off, shows just the open balance.",
+    doneDescription: "Open balance display updated.",
+  },
 ];
 
 export function InvoiceLayoutCard({ settings, pending, onToggle, disabled }: Props) {
@@ -65,7 +79,7 @@ export function InvoiceLayoutCard({ settings, pending, onToggle, disabled }: Pro
 
   const handleChange = (key: LayoutKey, doneDescription: string, checked: boolean) => {
     onToggle(
-      { [key]: !checked },
+      { [key]: isShowKey(key) ? checked : !checked },
       {
         onSuccess: () =>
           toast({
@@ -107,7 +121,7 @@ export function InvoiceLayoutCard({ settings, pending, onToggle, disabled }: Pro
                   <input
                     type="checkbox"
                     aria-label={row.label}
-                    checked={!shown?.[row.key]}
+                    checked={isShowKey(row.key) ? !!shown?.[row.key] : !shown?.[row.key]}
                     onChange={(e) => handleChange(row.key, row.doneDescription, e.target.checked)}
                     disabled={disabled}
                     className="h-4 w-4 rounded border-surface-border"

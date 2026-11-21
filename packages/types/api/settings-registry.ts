@@ -126,6 +126,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("invoice.hidePerPiece", "/settings?tab=invoicing"),
   cfg("invoice.hideAmountPaid", "/settings?tab=invoicing"),
   cfg("invoice.hideBalanceDue", "/settings?tab=invoicing"),
+  cfg("invoice.showAccountBalance", "/settings?tab=invoicing"), // SA-1197
   cfg("invoice.depositDefaultPercent", "/settings?tab=invoicing"),
   {
     key: "invoice.depositCollectAtOrder",

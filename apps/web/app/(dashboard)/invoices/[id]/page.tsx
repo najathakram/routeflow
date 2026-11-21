@@ -2760,6 +2760,8 @@ export default function InvoiceDetailPage() {
                 balanceDue={balanceDue}
                 isDraft={status === "DRAFT"}
                 itemCount={formatInvoiceLineCounts(invoice.items ?? [])}
+                accountBlock={invoice.accountBlock}
+                customerId={invoice.customerId}
               />
             </div>
 
