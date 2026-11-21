@@ -306,8 +306,9 @@ for (const route of ["/pricing", "/"] as const) {
 // SA-1200 A4-4: each plan card's list starts right after its own button. The gap from the button's border box bottom
 // to the list's top is the designed one, read from the page's own computed style (the card's row-gap, the button's
 // margin-bottom, the list's margin-top), +-1px. This is what catches a hole between a button and its list (a button row
-// taller than its buttons, or a pushed list). The list is ul.checks on /pricing and the .pm meter on "/". The cards are
-// hidden under 900px (the plan table shows), so this runs at the K1 widths.
+// taller than its buttons, or a list moved without a margin). A margin change is a design change and moves the designed
+// gap with it (SA-1200 A6). The list is ul.checks on /pricing and the .pm meter on "/". The cards are hidden under
+// 900px (the plan table shows), so this runs at the K1 widths.
 for (const route of ["/pricing", "/"] as const) {
   for (const w of PLAN_ALIGN_WIDTHS) {
     test(`A4 the list starts right after its own button: ${route} @${w}x900`, async ({ page }) => {

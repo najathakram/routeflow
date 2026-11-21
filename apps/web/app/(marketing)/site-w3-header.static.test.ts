@@ -216,15 +216,21 @@ describe("P01 and the band line", () => {
       const html = readServedSitePage(page, { websiteId: undefined });
       expect(html).not.toContain("pfoot");
       const doc = new JSDOM(html).window.document;
-      const cards = Array.from(doc.querySelectorAll("#pricing .pgrid--4 > .pcard"));
+      const cards = Array.from(doc.querySelectorAll(".pgrid--4 > .pcard"));
       expect(cards.length).toBe(4);
+      const order = [
+        page === "home" ? "h3" : "h2",
+        ".pfrom",
+        ".pprice",
+        ".pyear",
+        ".pfor",
+        "a.pbtn",
+        page === "home" ? ".pm" : "ul.checks",
+      ];
       for (const c of cards) {
         const kids = Array.from(c.children);
         counts.push(kids.length);
-        const n = kids.length;
-        expect(kids[n - 3]?.matches(".pfor")).toBe(true);
-        expect(kids[n - 2]?.matches("a.pbtn")).toBe(true);
-        expect(kids[n - 1]?.matches(page === "home" ? ".pm" : "ul.checks")).toBe(true);
+        expect(kids.map((k, i) => k.matches(order[i] ?? "never"))).toEqual(order.map(() => true));
       }
       if (page === "pricing") {
         expect(cards[0]?.querySelector("a.pbtn")?.id).toBe("plans");
