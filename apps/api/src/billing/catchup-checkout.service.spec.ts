@@ -1,5 +1,6 @@
 import { CatchupCheckoutService, catchupReportJson } from "./catchup-checkout.service";
 import { CatchupClaimService } from "./catchup-claim.service";
+import { PaymentDueService } from "./payment-due.service";
 import { fakeCatchupDb } from "../testing/fake-catchup-db";
 import { fakeStripeCatchup } from "../testing/fake-stripe-catchup";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -314,14 +315,22 @@ describe("MF1: add-ons the card checkout cannot bill", () => {
 });
 
 describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (activations AND PAID invoices)", () => {
+  // SA-1206 R1: the row's own paid period must not run past the recorded coverage, so the default fixture is the
+  // September window that ends where the go-live paid-through (Oct 1) does.
   const sub = (over: Record<string, unknown> = {}) => ({
-    periodStart: new Date("2026-10-01T12:00:00Z"),
-    periodEnd: new Date("2026-11-01T12:00:00Z"),
+    periodStart: new Date("2026-09-01T12:00:00Z"),
+    periodEnd: new Date("2026-10-01T12:00:00Z"),
     ...over,
   });
 
   it("activated Sep 10 for 30 days ([Sep 10, Oct 10)): ELIGIBLE - the line starts at Oct 10; open() sends it with the coded fields", async () => {
-    const h = make({ invoices: [OCT_OPEN], sub: sub() });
+    const h = make({
+      invoices: [OCT_OPEN],
+      sub: sub({
+        periodStart: new Date("2026-09-10T09:00:00Z"),
+        periodEnd: new Date("2026-10-10T09:00:00Z"),
+      }),
+    });
     activationRows(h, "2026-09-10T09:00:00Z", "2026-10-10T09:00:00Z");
     const r = await h.svc.plan("t1", NOW);
     expect(r.eligible).toBe(true);
@@ -330,8 +339,8 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
     expect(r.plan.stub.from.toISOString()).toBe("2026-10-10T09:00:00.000Z");
     const json = catchupReportJson(r);
     expect(json.subPeriod).toEqual({
-      start: "2026-10-01T12:00:00.000Z",
-      end: "2026-11-01T12:00:00.000Z",
+      start: "2026-09-10T09:00:00.000Z",
+      end: "2026-10-10T09:00:00.000Z",
     });
     await h.svc.open("t1", {
       surface: "ADMIN_LINK",
@@ -515,8 +524,8 @@ describe("MF2 -> SA-733r9: paid coverage is one walk over every paid source (act
     expect(r.eligible).toBe(true);
     expect(r.plan).toMatchObject({ ok: true, shape: "trial_one_time" });
     expect(catchupReportJson(r).subPeriod).toEqual({
-      start: "2026-10-01T12:00:00.000Z",
-      end: "2026-11-01T12:00:00.000Z",
+      start: "2026-09-01T12:00:00.000Z",
+      end: "2026-10-01T12:00:00.000Z",
     });
   });
 
@@ -869,8 +878,8 @@ describe("SA-1139 PR-1: the catch-up session x BILLING_CHECKOUT_UI", () => {
     const h = make({
       invoices: [OCT_OPEN],
       sub: {
-        periodStart: new Date("2026-10-01T12:00:00Z"),
-        periodEnd: new Date("2026-11-01T12:00:00Z"),
+        periodStart: new Date("2026-09-01T12:00:00Z"),
+        periodEnd: new Date("2026-10-01T12:00:00Z"),
       },
     });
     return h;
@@ -986,5 +995,85 @@ describe("SA-1139 PR-1: the catch-up session x BILLING_CHECKOUT_UI", () => {
     expect(sent(h).return_url).toBe(
       "https://app.test/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}",
     );
+  });
+});
+
+describe("SA-1206 R1: a hand-paid period on the subscription row that the records do not reach", () => {
+  // Activated Sep 26, recorded paid to Oct 26 09:00Z: the records' paid-through. NOW is Oct 9.
+  const OCT_26 = new Date("2026-10-26T09:00:00Z");
+  const AHEAD = new Date("2026-10-27T09:00:00Z");
+  const hand = (periodEnd: Date | null, over: Record<string, unknown> = {}) => {
+    const h = make({
+      invoices: [],
+      tenant: { class: "PRODUCTION" },
+      sub: {
+        externalPayment: true,
+        periodStart: new Date("2026-09-26T09:00:00Z"),
+        periodEnd,
+        ...over,
+      },
+    });
+    activationRows(h, "2026-09-26T09:00:00Z", "2026-10-26T09:00:00Z");
+    return h;
+  };
+  const dueSvc = (h: ReturnType<typeof make>) =>
+    new PaymentDueService(
+      {
+        ...h.prisma,
+        tenantConfig: { findUnique: jest.fn(async () => ({ timezone: "America/New_York" })) },
+      } as any,
+      h.svc as any,
+      { onSessionExpired: jest.fn() } as any,
+      { isConfigured: true } as any,
+    );
+
+  it("a period end equal to the recorded paid-through is eligible (control: the guard refuses only what runs past)", async () => {
+    const r = await hand(OCT_26).svc.plan("t1", NOW);
+    expect(r.eligible).toBe(true);
+    expect(r.plan.ok && r.plan.stub.from.toISOString()).toBe("2026-10-26T09:00:00.000Z");
+  });
+
+  it("a period end one day past the records is NOT eligible: manual_period_ahead, the coded refusal", async () => {
+    const r = await hand(AHEAD).svc.plan("t1", NOW);
+    expect(r.plan).toEqual({ ok: false, reason: "manual_period_ahead" });
+    expect(r.eligible).toBe(false);
+    expect(r.ineligible).toContain("manual_period_ahead");
+    expect(catchupReportJson(r).refusals).toEqual([API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]);
+  });
+
+  it("open() throws the coded 409 and creates nothing: no claim, no Stripe session", async () => {
+    const h = hand(AHEAD);
+    const err: any = await h.svc
+      .open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 0 })
+      .catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD });
+    expect(err.getResponse().message).toMatch(
+      /paid period runs past what its records show as paid/,
+    );
+    expect(h.sub().catchupState).toBeNull();
+    expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+  });
+
+  it("a subscription NOT invoiced by hand never feeds the guard (it is refused for its own reason instead)", async () => {
+    const r = await hand(AHEAD, { externalPayment: false }).svc.plan("t1", NOW);
+    expect(r.ineligible).toContain("not_manual_invoicing");
+    expect(r.ineligible).not.toContain("manual_period_ahead");
+  });
+
+  it("the business's own Pay banner (PaymentDueService, same planner): due in the control, NOT_DUE past the records", async () => {
+    const ok = await dueSvc(hand(OCT_26)).get("t1", NOW);
+    expect(ok.due).toBe(true);
+    const ahead = await dueSvc(hand(AHEAD)).get("t1", NOW);
+    expect(ahead).toEqual({
+      due: false,
+      pastDue: false,
+      amountCents: 0,
+      periodLabel: null,
+      periodStart: null,
+      cardNeeded: false,
+      chargeStartsOn: null,
+      cardBy: null,
+    });
   });
 });

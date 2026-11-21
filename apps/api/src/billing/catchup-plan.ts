@@ -463,7 +463,8 @@ export type CatchupPlanRefusal =
   | "billable_addon_not_card_billable"
   | "addon_snapshot_not_catalog"
   | "checkout_addon_without_priced_row"
-  | "manual_marker_without_period";
+  | "manual_marker_without_period"
+  | "manual_period_ahead";
 
 export type CatchupPlanResult = CatchupPlan | { ok: false; reason: CatchupPlanRefusal };
 
@@ -499,6 +500,13 @@ export function planCatchup(i: {
    * windows in the one paid-coverage walk. Omitted = the pure planner over the PAID RfInvoices alone.
    */
   manual?: { activations: readonly ActivationRecord[] };
+  /**
+   * SA-1206 R1: the end of the period the subscription row itself records as paid by hand. When it is given and,
+   * snapped to its 1st, runs past the paid coverage this plan measured, a line over [paid-through, A) could bill
+   * days already paid, so the plan refuses (`manual_period_ahead`). It only ever refuses: it never adds a charge.
+   * Omitted or null = no input, never a refusal.
+   */
+  manualPeriodEnd?: Date | null;
 }): CatchupPlanResult {
   if (i.monthly == null || Number.isNaN(i.monthly)) {
     return { ok: false, reason: "no_monthly_price" };
@@ -534,6 +542,12 @@ export function planCatchup(i: {
     activationWindows,
   });
   if (!cov.ok) return cov;
+  if (
+    i.manualPeriodEnd &&
+    snapToBoundary(i.manualPeriodEnd).getTime() > snapToBoundary(cov.paidThrough).getTime()
+  ) {
+    return { ok: false, reason: "manual_period_ahead" };
+  }
   if (i.billableRows) {
     const refusal = addonCardRefusal(i.billableRows, i.addons);
     if (refusal) return { ok: false, reason: refusal };

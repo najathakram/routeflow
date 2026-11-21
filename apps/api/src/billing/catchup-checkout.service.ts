@@ -276,6 +276,8 @@ export class CatchupCheckoutService {
       // an override REPLACES the first-activation term of the floor; with none the planner reads the first activation
       billingStart: override?.ok ? override.billingStart : null,
       manual: { activations: markers.activations },
+      // SA-1206 R1: a hand-paid period on the subscription row that the recorded coverage does not reach is refused
+      manualPeriodEnd: sub?.externalPayment ? sub.periodEnd : null,
     });
     if (!plan.ok) ineligible.push(plan.reason);
     if (plan.ok) {

@@ -37,7 +37,7 @@ const MESSAGE: Record<string, string> = {
   [API_ERROR_CODES.CATCHUP_ADDON_SNAPSHOT_NOT_CATALOG]:
     "NEEDS RULING: this tenant's add-on price or quantity differs from what the card checkout would bill. Keep it on the manual path. Nothing was created.",
   [API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD]:
-    "NEEDS RULING: an activation on this tenant has no recorded period, so its paid days cannot be measured. A catch-up could charge days that are already paid. Keep it on the manual path until the activation is corrected. Nothing was created.",
+    "NEEDS RULING: this tenant's paid period runs past what its records show as paid, so a catch-up could charge days that are already paid. Record the payment (or correct the activation) first. Nothing was created.",
   [API_ERROR_CODES.CATCHUP_NO_BILLABLE_PRICE]:
     "NEEDS RULING: this tenant's plan has no billable monthly price (zero or negative). A card subscription would bill nothing. Keep it on the manual path. Nothing was created.",
 };

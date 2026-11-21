@@ -305,6 +305,53 @@ describe("refusals", () => {
   });
 });
 
+describe("SA-1206 R1: the subscription row's own paid period must not run past the recorded coverage", () => {
+  const paidThroughNov1 = [OCT("PAID")]; // paid-through Nov 1 12:00Z
+  const run = (manualPeriodEnd?: Date | null, invoices = paidThroughNov1) =>
+    planCatchup({ now: NOW, monthly: 99, addons: [], invoices, manualPeriodEnd });
+
+  it("a period end equal to the paid-through passes", () => {
+    expect(run(d("2026-11-01T12:00:00Z"))).toMatchObject({ ok: true });
+  });
+
+  it("a period end one day past the paid-through refuses manual_period_ahead", () => {
+    const paidToOct26 = [inv("p", "PAID", "2026-09-26T09:00:00Z", "2026-10-26T09:00:00Z")];
+    expect(run(d("2026-10-26T09:00:00Z"), paidToOct26)).toMatchObject({ ok: true });
+    expect(run(d("2026-10-27T09:00:00Z"), paidToOct26)).toEqual({
+      ok: false,
+      reason: "manual_period_ahead",
+    });
+  });
+
+  it("past a 1st by more than the 24 h snap it refuses", () => {
+    expect(run(d("2026-11-03T12:00:00Z"))).toEqual({ ok: false, reason: "manual_period_ahead" });
+  });
+
+  it("a period end that snaps to the same 1st passes (the planner's own 24 h snap, not a raw compare)", () => {
+    expect(run(d("2026-11-01T20:00:00Z"))).toMatchObject({ ok: true });
+    expect(run(d("2026-11-02T12:00:00Z"))).toMatchObject({ ok: true });
+    expect(run(d("2026-11-01T00:00:00Z"))).toMatchObject({ ok: true });
+  });
+
+  it("a mid-month period end keeps its exact instant: one hour past a mid-month paid-through refuses", () => {
+    const midMonth = [inv("p", "PAID", "2026-09-05T12:00:00Z", "2026-10-05T12:00:00Z")];
+    expect(run(d("2026-10-05T12:00:00Z"), midMonth)).toMatchObject({ ok: true });
+    expect(run(d("2026-10-05T13:00:00Z"), midMonth)).toEqual({
+      ok: false,
+      reason: "manual_period_ahead",
+    });
+  });
+
+  it("a missing or null period end is no input: it never refuses", () => {
+    expect(run(undefined)).toMatchObject({ ok: true });
+    expect(run(null)).toMatchObject({ ok: true });
+  });
+
+  it("a period end BEHIND the paid-through never refuses (it only ever refuses, never adds)", () => {
+    expect(run(d("2026-10-05T12:00:00Z"))).toMatchObject({ ok: true });
+  });
+});
+
 describe("SA-733r5 selector rows", () => {
   it("catchupShape: S === A (>= now + 72 h) => trial; every S < A => trial_one_time", () => {
     const now = d("2026-10-09T10:00:00Z");

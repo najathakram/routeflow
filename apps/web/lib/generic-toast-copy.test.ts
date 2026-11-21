@@ -170,10 +170,10 @@ describe("genericToastCopy: codes users rely on", () => {
     expect(
       genericToastCopy(err(409, { code: API_ERROR_CODES.EXTERNAL_PAYMENT_USE_CATCHUP })),
     ).toMatch(/invoiced directly/);
-    // CATCHUP_MANUAL_PERIOD_AHEAD now means only "a manual activation recorded without a paid period"
+    // SA-1206: CATCHUP_MANUAL_PERIOD_AHEAD is cause-neutral: the paid period runs past what the records show as paid
     expect(
       genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
-    ).toMatch(/manual activation recorded without a paid period/);
+    ).toMatch(/paid period runs past what its records show as paid/);
     expect(
       genericToastCopy(err(409, { code: API_ERROR_CODES.CATCHUP_MANUAL_PERIOD_AHEAD })),
     ).not.toMatch(/part-way/);
