@@ -218,7 +218,6 @@
 .dv-pod{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:8px}
 .dv-pod span{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;border-radius:12px;background:var(--ios-6);font-size:12px;font-weight:600}
 .dv-pod .ico{width:20px;height:20px}
-.dv-go{margin-top:14px;height:44px;border-radius:12px;background:var(--app-deep);color:var(--rf-white);display:grid;place-items:center;font-weight:600;font-size:14px}
 .jr-side{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px}
 .jr-route{width:100%;height:auto;overflow:visible}
 .rt-b,.rt-l{fill:none;stroke-width:3;stroke-linecap:round}
