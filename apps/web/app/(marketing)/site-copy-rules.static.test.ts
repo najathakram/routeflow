@@ -3,6 +3,7 @@
 // (no sentence ends with the brand name, titles stay short) with a dotted fixture name, plus the
 // SA-1080 rule (no login or seat numbers on any served page). Pages are read as served.
 import { loadBrand } from "@routeflow/types/brand";
+import { attrValue, isIllustrationTag } from "../../e2e/helpers/site-figure-scope";
 import { readServedSitePage } from "@/lib/read-site-page";
 import {
   renderSitePage,
@@ -260,9 +261,9 @@ function parseVisible(html: string): Parsed {
       const at = stack.map((s) => s.tag).lastIndexOf(tag);
       if (at >= 0) stack.length = at;
     } else if (!VOID_TAGS.has(tag) && !m[3].trimEnd().endsWith("/")) {
-      const cls = /\bclass="([^"]*)"/.exec(m[3])?.[1] ?? "";
-      const label = /\baria-label="([^"]*)"/.exec(m[3])?.[1] ?? "";
-      const skip = tag === "figure" && /\brole="img"/.test(m[3]) && label.trim() !== "";
+      const cls = attrValue(m[3], "class") ?? "";
+      const label = attrValue(m[3], "aria-label") ?? "";
+      const skip = isIllustrationTag(tag, m[3]);
       if (skip) {
         figures++;
         nodes.push({ text: decodeVisible(label), frozen: stack.some((s) => s.frozen) });
@@ -344,6 +345,14 @@ describe("T10: copy rules over the visible text of every page", () => {
     // an empty or missing label does not buy a skip
     expect(t10Hits(fig('role="img" aria-label=""', "<b>Profit &amp; loss</b>"))).toHaveLength(1);
     expect(t10Hits(fig('aria-label="A report."', "<b>Profit &amp; loss</b>"))).toHaveLength(1);
+    // a data- attribute is not the attribute, and a label of spaces is empty
+    expect(
+      t10Hits(fig('data-role="img" aria-label="A report."', "<b>Profit &amp; loss</b>")),
+    ).toHaveLength(1);
+    expect(
+      t10Hits(fig('role="img" data-aria-label="A report."', "<b>Profit &amp; loss</b>")),
+    ).toHaveLength(1);
+    expect(t10Hits(fig('role="img" aria-label="   "', "<b>Profit &amp; loss</b>"))).toHaveLength(1);
     // the label is checked
     expect(t10Hits(fig('role="img" aria-label="Click here"', "<b>Net</b>"))).toHaveLength(1);
   });

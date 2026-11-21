@@ -319,8 +319,8 @@ Used here because the UX ledger (ux-ledger-p12-p16.md) holds P-rows for layout d
 
 ## Counts
 
-- Rows: 216. Changes proposed: 53. KEEP: 160. Flag-only or pointer rows (no proposal): 3 (HM-04, LG-07, LG-10).
-- Rows by flag (all rows / rows with a proposed change): NAME 62 / 15, EMAIL 21 / 6, PRICE 18 / 6, CLAIM 77 / 13, HOST 6 / 0, LEGAL 14 / 0.
+- Rows: 218 (GS-13, GS-14 added). Changes proposed: 55. KEEP: 160. Flag-only or pointer rows (no proposal): 3 (HM-04, LG-07, LG-10).
+- Rows by flag (all rows / rows with a proposed change): NAME 62 / 15, EMAIL 21 / 6, PRICE 18 / 6, CLAIM 78 / 14, HOST 6 / 0, LEGAL 14 / 0.
 - Name census (count of "RouteFlow" / "routeflow.info" / "hello@routeflow.info" per file): home.html 31/25/15; company 18/10/6; product 21/8/4; does-and-doesnt 24/6/2; data-in-and-out 17/7/3; pricing 16/12/8; security 16/8/4; contact 12/12/8; getting-started 10/10/6; landing 8/6/2; privacy page 56/13/0; terms page 26/4/0. The "routeflow.info" counts include canonical, og:url and sitemap links; the mailto links inside `lib/site.ts` and the `SITE_EMAIL` copy in `site-frame-nav.ts` are the only two code sources. Most address text on the static pages is typed, not read from a source.
 - Typed prices (PRICE, typed instead of read from `js/prices.js`): `pricing.html:7,13,21` ("$99"); `landing.html:57-58` ("$99", "$249", "$499"); `lib/site.ts:44` (pricing meta "$99"). Everything else on pricing, home and product is read from `prices.js` through `data-plan` and `data-addon` spans. "14 days" is typed 44 times in the static pages while `prices.js` holds `trialDays: 14`.
 
