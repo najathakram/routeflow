@@ -1,22 +1,15 @@
 import * as React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { navFor } from "@/test-utils/nav";
 import { CommandPalette } from "./CommandPalette";
 
 /** W-927: typing a product name or SKU lists matching products beside customers, orders and invoices. */
 const mockPush = jest.fn();
 const get = jest.fn();
-// SA-1087: the palette's Product insights entry reads the shared access rule; pinned in CommandPalette.insights.test.tsx.
-jest.mock("@/components/insights/use-insights-access", () => ({ useInsightsAccess: () => false }));
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock("@/lib/auth-context", () => ({ useAuth: () => ({ user: { role: "OPERATOR" } }) }));
 jest.mock("@/lib/api-client", () => ({ apiClient: { get: (...a: unknown[]) => get(...a) } }));
 jest.mock("@/lib/i18n", () => ({ useI18n: () => ({ t: (k: string) => k }) }));
-jest.mock("@/lib/api/addons", () => ({
-  useRoutesAccess: () => ({ enabled: true }),
-  useDeliveryAccess: () => ({ enabled: true }),
-}));
-jest.mock("@/lib/api/counter-sale", () => ({ useCounterSaleGate: () => ({ showButton: true }) }));
-jest.mock("@/lib/tenant-features", () => ({ useTenantFeatures: () => ({ data: undefined }) }));
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -37,7 +30,7 @@ afterEach(() => {
 
 describe("CommandPalette product results (W-927)", () => {
   it("searches products and opens the product page on a click", async () => {
-    render(<CommandPalette open onClose={() => {}} />);
+    render(<CommandPalette open onClose={() => {}} nav={navFor({ counterEnabled: true })} />);
     fireEvent.change(screen.getByPlaceholderText("palette.placeholder"), {
       target: { value: "cola" },
     });

@@ -1234,7 +1234,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         readAt={subscriptionReadAt}
         isAdmin={user?.role === "TENANT_ADMIN"}
       >
-        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          nav={navStructure}
+        />
       </ReadOnlyGateProvider>
 
       {/* Keyboard shortcuts help modal */}

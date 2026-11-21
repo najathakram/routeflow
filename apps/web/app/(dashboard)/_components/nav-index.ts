@@ -1,3 +1,4 @@
+import { Plus, Route as RouteIcon, Store, type LucideIcon } from "lucide-react";
 import { activeLeafHref } from "./nav-active";
 import type { NavEntry, NavGroup, NavLeaf } from "./nav-config";
 
@@ -68,4 +69,144 @@ export function navShortcuts(nav: readonly NavEntry[]): NavShortcut[] {
 /** `navShortcuts` as the letter → page map the key handler reads. */
 export function navShortcutTargets(nav: readonly NavEntry[]): Record<string, string> {
   return Object.fromEntries(navShortcuts(nav).map((s) => [s.letter, s.href]));
+}
+
+/**
+ * Retired and alternative names, searchable and never shown as rows of their own (palette search reads
+ * these as keywords). A rename moves the old label here, so nobody who knows it loses the page.
+ */
+export const NAV_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "/dashboard": ["home"],
+  "/orders": ["Orders", "My orders", "All orders"],
+  "/dispatch": ["Overview", "Dispatch overview"],
+  "/deliveries": ["Order delivery", "Trips", "Deliveries"],
+  "/settings": ["Settings"],
+  "/vendor-bills": ["Expenses"],
+  "/finance/dashboard": ["Overview", "Finance overview"],
+  "/finance/payments": ["Payments", "Payments received"],
+  "/insights": ["look up find scan barcode sales history demand trend buyers"],
+};
+
+export type QuickAction = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  /** The page the action opens; with `opensCreate` it opens that page's own create form. */
+  href: string;
+  opensCreate: boolean;
+  /** The menu leaf that must exist for this person, or the action is not theirs to offer. */
+  needs: string;
+  keywords: string;
+  /** Creates something: a read-only workspace lists it disabled with the shared line. */
+  readOnlyGated: boolean;
+  /** `readOnlyGated` and the workspace is read-only right now. */
+  blocked: boolean;
+};
+
+type QuickActionDef = Omit<QuickAction, "blocked">;
+
+/** The creating actions, in the order every surface lists them. A new quick action is one row here. */
+const QUICK_ACTION_DEFS: readonly QuickActionDef[] = [
+  {
+    id: "act-new-order",
+    label: "New Order",
+    icon: Plus,
+    href: "/orders",
+    opensCreate: true,
+    needs: "/orders",
+    keywords: "create add order",
+    readOnlyGated: true,
+  },
+  {
+    id: "act-counter-sale",
+    label: "New counter sale",
+    icon: Store,
+    href: "/orders/counter-sale",
+    opensCreate: false,
+    needs: "/orders/counter-sale",
+    keywords: "walk-in pickup pos till scan",
+    readOnlyGated: true,
+  },
+  {
+    id: "act-new-invoice",
+    label: "New Invoice",
+    icon: Plus,
+    href: "/invoices/new",
+    opensCreate: false,
+    needs: "/invoices",
+    keywords: "create add invoice",
+    readOnlyGated: true,
+  },
+  {
+    id: "act-new-route",
+    label: "New Route",
+    icon: Plus,
+    href: "/routes/create",
+    opensCreate: false,
+    needs: "/routes",
+    keywords: "create add route",
+    readOnlyGated: false,
+  },
+  {
+    id: "act-plan-trip",
+    label: "Plan delivery",
+    icon: RouteIcon,
+    href: "/deliveries/new",
+    opensCreate: false,
+    needs: "/deliveries",
+    keywords: "adhoc trip dispatch delivery",
+    readOnlyGated: false,
+  },
+  {
+    id: "act-new-customer",
+    label: "New Customer",
+    icon: Plus,
+    href: "/customers",
+    opensCreate: true,
+    needs: "/customers",
+    keywords: "create add customer",
+    readOnlyGated: true,
+  },
+  {
+    id: "act-new-product",
+    label: "New Product",
+    icon: Plus,
+    href: "/products",
+    opensCreate: true,
+    needs: "/products",
+    keywords: "create add product",
+    readOnlyGated: true,
+  },
+];
+
+/**
+ * The creating actions this menu can offer. `staff` is false for a customer or a driver, who get none
+ * (starting an order is a staff action, REG-B1). Each action needs its page in the menu, so a plan or
+ * add-on that hides the page hides the action with it.
+ */
+export function quickActions(
+  nav: readonly NavEntry[],
+  opts: { staff: boolean; readOnly: boolean },
+): QuickAction[] {
+  if (!opts.staff) return [];
+  const have = new Set(navLeaves(nav).map((l) => l.href));
+  return QUICK_ACTION_DEFS.filter((a) => have.has(a.needs)).map((a) => ({
+    ...a,
+    blocked: a.readOnlyGated && opts.readOnly,
+  }));
+}
+
+/**
+ * Where an action goes. A create form opened from a list is `?action=new`; when the person already stands on that
+ * list its own query state (page, search) is kept, because the target page consumes `action` and replaces the URL
+ * with whatever remains.
+ */
+export function quickActionHref(action: Pick<QuickAction, "href" | "opensCreate">): string {
+  if (!action.opensCreate) return action.href;
+  const params =
+    typeof window !== "undefined" && window.location.pathname === action.href
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+  params.set("action", "new");
+  return `${action.href}?${params.toString()}`;
 }
