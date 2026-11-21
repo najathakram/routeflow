@@ -77,9 +77,10 @@ export function navShortcutTargets(nav: readonly NavEntry[]): Record<string, str
  */
 export const NAV_ALIASES: Readonly<Record<string, readonly string[]>> = {
   "/dashboard": ["home"],
-  "/orders": ["Orders", "My orders"],
+  "/orders": ["Orders", "My orders", "All orders"],
   "/dispatch": ["Overview", "Dispatch overview"],
-  "/deliveries": ["Order delivery", "Trips"],
+  "/deliveries": ["Order delivery", "Trips", "Deliveries"],
+  "/settings": ["Settings"],
   "/vendor-bills": ["Expenses"],
   "/finance/dashboard": ["Overview", "Finance overview"],
   "/finance/payments": ["Payments", "Payments received"],
