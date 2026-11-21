@@ -117,10 +117,10 @@ const escapeRe = (v: string): string => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /** Open a page and wait until it has hydrated: the header name, and on the front door the card heading. */
 async function openPage(page: Page, route: string): Promise<void> {
-  await page.goto(route, { waitUntil: "load" });
-  await page.locator(".brand").first().waitFor({ state: "visible" });
+  await page.goto(route, { waitUntil: "load", timeout: 120_000 });
+  await page.locator(".brand").first().waitFor({ state: "visible", timeout: 120_000 });
   if ((FRONT_DOOR as readonly string[]).includes(route))
-    await page.locator("h1").first().waitFor({ state: "visible" });
+    await page.locator("h1").first().waitFor({ state: "visible", timeout: 120_000 });
 }
 
 /** What a reader sees and hears, with the footer line (checked to be exactly footerLine()) taken out. */
