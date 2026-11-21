@@ -163,11 +163,31 @@ describe("the footer line", () => {
     expect(tokenise(`<p>see ${b.formerly} here</p>`, b)).toBe(`<p>see ${b.formerly} here</p>`);
   });
 
-  // SA-1203 A2 (P5c): with formerly equal to name the line is bare and only the name is tokenised
-  it("formerly equal to name gives the bare line with only the name tokenised", () => {
+  // SA-1203 A2 (P5c): with formerly equal to name there is no previous name to token; both stay the name
+  it("formerly equal to name tokenises the name twice and never a formerly token", () => {
     const same = { ...b, formerly: b.name };
-    expect(tokenise(`<span>© 2026 ${b.name}</span>`, same)).toBe(
-      "<span>© 2026 {{brand:name}}</span>",
+    const out = tokenise(`<span>© 2026 ${b.name}, formerly ${b.name}</span>`, same);
+    expect(out).toBe("<span>© 2026 {{brand:name}}, formerly {{brand:name}}</span>");
+    expect(out).not.toContain("{{brand:formerly}}");
+  });
+
+  // SA-1203 A2 (P5e): only the whole text of an element is the footer; prose around it stays literal
+  it("a footer-shaped phrase inside prose is not tokenised as the previous name", () => {
+    const lead = `<p>Since © 2026 ${b.name}, formerly ${b.formerly}, we grew.</p>`;
+    const tail = `<span>© 2026 ${b.name}, formerly ${b.formerly} and partners</span>`;
+    expect(tokenise(lead, b)).toContain(`formerly ${b.formerly}`);
+    expect(tokenise(lead, b)).not.toContain("{{brand:formerly}}");
+    expect(tokenise(tail, b)).toContain(`formerly ${b.formerly}`);
+    expect(tokenise(tail, b)).not.toContain("{{brand:formerly}}");
+  });
+
+  // SA-1203 A2 (P5f): both names are escaped, so regex characters match themselves and nothing else
+  it("names with regex characters round-trip and a near miss is not matched", () => {
+    const rx = { ...b, name: "A.B+", formerly: "C(D)" };
+    expect(tokenise("<span>© 2026 A.B+, formerly C(D)</span>", rx)).toBe(
+      "<span>© 2026 {{brand:name}}, formerly {{brand:formerly}}</span>",
     );
+    const miss = "<span>© 2026 AxB+, formerly C(D)</span>";
+    expect(tokenise(miss, rx)).not.toContain("{{brand:formerly}}");
   });
 });

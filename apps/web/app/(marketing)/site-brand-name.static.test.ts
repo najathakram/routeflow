@@ -17,8 +17,14 @@ const WEB = path.resolve(__dirname, "../..");
 const pageHtml = (page: StaticSitePage): string =>
   readServedSitePage(page, { websiteId: undefined });
 
+/** What the renderer does to a value placed in HTML (written out here on purpose). */
 const escapeHtml = (v: string): string =>
-  v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 /** SA-1203 A1: the footer line occurs exactly once and equals footerLine(); it is removed, and the
  *  rest of the page is held to the old rule. */

@@ -142,7 +142,7 @@ describe("the pages", () => {
       });
     }
     // SA-1203 A1: the one footer line names the previous name; it is removed exactly, and the rest is checked
-    const footer = esc(footerLine());
+    const footer = esc(footerLine(undefined, FIXTURE));
     expect(rest.split(footer)).toHaveLength(2);
     expect(rest.replace(footer, "")).not.toContain(FIXTURE.formerly);
   });

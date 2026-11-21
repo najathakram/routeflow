@@ -27,6 +27,14 @@ const LANDING = "public/site/landing.html";
 const read = (rel: string) => fs.readFileSync(path.join(WEB, rel), "utf8");
 
 const raw = read(LANDING);
+/** What the renderer does to a value placed in HTML (written out here on purpose). */
+const esc = (v: string) =>
+  v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 const served = (brand = loadBrand()) =>
   readServedSitePage("landing", { brand, websiteId: undefined });
 
@@ -151,11 +159,8 @@ describe("T45 (landing alone): a fixture brand shows nothing of the real one", (
   const html = served(fx);
 
   it("has none of the current brand and none of the planned name", () => {
-    // SA-1203 A1: the one footer line names the previous name (the current brand here); remove it exactly
-    const footer = footerLine(2026, fx)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/"/g, "&quot;");
+    // SA-1203 A1: the one footer line names the previous name; remove it exactly (escape per A2 note)
+    const footer = esc(footerLine(2026, fx));
     expect(html.split(footer)).toHaveLength(2);
     expect(html.replace(footer, "")).not.toMatch(CURRENT_BRAND);
     expect(html).not.toMatch(/rovio/i);
