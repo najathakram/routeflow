@@ -40,12 +40,12 @@ import {
   type ParityMap,
 } from "./helpers/site-parity";
 import {
+  WALK_PAGE_HARD_MS,
   WALK_ROUTES,
   WALK_SIZES,
   judgeColours,
   judgeShadows,
-  openForWalk,
-  readWalk,
+  walkPageSize,
 } from "./helpers/site-colour-walk";
 
 test.describe.configure({ mode: "parallel" });
@@ -654,21 +654,10 @@ test.describe("T12 R12 nothing is lost", () => {
   });
 });
 
-// ─── T16 + T18c — one colour walk over the 17 signed-out pages ─────────────────
+// ─── T16 + T18c — one Tab walk over the 17 signed-out pages ───────────────────
 
-/** A band the focus ring can sit on, and a page that must show it: a missing band is a red, not a skip. */
-const RING_BANDS: Record<string, string> = {
-  "/": ".end",
-  "/landing": ".price",
-  "/pricing": ".pcard.featured",
-};
-
-/** Does a band label (tag#id.class.class) carry every class of a simple selector like .pcard.featured? */
-const bandHas = (label: string, sel: string): boolean =>
-  sel
-    .split(".")
-    .filter(Boolean)
-    .every((c) => label.includes(`.${c}`));
+/** Pages that must show a focusable element on a dark band: none measured there is a red, not a skip (SA-1203 A12 S4). */
+const DARK_BAND_PAGES: readonly string[] = ["/", "/landing", "/pricing"];
 
 test.describe("T16 T18c colour walk", () => {
   test("the walk covers 17 pages", () => {
@@ -678,26 +667,21 @@ test.describe("T16 T18c colour walk", () => {
 
   for (const route of nonEmpty(WALK_ROUTES, "walk routes")) {
     for (const size of WALK_SIZES) {
-      test(`T16 T18c colour walk ${route} ${sizeName(size)}`, async ({ page }) => {
-        test.setTimeout(240_000);
-        const label = `${route} ${sizeName(size)}`;
-        await openForWalk(page, route, size);
-        const walk = await readWalk(page, route, size);
-        const { problems, report } = judgeColours(walk, label);
+      test(`T16 T18c colour walk ${route} ${sizeName(size)}`, async () => {
+        // SA-1203 A12 S13: one page and size has a 60 s budget in the walk; the hard kill is in walkPageSize.
+        test.setTimeout(WALK_PAGE_HARD_MS + 60_000);
+        const walk = await walkPageSize(route, size);
+        const { problems, report } = judgeColours(walk);
         await test.info().attach("T16 focusable table", {
           body: report.join(String.fromCharCode(10)),
           contentType: "text/plain",
         });
         for (const line of report)
-          test.info().annotations.push({
-            type: "focus-ring",
-            description: `${route} ${sizeName(size)} ${line}`,
-          });
-        const band = RING_BANDS[route];
-        if (band)
+          test.info().annotations.push({ type: "focus-ring", description: line });
+        if (DARK_BAND_PAGES.includes(route))
           expect(
-            walk.rings.filter((r) => r.bands.some((b) => bandHas(b, band))).length,
-            `T16 ${route} ${sizeName(size)}: focusable elements measured inside ${band}`,
+            walk.rows.filter((r) => r.bandDark).length,
+            `T16 ${route} ${sizeName(size)}: focus stops read on a dark band`,
           ).toBeGreaterThan(0);
         expect.soft(problems, `T16 ${route} ${sizeName(size)}`).toEqual([]);
         expect.soft(judgeShadows(walk), `T18c ${route} ${sizeName(size)}`).toEqual([]);
