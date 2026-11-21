@@ -143,6 +143,27 @@ describe("T39: service worker, brand files", () => {
     expect(SW_SOURCE).toMatch(/if\s*\(\s*isStaticAsset\s*&&\s*isMarketingFile\s*\)/);
   });
 
+  // SA-1203 A3: brand files under /brand/ are served cache-first, and the switch gives every /brand/ key a
+  // NEW file name (the old files stay), so a cached old icon is never served for the new name. This pins the
+  // strategy; if it changes, the switch-day row (every /brand/ key differs from its pre-switch value) must be
+  // looked at again. sw.js is not changed for the site.
+  it.each(brandPaths().filter((p) => p.startsWith("/brand/")))(
+    "%s is cache-first: a cached copy wins and the network is not asked",
+    async (p) => {
+      const url = `${ORIGIN}${p}`;
+      const w = bootWorker({ cached: { [url]: "CACHED" }, network: { [url]: "NEW" } });
+      expect(await w.fetchOf(url)).toBe("CACHED");
+    },
+  );
+
+  it("only /site/ is network-first and /brand/ is cache-first in the worker source", () => {
+    expect(SW_SOURCE).not.toMatch(/startsWith\("\/brand\/"\)/);
+    expect(SW_SOURCE).toMatch(
+      /\/\/ Cache-first: static assets change rarely\s*\n\s*event\.respondWith/,
+    );
+    expect(SW_SOURCE).toMatch(/STATIC_EXTENSIONS\s*=\s*\[[^\]]*"\.png"/);
+  });
+
   it("every brand file outside /site/ is a file under /brand/ that exists (a new location needs a row here)", () => {
     const outside = brandPaths().filter((p) => !p.startsWith("/site/"));
     expect(outside.length).toBeGreaterThan(0);
