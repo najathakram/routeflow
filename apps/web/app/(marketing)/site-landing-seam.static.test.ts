@@ -366,14 +366,17 @@ describe("review fixes: phone bar, art contrast, art tokens", () => {
   const block = (raw.match(BLOCK)?.[1] as string) ?? "";
   const resolve = (token: string): string => {
     let t = token;
+    let viaBox = false;
     for (let i = 0; i < 6; i++) {
       const m = /^var\((--[a-z0-9-]+)\)$/.exec(t);
       if (!m) break;
       const key = m[1] as string;
+      viaBox = key.startsWith("--rf-box-");
       if (key.startsWith("--brand-")) return palette[key.slice(8)] as string;
       t = new RegExp(`${key}:([^;}]+)`).exec(stripCss(block).replace(/\s+/g, ""))?.[1] ?? "";
     }
-    if (/^#[0-9a-f]{6}$/i.test(t)) return t; // SA-1203 A5: the box tokens are typed kraft values
+    // SA-1203 A6 4a: a typed hex is read only when a --rf-box-* token holds it; a bare typed hex is refused
+    if (viaBox && /^#[0-9a-f]{6}$/i.test(t)) return t;
     throw new Error(`cannot resolve ${token}`);
   };
   const lum = (hex: string) => {
@@ -412,6 +415,12 @@ describe("review fixes: phone bar, art contrast, art tokens", () => {
   ];
   it.each(PAIRS)("%s .%s on a %s stage is at least 3:1", (prop, cls, stage) => {
     expect(ratio(colourOf(cls, prop), resolve(STAGES[stage]))).toBeGreaterThanOrEqual(3);
+  });
+
+  it("a typed copper hex is refused, bare or behind a non-box token", () => {
+    expect(() => resolve("#B5683A")).toThrow(/cannot resolve/);
+    expect(() => resolve(`var(--rf-text)`)).not.toThrow();
+    for (const c of ["f-box", "f-flap"]) expect(colourOf(c, "fill")).not.toMatch(/^#b5683a$/i);
   });
 
   it("the art uses no pale line colour for shapes (outlines and rows are steel or ink)", () => {

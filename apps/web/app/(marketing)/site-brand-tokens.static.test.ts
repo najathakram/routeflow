@@ -302,3 +302,34 @@ describe("T35d: no palette value typed outside the injected style", () => {
     );
   });
 });
+
+describe("T14a: the two kraft box values (SA-1203 A6 4b)", () => {
+  const KRAFT = ["#9a8260", "#6e5a40"];
+  const cssFiles = (dir: string): string[] =>
+    fs.readdirSync(path.join(WEB, dir), { withFileTypes: true }).flatMap((e) => {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) return cssFiles(rel);
+      return e.name.endsWith(".css") ? [rel] : [];
+    });
+  const texts = () => [
+    ...cssFiles("public/site").map((f) => [f, read(f)] as const),
+    ...STATIC_SITE_PAGE_NAMES.map(
+      (p) => [`${p}.html`, readServedSitePage(p, { websiteId: undefined })] as const,
+    ),
+  ];
+
+  it("appear only as the value of --rf-box-front and --rf-box-side, once per place that defines them", () => {
+    const hits: string[] = [];
+    for (const [name, text] of texts())
+      for (const m of text.matchAll(/(--[a-z0-9-]+)?\s*:?\s*(#[0-9a-f]{6})\b/gi)) {
+        if (KRAFT.includes((m[2] as string).toLowerCase()))
+          hits.push(`${name} ${m[1] ?? "(none)"}`);
+      }
+    expect(hits.sort()).toEqual([
+      "landing.html --rf-box-front",
+      "landing.html --rf-box-side",
+      "public/site/graphics/rf-graphics.css --rf-box-front",
+      "public/site/graphics/rf-graphics.css --rf-box-side",
+    ]);
+  });
+});

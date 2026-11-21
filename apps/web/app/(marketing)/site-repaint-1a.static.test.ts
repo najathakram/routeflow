@@ -366,6 +366,20 @@ const siteHtml = (): Array<{ name: string; html: string }> =>
     html: readServedSitePage(p, { websiteId: undefined }),
   }));
 
+// Inline style="" attributes of one page, one rule each.
+const inlineStyleRules = (name: string, html: string): CopperRule[] => {
+  const out: CopperRule[] = [];
+  for (const m of html.matchAll(/\sstyle="([^"]*)"/g)) {
+    const decls: Record<string, string> = {};
+    for (const d of m[1].split(";")) {
+      const k = d.indexOf(":");
+      if (k > 0) decls[d.slice(0, k).trim()] = d.slice(k + 1).trim();
+    }
+    out.push({ source: `${name} style=""`, selectors: ["style"], decls });
+  }
+  return out;
+};
+
 const copperSources = (): CopperRule[] => {
   const out: CopperRule[] = [];
   for (const f of allSiteCss())
@@ -378,14 +392,7 @@ const copperSources = (): CopperRule[] => {
       for (const r of rulesOf(m[2]))
         out.push({ source: `${name} <style>`, selectors: r.selectors, decls: r.decls });
     }
-    for (const m of html.matchAll(/\sstyle="([^"]*)"/g)) {
-      const decls: Record<string, string> = {};
-      for (const d of m[1].split(";")) {
-        const k = d.indexOf(":");
-        if (k > 0) decls[d.slice(0, k).trim()] = d.slice(k + 1).trim();
-      }
-      out.push({ source: `${name} style=""`, selectors: ["style"], decls });
-    }
+    out.push(...inlineStyleRules(name, html));
   }
   return out;
 };
@@ -394,8 +401,8 @@ const COPPER_SEEDS = ["--brand-copper", "--brand-copper-light", "--brand-copper-
 
 /** Every copper use as `source :: selectors :: property`, with the tokens that are copper and the ones
  *  that are not the app's own copper. */
-function copperScan() {
-  const rules = copperSources();
+function copperScan(extra: CopperRule[] = []) {
+  const rules = [...copperSources(), ...extra];
   const tokens = new Set(COPPER_SEEDS);
   const nonApp = new Set<string>();
   const lits = (v: string) => literalsOf(v).filter((c) => copperLike(c) || isAppCopper(c));
@@ -450,6 +457,11 @@ const R17_JOBS = [
 ] as const;
 const PICTURE = "picture of the app (owner, 2026-11-21, SA-1203 A4)";
 
+// A definition of one of the five copper tokens, in a pinned scope (SA-1203 A6 2). An alias is a use, not this.
+const TOKEN_DEF = "token definition";
+// Picture-of-the-app rows the owner has not yet ruled on (SA-1203 A6 1); not an allowed tag.
+const PENDING_OWNER = "PENDING-OWNER R17";
+
 const [LOGO, WHEEL, STEP, BARS, DOT, NOTE, LINK] = R17_JOBS;
 const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, tag: string]> = [
   ["components/site-frame/site-frame.css", ".rf-legal a", "color", LINK],
@@ -463,81 +475,26 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ],
   ["css/home-up.css", ".featured .pm-bar i", "background", BARS],
   ["css/home-up.css", ".pm-bar i", "background", BARS],
-  [
-    "css/home.css",
-    ".a-av",
-    "color",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "css/home.css",
-    ".a-link2",
-    "color",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "css/home.css",
-    ".a-nav li.on",
-    "border-left",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "css/home.css",
-    ".a-nav li.on .ico",
-    "color",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "css/home.css",
-    ".ans-i--p .ans-bar",
-    "background",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "css/home.css",
-    ".b-nav li.on",
-    "border-left",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "css/home.css",
-    ".b-nav li.on .ico",
-    "color",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
+  ["css/home.css", ".a-av", "color", PENDING_OWNER],
+  ["css/home.css", ".a-link2", "color", PENDING_OWNER],
+  ["css/home.css", ".a-nav li.on", "border-left", PENDING_OWNER],
+  ["css/home.css", ".a-nav li.on .ico", "color", PENDING_OWNER],
+  ["css/home.css", ".ans-i--p .ans-bar", "background", PENDING_OWNER],
+  ["css/home.css", ".b-nav li.on", "border-left", PENDING_OWNER],
+  ["css/home.css", ".b-nav li.on .ico", "color", PENDING_OWNER],
   ["css/home.css", ".end-mail a", "color", LINK],
   ["css/home.css", ".fd-more", "color", LINK],
   ["css/home.css", ".fd-note a", "color", LINK],
-  [
-    "css/home.css",
-    ".home",
-    "--c-pay",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
+  ["css/home.css", ".home", "--c-pay", PENDING_OWNER],
   ["css/home.css", ".home .fq a", "color", LINK],
   ["css/home.css", ".home #pricing .pl-inc a", "color", LINK],
   ["css/home.css", ".hx-more", "color", LINK],
   ["css/home.css", ".n3", "background", NOTE],
   ["css/home.css", ".rt-d--now", "fill", STEP],
   ["css/home.css", ".sp-all", "color", LINK],
-  [
-    "css/home.css",
-    ".sp-q em",
-    "color",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "css/home.css",
-    ".sp-q i",
-    "color",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "css/home.css",
-    ".sp-top span",
-    "color",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
+  ["css/home.css", ".sp-q em", "color", PENDING_OWNER],
+  ["css/home.css", ".sp-q i", "color", PENDING_OWNER],
+  ["css/home.css", ".sp-top span", "color", PENDING_OWNER],
   ["css/product.css", ".pd main a:not(.btn):not(.pd-tile):not(.link):not(.pd-go)", "color", LINK],
   ["css/product.css", ".pd-go", "color", LINK],
   ["css/product.css", ".pd-more summary", "color", LINK],
@@ -547,40 +504,15 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ["css/site.css", ".link", "color", LINK],
   ["css/site.css", ".pg-top .eyebrow::before", "background", DOT],
   ["css/start.css", ".gs-step a:not(.link)", "color", LINK],
-  [
-    "graphics/rf-graphics.css",
-    ":root",
-    "--app-deep",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "graphics/rf-graphics.css",
-    ":root",
-    "--app-on",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "graphics/rf-graphics.css",
-    ":root",
-    "--buy-deep",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  [
-    "graphics/rf-graphics.css",
-    ":root",
-    "--buy-on",
-    "no R17 job: picture of the app, no app cite (the app has no copper)",
-  ],
-  ["graphics/rf-graphics.css", ":root", "--rf-accent", "no R17 job: token with several jobs"],
-  [
-    "graphics/rf-graphics.css",
-    ":root",
-    "--rf-accent-on-panel",
-    "no R17 job: token with several jobs",
-  ],
-  ["graphics/rf-graphics.css", ":root", "--rf-copper", "no R17 job: token with several jobs"],
-  ["graphics/rf-graphics.css", ":root", "--rf-copper-dark", "no R17 job: token with several jobs"],
-  ["graphics/rf-graphics.css", ":root", "--rf-copper-light", "no R17 job: token with several jobs"],
+  ["graphics/rf-graphics.css", ":root", "--app-deep", PENDING_OWNER],
+  ["graphics/rf-graphics.css", ":root", "--app-on", PENDING_OWNER],
+  ["graphics/rf-graphics.css", ":root", "--buy-deep", PENDING_OWNER],
+  ["graphics/rf-graphics.css", ":root", "--buy-on", PENDING_OWNER],
+  ["graphics/rf-graphics.css", ":root", "--rf-accent", TOKEN_DEF],
+  ["graphics/rf-graphics.css", ":root", "--rf-accent-on-panel", TOKEN_DEF],
+  ["graphics/rf-graphics.css", ":root", "--rf-copper", TOKEN_DEF],
+  ["graphics/rf-graphics.css", ":root", "--rf-copper-dark", TOKEN_DEF],
+  ["graphics/rf-graphics.css", ":root", "--rf-copper-light", TOKEN_DEF],
   ["graphics/rf-graphics.css", ":root", "--rf-link", LINK],
   ["graphics/rf-graphics.css", ":root", "--rf-link-on-panel", LINK],
   ["graphics/rf-graphics.css", ":root", "--rf-wh-focus", WHEEL],
@@ -588,11 +520,11 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ["graphics/rf-wheel-up.css", ".rfw-t .rfw-eye::before", "background", DOT],
   ["graphics/rf-wheel-up.css", ".rfw-w.f", "fill", WHEEL],
   ["graphics/rf-wheel-up.css", ".rfw-w.f", "stroke", WHEEL],
-  ["landing.html <style>", ":root", "--rf-accent", "no R17 job: token with several jobs"],
-  ["landing.html <style>", ":root", "--rf-accent-on-panel", "no R17 job: token with several jobs"],
-  ["landing.html <style>", ":root", "--rf-copper", "no R17 job: token with several jobs"],
-  ["landing.html <style>", ":root", "--rf-copper-dark", "no R17 job: token with several jobs"],
-  ["landing.html <style>", ":root", "--rf-copper-light", "no R17 job: token with several jobs"],
+  ["landing.html <style>", ":root", "--rf-accent", TOKEN_DEF],
+  ["landing.html <style>", ":root", "--rf-accent-on-panel", TOKEN_DEF],
+  ["landing.html <style>", ":root", "--rf-copper", TOKEN_DEF],
+  ["landing.html <style>", ":root", "--rf-copper-dark", TOKEN_DEF],
+  ["landing.html <style>", ":root", "--rf-copper-light", TOKEN_DEF],
   ["landing.html <style>", ":root", "--rf-link", LINK],
   ["landing.html <style>", ":root", "--rf-link-on-panel", LINK],
   ["landing.html <style>", ":root", "--rf-wh-focus", WHEEL],
@@ -617,7 +549,8 @@ function citeOk(tag: string): boolean {
   const line = fs.readFileSync(file, "utf8").split("\n")[Number(m[2]) - 1] ?? "";
   return /copper/i.test(line) || COPPER_HEXES.some((h) => line.toLowerCase().includes(h));
 }
-const isAllowedTag = (tag: string) => (R17_JOBS as readonly string[]).includes(tag) || citeOk(tag);
+const isAllowedTag = (tag: string) =>
+  (R17_JOBS as readonly string[]).includes(tag) || tag === TOKEN_DEF || citeOk(tag);
 
 type UseInfo = { nonApp: boolean };
 /** Why each picture row fails, if it does: no app cite, not the app's copper, not a css rule, or not
@@ -664,17 +597,58 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
     expect(allowed.filter((a) => !uses.includes(a))).toEqual([]);
   });
 
+  // SA-1203 A6 2: the five copper tokens may be defined only in these scopes; an alias is a use with its own tag.
+  const DEF_TOKENS = [
+    "--rf-copper",
+    "--rf-copper-light",
+    "--rf-copper-dark",
+    "--rf-accent",
+    "--rf-accent-on-panel",
+  ];
+  const DEF_SCOPES = [
+    "graphics/rf-graphics.css :: :root",
+    "landing.html <style> :: :root",
+    "css/home.css :: .pb",
+    "css/home.css :: .end",
+  ];
+  it("(a) the five copper tokens are defined only in the pinned scopes, ten times in all", () => {
+    const defs = copperSources().flatMap((r) =>
+      Object.keys(r.decls)
+        .filter((k) => DEF_TOKENS.includes(k))
+        .map((k) => `${r.source} :: ${r.selectors.join(", ")} :: ${k}`),
+    );
+    expect(defs.filter((d) => !DEF_SCOPES.some((sc) => d.startsWith(sc + " ::")))).toEqual([]);
+    expect(defs).toHaveLength(10);
+    const tagged = COPPER_ALLOW.filter(([, , , tag]) => tag === TOKEN_DEF);
+    expect(tagged).toHaveLength(10);
+    for (const [src, sel, prop] of tagged) {
+      expect(DEF_TOKENS).toContain(prop);
+      expect(DEF_SCOPES).toContain(`${src} :: ${sel}`);
+    }
+  });
+
+  // SA-1203 A6 4c: a planted fixture, no figure and no page: an inline copper fill is found and is not allowed.
+  it("(a) a planted inline copper fill in an svg with no figure is a copper use that is not allowed", () => {
+    const html =
+      '<svg viewBox="0 0 4 4"><rect width="4" height="4" style="fill:var(--rf-copper)"/></svg>';
+    const planted = copperScan(inlineStyleRules("fixture.html", html)).uses.map((u) => u.key);
+    const allowed = COPPER_ALLOW.map(([s, sel, p]) => copperKey(s, sel, p));
+    expect(planted.filter((k) => !allowed.includes(k))).toEqual([
+      'fixture.html style="" :: style :: fill',
+    ]);
+  });
+
+  // the truck art reads the kraft token (SA-1203 A5 7); its own case, apart from the scan proof above
+  it("(a) the truck art fills read the kraft box tokens", () => {
+    const fills = copperSources()
+      .filter((r) => r.source === 'home.html style=""')
+      .flatMap((r) => Object.values(r.decls));
+    expect(fills.some((v) => v.includes("--rf-box-front"))).toBe(true);
+  });
+
   it("(a) the scan reads <style> blocks, inline style, custom properties, and every colour form", () => {
     const keys = copperUses();
     expect(keys.some((k) => k.startsWith("landing.html <style> ::"))).toBe(true);
-    // the truck fills are inline style and read the kraft box tokens now (SA-1203 A5), so the inline source is read but not copper
-    expect(
-      copperSources().some(
-        (r) =>
-          r.source === 'home.html style=""' &&
-          Object.values(r.decls).some((v) => v.includes("--rf-box-front")),
-      ),
-    ).toBe(true);
     expect(keys.some((k) => k.endsWith(":: --rf-link"))).toBe(true);
     const [r, g, b] = toRgb(COPPER_HEXES[0]);
     expect(literalsOf(`color: rgb(${r}, ${g}, ${b})`).some(isAppCopper)).toBe(true);
