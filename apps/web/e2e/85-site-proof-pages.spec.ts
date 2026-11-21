@@ -664,6 +664,11 @@ const RING_BANDS: Record<string, string> = {
 };
 
 test.describe("T16 T18c colour walk", () => {
+  test("the walk covers 17 pages", () => {
+    expect(new Set(WALK_ROUTES).size).toBe(17);
+    expect(WALK_ROUTES).toHaveLength(17);
+  });
+
   for (const route of nonEmpty(WALK_ROUTES, "walk routes")) {
     for (const size of WALK_SIZES) {
       test(`T16 T18c colour walk ${route} ${sizeName(size)}`, async ({ page }) => {

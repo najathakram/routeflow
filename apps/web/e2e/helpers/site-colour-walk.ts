@@ -12,16 +12,11 @@ import * as path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { PUBLIC_ROUTES, contrast, frames, installProbes } from "./site-proof";
 
-/** The 17 signed-out pages: the 12 public routes and the five sign-in pages. */
-export const AUTH_ROUTES = [
-  "/login",
-  "/signup",
-  "/forgot-password",
-  "/reset-password",
-  "/admin-login",
-] as const;
-export const WALK_ROUTES = [...PUBLIC_ROUTES, ...AUTH_ROUTES] as const;
-export const SIGN_IN_ROUTES: readonly string[] = AUTH_ROUTES;
+/** The 17 signed-out pages: the 12 public routes, four sign-in pages and one 404 path. Mirrors the 2.5b T24 walk, so the two can share one list after the lanes merge. */
+export const SIGN_IN_PAGES = ["/login", "/signup", "/reset-password", "/buyer/login"] as const;
+export const NOT_FOUND_PAGE = "/this-page-does-not-exist";
+export const WALK_ROUTES = [...PUBLIC_ROUTES, ...SIGN_IN_PAGES, NOT_FOUND_PAGE] as const;
+export const SIGN_IN_ROUTES: readonly string[] = SIGN_IN_PAGES;
 export const WALK_SIZES = [
   { w: 1440, h: 900 },
   { w: 390, h: 844 },
