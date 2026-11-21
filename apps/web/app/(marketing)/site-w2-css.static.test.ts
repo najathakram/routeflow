@@ -228,39 +228,79 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
     expect(sels.filter((s) => s.includes(":focus-visible"))).toEqual([":focus-visible"]);
   });
 
-  // SA-1203 A10: a dark panel carries its own ring colour. Any rule body that paints the panel background
-  // (var(--rf-panel)) must set --rf-focus:var(--rf-on-panel) in the SAME body, so a new panel cannot
-  // be added with the ink ring (1:1 on ink). It supersedes the earlier pin of a fixed list of three scopes
-  // (.pb, .end, .price), and it pins no count. Any setter anywhere must still be the on-panel value.
-  it("every rule that paints the panel background sets --rf-focus to the on-panel text token in the same body", () => {
+  // SA-1203 A10: a dark panel carries its own ring colour. Any rule body, or inline style, that paints the
+  // panel background (var(--rf-panel)) must set --rf-focus:var(--rf-on-panel) in the SAME body, so a new
+  // panel cannot be added with the ink ring (1:1 on ink). It replaces the earlier pins of a fixed list of
+  // scopes (.pb, .end, .price) and pins no count. Every declaration is read: `!important`, extra values
+  // (`var(--rf-panel) url(...)`), inner spaces, and `background:none;background-color:var(--rf-panel)`.
+  const norm = (v: string) => v.replace(/!important/gi, "").replace(/\s+/g, "");
+  const paintsPanel = (decls: Record<string, string>) =>
+    ["background", "background-color"].some((k) =>
+      norm(decls[k] ?? "").includes("var(--rf-panel)"),
+    );
+  const setsOnPanel = (decls: Record<string, string>) =>
+    norm(decls["--rf-focus"] ?? "") === "var(--rf-on-panel)";
+  const inlineDecls = (style: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const d of style.split(";")) {
+      const k = d.indexOf(":");
+      if (k > 0) out[d.slice(0, k).trim().toLowerCase()] = d.slice(k + 1).trim();
+    }
+    return out;
+  };
+
+  it("the panel pin reads every form of the declaration (planted fixtures)", () => {
+    const bodies = [
+      "background:var(--rf-panel)!important",
+      "background:var(--rf-panel) url(x.png)",
+      "background:var( --rf-panel )",
+      "background:none;background-color:var(--rf-panel)",
+      "background-color:var(--rf-panel) !important",
+    ];
+    for (const b of bodies) {
+      const decls = rulesOf(`.x{${b}}`)[0]?.decls ?? {};
+      expect({ b, v: paintsPanel(decls) }).toEqual({ b, v: true });
+      expect({ b, v: setsOnPanel(decls) }).toEqual({ b, v: false });
+    }
+    expect(paintsPanel(inlineDecls("color:red;background:var(--rf-panel)"))).toBe(true);
+    expect(paintsPanel(rulesOf(".x{background:var(--rf-white)}")[0]?.decls ?? {})).toBe(false);
+    expect(
+      setsOnPanel(rulesOf(".x{--rf-focus:var(--rf-on-panel) !important}")[0]?.decls ?? {}),
+    ).toBe(true);
+    expect(setsOnPanel(rulesOf(".x{--rf-focus:var(--rf-white)}")[0]?.decls ?? {})).toBe(false);
+  });
+
+  it("every rule or inline style that paints the panel background sets --rf-focus to the on-panel text token in the same body", () => {
     const panelOffenders: string[] = [];
-    const setters: Array<{ sel: string; value: string }> = [];
-    const judge = (source: string, rules: Rule[]) => {
+    const setters: Array<{ where: string; ok: boolean }> = [];
+    const GRAPHICS = "public/site/graphics/rf-graphics.css";
+    // The only :root scopes that may set the ring: the graphics file's and landing's own <style> (the ink
+    // default is defined there). A :root anywhere else that sets it fails, whatever the value.
+    const judge = (source: string, rules: Rule[], rootOk: boolean) => {
       for (const r of rules) {
-        const bg = r.decls["background"] ?? r.decls["background-color"];
-        if (bg === "var(--rf-panel)" && r.decls["--rf-focus"] !== "var(--rf-on-panel)")
-          panelOffenders.push(`${source} :: ${r.selectors.join(", ")}`);
-        const v = r.decls["--rf-focus"];
-        if (v === undefined) continue;
-        // the root token (the graphics file, and the landing token block copy) sets the default ring
-        if (r.selectors.length === 1 && r.selectors[0] === ":root") continue;
-        for (const sel of r.selectors) setters.push({ sel, value: v });
+        const where = `${source} :: ${r.selectors.join(", ")}`;
+        if (paintsPanel(r.decls) && !setsOnPanel(r.decls)) panelOffenders.push(where);
+        if (r.decls["--rf-focus"] === undefined) continue;
+        if (r.selectors.every((s) => s === ":root") && rootOk) continue;
+        if (r.selectors.includes(":root"))
+          panelOffenders.push(`${where} (a :root setter out of scope)`);
+        setters.push({ where, ok: setsOnPanel(r.decls) });
       }
     };
-    for (const f of CSS_FILES()) {
-      const rules = rulesOf(strip(read(f)));
-      judge(f, rules);
-    }
+    for (const f of CSS_FILES()) judge(f, rulesOf(strip(read(f))), f === GRAPHICS);
     for (const name of STATIC_SITE_PAGE_NAMES) {
       const html = readServedSitePage(name, { websiteId: undefined });
       for (const m of html.matchAll(/<style([^>]*)>([\s\S]*?)<\/style>/gi)) {
         if (/\sid="brand-tokens"/.test(m[1] as string)) continue;
-        judge(`${name}.html <style>`, rulesOf(strip(m[2] as string)));
+        judge(`${name}.html <style>`, rulesOf(strip(m[2] as string)), name === "landing");
+      }
+      for (const m of html.matchAll(/\sstyle="([^"]*)"/g)) {
+        const d = inlineDecls(m[1] as string);
+        if (paintsPanel(d) && !setsOnPanel(d)) panelOffenders.push(`${name}.html style="${m[1]}"`);
       }
     }
     expect(panelOffenders.sort()).toEqual([]);
-    for (const x of setters)
-      expect({ ...x, ok: x.value === "var(--rf-on-panel)" }).toEqual({ ...x, ok: true });
+    expect(setters.filter((x) => !x.ok).map((x) => x.where)).toEqual([]);
   });
 
   it("the roles hold 3:1: the accent on white and bone, the on-panel accent on the panel", () => {

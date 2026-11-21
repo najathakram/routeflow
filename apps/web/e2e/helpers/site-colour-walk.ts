@@ -42,6 +42,7 @@ type LinkRow = { el: string; color: string; dark: boolean | null };
 type RingRow = {
   el: string;
   band: string;
+  bands: string[];
   style: string;
   width: number;
   color: string;
@@ -52,6 +53,8 @@ export type Walk = {
   buttons: ButtonRow[];
   links: LinkRow[];
   rings: RingRow[];
+  focus: { found: number; measured: number; skipped: { el: string; reason: string }[] };
+  bandsOnPage: { band: string; focusables: number }[];
   shadows: { el: string; shadow: string }[];
   ringShadow: string;
 };
@@ -73,9 +76,25 @@ export async function openForWalk(
 }
 
 /** Reads everything both rows need, in one pass. Keyboard modality first, so a focus() shows the ring. */
-export async function readWalk(page: Page): Promise<Walk> {
-  await page.keyboard.press("Tab");
-  return page.evaluate(() => {
+type Part = { part: "page" | "menu"; menuShown: boolean };
+
+/** Brings what is hidden into view: every <details> open, the whole page scrolled through once (so reveals run). */
+async function prepare(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    for (const d of document.querySelectorAll("details")) d.open = true;
+  });
+  const total = await page.evaluate(() => document.documentElement.scrollHeight);
+  const step = Math.max(200, Math.floor((page.viewportSize()?.height ?? 800) * 0.8));
+  for (let y = 0; y < total; y += step) {
+    await page.evaluate((top) => window.scrollTo(0, top), y);
+    await frames(page, 2);
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await frames(page, 2);
+}
+
+async function walkPart(page: Page, arg: Part): Promise<Walk> {
+  return page.evaluate(async (arg: Part) => {
     type Rgba = [number, number, number, number];
     const parse = (c: string): Rgba => {
       const m = c.match(/[\d.]+/g) ?? ["0", "0", "0", "0"];
@@ -118,7 +137,7 @@ export async function readWalk(page: Page): Promise<Walk> {
     const all = [...body.querySelectorAll("*")].filter((e) => !SKIP.test(e.tagName) && !inSvg(e));
 
     const texts: TextRow[] = [];
-    for (const e of all) {
+    for (const e of arg.part === "page" ? all : []) {
       const own = [...e.childNodes].some(
         (n) => n.nodeType === 3 && (n.textContent ?? "").trim() !== "",
       );
@@ -137,7 +156,7 @@ export async function readWalk(page: Page): Promise<Walk> {
     }
 
     const buttons: ButtonRow[] = [];
-    for (const e of body.querySelectorAll(".btn-primary, .btn-light")) {
+    for (const e of arg.part === "page" ? body.querySelectorAll(".btn-primary, .btn-light") : []) {
       if (!sp.shown(e)) continue;
       const cs = getComputedStyle(e);
       buttons.push({
@@ -148,7 +167,9 @@ export async function readWalk(page: Page): Promise<Walk> {
     }
 
     const links: LinkRow[] = [];
-    for (const e of body.querySelectorAll("a.link, .band-ink a:not(.btn)")) {
+    for (const e of arg.part === "page"
+      ? body.querySelectorAll("a.link, .band-ink a:not(.btn)")
+      : []) {
       if (!sp.shown(e)) continue;
       const behind = bgOf(e.parentElement);
       links.push({
@@ -158,19 +179,64 @@ export async function readWalk(page: Page): Promise<Walk> {
       });
     }
 
-    const BANDS = [".price", ".pb", ".end", ".pcard.featured", ".band-ink", ".cta-band", ".risk"];
+    // Every band the page paints with the panel, so a missing measurement inside one is found (SA-1203 A10).
+    const BANDS = [
+      ".price",
+      ".pb",
+      ".end",
+      ".pcard.featured",
+      ".band-ink",
+      ".cta-band",
+      ".risk",
+      ".carry",
+      ".pd-deep",
+      "#founder .fd-in",
+      ".site-header.on-dark",
+    ];
+    const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
     const rings: RingRow[] = [];
-    const focusable = body.querySelectorAll<HTMLElement>(
-      'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])',
-    );
+    const skipped: { el: string; reason: string }[] = [];
+    let found = 0;
+    const menu = document.getElementById("mobile-menu");
+    const focusable = [
+      ...body.querySelectorAll<HTMLElement>(
+        'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])',
+      ),
+    ].filter((e) => {
+      const inMenu = !!menu && menu.contains(e);
+      if (arg.part === "menu") return inMenu;
+      return !(inMenu && arg.menuShown);
+    });
     for (const e of focusable) {
-      if (!sp.shown(e) || (e as HTMLButtonElement).disabled) continue;
+      found++;
+      const reason = ((): string | null => {
+        if ((e as HTMLButtonElement).disabled) return "disabled";
+        if (e.closest("[inert]")) return "inert";
+        if (e.closest("dialog:not([open])")) return "closed-dialog";
+        return null;
+      })();
+      if (reason) {
+        skipped.push({ el: sp.name(e), reason });
+        continue;
+      }
+      // Bring it into view; an element that only shows on focus (the skip link) is focused first.
+      e.scrollIntoView({ block: "center" });
       e.focus({ focusVisible: true } as FocusOptions);
-      if (document.activeElement !== e) continue;
+      await frame();
+      await frame();
+      if (e.getClientRects().length === 0 || getComputedStyle(e).visibility === "hidden") {
+        skipped.push({ el: sp.name(e), reason: "not-rendered" });
+        continue;
+      }
+      if (document.activeElement !== e) {
+        skipped.push({ el: sp.name(e), reason: "focus-refused" });
+        continue;
+      }
       const cs = getComputedStyle(e);
       const behind = bgOf(e.parentElement);
       rings.push({
         el: sp.name(e),
+        bands: BANDS.filter((b) => e.closest(b)),
         band: BANDS.find((b) => e.closest(b)) ?? "light",
         style: cs.outlineStyle,
         width: parseFloat(cs.outlineWidth),
@@ -179,6 +245,11 @@ export async function readWalk(page: Page): Promise<Walk> {
       });
       e.blur();
     }
+    // A band on the page with a focusable element inside it, and how many of those were measured.
+    const bandsOnPage = BANDS.filter((b) => body.querySelector(b)).map((b) => ({
+      band: b,
+      focusables: focusable.filter((e) => e.closest(b)).length,
+    }));
 
     const probe = document.createElement("div");
     probe.style.boxShadow = "var(--rf-ring)";
@@ -186,12 +257,21 @@ export async function readWalk(page: Page): Promise<Walk> {
     const ringShadow = getComputedStyle(probe).boxShadow;
     probe.remove();
     const shadows: { el: string; shadow: string }[] = [];
-    for (const e of [document.documentElement, body, ...all]) {
+    for (const e of arg.part === "page" ? [document.documentElement, body, ...all] : []) {
       const s = getComputedStyle(e).boxShadow;
       if (s !== "none") shadows.push({ el: sp.name(e), shadow: s });
     }
-    return { texts, buttons, links, rings, shadows, ringShadow };
-  });
+    return {
+      texts,
+      buttons,
+      links,
+      rings,
+      shadows,
+      ringShadow,
+      focus: { found, measured: rings.length, skipped },
+      bandsOnPage,
+    };
+  }, arg);
 }
 
 const isLarge = (r: TextRow) => r.size >= 24 || (r.size >= 18.66 && r.weight >= 700);
@@ -219,6 +299,18 @@ export function judgeColours(walk: Walk): { problems: string[]; report: string[]
         `link ${l.el}: ${l.color} on a ${l.dark ? "dark" : "light"} band, want ${want}`,
       );
   }
+  for (const k of walk.focus.skipped)
+    if (!(ALLOWED_SKIPS as readonly string[]).includes(k.reason))
+      problems.push(`focusable ${k.el} not measured: ${k.reason}`);
+  if (walk.focus.measured + walk.focus.skipped.length !== walk.focus.found)
+    problems.push(
+      `focusables: found ${walk.focus.found}, measured ${walk.focus.measured}, skipped ${walk.focus.skipped.length}`,
+    );
+  for (const b of walk.bandsOnPage) {
+    const n = walk.rings.filter((r) => r.bands.includes(b.band)).length;
+    if (b.focusables > 0 && n === 0)
+      problems.push(`band ${b.band}: ${b.focusables} focusables, none measured`);
+  }
   const perBand = new Map<string, { min: number; n: number }>();
   for (const r of walk.rings) {
     if (r.style === "none" || r.width <= 0) {
@@ -238,6 +330,10 @@ export function judgeColours(walk: Walk): { problems: string[]; report: string[]
   const report = [...perBand].map(
     ([band, v]) => `${band}: min ${v.min.toFixed(2)}:1 over ${v.n} focusable elements`,
   );
+  report.push(
+    `focusables: found ${walk.focus.found}, measured ${walk.focus.measured}, skipped ${walk.focus.skipped.length}` +
+      (walk.focus.skipped.length ? ` (${walk.focus.skipped.map((k) => k.reason).join(", ")})` : ""),
+  );
   return { problems, report };
 }
 
@@ -248,4 +344,33 @@ export function judgeShadows(walk: Walk): string[] {
   for (const s of walk.shadows)
     if (s.shadow !== walk.ringShadow) out.push(`${s.el}: ${s.shadow} is not the ring`);
   return out;
+}
+
+/** Why a focusable element may go unmeasured. Anything else is a red, never a skip. */
+export const ALLOWED_SKIPS = ["disabled", "inert", "closed-dialog", "not-rendered"] as const;
+
+/** Reads everything both rows need. Keyboard modality first, so a focus() shows the ring; the mobile menu is opened for its own pass. */
+export async function readWalk(page: Page): Promise<Walk> {
+  await page.keyboard.press("Tab");
+  await prepare(page);
+  const menuBtn = page.locator(".menu-btn").first();
+  const menuShown = (await menuBtn.count()) > 0 && (await menuBtn.isVisible());
+  const main = await walkPart(page, { part: "page", menuShown });
+  if (!menuShown) return main;
+  await menuBtn.click();
+  await frames(page, 3);
+  const menu = await walkPart(page, { part: "menu", menuShown });
+  return {
+    ...main,
+    rings: [...main.rings, ...menu.rings],
+    focus: {
+      found: main.focus.found + menu.focus.found,
+      measured: main.focus.measured + menu.focus.measured,
+      skipped: [...main.focus.skipped, ...menu.focus.skipped],
+    },
+    bandsOnPage: main.bandsOnPage.map((b) => ({
+      band: b.band,
+      focusables: b.focusables + (menu.bandsOnPage.find((m) => m.band === b.band)?.focusables ?? 0),
+    })),
+  };
 }
