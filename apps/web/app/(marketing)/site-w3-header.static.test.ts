@@ -207,24 +207,27 @@ describe("P01 and the band line", () => {
     expect(supportsBlock?.[0]).toMatch(/\.pgrid--4 \.pfor\{min-height:0\}/);
   });
 
-  it("the card spans as many rows as the card has children, on / and /pricing; the last child wraps the list and the button (SA-1200 A1 H1)", () => {
+  it("one plan card order on / and /pricing: heading, from, price, year, for, button, then the list; the card spans one row per child (SA-1200 A4)", () => {
     const span = Number(css.match(/\.pgrid--4 \.pcard\{[^}]*grid-row:span (\d+)/)?.[1]);
     expect(span).toBeGreaterThan(0);
+    expect(css).not.toContain("pfoot");
     const counts: number[] = [];
     for (const page of ["home", "pricing"] as const) {
-      const doc = new JSDOM(readServedSitePage(page, { websiteId: undefined })).window.document;
-      const cards = Array.from(doc.querySelectorAll(".pgrid--4 > .pcard"));
+      const html = readServedSitePage(page, { websiteId: undefined });
+      expect(html).not.toContain("pfoot");
+      const doc = new JSDOM(html).window.document;
+      const cards = Array.from(doc.querySelectorAll("#pricing .pgrid--4 > .pcard"));
       expect(cards.length).toBe(4);
       for (const c of cards) {
-        counts.push(c.children.length);
-        // the last row is one wrapper holding exactly the list (or meter) and the button, so a shorter card's
-        // leftover sits under its button and never between its list and its button
-        const last = c.children[c.children.length - 1] as Element;
-        expect(last.tagName).toBe("DIV");
-        expect(last.className).toBe("pfoot");
-        expect(last.children.length).toBe(2);
-        expect(last.children[0]?.matches(page === "home" ? ".pm" : "ul.checks")).toBe(true);
-        expect(last.children[1]?.matches("a.pbtn")).toBe(true);
+        const kids = Array.from(c.children);
+        counts.push(kids.length);
+        const n = kids.length;
+        expect(kids[n - 3]?.matches(".pfor")).toBe(true);
+        expect(kids[n - 2]?.matches("a.pbtn")).toBe(true);
+        expect(kids[n - 1]?.matches(page === "home" ? ".pm" : "ul.checks")).toBe(true);
+      }
+      if (page === "pricing") {
+        expect(cards[0]?.querySelector("a.pbtn")?.id).toBe("plans");
       }
     }
     expect(counts).toEqual(Array(8).fill(span));

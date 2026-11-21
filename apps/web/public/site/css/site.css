@@ -188,9 +188,8 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
 .pcard .pprice{margin-top:2px}
 .pyear{font-size:16px;color:var(--rf-text-2)}
 .pgrid--4 .pfor{margin-top:8px}
-/* Each card takes its six rows (heading, from-line, price, year line, description, list-and-button) from the grid, so a row is as tall as its tallest card and no taller. The 6 is the card’s child count on / and /pricing (pinned in site-w3-header.static.test.ts). The last row is one .pfoot wrapper holding the list (or meter) and the button, so a shorter card’s leftover sits under its button, never between its list and its button. The card’s own 6px gap sits between the rows, and .pfoot repeats it between the list and the button. */
-.pfoot{display:flex;flex-direction:column;gap:6px}
-@supports (grid-template-rows:subgrid){.pgrid--4 .pcard{display:grid;grid-template-rows:subgrid;grid-row:span 6}.pgrid--4 .pcard>*{align-self:start}.pgrid--4 .pfor{min-height:0}}
+/* Each card takes its seven rows (heading, from-line, price, year line, description, button, list) from the grid, so a row is as tall as its tallest card and no taller; the list is the last row, so a shorter card's leftover sits below it. The 7 is the card's child count on / and /pricing (pinned in site-w3-header.static.test.ts). The list sits one gap under the button: the card’s 6px row gap plus the list’s own top margin. */
+@supports (grid-template-rows:subgrid){.pgrid--4 .pcard{display:grid;grid-template-rows:subgrid;grid-row:span 7}.pgrid--4 .pcard>*{align-self:start}.pgrid--4 .pfor{min-height:0}}
 @supports not (grid-template-rows:subgrid){.pgrid--4 .pfor{min-height:4.6em}}
 .pbtn{margin-top:0;width:100%}
 .pcard .checks{margin-bottom:22px}
