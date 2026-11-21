@@ -5,6 +5,8 @@
  *   T1  R1   print shows the whole page, and screen is restored afterwards
  *   T2  R2   headings below the fold are not waiting for a scroll to appear
  *   T9  R10  no heading sits on top of the next block while the page rises into view
+ *   T16 R16  button and link colours, the focus ring on every band, text contrast
+ *   T18c R18 every element's box-shadow is none or the ring (one walk, helpers/site-colour-walk.ts)
  *   T12 R12  nothing is lost: links, buttons, controls, anchors and the 15 tiles (parity diff)
  *
  * Signed out. The post-deploy job runs this project, so every cell here is green on master
@@ -37,6 +39,14 @@ import {
   readParityFile,
   type ParityMap,
 } from "./helpers/site-parity";
+import {
+  WALK_ROUTES,
+  WALK_SIZES,
+  judgeColours,
+  judgeShadows,
+  openForWalk,
+  readWalk,
+} from "./helpers/site-colour-walk";
 
 test.describe.configure({ mode: "parallel" });
 
@@ -642,4 +652,39 @@ test.describe("T12 R12 nothing is lost", () => {
     const diff = diffParity(base.pages, now, readChanges());
     expect(diff, "T12: differences from the baseline that no changes row explains").toEqual([]);
   });
+});
+
+// ─── T16 + T18c — one colour walk over the 17 signed-out pages ─────────────────
+
+/** A band the focus ring can sit on, and a page that must show it: a missing band is a red, not a skip. */
+const RING_BANDS: Record<string, string> = {
+  "/": ".end",
+  "/landing": ".price",
+  "/pricing": ".pcard.featured",
+};
+
+test.describe("T16 T18c colour walk", () => {
+  for (const route of nonEmpty(WALK_ROUTES, "walk routes")) {
+    for (const size of WALK_SIZES) {
+      test(`T16 T18c colour walk ${route} ${sizeName(size)}`, async ({ page }) => {
+        test.setTimeout(240_000);
+        await openForWalk(page, route, size);
+        const walk = await readWalk(page);
+        const { problems, report } = judgeColours(walk);
+        for (const line of report)
+          test.info().annotations.push({
+            type: "focus-ring",
+            description: `${route} ${sizeName(size)} ${line}`,
+          });
+        const band = RING_BANDS[route];
+        if (band)
+          expect(
+            walk.rings.filter((r) => r.band === band).length,
+            `T16 ${route} ${sizeName(size)}: focusable elements measured inside ${band}`,
+          ).toBeGreaterThan(0);
+        expect.soft(problems, `T16 ${route} ${sizeName(size)}`).toEqual([]);
+        expect.soft(judgeShadows(walk), `T18c ${route} ${sizeName(size)}`).toEqual([]);
+      });
+    }
+  }
 });
