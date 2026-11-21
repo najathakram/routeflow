@@ -71,7 +71,7 @@ function pagesFound(role: string, over: Parameters<typeof navFor>[0], query: str
   for (const row of rows) {
     mockPush.mockClear();
     fireEvent.click(row);
-    for (const call of mockPush.mock.calls) opened.push(String(call[0]).split("?")[0]);
+    for (const call of mockPush.mock.calls) opened.push(String(call[0])); // the exact href: an Action to "/orders?action=new" is not "/orders"
   }
   unmount();
   return opened;

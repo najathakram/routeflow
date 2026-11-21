@@ -106,7 +106,11 @@ describe("one read-only predicate (UXG-R8-A2 F3)", () => {
       </ReadOnlyGateProvider>,
     );
     const input = screen.getByPlaceholderText("palette.placeholder");
-    fireEvent.keyDown(input, { key: "Enter" }); // the first row on an empty query is New Order
+    // SA-1205: an empty query highlights nothing, so ArrowDown puts the highlight on the first row, New Order.
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(screen.getAllByRole("button")[0]).toHaveTextContent("New Order");
+    expect(screen.getAllByRole("button")[0]).toHaveAttribute("aria-disabled", "true");
+    fireEvent.keyDown(input, { key: "Enter" });
     expect(mockPush).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });

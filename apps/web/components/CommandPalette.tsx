@@ -44,8 +44,8 @@ interface CommandItem {
 
 /**
  * Jump to = every entry of the menu the layout built (so a page the menu hides is never offered, and a page it
- * shows always is, except one an Action already opens: SA-1205, the Action stays and takes the menu label as a
- * keyword); Actions = the creating actions that menu can reach. Nothing here is listed by hand: see nav-index.
+ * shows always is, except one an unblocked Action already opens: SA-1205, the Action stays and takes the menu
+ * label as a keyword); Actions = the creating actions that menu can reach. Nothing here is listed by hand: see nav-index.
  */
 function useStaticCommands(
   nav: readonly NavEntry[],
@@ -58,6 +58,7 @@ function useStaticCommands(
     const leaves = navLeaves(nav);
     const labelFor = new Map<string, string>(); // SA-1205: Action href -> the menu label it absorbs
     for (const a of actions) {
+      if (a.blocked) continue; // a blocked Action opens nothing, so it cannot stand in for the menu row
       const leaf = leaves.find((l) => l.href === quickActionHref(a));
       if (leaf)
         labelFor.set(quickActionHref(a), [leaf.label, ...(NAV_ALIASES[leaf.href] ?? [])].join(" "));
@@ -395,7 +396,8 @@ export function CommandPalette({ open, onClose, nav }: Props) {
                         }
                         onClose();
                       }}
-                      onMouseEnter={() => setActiveIndex(flatIndex)}
+                      // A real pointer move, not mouseenter: a cursor resting where the panel opens must not arm a row (SA-1205).
+                      onMouseMove={() => setActiveIndex(flatIndex)}
                       className={cn(
                         "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
                         blocked && "cursor-not-allowed opacity-60",

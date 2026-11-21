@@ -2,7 +2,9 @@ import * as React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import * as fs from "fs";
 import * as path from "path";
+import type { SubscriptionView } from "@routeflow/types";
 import { navLeaves, quickActions, quickActionHref } from "@/app/(dashboard)/_components/nav-index";
+import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
 import { navFor } from "@/test-utils/nav";
 import { CommandPalette } from "./CommandPalette";
 
@@ -198,24 +200,117 @@ describe("CommandPalette empty Enter and duplicate rows (SA-1205 P1-P5)", () => 
     expect(allRows()).toEqual(["New counter sale"]);
   });
 
+  const view = (status: string) =>
+    ({ status, billingContactEmail: "dana@acme.test" }) as unknown as SubscriptionView;
+  const clickable = () =>
+    Array.from(document.querySelectorAll("button")).filter((b) => b.querySelector("p.truncate"));
+
   it.each([
-    ["operator with a counter", "OPERATOR", { counterEnabled: true, insightsAccess: true }],
-    ["operator without one", "OPERATOR", {}],
-    ["driver", "DRIVER", {}],
-    ["buyer", "CUSTOMER", {}],
-  ] as const)("P5: %s: no two rows share a destination", (_n, role, over) => {
-    mockRole = role;
-    open(navFor({ ...over, role }));
-    const rows = Array.from(document.querySelectorAll("button")).filter((b) =>
-      b.querySelector("p.truncate"),
+    [
+      "operator with a counter",
+      "OPERATOR",
+      { counterEnabled: true, insightsAccess: true },
+      "ACTIVE",
+    ],
+    ["operator without one", "OPERATOR", {}, "ACTIVE"],
+    ["driver", "DRIVER", {}, "ACTIVE"],
+    ["buyer", "CUSTOMER", {}, "ACTIVE"],
+    ["read-only operator with a counter", "OPERATOR", { counterEnabled: true }, "READ_ONLY"],
+  ] as const)(
+    "P5: %s: no two rows share a destination and every menu page is reachable",
+    (_n, role, over, status) => {
+      mockRole = role;
+      const nav = navFor({ ...over, role });
+      render(
+        <ReadOnlyGateProvider view={view(status)}>
+          <CommandPalette open onClose={() => {}} nav={nav} />
+        </ReadOnlyGateProvider>,
+      );
+      const pushed: string[] = [];
+      let blockedRows = 0;
+      for (const r of clickable()) {
+        mockPush.mockClear();
+        fireEvent.click(r);
+        pushed.push(...mockPush.mock.calls.map((c) => String(c[0])));
+        if (r.getAttribute("aria-disabled") === "true") {
+          blockedRows += 1;
+          expect(mockPush).not.toHaveBeenCalled(); // a blocked row opens nothing
+        }
+      }
+      expect(pushed.length).toBeGreaterThan(0);
+      expect(new Set(pushed).size).toBe(pushed.length);
+      // Every menu page is opened by some row that works (a blocked Action opens nothing, so it cannot cover one).
+      expect(
+        navLeaves(nav)
+          .filter((l) => !pushed.includes(l.href))
+          .map((l) => l.href),
+      ).toEqual([]);
+      expect(blockedRows > 0).toBe(status === "READ_ONLY");
+    },
+  );
+
+  it("D2: in a read-only workspace the Counter menu row stays, and 'counter' finds a row that works", () => {
+    render(
+      <ReadOnlyGateProvider view={view("READ_ONLY")}>
+        <CommandPalette open onClose={() => {}} nav={navFor({ counterEnabled: true })} />
+      </ReadOnlyGateProvider>,
     );
-    const pushed: string[] = [];
-    for (const r of rows) {
-      mockPush.mockClear();
-      fireEvent.click(r);
-      pushed.push(...mockPush.mock.calls.map((c) => String(c[0])));
-    }
-    expect(pushed.length).toBeGreaterThan(0);
-    expect(new Set(pushed).size).toBe(pushed.length);
+    fireEvent.change(input(), { target: { value: "counter" } });
+    expect(allRows()).toContain("Counter");
+    fireEvent.click(screen.getByText("Counter").closest("button")!);
+    expect(mockPush).toHaveBeenCalledWith("/orders/counter-sale");
+  });
+
+  it("the menu's own label is a keyword of the Action that absorbed its row", () => {
+    // A menu that calls the counter "Cashier desk": no word of it is in the Action's label or keywords.
+    const rename = <T extends { href: string; label: string }>(c: T): T =>
+      c.href === "/orders/counter-sale" ? { ...c, label: "Cashier desk" } : c;
+    const nav = navFor({ counterEnabled: true }).map((e) =>
+      e.kind === "group"
+        ? { ...e, children: e.children.map(rename) }
+        : e.kind === "leaf"
+          ? rename(e)
+          : e,
+    );
+    openWith(nav);
+    fireEvent.change(input(), { target: { value: "cashier" } });
+    expect(allRows()).toEqual(["New counter sale"]);
+  });
+
+  it("D1: a pointer resting over a row when the palette opens does not arm it (hover alone, then Enter)", () => {
+    const onClose = openWith(navFor());
+    fireEvent.mouseEnter(clickable()[0]!); // the browser fires this when the panel opens under a parked cursor
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("D1: a real pointer move over a row highlights it, and Enter then runs it", () => {
+    openWith(navFor());
+    fireEvent.mouseMove(clickable()[1]!);
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(mockPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("ArrowUp on an empty query never highlights a row: Enter after ArrowUp does nothing", () => {
+    openWith(navFor());
+    for (let n = 0; n < 3; n += 1) fireEvent.keyDown(input(), { key: "ArrowUp" });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("ArrowDown twice then ArrowUp past the top lands on no row again", () => {
+    openWith(navFor());
+    for (let n = 0; n < 2; n += 1) fireEvent.keyDown(input(), { key: "ArrowDown" });
+    for (let n = 0; n < 5; n += 1) fireEvent.keyDown(input(), { key: "ArrowUp" });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("Escape closes the palette and opens nothing", () => {
+    const onClose = openWith(navFor());
+    fireEvent.keyDown(input(), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockPush).not.toHaveBeenCalled();
   });
 });
