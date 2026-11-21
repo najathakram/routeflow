@@ -39,7 +39,7 @@
 /* Art only: cartons, people, and the roles the scenes use. A slot on a colour band changes the roles and the art follows. */
 :root{
   --rf-biscuit:#f6bd7c;--rf-biscuit-deep:#e9a45a;--rf-box-top:#EACBB3;
-  --rf-skin-a:#f7cdac;--rf-skin-b:#dc9f72;--rf-skin-c:#99643f;--rf-hair:#2a2c3f;
+  --rf-skin-a:#f7cdac;--rf-hair:#2a2c3f;
   --rf-road:var(--rf-line);
   --rf-disc-a:var(--rf-bone);--rf-disc-b:var(--rf-bone);--rf-disc-c:var(--rf-bone);
   --rf-pill-bg:var(--rf-ink);--rf-pill-fg:var(--rf-white);
