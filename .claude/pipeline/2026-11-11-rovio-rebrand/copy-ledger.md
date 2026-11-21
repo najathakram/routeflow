@@ -308,6 +308,15 @@ How to read it
 | LG-11 | (marketing)/terms/page.tsx:234-245 | Sub-processor sentence incl. a mail fallback and Google Calendar | KEEP | Verify it still matches what runs | LEGAL, CLAIM |
 | LG-12 | (marketing)/terms/page.tsx:397 | "Return to RouteFlow" | KEEP | | LEGAL, NAME |
 
+## Design rows (R17, copper)
+
+Used here because the UX ledger (ux-ledger-p12-p16.md) holds P-rows for layout defects, not colour rulings. Each row turns a copper use ink, citing R17 (copper only in its listed jobs) and SA-1203 A3 and A4.
+
+| ID | Where | Was | Now | Why |
+|---|---|---|---|---|
+| DS-01 | css/mobile.css:36 `.home .hx-up .hx-over` (decorative rings) | two copper strokes | ink strokes | R17 has no decorative job (SA-1203 A4 2) |
+| DS-02 | css/home.css:252 `.st-note` (second note, stores section) | copper | ink (`--rf-text`) | R17 allows exactly one problem-section note (SA-1203 A4 2) |
+
 ## Counts
 
 - Rows: 216. Changes proposed: 53. KEEP: 160. Flag-only or pointer rows (no proposal): 3 (HM-04, LG-07, LG-10).
