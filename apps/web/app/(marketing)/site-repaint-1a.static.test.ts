@@ -491,7 +491,7 @@ const palettePageSignature = (css: string) =>
       r.at,
       r.selectors,
       Object.fromEntries(
-        Object.entries(r.decls).map(([k, v]) => [k, v.replace(/s+/g, " ").trim()]),
+        Object.entries(r.decls).map(([k, v]) => [k, v.replace(/\s+/g, " ").trim()]),
       ),
     ]),
   );
@@ -593,7 +593,7 @@ function readSources(inp: SourceInputs): SiteRead {
       for (const m of d.value.matchAll(CSS_URL)) {
         const uri = (m[1] ?? m[2] ?? m[3] ?? "").trim();
         if (!/^data:/i.test(uri)) continue;
-        const key = `${d.source}:${d.line}:${uri}`;
+        const key = `${d.source}|${d.at}|${d.selectors.join(",")}|${uri}`;
         if (seenData.has(key)) continue;
         seenData.add(key);
         census.dataUrls++;
@@ -630,6 +630,14 @@ function readSources(inp: SourceInputs): SiteRead {
         if (el.getAttribute("id") === "brand-tokens") {
           palette++;
           census.paletteBlocks++;
+          // every problem the shared reader finds in the block is a red, not only a changed value
+          const l0 = loc(el);
+          for (const p of readCss(el.textContent ?? "", `${label} <style#brand-tokens>`).problems)
+            problems.push(
+              p.includes("  rule=")
+                ? p
+                : mkRed(file, l0[0], l0[1], "palette-block", p, "palette-css-problem"),
+            );
           if (palettePageSignature(el.textContent ?? "") !== expectedPaletteSignature())
             red(
               el,
@@ -1664,6 +1672,34 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
       const out = auditSources(withSheet("css/home.css", dataSvg("%3Crect width=%271%27/%3E")));
       expect(out.length).toBeGreaterThan(0);
       expect(out.every((r) => r.includes("rule=census-pin"))).toBe(true);
+    });
+    const inPalette = (f: (css: string) => string): SourceInputs =>
+      withHome((h) =>
+        h.replace(
+          /(<style id="brand-tokens">)([\s\S]*?)(<\/style>)/,
+          (_m, a, b, c) => a + f(b) + c,
+        ),
+      );
+    it("34: a palette block with doubled spaces is a green control", () => {
+      const inp = inPalette((c) => c.replace(":root{", ":root  {  ").replace(/;/g, "  ;"));
+      expect(auditSources(inp)).toEqual([]);
+    });
+    it("35: a palette value with one extra letter s is red under the palette rule", () => {
+      const inp = inPalette((c) => c.replace("--brand-ink:#0E1726", "--brand-ink:#0E1726s"));
+      expect(rules(inp)).toContain("rule=palette-content-mismatch");
+    });
+    it("36: a decoded data-url stroke that is not a palette colour is red", () => {
+      const css = dataSvg("%3Cpath stroke=%27%23123456%27/%3E");
+      expect(rules(withSheet("css/home.css", css))).toContain("rule=data-url-off-palette");
+    });
+    const PALETTE_PLANTS: Array<[string, (c: string) => string]> = [
+      ["@layer", (c) => c + "@layer l{h1{color:#B5683A}}"],
+      ["@container", (c) => c + "@container (min-width:1px){h1{color:var(--rf-copper)}}"],
+      ["a nested rule", (c) => c.replace(/\}$/, "h1{color:red}}")],
+      ["a leading @import", (c) => '@import "x.css";' + c],
+    ];
+    it.each(PALETTE_PLANTS)("H1: %s inside the palette block is red", (_name, f) => {
+      expect(rules(inPalette(f))).toContain("rule=palette-css-problem");
     });
     it("26: a ninth palette-hex logo in img/brand is a census red only", () => {
       const inp = realInputs();
