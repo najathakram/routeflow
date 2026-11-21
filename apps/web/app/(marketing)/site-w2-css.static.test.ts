@@ -192,8 +192,22 @@ describe("P14: the plan-table header cells share a baseline", () => {
 /** Selectors that paint the panel but match nothing in a served static page: set at run time (SA-1203 A11 C6). */
 // .band-ink: used by no static page (a role class for the React pages); .site-header.on-dark: the class is set by script.
 const RUN_TIME_ONLY: string[] = [".band-ink", ".site-header.on-dark"];
-/** Surfaces painted with the ink token directly. The walk finds them by colour; A10 does not. None holds a focusable. */
-const INK_SURFACES: string[] = [".dv", ".st-phone"];
+/** Surfaces painted with the ink token, directly or as --rf-text or --rf-btn. The walk finds them by colour; A10 does not. None holds a focusable element inside it. */
+const INK_SURFACES: string[] = [
+  ".ans-fill",
+  ".btn-primary",
+  ".cta",
+  ".dv",
+  ".gs-n",
+  ".home .inc-i .inc-ic",
+  ".home .uc-t h3",
+  ".pd-cross li",
+  ".pd-tick li",
+  ".st-phone",
+  ".upd-o i",
+];
+/** The tokens that resolve to the ink colour the walk calls a band: the ink itself, the text token and the button token (S4, S15). */
+const INK_TOKENS: string[] = ["--rf-ink", "--rf-text", "--rf-btn"];
 
 describe("D-4: one focus token, set by the band, never a list of selectors", () => {
   const CSS_FILES = (): string[] => {
@@ -351,9 +365,10 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
     const collect = (rules: Rule[]) => {
       for (const r of rules) {
         const bg = norm(r.decls["background"] ?? r.decls["background-color"] ?? "");
+        // SA-1203 A12 S15 (L3): --rf-text and --rf-btn are the ink token too, so a surface painted with them is an ink surface.
         const set = bg.includes("var(--rf-panel)")
           ? panelSelectors
-          : bg.includes("var(--rf-ink)")
+          : INK_TOKENS.some((t) => bg.includes(`var(${t})`))
             ? inkSelectors
             : null;
         if (set) for (const sel of r.selectors) set.add(stateless(sel));
