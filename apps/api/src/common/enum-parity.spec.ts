@@ -611,13 +611,20 @@ describe("SA-1204 PR-1 T3: tenant-plan-core-all-in migration is additive-only", 
       .filter((line) => line.length > 0)
       .join("\n");
     expect(stripped).toBe(
-      `ALTER TYPE "TenantPlan" ADD VALUE 'CORE';\nALTER TYPE "TenantPlan" ADD VALUE 'ALL_IN';`,
+      [
+        "BEGIN;",
+        "SET LOCAL lock_timeout = '5s';",
+        `ALTER TYPE "TenantPlan" ADD VALUE 'CORE';`,
+        `ALTER TYPE "TenantPlan" ADD VALUE 'ALL_IN';`,
+        "COMMIT;",
+      ].join("\n"),
     );
 
+    expect(stripped.match(/^BEGIN;$/gm)).toHaveLength(1);
+    expect(stripped.match(/^SET LOCAL lock_timeout/gm)).toHaveLength(1);
+    expect(stripped.match(/^COMMIT;$/gm)).toHaveLength(1);
     expect(raw).not.toMatch(/\bDROP\b/i);
     expect(raw).not.toMatch(/\bRENAME\b/i);
-    expect(raw).not.toMatch(/\bBEGIN\b/i);
-    expect(raw).not.toMatch(/\bCOMMIT\b/i);
   });
 });
 
