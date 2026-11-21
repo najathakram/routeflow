@@ -11,7 +11,10 @@ import ChooseRolePage from "./page";
  * buyer login with the email prefilled: no buyer token is minted from the staff session, and both are never live.
  */
 const replace = jest.fn();
-jest.mock("next/navigation", () => ({ useRouter: () => ({ replace, push: jest.fn() }) }));
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useRouter: () => ({ replace, push: jest.fn() }),
+}));
 const mockGet = jest.fn();
 const mockPost = jest.fn();
 jest.mock("@/lib/api-client", () => ({

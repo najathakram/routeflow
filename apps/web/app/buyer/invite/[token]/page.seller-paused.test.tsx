@@ -8,6 +8,7 @@ import BuyerInvitePage from "./page";
  * invite still reads "Invalid invite".
  */
 jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
   useParams: () => ({ token: "tok" }),
   useRouter: () => ({ push: jest.fn() }),
 }));
