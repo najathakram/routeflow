@@ -50,8 +50,6 @@ import {
   walkPageSize,
 } from "./helpers/site-colour-walk";
 
-// SA-1203 A12 S13 (build fix round): the walk has a run-wide hard kill of 15 minutes.
-armRunKill(WALK_RUN_HARD_MS);
 test.describe.configure({ mode: "parallel" });
 
 test.beforeEach(async ({ context }) => {
@@ -668,6 +666,16 @@ const DARK_BAND_ON_PAGE: Record<string, string> = {
 };
 
 test.describe("T16 T18c colour walk", () => {
+  // SA-1203 A12 S13: the walk has a run-wide hard kill of 15 minutes. It is armed here, for the walk's tests only,
+  // and disarmed when each ends, so no other test in this file (or the runner) carries it.
+  let disarm: (() => void) | undefined;
+  test.beforeEach(() => {
+    disarm = armRunKill(WALK_RUN_HARD_MS);
+  });
+  test.afterEach(() => {
+    disarm?.();
+    disarm = undefined;
+  });
   test("the walk covers 17 pages", () => {
     expect(new Set(WALK_ROUTES).size).toBe(17);
     expect(WALK_ROUTES).toHaveLength(17);

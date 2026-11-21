@@ -464,3 +464,88 @@ export function diffSignatures(a: Map<string, string>, b: Map<string, string>): 
   const keys = new Set([...a.keys(), ...b.keys()]);
   return [...keys].filter((k) => a.get(k) !== b.get(k)).sort();
 }
+
+// ── the run folder key (SA-1203 A13 fix round) ──────────────────────────────────────────────────────
+/** A fresh id for one Playwright run: a clock reading and a random part, never a process id. */
+export const mintRunId = (now: number, random: string): string => `${now.toString(36)}-${random}`;
+/**
+ * The key of the run folder. `T16_RUN_ID` is the override; with none set the key is minted once and the caller
+ * stores it in the environment, so every worker of that run (they inherit it) shares it and no later run does.
+ */
+export function resolveRunId(env: Record<string, string | undefined>, mint: () => string): string {
+  const own = env.T16_RUN_ID?.trim();
+  return own ? own : mint();
+}
+
+// ── the scroll-through stops (SA-1203 A13 N2, fix round) ────────────────────────────────────────────
+export type ScrollBand = { top: number; bottom: number };
+/**
+ * Where the scroll-through stops, from the top (0) to the end (`max`), in document pixels. Every band's top and
+ * bottom edge is a stop, as are the scroll positions where that edge meets the header's bottom, and a point
+ * between those two (so a band shorter than the step is still met). No two stops are more than `step` apart.
+ */
+export function scrollStops(
+  max: number,
+  step: number,
+  bands: readonly ScrollBand[],
+  headerH: number,
+): number[] {
+  const top = Math.max(0, Math.round(max));
+  const at = new Set<number>([0, top]);
+  const add = (y: number) => {
+    if (Number.isFinite(y)) at.add(Math.min(top, Math.max(0, Math.round(y))));
+  };
+  for (const b of bands) {
+    add(b.top);
+    add(b.bottom);
+    add(b.top - headerH);
+    add(b.bottom - headerH);
+    add((b.top + b.bottom) / 2 - headerH);
+  }
+  const edges = [...at].sort((a, b) => a - b);
+  const size = Math.max(1, step);
+  const out: number[] = [];
+  for (let i = 0; i < edges.length; i++) {
+    const from = edges[i];
+    out.push(from);
+    const to = edges[i + 1];
+    if (to === undefined) break;
+    const parts = Math.ceil((to - from) / size);
+    for (let k = 1; k < parts; k++) out.push(Math.round(from + ((to - from) * k) / parts));
+  }
+  return out;
+}
+
+// ── W7's light rows (SA-1203 A13 N1, fix round) ─────────────────────────────────────────────────────
+/** WCAG 2 contrast of two `rgb(...)` colours, for the plant's own check (white against a row's backdrop). */
+export function rgbContrast(a: string, b: string): number {
+  const lum = (c: string): number => {
+    const m = (c.match(/[\d.]+/g) ?? ["0", "0", "0"]).slice(0, 3).map(Number);
+    const [r, g, bl] = m.map((v) => {
+      const s = v / 255;
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+export const PLANT_WHITE = "rgb(255, 255, 255)";
+/**
+ * What a planted `:root{--rf-focus:#ffffff}` owes one LIGHT-surface row. A row with no local `--rf-focus` setter
+ * reads the planted white token. It is red when white measures under 3:1 against its backdrop, and may be green
+ * where white is 3:1 or more (a dark backdrop that is not a token). A row whose backdrop is unresolved owes no colour.
+ */
+export function lightRowPlantProblems(r: RingRead): string[] {
+  const out: string[] = [];
+  if (r.focusTok !== PLANT_WHITE)
+    out.push(
+      `${r.sel}: no local setter, so --rf-focus must read the planted white (got ${r.focusTok})`,
+    );
+  if (r.backdrop === null) return out;
+  const red = readProblems(r).length > 0;
+  const whiteLow = rgbContrast(PLANT_WHITE, r.backdrop) < 3;
+  if (whiteLow && !red)
+    out.push(`${r.sel}: white is under 3:1 on ${r.backdrop} but the row is green`);
+  return out;
+}

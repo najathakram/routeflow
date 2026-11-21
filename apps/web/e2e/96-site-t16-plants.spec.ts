@@ -41,6 +41,7 @@ import {
   PLANTS_TEST_HARD_MS,
   countInSet,
   diffSignatures,
+  lightRowPlantProblems,
   readProblems,
   signatures,
   unreachedVerdict,
@@ -155,8 +156,15 @@ const tagFirst =
   };
 
 if (process.env.T16_PLANTS === "1") {
-  // SA-1203 A12 S13: a run-wide hard kill for this spec file (the 6 minute limit is per test, below).
-  armRunKill(WALK_RUN_HARD_MS);
+  // SA-1203 A12 S13: a run-wide hard kill (the 6 minute limit is per test, below), armed per test, disarmed after.
+  let disarm: (() => void) | undefined;
+  test.beforeEach(() => {
+    disarm = armRunKill(WALK_RUN_HARD_MS);
+  });
+  test.afterEach(() => {
+    disarm?.();
+    disarm = undefined;
+  });
   test.describe.configure({ mode: "parallel" });
 
   test("T16 plants W1 W4 W10 W11 share / 1440x900", async () => {
@@ -326,12 +334,11 @@ if (process.env.T16_PLANTS === "1") {
     expectStable(`/pricing ${sizeName(DESKTOP)}`, r);
     const light = r.planted.rows.filter((x) => !x.bandDark);
     const dark = r.planted.rows.filter((x) => x.bandDark);
-    // SA-1203 A13 N1 (W7): every light-surface ring row reads the live white token and is red.
+    // SA-1203 A13 N1 (W7): every light-surface ring row reads the live white token, and is red wherever white
+    // measures under 3:1 against its backdrop (a row whose backdrop takes white at 3:1 or more may be green).
     expect.soft(light.length, "W7: light-surface ring rows").toBeGreaterThan(0);
-    for (const row of light) {
-      expect.soft(row.focusTok, `W7: ${row.sel} live --rf-focus`).toBe("rgb(255, 255, 255)");
-      expect.soft(row.ringContrast ?? 0, `W7: ${row.sel} ring contrast`).toBeLessThan(3);
-    }
+    for (const row of light)
+      expect.soft(lightRowPlantProblems(row), `W7: ${row.sel} under the planted white`).toEqual([]);
     // SA-1203 A13 N1 (W7): every bandDark row is unchanged from clean and green (A10's setters, in the browser).
     expect.soft(dark.length, "W7: bandDark ring rows").toBeGreaterThan(0);
     for (const row of dark)

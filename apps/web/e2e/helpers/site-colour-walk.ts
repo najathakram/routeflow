@@ -19,6 +19,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { chromium, devices, expect, test, type Page } from "@playwright/test";
 import {
   PUBLIC_ROUTES,
@@ -55,6 +56,9 @@ import {
   type Skip,
   type TextRow,
   type UnreadRow,
+  mintRunId,
+  resolveRunId,
+  scrollStops,
 } from "./site-colour-walk-pure";
 
 export {
@@ -160,7 +164,13 @@ type Reader = {
   start(): Promise<number>;
   step(ctx: Ctx): Promise<StepOut>;
   sweepStep(): Promise<{ done: boolean }>;
-  scrollThrough(): Promise<{ state: string; scrollY: number }[]>;
+  scrollThrough(stops: number[]): Promise<{ state: string; scrollY: number }[]>;
+  scrollPlan(): {
+    max: number;
+    headerH: number;
+    step: number;
+    bands: { top: number; bottom: number }[];
+  };
   toState(i: number): Promise<{ state: string; scrollY: number; reproduced: boolean }>;
   headerReads(how: string): Promise<RingRead[]>;
   toTop(): Promise<void>;
@@ -593,8 +603,7 @@ function installReader(cfg: ReaderCfg): void {
     },
     // N2: scroll from the top to the end in steps; at each settled step record the header state (class list and
     // computed background). Each distinct state keeps the first scroll position it was seen at.
-    scrollThrough: async () => {
-      const step = Math.max(100, Math.min(200, Math.floor(window.innerHeight / 2)));
+    scrollThrough: async (stops: number[]) => {
       const seen: { state: string; scrollY: number }[] = [];
       const note = () => {
         const state = headerState();
@@ -603,16 +612,33 @@ function installReader(cfg: ReaderCfg): void {
       window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
       await settle(headerEl() ?? body, "plain");
       note();
-      for (let i = 1; i <= 600; i++) {
+      for (const y of stops) {
         const max = document.documentElement.scrollHeight - window.innerHeight;
-        const to = Math.min(i * step, Math.max(0, max));
-        window.scrollTo({ top: to, left: 0, behavior: "instant" as ScrollBehavior });
+        const top = Math.min(y, Math.max(0, max));
+        window.scrollTo({ top, left: 0, behavior: "instant" as ScrollBehavior });
         await settle(headerEl() ?? body, "plain");
         note();
-        if (to >= max) break;
       }
       S.states = seen;
       return seen;
+    },
+    // The edges the header can cross: every band's top and bottom (document pixels), the header height, and the
+    // end of the page. Node turns them into stops (scrollStops), so no band is skipped whatever its height.
+    scrollPlan: () => {
+      const bands = [
+        ...document.querySelectorAll(
+          "body > *, main > *, section, footer, .pb, .end, [class*='band']",
+        ),
+      ]
+        .map((e) => e.getBoundingClientRect())
+        .filter((r) => r.height > 0)
+        .map((r) => ({ top: r.top + window.scrollY, bottom: r.bottom + window.scrollY }));
+      return {
+        max: Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
+        headerH: headerEl()?.getBoundingClientRect().height ?? 0,
+        step: Math.max(100, Math.min(200, Math.floor(window.innerHeight / 2))),
+        bands,
+      };
     },
     // N2: back to the scroll position of one seen state; settled when the header's class list is stable for 3 frames.
     toState: async (i: number) => {
@@ -774,9 +800,17 @@ function cropRoot(): string {
     return path.resolve(__dirname, "../../../../local-assets/t16-crops");
   }
 }
-/** One directory per Playwright run, shared by every worker of it (they have the same parent process). */
+/**
+ * One id per Playwright run, never a process id. The runner loads this module (through the spec files) before it
+ * starts any worker, so the id set here is inherited by every worker of the run; a later run mints its own and
+ * never meets this run's folder. `T16_RUN_ID` is the override.
+ */
+process.env.T16_RUN_ID = resolveRunId(process.env, () =>
+  mintRunId(Date.now(), randomBytes(6).toString("hex")),
+);
+/** One directory per Playwright run, shared by every worker of it. */
 function runDir(): string {
-  const d = path.join(cropRoot(), `run-${process.env.T16_RUN_ID ?? process.ppid}`);
+  const d = path.join(cropRoot(), `run-${process.env.T16_RUN_ID}`);
   fs.mkdirSync(d, { recursive: true });
   return d;
 }
@@ -790,8 +824,9 @@ function claimCrop(): boolean {
 /**
  * S13: the hard kill of a spec file. The first worker writes the start time under the run directory; every worker
  * of the run kills itself when `ms` have passed since then, so the limit is run-wide, not per worker.
+ * Call it from a walk test or its hook, never at module scope; the returned function disarms it.
  */
-export function armRunKill(ms: number): void {
+export function armRunKill(ms: number): () => void {
   const f = path.join(runDir(), `started-${ms}`);
   try {
     fs.writeFileSync(f, String(Date.now()), { flag: "wx" });
@@ -809,6 +844,7 @@ export function armRunKill(ms: number): void {
     Math.max(1000, ms - (Date.now() - start)),
   );
   (timer as unknown as { unref(): void }).unref();
+  return () => clearTimeout(timer);
 }
 
 async function walkPage(
@@ -861,7 +897,12 @@ async function walkPage(
   };
   await page.evaluate(installReader, cfg);
   // N2: the scroll-through that finds the header states (the Tab pass starts from the top again).
-  const seenStates = await call(page, "scrollThrough");
+  const plan = await call(page, "scrollPlan");
+  const seenStates = await call(
+    page,
+    "scrollThrough",
+    scrollStops(plan.max, plan.step, plan.bands, plan.headerH),
+  );
 
   const accept = async (row: RingRead, ts: number) => {
     row.stepMs = Date.now() - ts;
