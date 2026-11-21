@@ -75,6 +75,8 @@ export type RingRead = {
   settleMs: number;
   stillAnimating: number;
   inView: boolean;
+  /** Which of the watched dark-band selectors (DARK_BAND_SELECTORS) the element sits inside. */
+  inside: string[];
   /** S5: why the ring is not clear to a visitor ("out of viewport", or the element on top), else null. */
   obscuredBy: string | null;
   rect: { x: number; y: number; w: number; h: number };
@@ -169,12 +171,23 @@ export function staleExemptions(
   label: string,
   entries: readonly { selector: string; state: string }[],
   hits: readonly number[],
+  sha = "-",
 ): string[] {
   return entries
     .filter((_, i) => (hits[i] ?? 0) === 0)
-    .map(
-      (e) =>
-        `T16 ${label}: stale-exemption ${e.selector} (${e.state}): the state was not seen in this run`,
+    .map((e) =>
+      redLine({
+        label,
+        part: "page",
+        headerState: "-",
+        tab: null,
+        settle: "-",
+        kind: "stale-exemption",
+        detail: `${e.selector} (${e.state}): the state was not seen in this run`,
+        raw: "-",
+        repro: `open ${label} and look for ${e.selector}`,
+        sha,
+      }),
     );
 }
 
@@ -309,16 +322,27 @@ export function readProblems(r: RingRead): Problem[] {
 /** S8: the header states a page must reach. Light comes from the Tab pass, dark from the dark stops. */
 export function headerStateProblems(
   label: string,
-  o: { bands: number; headerRows: readonly RingRead[] },
+  sha: string,
+  o: { hasHeader: boolean; bands: number; headerRows: readonly RingRead[] },
 ): string[] {
   const out: string[] = [];
   const seen = (s: HeaderState) => o.headerRows.some((r) => r.headerState === s);
-  if (o.headerRows.length > 0 && !seen("light"))
-    out.push(`T16 ${label}: state-not-reached: the header was never read in its light state`);
-  if (o.bands > 0 && !seen("dark"))
-    out.push(
-      `T16 ${label}: state-not-reached: ${o.bands} full-width panel band(s) and the header never reached on-dark`,
-    );
+  const line = (detail: string) =>
+    redLine({
+      label,
+      part: "header",
+      headerState: "-",
+      tab: null,
+      settle: "-",
+      kind: "state-not-reached",
+      detail,
+      raw: `bands=${o.bands} headerRows=${o.headerRows.length}`,
+      repro: `open ${label}, Tab through the header, then scroll each dark band under it`,
+      sha,
+    });
+  if (o.hasHeader && !seen("light")) out.push(line("the header was never read in its light state"));
+  if (o.hasHeader && o.bands > 0 && !seen("dark"))
+    out.push(line(`${o.bands} full-width panel band(s) and the header never reached on-dark`));
   return out;
 }
 

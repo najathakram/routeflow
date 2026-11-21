@@ -41,6 +41,8 @@ import {
 } from "./helpers/site-parity";
 import {
   WALK_PAGE_HARD_MS,
+  WALK_RUN_HARD_MS,
+  armRunKill,
   WALK_ROUTES,
   WALK_SIZES,
   judgeColours,
@@ -48,6 +50,8 @@ import {
   walkPageSize,
 } from "./helpers/site-colour-walk";
 
+// SA-1203 A12 S13 (build fix round): the walk has a run-wide hard kill of 15 minutes.
+armRunKill(WALK_RUN_HARD_MS);
 test.describe.configure({ mode: "parallel" });
 
 test.beforeEach(async ({ context }) => {
@@ -657,7 +661,11 @@ test.describe("T12 R12 nothing is lost", () => {
 // ─── T16 + T18c — one Tab walk over the 17 signed-out pages ───────────────────
 
 /** Pages that must show a focusable element on a dark band: none measured there is a red, not a skip (SA-1203 A12 S4). */
-const DARK_BAND_PAGES: readonly string[] = ["/", "/landing", "/pricing"];
+const DARK_BAND_ON_PAGE: Record<string, string> = {
+  "/": ".end",
+  "/landing": ".price",
+  "/pricing": ".pcard.featured",
+};
 
 test.describe("T16 T18c colour walk", () => {
   test("the walk covers 17 pages", () => {
@@ -678,10 +686,11 @@ test.describe("T16 T18c colour walk", () => {
         });
         for (const line of report)
           test.info().annotations.push({ type: "focus-ring", description: line });
-        if (DARK_BAND_PAGES.includes(route))
+        const band = DARK_BAND_ON_PAGE[route];
+        if (band)
           expect(
-            walk.rows.filter((r) => r.bandDark).length,
-            `T16 ${route} ${sizeName(size)}: focus stops read on a dark band`,
+            walk.rows.filter((r) => r.bandDark && r.inside.includes(band)).length,
+            `T16 ${route} ${sizeName(size)}: focus stops read on a dark backdrop inside ${band}`,
           ).toBeGreaterThan(0);
         expect.soft(problems, `T16 ${route} ${sizeName(size)}`).toEqual([]);
         expect.soft(judgeShadows(walk), `T18c ${route} ${sizeName(size)}`).toEqual([]);

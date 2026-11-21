@@ -40,7 +40,6 @@ import {
   TAB_CAP_EXTRA,
   WALK_BUDGET_MS,
   WALK_PAGE_HARD_MS,
-  WALK_RUN_HARD_MS,
   headerStateProblems,
   readProblems,
   redLine,
@@ -49,6 +48,7 @@ import {
   sizeOnlyEntryProblems,
   staleExemptions,
   unreachedProblems,
+  unreachedVerdict,
   type ButtonRow,
   type LinkRow,
   type Part,
@@ -63,6 +63,7 @@ export {
   MIN_TEXT_ELEMENTS,
   SETTLE_CAP_MS,
   WALK_PAGE_HARD_MS,
+  WALK_RUN_HARD_MS,
 } from "./site-colour-walk-pure";
 
 /** The 17 signed-out pages: the 12 public routes, four sign-in pages and one 404 path. Mirrors the 2.5b T24 walk, so the two can share one list after the lanes merge. */
@@ -88,6 +89,9 @@ export const LINK_ON_LIGHT = rgbOf(PALETTE.color["copper-dark"]);
 export const LINK_ON_DARK = rgbOf(PALETTE.color["copper-light"]);
 
 /** What the walk read for one page and size. */
+/** The dark bands spec 85 requires focus stops inside, on the pages that carry them. */
+export const DARK_BAND_SELECTORS = [".pcard.featured", ".end", ".price"];
+
 export type Walk = {
   label: string;
   route: string;
@@ -151,6 +155,8 @@ type ReaderCfg = {
   stableFrames: number;
   stripTop: number;
   bandShare: number;
+  /** Selectors of the dark bands a row is tagged as being inside (spec 85 requires rows inside each). */
+  watch: string[];
 };
 type Ctx = { kind?: "focus" | "text"; tab: number | null; how: string };
 type StepOut = { end: "body" | "cycle" | "left" | null; row?: RingRead | null };
@@ -229,6 +235,19 @@ function installReader(cfg: ReaderCfg): void {
       .slice(0, 2)
       .map((c) => `.${c}`)
       .join("")}`;
+  /** True when the element is, or sits inside, a control a visitor can really Tab to. */
+  const insideTabbable = (e: Element): boolean => {
+    for (let n: Element | null = e; n; n = n.parentElement) {
+      const ti = n.getAttribute("tabindex");
+      if (
+        n.matches(FOCUSABLE) &&
+        !(ti !== null && Number(ti) < 0) &&
+        !(n as HTMLButtonElement).disabled
+      )
+        return true;
+    }
+    return false;
+  };
   const headerEl = () => document.querySelector<HTMLElement>(".site-header");
   const menuEl = () => document.getElementById("mobile-menu");
   const headerState = (): "light" | "dark" =>
@@ -293,6 +312,7 @@ function installReader(cfg: ReaderCfg): void {
     seenBtn: new Map<Element, Set<string>>(),
     seenLink: new Map<Element, Set<string>>(),
     tried: new Set<Element>(),
+    swept: false,
     headerDone: new Set<string>(),
     texts: [] as TextRow[],
     buttons: [] as ButtonRow[],
@@ -530,6 +550,7 @@ function installReader(cfg: ReaderCfg): void {
         settleMs: st.ms,
         stillAnimating: animating,
         inView: seen,
+        inside: cfg.watch.filter((w) => !!el.closest(w)),
         obscuredBy,
         rect: { x: rr.left, y: rr.top, w: rr.width, h: rr.height },
         exempt: hit(el, state),
@@ -558,10 +579,25 @@ function installReader(cfg: ReaderCfg): void {
     },
     // S7: scroll to the first text nobody has read, settle it, read it; one still unread is `text-unread`.
     sweepStep: async () => {
-      const next = withText().find((e) => !seenAny(e) && !S.tried.has(e) && visibleInPrinciple(e));
+      // Downward from scroll 0, and each text brought to the middle of the view, so it is never under the sticky header.
+      if (!S.swept) {
+        S.swept = true;
+        window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
+        await settle(body, "plain");
+      }
+      const top = (e: Element) => e.getBoundingClientRect().top + window.scrollY;
+      let next: HTMLElement | null = null;
+      for (const e of withText())
+        if (
+          !seenAny(e) &&
+          !S.tried.has(e) &&
+          visibleInPrinciple(e) &&
+          (!next || top(e) < top(next))
+        )
+          next = e;
       if (!next) return { done: true };
       S.tried.add(next);
-      next.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+      next.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
       await settleThenRead(next, { kind: "text", tab: null, how: "sweep" });
       if (!seenAny(next))
         S.unread.push({
@@ -578,7 +614,7 @@ function installReader(cfg: ReaderCfg): void {
       const matched: Element[] = [];
       for (const e of body.querySelectorAll("*")) {
         // An ink button or link is painted with the panel colour, but it is a control, not a band.
-        if (skipEl(e) || e.closest(`.site-header, #mobile-menu, ${FOCUSABLE}`)) continue;
+        if (skipEl(e) || e.closest(".site-header, #mobile-menu") || insideTabbable(e)) continue;
         const cs = getComputedStyle(e);
         const c = parse(cs.backgroundColor);
         if (c[3] !== 1 || rgb(c) !== panel) continue;
@@ -739,6 +775,8 @@ function walkSha(): string {
   }
 }
 const SHA = walkSha();
+/** S7: the sweep stops here, and a page that reaches it is red (sweep-capped). */
+const SWEEP_CAP = 4000;
 
 /** Crops go under the main checkout's local-assets (gitignored), never into git (S13). */
 function cropRoot(): string {
@@ -753,9 +791,42 @@ function cropRoot(): string {
     return path.resolve(__dirname, "../../../../local-assets/t16-crops");
   }
 }
-const RUN_STAMP = new Date().toISOString().replace(/[:.]/g, "-");
-let cropsThisRun = 0;
-let runStart: number | null = null;
+/** One directory per Playwright run, shared by every worker of it (they have the same parent process). */
+function runDir(): string {
+  const d = path.join(cropRoot(), `run-${process.env.T16_RUN_ID ?? process.ppid}`);
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+/** S13: the 30-crop cap is run-wide: every worker appends to one file under the crop root and reads its size. */
+function claimCrop(): boolean {
+  const f = path.join(runDir(), "crops.count");
+  if ((fs.existsSync(f) ? fs.statSync(f).size : 0) >= CROPS_PER_RUN) return false;
+  fs.appendFileSync(f, "x");
+  return true;
+}
+/**
+ * S13: the hard kill of a spec file. The first worker writes the start time under the run directory; every worker
+ * of the run kills itself when `ms` have passed since then, so the limit is run-wide, not per worker.
+ */
+export function armRunKill(ms: number): void {
+  const f = path.join(runDir(), `started-${ms}`);
+  try {
+    fs.writeFileSync(f, String(Date.now()), { flag: "wx" });
+  } catch {
+    // another worker of this run wrote it first
+  }
+  const start = Number(fs.readFileSync(f, "utf8")) || Date.now();
+  const timer = setTimeout(
+    () => {
+      process.stderr
+        .write(`T16: the ${Math.round(ms / 60_000)} minute hard timeout of the run passed
+`);
+      process.exit(2);
+    },
+    Math.max(1000, ms - (Date.now() - start)),
+  );
+  (timer as unknown as { unref(): void }).unref();
+}
 
 async function walkPage(
   page: Page,
@@ -805,6 +876,7 @@ async function walkPage(
     stableFrames: SETTLE_STABLE_FRAMES,
     stripTop: HEADER_STRIP_TOP,
     bandShare: BAND_WIDTH_SHARE,
+    watch: DARK_BAND_SELECTORS,
   };
   await page.evaluate(installReader, cfg);
 
@@ -815,9 +887,8 @@ async function walkPage(
     rows.push(row);
     // S13: crops on red only, at most CROPS_PER_PAGE per page and size and CROPS_PER_RUN per run.
     if (readProblems(row).length === 0) return;
-    if (crops.length >= CROPS_PER_PAGE || cropsThisRun >= CROPS_PER_RUN) return;
-    cropsThisRun++;
-    const dir = path.join(cropRoot(), RUN_STAMP);
+    if (crops.length >= CROPS_PER_PAGE || !claimCrop()) return;
+    const dir = path.join(runDir(), "crops");
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(
       dir,
@@ -856,7 +927,27 @@ async function walkPage(
   if (!ended && !budget.exceeded) driver.push(trap("page", cap, total, "tab"));
 
   // S7: every text still unread is scrolled to, settled and read.
-  for (let i = 0; i < 4000 && !over(); i++) if ((await call(page, "sweepStep")).done) break;
+  let swept = false;
+  for (let i = 0; i < SWEEP_CAP && !over(); i++)
+    if ((await call(page, "sweepStep")).done) {
+      swept = true;
+      break;
+    }
+  if (!swept && !budget.exceeded)
+    driver.push(
+      redLine({
+        label,
+        part: "page",
+        headerState: "-",
+        tab: null,
+        settle: "-",
+        kind: "sweep-capped",
+        detail: `the sweep hit its ${SWEEP_CAP} step cap with texts still unread`,
+        raw: "-",
+        repro: `open ${label}, scroll from the top to the end`,
+        sha: SHA,
+      }),
+    );
 
   // S8: the header in its dark state, at stops found by colour; at the first dark stop the phone menu is opened (S9).
   const bandInfo = await call(page, "bands");
@@ -954,11 +1045,6 @@ export async function walkPageSize(
   size: { w: number; h: number },
   opts: { hooks?: OpenHooks; hardMs?: number } = {},
 ): Promise<Walk> {
-  runStart ??= Date.now();
-  if (Date.now() - runStart > WALK_RUN_HARD_MS)
-    throw new Error(
-      `T16 ${route} ${sizeName(size)}: the 15 minute hard timeout of the walk passed`,
-    );
   const use = test.info().project.use;
   const browser = await chromium.launch({ headless: use.headless ?? true });
   const kill = setTimeout(
@@ -1097,11 +1183,27 @@ export function judgeColours(walk: Walk): {
   const measured = walk.rows.map((r) => r.info);
   const un = unreachedProblems(label, walk.unreached, measured, sha);
   problems.push(...un.problems);
-  problems.push(...staleExemptions(label, walk.entries, walk.hits));
-  problems.push(...sizeOnlyEntryProblems(T16_SIZE_ONLY).map((p) => `T16 ${label}: ${p}`));
+  problems.push(...staleExemptions(label, walk.entries, walk.hits, sha));
   problems.push(
-    ...headerStateProblems(label, {
-      bands: walk.hasHeader ? walk.bands : 0,
+    ...sizeOnlyEntryProblems(T16_SIZE_ONLY).map((p) =>
+      redLine({
+        label,
+        part: "page",
+        headerState: "-",
+        tab: null,
+        settle: "-",
+        kind: "size-only-entry",
+        detail: p,
+        raw: "-",
+        repro: "read T16_SIZE_ONLY in site-colour-walk-pure.ts",
+        sha,
+      }),
+    ),
+  );
+  problems.push(
+    ...headerStateProblems(label, sha, {
+      hasHeader: walk.hasHeader,
+      bands: walk.bands,
       headerRows: walk.rows.filter((r) => r.part === "header"),
     }),
   );
@@ -1110,12 +1212,15 @@ export function judgeColours(walk: Walk): {
   const report: string[] = [];
   for (const part of ["page", "header", "menu"] as const) {
     const rs = walk.rows.filter((r) => r.part === part);
-    if (rs.length === 0) continue;
+    const lost = walk.unreached.filter(
+      (s) => s.part === part && unreachedVerdict(s, measured) === "red",
+    ).length;
+    if (rs.length === 0 && lost === 0) continue;
     const ratios = rs.map((r) => r.ringContrast).filter((v): v is number => v !== null && v > 0);
     const min = ratios.length ? Math.min(...ratios) : 0;
     const count = (s: string) => rs.filter((r) => r.state === s).length;
     report.push(
-      `${label} part=${part}: reads ${rs.length}, measured ${count("measured")}, obscured ${count("obscured")}, unsettled@cap ${count("unsettled")}, drift>0 ${rs.filter((r) => r.scrollY1 !== r.scrollY0).length}, min ring ${min.toFixed(2)}:1, light ${rs.filter((r) => r.headerState === "light").length}, dark ${rs.filter((r) => r.headerState === "dark").length}`,
+      `${label} part=${part}: reads ${rs.length}, measured ${count("measured")}, obscured ${count("obscured")}, unsettled@cap ${count("unsettled")}, drift>0 ${rs.filter((r) => r.scrollY1 !== r.scrollY0).length}, min ring ${min.toFixed(2)}:1, unreached-unlisted ${lost}, light ${rs.filter((r) => r.headerState === "light").length}, dark ${rs.filter((r) => r.headerState === "dark").length}`,
     );
   }
   report.push(

@@ -27,6 +27,8 @@ import { test, expect, type Page } from "@playwright/test";
 import { contrast, sizeName } from "./helpers/site-proof";
 import {
   INK,
+  WALK_RUN_HARD_MS,
+  armRunKill,
   judgeColours,
   walkPageSize,
   type OpenHooks,
@@ -47,14 +49,35 @@ const DESKTOP = { w: 1440, h: 900 };
 /** Three walks of at most 60 s each fit in one test's hard timeout, with room to spare. */
 const WALK_HARD_MS = 110_000;
 
-type Plant = { route: string; size: { w: number; h: number }; hooks: OpenHooks };
+type Step = (p: Page) => Promise<void>;
+/**
+ * A plant is TWO page setups. `tag` keys the element (data-t16-plant) and adds the element when the plant is a new
+ * one, with no defect: the clean runs use it. `defect` is added on top of `tag` in the planted run only. So the keyed
+ * element exists in every run and the runs differ on its rows alone (S12).
+ */
+type Plant = {
+  route: string;
+  size: { w: number; h: number };
+  tag: Step;
+  defect: Step;
+  /** An init script that belongs to the defect (a faked snap); the clean runs never get it. */
+  defectBeforeGoto?: Step;
+};
 
 async function threeRuns(p: Plant): Promise<{ clean1: Walk; planted: Walk; clean2: Walk }> {
   const opts = { hardMs: WALK_HARD_MS };
-  const clean1 = await walkPageSize(p.route, p.size, opts);
-  const planted = await walkPageSize(p.route, p.size, { ...opts, hooks: p.hooks });
-  const clean2 = await walkPageSize(p.route, p.size, opts);
-  return { clean1, planted, clean2 };
+  const clean: OpenHooks = { afterLoad: p.tag };
+  const planted: OpenHooks = {
+    beforeGoto: p.defectBeforeGoto,
+    afterLoad: async (page) => {
+      await p.tag(page);
+      await p.defect(page);
+    },
+  };
+  const clean1 = await walkPageSize(p.route, p.size, { ...opts, hooks: clean });
+  const plantedRun = await walkPageSize(p.route, p.size, { ...opts, hooks: planted });
+  const clean2 = await walkPageSize(p.route, p.size, { ...opts, hooks: clean });
+  return { clean1, planted: plantedRun, clean2 };
 }
 
 /** S12: clean against clean must agree (else nondeterministic); planted against clean may differ on keyed rows only. */
@@ -79,10 +102,14 @@ const textOf = (w: Walk, id: string): TextRow => {
   if (!t) throw new Error(`plant ${id}: no text row carries it`);
   return t;
 };
+/** A text row's contrast; a text with no resolved backdrop fails the plant instead of falling back to white. */
+const textContrast = (t: TextRow, id: string): number => {
+  expect(t.bg, `${id}: the keyed text row has a resolved backdrop`).not.toBeNull();
+  return contrast(t.fg, t.bg as string);
+};
 
 /** Appends a white wrapper at the end of the body, so every planted element has a known white backdrop. */
-async function appendPlants(p: Page, html: string, css: string, wrapStyle = ""): Promise<void> {
-  await p.addStyleTag({ content: css });
+async function appendPlants(p: Page, html: string, wrapStyle = ""): Promise<void> {
   await p.evaluate(
     ({ html, wrapStyle }) => {
       const d = document.createElement("div");
@@ -94,40 +121,61 @@ async function appendPlants(p: Page, html: string, css: string, wrapStyle = ""):
     { html, wrapStyle },
   );
 }
+const css =
+  (content: string): Step =>
+  async (p) => {
+    await p.addStyleTag({ content });
+  };
+const tagFirst =
+  (selector: string, id: string, what: string): Step =>
+  async (p) => {
+    const ok = await p.evaluate(
+      ({ selector, id }) => {
+        const el = document.querySelector(selector);
+        el?.setAttribute("data-t16-plant", id);
+        return Boolean(el);
+      },
+      { selector, id },
+    );
+    expect(ok, `${id} setup: ${what}`).toBe(true);
+  };
 
 if (process.env.T16_PLANTS === "1") {
+  // SA-1203 A12 S13: a run-wide hard kill for this spec file (the 6 minute limit is per test, below).
+  armRunKill(WALK_RUN_HARD_MS);
   test.describe.configure({ mode: "parallel" });
 
   test("T16 plants W1 W4 W10 W11 share / 1440x900", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
-    const label = `/ ${sizeName(DESKTOP)}`;
     const r = await threeRuns({
       route: "/",
       size: DESKTOP,
-      hooks: {
-        afterLoad: (p) =>
-          appendPlants(
-            p,
-            '<a href="/pricing" data-t16-plant="W1">W1 link</a> ' +
-              '<a href="/pricing" data-t16-plant="W4">W4 moving</a> ' +
-              '<a href="/pricing" data-t16-plant="W4-neighbour">W4 neighbour</a> ' +
-              '<button type="button" data-t16-plant="W10-visible">Send</button> ' +
-              '<button type="button" data-t16-plant="W10" style="display:none">Send</button> ' +
-              '<a href="/pricing" data-t16-plant="W11">W11 fade</a> ' +
-              '<a href="/pricing" data-t16-plant="W11-twin">W11 twin</a>',
-            '[data-t16-plant="W1"]:focus-visible{outline-color:#ffffff !important}' +
-              "@keyframes t16w4{from{transform:translateX(0)}to{transform:translateX(14px)}}" +
-              '[data-t16-plant="W4"]{display:inline-block;animation:t16w4 .4s linear infinite alternate}' +
-              '[data-t16-plant^="W11"]{transition:outline-color 600ms linear}' +
-              '[data-t16-plant^="W11"]:not(:focus-visible){outline:3px solid #ffffff}' +
-              '[data-t16-plant="W11-twin"]:focus-visible{outline-color:#ececec !important}',
-          ),
-      },
+      tag: (p) =>
+        appendPlants(
+          p,
+          '<a href="/pricing" data-t16-plant="W1">W1 link</a> ' +
+            '<a href="/pricing" data-t16-plant="W4">W4 moving</a> ' +
+            '<a href="/pricing" data-t16-plant="W4-neighbour">W4 neighbour</a> ' +
+            '<button type="button" data-t16-plant="W10-visible">Send</button> ' +
+            '<button type="button" data-t16-plant="W10">Send</button> ' +
+            '<a href="/pricing" data-t16-plant="W11">W11 fade</a> ' +
+            '<a href="/pricing" data-t16-plant="W11-twin">W11 twin</a>',
+        ),
+      defect: css(
+        '[data-t16-plant="W1"]:focus-visible{outline-color:#ffffff !important}' +
+          "@keyframes t16w4{from{transform:translateX(0)}to{transform:translateX(14px)}}" +
+          '[data-t16-plant="W4"]{display:inline-block;animation:t16w4 .4s linear infinite alternate}' +
+          '[data-t16-plant="W10"]{display:none}' +
+          '[data-t16-plant^="W11"]{transition:outline-color 600ms linear}' +
+          '[data-t16-plant^="W11"]:not(:focus-visible){outline:3px solid #ffffff}' +
+          '[data-t16-plant="W11-twin"]:focus-visible{outline-color:#ececec !important}',
+      ),
     });
-    expectStable(label, r);
+    expectStable(`/ ${sizeName(DESKTOP)}`, r);
     const w = r.planted;
     // SA-1203 A12 W1: the ring is the backdrop colour, so the keyed row's ring is below 3:1.
     const w1 = rowOf(w, "W1");
+    expect.soft(w1.state, "W1: state").toBe("measured");
     expect.soft(w1.ring.color, "W1: the ring colour is the backdrop colour").toBe(w1.backdrop);
     expect.soft(w1.ringContrast ?? 99, "W1: ring contrast").toBeLessThan(3);
     // SA-1203 A12 W4: the animated focusable is unsettled at the cap; the named neighbour is measured.
@@ -163,18 +211,14 @@ if (process.env.T16_PLANTS === "1") {
     const r = await threeRuns({
       route: "/",
       size: DESKTOP,
-      hooks: {
-        afterLoad: async (p) => {
-          const ok = await p.evaluate(() => {
-            const a = document.querySelector<HTMLAnchorElement>(".nav-links a");
-            if (!a) return false;
-            a.setAttribute("data-t16-plant", "W2");
-            a.setAttribute("href", "/t16-w2-only");
-            a.style.display = "none";
-            return true;
-          });
-          expect(ok, "W2 setup: a desktop-nav link").toBe(true);
-        },
+      tag: tagFirst(".nav-links a", "W2", "a desktop-nav link"),
+      defect: async (p) => {
+        await p.evaluate(() => {
+          const a = document.querySelector<HTMLAnchorElement>('[data-t16-plant="W2"]');
+          if (!a) return;
+          a.setAttribute("href", "/t16-w2-only");
+          a.style.display = "none";
+        });
       },
     });
     expectStable(`/ ${sizeName(DESKTOP)}`, r);
@@ -200,19 +244,8 @@ if (process.env.T16_PLANTS === "1") {
     const r = await threeRuns({
       route: "/",
       size: PHONE,
-      hooks: {
-        afterLoad: async (p) => {
-          const ok = await p.evaluate(() => {
-            const a = document.querySelector("#mobile-menu nav a:not(.btn)");
-            a?.setAttribute("data-t16-plant", "W3");
-            return Boolean(a);
-          });
-          expect(ok, "W3 setup: a menu link").toBe(true);
-          await p.addStyleTag({
-            content: '[data-t16-plant="W3"]:focus-visible{outline:none !important}',
-          });
-        },
-      },
+      tag: tagFirst("#mobile-menu nav a:not(.btn)", "W3", "a menu link"),
+      defect: css('[data-t16-plant="W3"]:focus-visible{outline:none !important}'),
     });
     expectStable(`/ ${sizeName(PHONE)}`, r);
     const w3 = rowOf(r.planted, "W3");
@@ -225,17 +258,19 @@ if (process.env.T16_PLANTS === "1") {
 
   test("T16 plant W5 an ink ring on a new dark band with no setter is red", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
+    const band = ".t16-w5{background:var(--rf-panel);color:var(--rf-on-panel);padding:48px}";
     const r = await threeRuns({
       route: "/pricing",
       size: DESKTOP,
-      hooks: {
-        afterLoad: (p) =>
-          appendPlants(
-            p,
-            '<section class="t16-w5"><a href="/pricing" data-t16-plant="W5">A link on a new dark band</a></section>',
-            ".t16-w5{background:var(--rf-panel);color:var(--rf-on-panel);padding:48px}",
-          ),
+      // Clean: the new band carries its own on-panel ring token. Planted: the same band with no setter.
+      tag: async (p) => {
+        await appendPlants(
+          p,
+          '<section class="t16-w5"><a href="/pricing" data-t16-plant="W5">A link on a new dark band</a></section>',
+        );
+        await css(`${band}.t16-w5{--rf-focus:var(--rf-on-panel)}`)(p);
       },
+      defect: css(".t16-w5{--rf-focus:var(--rf-text) !important}"),
     });
     expectStable(`/pricing ${sizeName(DESKTOP)}`, r);
     const w5 = rowOf(r.planted, "W5");
@@ -243,6 +278,8 @@ if (process.env.T16_PLANTS === "1") {
     expect.soft(w5.bandDark, "W5: the backdrop is a panel").toBe(true);
     expect.soft(w5.ringContrast ?? 99, "W5: ring contrast").toBeLessThan(3);
     expect.soft(w5.focusTok, "W5: --rf-focus is not the on-panel token").not.toBe(w5.onPanel);
+    const clean = rowOf(r.clean1, "W5");
+    expect.soft(readProblems(clean), "W5: the clean band is green").toEqual([]);
   });
 
   test("T16 plant W6 low-contrast text in the open menu is red", async () => {
@@ -250,26 +287,14 @@ if (process.env.T16_PLANTS === "1") {
     const r = await threeRuns({
       route: "/",
       size: PHONE,
-      hooks: {
-        afterLoad: async (p) => {
-          const ok = await p.evaluate(() => {
-            const a = document.querySelector("#mobile-menu nav a:not(.btn)");
-            a?.setAttribute("data-t16-plant", "W6");
-            return Boolean(a);
-          });
-          expect(ok, "W6 setup: a menu link").toBe(true);
-          await p.addStyleTag({
-            content:
-              '[data-t16-plant="W6"]{color:#cfcfcf !important;background:#ffffff !important}',
-          });
-        },
-      },
+      tag: tagFirst("#mobile-menu nav a:not(.btn)", "W6", "a menu link"),
+      defect: css('[data-t16-plant="W6"]{color:#cfcfcf !important;background:#ffffff !important}'),
     });
     expectStable(`/ ${sizeName(PHONE)}`, r);
     const t = textOf(r.planted, "W6");
     // SA-1203 A12 W6 (C4): the menu pass runs every check, so the menu text is read and is below 3:1.
     expect.soft(t.part, "W6: part").toBe("menu");
-    expect.soft(contrast(t.fg, t.bg ?? "rgb(255, 255, 255)"), "W6: text contrast").toBeLessThan(3);
+    expect.soft(textContrast(t, "W6"), "W6: text contrast").toBeLessThan(3);
   });
 
   test("T16 plant W7 a white --rf-focus out of scope is red", async () => {
@@ -277,15 +302,9 @@ if (process.env.T16_PLANTS === "1") {
     const r = await threeRuns({
       route: "/pricing",
       size: DESKTOP,
-      hooks: {
-        afterLoad: (p) =>
-          appendPlants(
-            p,
-            '<a href="/pricing" data-t16-plant="W7">W7 link</a>',
-            // Set on the keyed element, not on :root, so only the keyed row differs (S12); the walk reads the live ring either way.
-            '[data-t16-plant="W7"]{--rf-focus:#ffffff !important}',
-          ),
-      },
+      tag: (p) => appendPlants(p, '<a href="/pricing" data-t16-plant="W7">W7 link</a>'),
+      // Set on the keyed element, not on :root, so only the keyed row differs (S12); the walk reads the live ring either way.
+      defect: css('[data-t16-plant="W7"]{--rf-focus:#ffffff !important}'),
     });
     expectStable(`/pricing ${sizeName(DESKTOP)}`, r);
     const w7 = rowOf(r.planted, "W7");
@@ -299,21 +318,22 @@ if (process.env.T16_PLANTS === "1") {
     const r = await threeRuns({
       route: "/",
       size: DESKTOP,
-      hooks: {
-        afterLoad: async (p) => {
-          await p.evaluate(() =>
-            document.querySelector(".site-header")?.setAttribute("data-t16-plant", "W8"),
-          );
-          await p.addStyleTag({ content: `.site-header.on-dark{--rf-focus:${INK} !important}` });
-        },
-      },
+      tag: tagFirst(".site-header", "W8", "the site header"),
+      defect: css(`.site-header.on-dark{--rf-focus:${INK} !important}`),
     });
     expectStable(`/ ${sizeName(DESKTOP)}`, r);
-    const dark = r.planted.rows.filter((x) => x.part === "header" && x.headerState === "dark");
-    // SA-1203 A12 W8: every header row read in the dark state is red.
-    expect.soft(dark.length, "W8: header rows read in the dark state").toBeGreaterThan(0);
-    for (const row of dark)
-      expect.soft(readProblems(row), `W8: ${row.sel} in the dark header`).not.toEqual([]);
+    const dark = (w: Walk) => w.rows.filter((x) => x.part === "header" && x.headerState === "dark");
+    // SA-1203 A12 W8: every dark header row has the ink token and a ring below 3:1; the clean run's dark rows are green.
+    expect
+      .soft(dark(r.planted).length, "W8: header rows read in the dark state")
+      .toBeGreaterThan(0);
+    for (const row of dark(r.planted)) {
+      expect.soft(row.focusTok, `W8: ${row.sel} --rf-focus`).toBe(INK);
+      expect.soft(row.ringContrast ?? 99, `W8: ${row.sel} ring contrast`).toBeLessThan(3);
+    }
+    expect.soft(dark(r.clean1).length, "W8: clean dark header rows").toBeGreaterThan(0);
+    for (const row of dark(r.clean1))
+      expect.soft(readProblems(row), `W8 clean: ${row.sel}`).toEqual([]);
   });
 
   test("T16 plant W9 a contrast drop on one text is red", async () => {
@@ -321,29 +341,30 @@ if (process.env.T16_PLANTS === "1") {
     const r = await threeRuns({
       route: "/pricing",
       size: DESKTOP,
-      hooks: {
-        afterLoad: async (p) => {
-          const ok = await p.evaluate(() => {
-            const el = [...document.querySelectorAll<HTMLElement>("main p")].find(
-              (e) =>
-                e.getClientRects().length > 0 &&
-                (e.textContent ?? "").trim().length > 20 &&
-                !e.closest(".site-header, #mobile-menu"),
-            );
-            if (!el) return false;
-            el.setAttribute("data-t16-plant", "W9");
-            el.style.setProperty("color", "#cfcfcf", "important");
-            el.style.setProperty("background-color", "#ffffff", "important");
-            return true;
-          });
-          expect(ok, "W9 setup: a paragraph on the page").toBe(true);
-        },
+      tag: async (p) => {
+        const ok = await p.evaluate(() => {
+          const el = [...document.querySelectorAll<HTMLElement>("main p")].find(
+            (e) =>
+              e.getClientRects().length > 0 &&
+              (e.textContent ?? "").trim().length > 20 &&
+              !e.closest(".site-header, #mobile-menu"),
+          );
+          el?.setAttribute("data-t16-plant", "W9");
+          return Boolean(el);
+        });
+        expect(ok, "W9 setup: a paragraph on the page").toBe(true);
+      },
+      defect: async (p) => {
+        await p.evaluate(() => {
+          const el = document.querySelector<HTMLElement>('[data-t16-plant="W9"]');
+          el?.style.setProperty("color", "#cfcfcf", "important");
+          el?.style.setProperty("background-color", "#ffffff", "important");
+        });
       },
     });
     expectStable(`/pricing ${sizeName(DESKTOP)}`, r);
-    const t = textOf(r.planted, "W9");
     // SA-1203 A12 W9: the keyed text row is below the threshold.
-    expect.soft(contrast(t.fg, t.bg ?? "rgb(255, 255, 255)"), "W9: text contrast").toBeLessThan(3);
+    expect.soft(textContrast(textOf(r.planted, "W9"), "W9"), "W9: text contrast").toBeLessThan(3);
   });
 
   test("T16 plant W12 a faked 400 px snap shows as drift", async () => {
@@ -351,34 +372,32 @@ if (process.env.T16_PLANTS === "1") {
     const r = await threeRuns({
       route: "/pricing",
       size: DESKTOP,
-      hooks: {
-        beforeGoto: async (p) => {
-          await p.addInitScript(() => {
-            document.addEventListener(
-              "focusin",
-              (e) => {
-                const t = e.target;
-                if (!(t instanceof Element) || t.getAttribute("data-t16-plant") !== "W12") return;
-                const y0 = window.scrollY;
-                const t0 = performance.now();
-                const step = (now: number) => {
-                  const k = Math.min(1, (now - t0) / 400);
-                  window.scrollTo({ top: y0 + 400 * k, behavior: "instant" as ScrollBehavior });
-                  if (k < 1) requestAnimationFrame(step);
-                };
-                requestAnimationFrame(step);
-              },
-              true,
-            );
-          });
-        },
-        afterLoad: (p) =>
-          appendPlants(
-            p,
-            '<a href="/pricing" data-t16-plant="W12">W12 link</a>',
-            "",
-            "padding-bottom:1600px;",
-          ),
+      tag: (p) =>
+        appendPlants(
+          p,
+          '<a href="/pricing" data-t16-plant="W12">W12 link</a>',
+          "padding-bottom:1600px;",
+        ),
+      defect: async () => undefined,
+      defectBeforeGoto: async (p) => {
+        await p.addInitScript(() => {
+          document.addEventListener(
+            "focusin",
+            (e) => {
+              const t = e.target;
+              if (!(t instanceof Element) || t.getAttribute("data-t16-plant") !== "W12") return;
+              const y0 = window.scrollY;
+              const t0 = performance.now();
+              const step = (now: number) => {
+                const k = Math.min(1, (now - t0) / 400);
+                window.scrollTo({ top: y0 + 400 * k, behavior: "instant" as ScrollBehavior });
+                if (k < 1) requestAnimationFrame(step);
+              };
+              requestAnimationFrame(step);
+            },
+            true,
+          );
+        });
       },
     });
     expectStable(`/pricing ${sizeName(DESKTOP)}`, r);

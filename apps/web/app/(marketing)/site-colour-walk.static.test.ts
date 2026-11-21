@@ -81,6 +81,7 @@ const read = (over: Partial<RingRead> = {}): RingRead => ({
   settleMs: 50,
   stillAnimating: 0,
   inView: true,
+  inside: [],
   obscuredBy: null,
   rect: { x: 10, y: 20, w: 80, h: 24 },
   exempt: false,
@@ -144,9 +145,13 @@ describe("W13 (SA-1203 A12 K4): the T16_SIZE_ONLY exemption list starts empty an
       { selector: "a.marquee", state: "unsettled" },
       { selector: "a.desktop", state: "not-rendered" },
     ];
-    expect(staleExemptions("/ 1440x900", entries, [2, 0])).toEqual([
-      "T16 / 1440x900: stale-exemption a.desktop (not-rendered): the state was not seen in this run",
-    ]);
+    const stale = staleExemptions("/ 1440x900", entries, [2, 0], "abc1234567");
+    expect(stale).toHaveLength(1);
+    expect(stale[0]?.startsWith("T16 RED / 1440x900 part=page")).toBe(true);
+    expect(stale[0]).toContain(
+      "kind=stale-exemption a.desktop (not-rendered): the state was not seen",
+    );
+    expect(stale[0]).toContain("walk=abc1234567");
     expect(staleExemptions("/ 1440x900", entries, [1, 1])).toEqual([]);
     expect(staleExemptions("/ 1440x900", [], [])).toEqual([]);
   });
@@ -285,19 +290,35 @@ describe("S8: the header states a page must reach", () => {
   const h = (headerState: "light" | "dark") => read({ part: "header", headerState });
   it("a page with a band and a header read in both states is green", () => {
     expect(
-      headerStateProblems("/ 1440x900", { bands: 2, headerRows: [h("light"), h("dark")] }),
+      headerStateProblems("/ 1440x900", "sha", {
+        hasHeader: true,
+        bands: 2,
+        headerRows: [h("light"), h("dark")],
+      }),
     ).toEqual([]);
   });
   it("a band that never turns the header dark is state-not-reached", () => {
-    const p = headerStateProblems("/ 1440x900", { bands: 1, headerRows: [h("light")] });
+    const p = headerStateProblems("/ 1440x900", "sha", {
+      hasHeader: true,
+      bands: 1,
+      headerRows: [h("light")],
+    });
     expect(p).toHaveLength(1);
     expect(p[0]).toContain("state-not-reached");
     expect(p[0]).toContain("on-dark");
   });
   it("a header never read in the light state is state-not-reached; a page with no band owes no dark state", () => {
-    expect(headerStateProblems("p", { bands: 0, headerRows: [h("dark")] })[0]).toContain("light");
-    expect(headerStateProblems("p", { bands: 0, headerRows: [h("light")] })).toEqual([]);
-    expect(headerStateProblems("p", { bands: 3, headerRows: [] })).toHaveLength(1);
+    const hs = (bands: number, headerRows: RingRead[], hasHeader = true) =>
+      headerStateProblems("p", "sha", { hasHeader, bands, headerRows });
+    expect(hs(0, [h("dark")])[0]).toContain("light");
+    expect(hs(0, [h("light")])).toEqual([]);
+    // (c) the light half fires even when no header row was read at all
+    expect(hs(0, [])).toHaveLength(1);
+    expect(hs(0, [])[0]).toContain("light state");
+    expect(hs(3, [])).toHaveLength(2);
+    // a page with no header at all owes neither state
+    expect(hs(3, [], false)).toEqual([]);
+    expect(hs(1, [h("light")])[0]).toMatch(/^T16 RED p part=header/);
   });
 });
 
@@ -362,6 +383,18 @@ describe("S12: clean, planted, clean compare on rows that carry no plant", () =>
     const planted = w([read(), read({ sel: 'a.p "Plant"', plant: "W1", ringContrast: 1 })]);
     expect(diffSignatures(signatures(planted), signatures(clean))).toEqual([]);
   });
+  it("the keyed element exists in BOTH runs, with the defect in the planted one only, and the runs still agree", () => {
+    const keyed = (over: Partial<RingRead>) => read({ sel: 'a.k "Keyed"', plant: "W3", ...over });
+    const clean = w([read(), keyed({})]);
+    const planted = w([
+      read(),
+      keyed({ ringContrast: 0, ring: { ...read().ring, style: "none" } }),
+    ]);
+    expect(diffSignatures(signatures(planted), signatures(clean))).toEqual([]);
+    // the same defect on an element with no plant is a difference
+    const unkeyed = w([read({ ringContrast: 0, ring: { ...read().ring, style: "none" } })]);
+    expect(diffSignatures(signatures(unkeyed), signatures(w([read()])))).toHaveLength(1);
+  });
   it("timing is not a verdict: scroll and settle numbers are left out", () => {
     const a = w([read({ settleMs: 40, scrollY1: 100 })]);
     const b = w([read({ settleMs: 900, scrollY1: 500, tab: 9 })]);
@@ -403,14 +436,14 @@ describe("S1 + S3 + S5 + S13: what the walk's source may do", () => {
     expect(scoped).toHaveLength(calls.length);
   });
 
-  it("S5: settleThenRead writes no scroll; the walk's scroll writes are the sweep, the dark stops and the top", () => {
+  it("S5: settleThenRead writes no scroll; the walk's scroll writes are the sweep (its start and each text), the dark stops and the top", () => {
     const at = walk.search(/const settleThenRead\s*=/);
     expect(at).toBeGreaterThan(0);
     const body = blockAfter(walk, at);
     expect(body.length).toBeGreaterThan(500);
     expect(body).not.toMatch(/scrollTo|scrollIntoView|scrollBy|\.scroll\(|scrollTop\s*=/);
     const writers = walk.match(/scrollTo\(|scrollIntoView\(|scrollBy\(/g) ?? [];
-    expect(writers).toHaveLength(4);
+    expect(writers).toHaveLength(5);
   });
 
   it("S13: each walk runs in its own browser, closed in a finally and killed by a hard timer; crops go under local-assets", () => {
@@ -418,6 +451,41 @@ describe("S1 + S3 + S5 + S13: what the walk's source may do", () => {
     expect(walk).toMatch(/setTimeout\(\s*\(\) => void browser\.close\(\)/);
     expect(walk).toContain('"local-assets"');
     expect(walk).toMatch(/animations:\s*"allow"/);
+  });
+
+  it("S13: the 15 minute and 30 crop caps are run-wide: one kill timer per spec file, one crop counter in a file", () => {
+    expect(walk).toMatch(/export function armRunKill/);
+    expect(walk).toMatch(/flag: "wx"/);
+    expect(walk).toContain("crops.count");
+    expect(walk).toMatch(/appendFileSync/);
+    expect(stripComments(source("e2e/85-site-proof-pages.spec.ts"))).toContain(
+      "armRunKill(WALK_RUN_HARD_MS)",
+    );
+    expect(stripComments(source("e2e/96-site-t16-plants.spec.ts"))).toContain(
+      "armRunKill(WALK_RUN_HARD_MS)",
+    );
+  });
+
+  it("S7: the sweep starts at scroll 0, brings each text to the middle, and a capped sweep is red", () => {
+    const at = walk.indexOf("sweepStep: async");
+    const body = blockAfter(walk, at);
+    expect(body).toContain('block: "center"');
+    expect(body).not.toContain('block: "nearest"');
+    expect(body).toContain("scrollTo({ top: 0");
+    expect(walk).toContain('kind: "sweep-capped"');
+  });
+
+  it("S8: a dark stop never takes an ink control for a band: only a control a visitor can Tab to is excluded", () => {
+    const at = walk.indexOf("const insideTabbable = ");
+    const body = blockAfter(walk, at);
+    expect(body).toContain("Number(ti) < 0");
+    expect(body).toContain("disabled");
+    expect(walk).not.toContain("closest(`.site-header, #mobile-menu, $" + "{FOCUSABLE}");
+  });
+
+  it("S14: every red is a redLine, and each part row carries unreached-unlisted", () => {
+    expect(walk).toContain("unreached-unlisted $" + "{lost}");
+    expect(walk).not.toContain("problems.push(`T16 $" + "{label}");
   });
 
   it("the site carries no test hook for the walk", () => {
