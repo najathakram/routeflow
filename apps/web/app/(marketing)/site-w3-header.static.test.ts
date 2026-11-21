@@ -1,0 +1,249 @@
+/**
+ * @jest-environment node
+ */
+// Wave 3, header lane. The static half of the header rows (the browser half is e2e/93-site-w3-header.spec.ts):
+// one observer owns the "header trial pill steps aside" class, the phone menu fits its Sign in and trial button
+// in one screen, the plan cards share a row height, the top band's line, and no stylesheet reads a custom
+// property nothing sets (SA-1186 K5). Every scan asserts it found its targets (L-202).
+import * as fs from "fs";
+import * as path from "path";
+import { JSDOM } from "jsdom";
+import { readServedSitePage } from "@/lib/read-site-page";
+
+const WEB = path.resolve(__dirname, "../..");
+const SITE = path.join(WEB, "public/site");
+const read = (rel: string) => fs.readFileSync(path.join(SITE, rel), "utf8");
+
+/** Custom properties a rule reads with no fallback and nothing declares. `declared` is every text that may set one. */
+function undeclaredVarReads(
+  readers: Record<string, string>,
+  declared: string[],
+): Array<{ file: string; prop: string }> {
+  const set = new Set<string>();
+  for (const text of declared) {
+    const bare = text.replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const m of bare.matchAll(/(--[a-z0-9_-]+)\s*:/gi)) set.add(m[1] as string);
+    for (const m of bare.matchAll(/setProperty\(\s*["'](--[a-z0-9_-]+)/g)) set.add(m[1] as string);
+  }
+  const out: Array<{ file: string; prop: string }> = [];
+  let reads = 0;
+  for (const [file, text] of Object.entries(readers)) {
+    for (const m of text.matchAll(/var\(\s*(--[a-z0-9_-]+)\s*([,)])/gi)) {
+      reads++;
+      if (m[2] === ",") continue; // has a fallback
+      if (!set.has(m[1] as string)) out.push({ file, prop: m[1] as string });
+    }
+  }
+  if (reads === 0) throw new Error("the sweep found no var() reads: it would pass on nothing");
+  return out;
+}
+
+const walk = (dir: string): string[] =>
+  fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    return e.isDirectory() ? walk(p) : [p];
+  });
+
+describe("K5: no var() read names a property nothing sets", () => {
+  const READERS = ["css/home.css", "css/home-up.css", "css/home-color.css"];
+  const declaredTexts = () => {
+    const files = walk(SITE).filter((f) => /\.(css|js|html)$/.test(f));
+    expect(files.length).toBeGreaterThan(20);
+    const palette = fs.readFileSync(
+      path.resolve(WEB, "../../packages/types/brand/palette.json"),
+      "utf8",
+    );
+    const keys = Object.keys((JSON.parse(palette) as { color: Record<string, string> }).color);
+    return [
+      ...files.map((f) => fs.readFileSync(f, "utf8")),
+      keys.map((k) => `--brand-${k}:x;`).join(""),
+      fs.readFileSync(path.join(WEB, "components/site-frame/site-frame.css"), "utf8"),
+    ];
+  };
+
+  it("the checker names an unset property, accepts a fallback, an inline setter and a js setter", () => {
+    const bad = { "a.css": ".uc-t h3::before{background:var(--pc)}" };
+    expect(undeclaredVarReads(bad, [".x{color:red}"])).toEqual([{ file: "a.css", prop: "--pc" }]);
+    expect(undeclaredVarReads({ "a.css": "a{b:var(--pc,#000)}" }, [""])).toEqual([]);
+    expect(undeclaredVarReads(bad, ['<li style="--pc:#fff">'])).toEqual([]);
+    expect(undeclaredVarReads(bad, ['el.style.setProperty("--pc", v)'])).toEqual([]);
+    expect(() => undeclaredVarReads({ "a.css": "a{b:c}" }, [""])).toThrow(/no var\(\) reads/);
+    // a name only inside a comment is not a setter; a name with an underscore is read in full
+    expect(undeclaredVarReads(bad, ["/* --pc: old */"])).toEqual([{ file: "a.css", prop: "--pc" }]);
+    const under = { "a.css": "a{b:var(--a_b)}" };
+    expect(undeclaredVarReads(under, ["x{--a_b:1}"])).toEqual([]);
+    expect(undeclaredVarReads(under, ["x{--a:1}"])).toEqual([{ file: "a.css", prop: "--a_b" }]);
+  });
+
+  it("home.css, home-up.css and home-color.css read only properties the site sets", () => {
+    const readers = Object.fromEntries(READERS.map((f) => [f, read(f)]));
+    expect(undeclaredVarReads(readers, declaredTexts())).toEqual([]);
+  });
+
+  it("with the page's inline setters taken away, home-up.css reads nothing unset (the use-case dot is gone)", () => {
+    // The tree after the home lane drops its inline --pc: the dot rule (this lane) must not be one of the readers.
+    const noInline = declaredTexts().map((t) =>
+      t.replace(/--pc:[^;"]*;?/g, "").replace(/--pi:[^;"]*;?/g, ""),
+    );
+    const readers = Object.fromEntries(READERS.map((f) => [f, read(f)]));
+    const left = undeclaredVarReads(readers, noInline).filter((r) => r.file === "css/home-up.css");
+    expect(left).toEqual([]);
+  });
+
+  it("the unset --pc read (the empty heading dot) is gone from home-up.css", () => {
+    const css = read("css/home-up.css");
+    expect(css).not.toMatch(/\.uc-t h3::before/);
+    expect(css).not.toMatch(/\.uc-t h3\s*\{[^}]*display:\s*flex/);
+    expect(css).toMatch(/\.uc-t p\{/); // the sweep found the neighbouring rule: it read the right file
+  });
+});
+
+describe("one observer owns the header trial pill", () => {
+  const site = read("js/chrome.js");
+
+  it("chrome.js observes the trial buttons outside the header and the phone menu, and sets the class from all of them", () => {
+    const src = site.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    // the trial buttons: a selector on the sign-up links, in any quote style
+    expect(src).toMatch(/\.btn\[href\^=\\?["']?\/signup/);
+    // the header and the phone menu are left out, in any order
+    const closest = [...src.matchAll(/closest\(\s*(["'])(.*?)\1\s*\)/g)].map((m) => m[2] as string);
+    expect(closest.some((c) => c.includes(".site-header") && c.includes("#mobile-menu"))).toBe(
+      true,
+    );
+    // the class goes through classList (toggle, add or remove), from an IntersectionObserver
+    expect(src).toMatch(/classList\.(toggle|add|remove)\(\s*["']hero-btn-in["']/);
+    expect(src).toContain("IntersectionObserver");
+    // never decided by the last entry of a batch (the old single-button logic)
+    expect(src).not.toMatch(/\w+\[\s*\w+\.length\s*-\s*1\s*\]/);
+  });
+
+  it("home-up.js and site.js no longer toggle it", () => {
+    expect(read("js/home-up.js")).not.toContain("hero-btn-in");
+    expect(read("js/site.js")).not.toContain("hero-btn-in");
+  });
+
+  it("the React header does not hard-code the class", () => {
+    const tsx = fs.readFileSync(
+      path.join(WEB, "components/site-frame/SiteFrameHeader.tsx"),
+      "utf8",
+    );
+    expect(tsx).toContain("site-header");
+    expect(tsx).not.toContain("hero-btn-in");
+  });
+
+  it("the rule set lives in site.css (every page), not in home-up.css", () => {
+    const css = read("css/site.css");
+    expect(css).toContain(".js .site-header.hero-btn-in .btn-sm{display:none}");
+    expect(css).toContain(".js .site-header.hero-btn-in .nav-price{display:inline-flex}");
+    expect(css).toContain(".js body.menu-open .site-header.hero-btn-in .nav-price{display:none}");
+    expect(read("css/home-up.css")).not.toContain("hero-btn-in");
+  });
+
+  it("an open phone menu has one trial button: the header pill steps aside", () => {
+    expect(read("css/site.css")).toMatch(/body\.menu-open \.site-header \.btn-sm\{display:none\}/);
+  });
+});
+
+describe("F08: the open phone menu shows Sign in and the trial button in one screen", () => {
+  const css = read("css/site.css");
+  const num = (re: RegExp) => {
+    const m = css.match(re);
+    if (!m) throw new Error(`no match for ${re}`);
+    return Number(m[1]);
+  };
+
+  it.each([
+    ["company.html", 740],
+    ["home.html", 740],
+  ])("%s: the links, Sign in and the button fit in a %i px tall phone", (file, height) => {
+    const html = read(file);
+    const at = html.indexOf('id="mobile-menu"');
+    const menu = html.slice(at, html.indexOf("</nav>", at));
+    const links = (menu.match(/<a\b/g) ?? []).length; // every link, Sign in, and the trial button
+    expect(links).toBeGreaterThan(10);
+    const row = num(/\.mobile-menu a\{[^}]*min-height:(\d+)px/);
+    const gap = num(/\.mobile-menu \.btn\{[^}]*margin-top:(\d+)px/);
+    const padTop = num(/\.mobile-menu\{[^}]*padding:(\d+)px/);
+    // The menu opens under the header: its inset is the header height token (SA-1199 A1), read from its definition.
+    expect(css).toMatch(/\.mobile-menu\{[^}]*inset:var\(--rf-header-h\) 0 0/);
+    const top = num(/--rf-header-h:(\d+)px/);
+    expect(row).toBeGreaterThanOrEqual(44);
+    expect(top + padTop + links * row + gap).toBeLessThanOrEqual(height);
+  });
+});
+
+describe("P01 and the band line", () => {
+  const css = read("css/site.css");
+
+  it("the plan cards of a row stretch to one height, with the leftover space below the button (SA-1189 K2)", () => {
+    expect(css).toMatch(/\.pgrid\{[^}]*align-items:stretch/);
+    expect(css).not.toMatch(/\.pgrid\{[^}]*align-items:start/);
+    expect(css).toMatch(/\.pcard \.checks\{[^}]*margin-top:22px/);
+    expect(css).not.toMatch(/\.pcard \.checks\{[^}]*(margin-top:auto|padding-top)/);
+    expect(css).toMatch(/\.pbtn\{[^}]*margin-top:0/);
+    // the gap from a list's last text to its button stays under 32 px with the half-leading (the e2e measures it)
+    expect(Number(css.match(/\.pcard \.checks\{margin-bottom:(\d+)px/)?.[1])).toBeLessThanOrEqual(
+      23,
+    );
+    // home's cards hold a .pm meter, not a list: it does not push itself apart from the text above it either
+    expect(read("css/home-up.css")).not.toMatch(/\.pm\{[^}]*margin:auto/);
+  });
+
+  it("the card rows come from the grid: no typed min-height on .pfor outside the no-subgrid fallback (SA-1200 K1)", () => {
+    // Everything that is not inside an `@supports not (grid-template-rows:subgrid){...}` block.
+    const fallback = /@supports not \(grid-template-rows:subgrid\)\{(?:[^{}]|\{[^}]*\})*\}/g;
+    const blocks = css.match(fallback) ?? [];
+    expect(blocks.length).toBe(1);
+    expect(blocks[0]).toMatch(/\.pgrid--4 \.pfor\{min-height:4\.6em\}/);
+    const outside = css.replace(fallback, "");
+    expect(outside).not.toMatch(/\.pgrid--4 \.pfor\{[^}]*min-height:(?!0[;}])/);
+    expect(css).toMatch(
+      /@supports \(grid-template-rows:subgrid\)\{\.pgrid--4 \.pcard\{[^}]*grid-template-rows:subgrid/,
+    );
+    // SA-1200 A1 L1: under subgrid the base 3.1em reserve on .pfor no longer applies either
+    const supportsBlock = css.match(
+      /@supports \(grid-template-rows:subgrid\)\{(?:[^{}]|\{[^}]*\})*\}/,
+    );
+    expect(supportsBlock?.[0]).toMatch(/\.pgrid--4 \.pfor\{min-height:0\}/);
+  });
+
+  it("the card spans as many rows as the card has children, on / and /pricing; the last child wraps the list and the button (SA-1200 A1 H1)", () => {
+    const span = Number(css.match(/\.pgrid--4 \.pcard\{[^}]*grid-row:span (\d+)/)?.[1]);
+    expect(span).toBeGreaterThan(0);
+    const counts: number[] = [];
+    for (const page of ["home", "pricing"] as const) {
+      const doc = new JSDOM(readServedSitePage(page, { websiteId: undefined })).window.document;
+      const cards = Array.from(doc.querySelectorAll(".pgrid--4 > .pcard"));
+      expect(cards.length).toBe(4);
+      for (const c of cards) {
+        counts.push(c.children.length);
+        // the last row is one wrapper holding exactly the list (or meter) and the button, so a shorter card's
+        // leftover sits under its button and never between its list and its button
+        const last = c.children[c.children.length - 1] as Element;
+        expect(last.tagName).toBe("DIV");
+        expect(last.className).toBe("pfoot");
+        expect(last.children.length).toBe(2);
+        expect(last.children[0]?.matches(page === "home" ? ".pm" : "ul.checks")).toBe(true);
+        expect(last.children[1]?.matches("a.pbtn")).toBe(true);
+      }
+    }
+    expect(counts).toEqual(Array(8).fill(span));
+  });
+
+  it("band-line closes a band with the one-pixel line, next to the band roles", () => {
+    expect(css).toContain(".band-line{border-bottom:1px solid var(--rf-line)}");
+    expect(css.indexOf(".band-line{")).toBeGreaterThan(css.indexOf(".band-white{"));
+  });
+});
+
+describe("the header stays put", () => {
+  it("is sticky at the top with a fixed 68 px bar, and nothing in the stylesheet changes the bar's height", () => {
+    const css = read("css/site.css");
+    expect(css).toMatch(/\.site-header\{position:sticky;top:0;/);
+    // SA-1199 A1: the height is defined once (--rf-header-h) and the bar reads it.
+    expect(css.match(/--rf-header-h:/g) ?? []).toHaveLength(1);
+    expect(css).toMatch(/:root\{--rf-header-h:68px\}/);
+    expect(css).toMatch(/\.nav\{[^}]*height:var\(--rf-header-h\)/);
+    expect(css).not.toMatch(/\.site-header\.scrolled\{[^}]*(height|padding)/);
+  });
+});

@@ -67,6 +67,7 @@ for (const rel of [
   "css/start.css",
   "css/company.css",
   "js/prices.js",
+  "js/chrome.js",
   "js/site.js",
   "js/product.js",
   "js/home-up.js",

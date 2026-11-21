@@ -133,14 +133,32 @@ function scanFile(file: string, rows: Exemption[]): Finding[] {
 const scan = (rows: Exemption[] = EXEMPT): Finding[] =>
   surfaceFiles().flatMap((file) => scanFile(file, rows));
 
+/** Control fixtures (SA-1198): outside the real SURFACE on purpose, so a control never reads a page. */
+const FIXTURES_DIR = "lib/test-support/fixtures";
+const FIXTURE_SURFACE: typeof SURFACE = [{ name: "fixtures", dir: FIXTURES_DIR, ext: /\.html$/ }];
+const FX_BOTH = `${FIXTURES_DIR}/hex-and-name.html`;
+const FX_CLEAN = `${FIXTURES_DIR}/clean.html`;
+const FX_HEX_ONLY = `${FIXTURES_DIR}/hex-only.html`;
+const FX_NAME_IN_COMMENT = `${FIXTURES_DIR}/name-in-comment.html`;
+const mkRow = (p: string, scope: Exemption["scope"]): Exemption => ({
+  path: p,
+  scope,
+  liftedBy: "W3",
+  lane: "test",
+});
+
 const HEX_KINDS = new Set(["hex in style/fill", "hex in the share image", "hex in the wheel"]);
 
 /** A row is stale when taking it away leaves the file with nothing it was exempt for: any finding
  *  for a `file` row except hex alone (a hex-only file needs a `hex` row), a name for `comments`,
  *  a hex finding for `hex`. Rows name one file each. */
-function isStale(row: Exemption, all: Exemption[] = EXEMPT): boolean {
+function isStale(
+  row: Exemption,
+  all: Exemption[] = EXEMPT,
+  surface: typeof SURFACE = SURFACE,
+): boolean {
   const without = all.filter((e) => e !== row);
-  const findings = surfaceFiles().includes(row.path) ? scanFile(row.path, without) : [];
+  const findings = surfaceFiles(surface).includes(row.path) ? scanFile(row.path, without) : [];
   const kinds = findings.map((f) => f.what);
   if (row.scope === "hex") return !kinds.some((k) => HEX_KINDS.has(k));
   if (row.scope === "comments") return !kinds.includes("brand literal");
@@ -164,26 +182,26 @@ describe("T35: the brand seam", () => {
     expect(missing).toEqual([]);
   });
 
-  it.each(EXEMPT.map((e) => [e.path, e] as const))(
-    "exemption %s still exempts something (a lane that cleans a file deletes its row)",
-    (_path, row) => {
-      expect(
-        !isStale(row)
-          ? ""
-          : `stale exemption: remove the row for ${row.path} (${row.lane}, ${row.liftedBy})`,
-      ).toBe("");
-    },
-  );
+  it("every exemption still exempts something (a lane that cleans a file deletes its row)", () => {
+    const stale = EXEMPT.filter((e) => isStale(e)).map(
+      (e) => `stale exemption: remove the row for ${e.path} (${e.lane}, ${e.liftedBy})`,
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it("W3 closed: no file is exempt (SA-1198)", () => expect(EXEMPT).toEqual([]));
+
+  it("the real surface never matches the fixtures directory", () => {
+    expect(surfaceFiles().filter((f) => f.startsWith(`${FIXTURES_DIR}/`))).toEqual([]);
+  });
 
   it("a file-scope row does not stay alive on hex-only findings (that is a hex row)", () => {
-    // product.html has only inline hex: a file row for it exempts nothing but the hex.
-    const wrong: Exemption = {
-      path: "public/site/product.html",
-      scope: "file",
-      liftedBy: "W3",
-      lane: "test",
-    };
-    expect(isStale(wrong, [...EXEMPT.filter((e) => e.path !== wrong.path), wrong])).toBe(true);
+    // The hex-only fixture has one inline hex and no name: a file row exempts nothing but the hex.
+    const surface = [...SURFACE, ...FIXTURE_SURFACE];
+    const wrong = mkRow(FX_HEX_ONLY, "file");
+    const hex = mkRow(FX_HEX_ONLY, "hex");
+    expect(isStale(wrong, [wrong], surface)).toBe(true);
+    expect(isStale(hex, [hex], surface)).toBe(false);
   });
 
   it("no row names a directory: each exempts files, one by one", () => {
@@ -198,7 +216,27 @@ describe("T35: the brand seam", () => {
       lane: "test",
     };
     expect(isStale(dead, [...EXEMPT, dead])).toBe(true);
-    expect(isStale(EXEMPT[0] as Exemption)).toBe(false);
+    // Live controls come from the fixture, never from a real page or a row of the list.
+    const surface = [...SURFACE, ...FIXTURE_SURFACE];
+    for (const scope of ["hex", "comments", "file"] as const) {
+      const live = mkRow(FX_BOTH, scope);
+      expect(isStale(live, [live], surface)).toBe(false);
+    }
+    const deadTwin = mkRow(FX_CLEAN, "file");
+    expect(isStale(deadTwin, [deadTwin], surface)).toBe(true);
+  });
+
+  it("a comments row is judged by the name, not by the hex or the file", () => {
+    const surface = [...SURFACE, ...FIXTURE_SURFACE];
+    // hex but no name: the comments row exempts nothing.
+    const onHexOnly = mkRow(FX_HEX_ONLY, "comments");
+    expect(isStale(onHexOnly, [onHexOnly], surface)).toBe(true);
+    // the name sits only in a comment: the comments scope strips it, unscoped it is seen.
+    const commentsRow = mkRow(FX_NAME_IN_COMMENT, "comments");
+    expect(scanFile(FX_NAME_IN_COMMENT, [commentsRow]).map((f) => f.what)).not.toContain(
+      "brand literal",
+    );
+    expect(scanFile(FX_NAME_IN_COMMENT, []).map((f) => f.what)).toContain("brand literal");
   });
 
   it("the eight inner pages, the frame, lib/site, lib/metadata, the og route and umami-tag are in the surface and not file-exempt", () => {
