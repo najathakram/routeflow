@@ -2,7 +2,7 @@ import * as React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import * as fs from "fs";
 import * as path from "path";
-import { navLeaves } from "@/app/(dashboard)/_components/nav-index";
+import { navLeaves, quickActions, quickActionHref } from "@/app/(dashboard)/_components/nav-index";
 import { navFor } from "@/test-utils/nav";
 import { CommandPalette } from "./CommandPalette";
 
@@ -19,12 +19,6 @@ jest.mock("@/lib/api-client", () => ({
 }));
 jest.mock("@/lib/tenant-features", () => ({ useTenantFeatures: () => ({ data: undefined }) }));
 jest.mock("@/lib/i18n", () => ({ useI18n: () => ({ t: (k: string) => k }) }));
-jest.mock("@/lib/api/addons", () => ({
-  useRoutesAccess: () => ({ enabled: true }),
-  useDeliveryAccess: () => ({ enabled: true }),
-}));
-jest.mock("@/lib/api/counter-sale", () => ({ useCounterSaleGate: () => ({ showButton: true }) }));
-jest.mock("@/components/insights/use-insights-access", () => ({ useInsightsAccess: () => true }));
 
 beforeEach(() => {
   mockPush.mockClear();
@@ -70,7 +64,15 @@ describe("CommandPalette pages come from the menu (UXG-R8 T4, T5)", () => {
     });
     open(nav);
     const rows = rowsUnder("palette.jumpTo");
-    expect(rows).toEqual(navLeaves(nav).map((l) => l.label));
+    // SA-1205: a menu entry an Action already opens (the counter) is not listed twice.
+    const covered = new Set(
+      quickActions(nav, { staff: true, readOnly: false }).map(quickActionHref),
+    );
+    expect(rows).toEqual(
+      navLeaves(nav)
+        .filter((l) => !covered.has(l.href))
+        .map((l) => l.label),
+    );
     for (const label of [
       "Shipments",
       "Payment requests",
@@ -78,7 +80,6 @@ describe("CommandPalette pages come from the menu (UXG-R8 T4, T5)", () => {
       "Sales agents",
       "Commissions",
       "Acme tobacco",
-      "Counter",
     ])
       expect(rows).toContain(label);
   });
@@ -160,5 +161,61 @@ describe("CommandPalette by role (UXG-R8 T8)", () => {
     open(nav);
     expect(headings()).toEqual(["palette.jumpTo"]);
     expect(allRows()).toEqual(navLeaves(nav).map((l) => l.label));
+  });
+});
+
+describe("CommandPalette empty Enter and duplicate rows (SA-1205 P1-P5)", () => {
+  const input = () => screen.getByPlaceholderText("palette.placeholder");
+  const openWith = (nav: ReturnType<typeof navFor>, onClose = jest.fn()) => {
+    render(<CommandPalette open onClose={onClose} nav={nav} />);
+    return onClose;
+  };
+
+  it("P1: empty query, Enter does nothing and the palette stays open", () => {
+    const onClose = openWith(navFor());
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("P2: empty query, ArrowDown then Enter runs the first Action", () => {
+    openWith(navFor());
+    fireEvent.keyDown(input(), { key: "ArrowDown" });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(mockPush).toHaveBeenCalledWith("/orders?action=new");
+  });
+
+  it("P3: typing 'dash' then Enter opens the Dashboard", () => {
+    openWith(navFor());
+    fireEvent.change(input(), { target: { value: "dash" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    expect(mockPush).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("P4: with a counter, 'counter' gives exactly the one Action row", () => {
+    openWith(navFor({ counterEnabled: true }));
+    fireEvent.change(input(), { target: { value: "counter" } });
+    expect(allRows()).toEqual(["New counter sale"]);
+  });
+
+  it.each([
+    ["operator with a counter", "OPERATOR", { counterEnabled: true, insightsAccess: true }],
+    ["operator without one", "OPERATOR", {}],
+    ["driver", "DRIVER", {}],
+    ["buyer", "CUSTOMER", {}],
+  ] as const)("P5: %s: no two rows share a destination", (_n, role, over) => {
+    mockRole = role;
+    open(navFor({ ...over, role }));
+    const rows = Array.from(document.querySelectorAll("button")).filter((b) =>
+      b.querySelector("p.truncate"),
+    );
+    const pushed: string[] = [];
+    for (const r of rows) {
+      mockPush.mockClear();
+      fireEvent.click(r);
+      pushed.push(...mockPush.mock.calls.map((c) => String(c[0])));
+    }
+    expect(pushed.length).toBeGreaterThan(0);
+    expect(new Set(pushed).size).toBe(pushed.length);
   });
 });

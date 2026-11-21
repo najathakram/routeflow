@@ -44,7 +44,8 @@ interface CommandItem {
 
 /**
  * Jump to = every entry of the menu the layout built (so a page the menu hides is never offered, and a page it
- * shows always is); Actions = the creating actions that menu can reach. Nothing here is listed by hand: see nav-index.
+ * shows always is, except one an Action already opens: SA-1205, the Action stays and takes the menu label as a
+ * keyword); Actions = the creating actions that menu can reach. Nothing here is listed by hand: see nav-index.
  */
 function useStaticCommands(
   nav: readonly NavEntry[],
@@ -53,21 +54,32 @@ function useStaticCommands(
   readOnly: boolean,
 ): { navRows: CommandItem[]; actionRows: CommandItem[] } {
   return React.useMemo(() => {
-    const navRows = navLeaves(nav).map((leaf): CommandItem => ({
-      id: `nav-${leaf.href}`,
-      group: "Navigate",
-      label: leaf.label,
-      icon: leaf.icon,
-      action: () => router.push(leaf.href),
-      keywords: (NAV_ALIASES[leaf.href] ?? []).join(" ") || undefined,
-    }));
-    const actionRows = quickActions(nav, { staff, readOnly }).map((a): CommandItem => ({
+    const actions = quickActions(nav, { staff, readOnly });
+    const leaves = navLeaves(nav);
+    const labelFor = new Map<string, string>(); // SA-1205: Action href -> the menu label it absorbs
+    for (const a of actions) {
+      const leaf = leaves.find((l) => l.href === quickActionHref(a));
+      if (leaf)
+        labelFor.set(quickActionHref(a), [leaf.label, ...(NAV_ALIASES[leaf.href] ?? [])].join(" "));
+    }
+    const navRows = leaves
+      .filter((leaf) => !labelFor.has(leaf.href))
+      .map((leaf): CommandItem => ({
+        id: `nav-${leaf.href}`,
+        group: "Navigate",
+        label: leaf.label,
+        icon: leaf.icon,
+        action: () => router.push(leaf.href),
+        keywords: (NAV_ALIASES[leaf.href] ?? []).join(" ") || undefined,
+      }));
+    const actionRows = actions.map((a): CommandItem => ({
       id: a.id,
       group: "Actions",
       label: a.label,
       icon: a.icon,
       action: () => router.push(quickActionHref(a)),
-      keywords: a.keywords,
+      keywords:
+        [a.keywords, labelFor.get(quickActionHref(a))].filter(Boolean).join(" ") || undefined,
       blocked: a.blocked,
     }));
     return { navRows, actionRows };
@@ -230,7 +242,8 @@ export function CommandPalette({ open, onClose, nav }: Props) {
     user.role === "TENANT_ADMIN";
 
   const [query, setQuery] = React.useState("");
-  const [activeIndex, setActiveIndex] = React.useState(0);
+  // SA-1205: an empty query highlights nothing, so Ctrl+K then Enter starts no job.
+  const [activeIndex, setActiveIndex] = React.useState(-1);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const { navRows, actionRows } = useStaticCommands(nav, router, isOperator, readOnlyGate.readOnly);
@@ -257,14 +270,14 @@ export function CommandPalette({ open, onClose, nav }: Props) {
 
   // Reset active index when items change
   React.useEffect(() => {
-    setActiveIndex(0);
+    setActiveIndex(query ? 0 : -1);
   }, [flatItems.length, query]);
 
   // Focus input when opened
   React.useEffect(() => {
     if (open) {
       setQuery("");
-      setActiveIndex(0);
+      setActiveIndex(-1);
       setTimeout(() => inputRef.current?.focus(), 10);
     }
   }, [open]);
@@ -277,7 +290,7 @@ export function CommandPalette({ open, onClose, nav }: Props) {
         setActiveIndex((i) => Math.min(i + 1, flatItems.length - 1));
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        setActiveIndex((i) => Math.max(i - 1, 0));
+        setActiveIndex((i) => Math.max(i - 1, query ? 0 : -1));
       } else if (e.key === "Enter") {
         e.preventDefault();
         const selected = flatItems[activeIndex];
@@ -295,7 +308,7 @@ export function CommandPalette({ open, onClose, nav }: Props) {
         onClose();
       }
     },
-    [flatItems, activeIndex, router, onClose],
+    [flatItems, activeIndex, query, router, onClose],
   );
 
   // Group items for rendering
