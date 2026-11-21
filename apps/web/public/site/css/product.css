@@ -100,7 +100,7 @@
 .pd-list b{color:var(--rf-text);font-weight:600}
 
 /* ---------- the details ---------- */
-.pd-deep{padding:clamp(72px,9vw,128px) 0;background:var(--rf-panel);color:var(--rf-on-panel)}
+.pd-deep{padding:clamp(72px,9vw,128px) 0;background:var(--rf-panel);color:var(--rf-on-panel);--rf-focus:var(--rf-on-panel)}
 .pd-head--deep .kick{color:var(--rf-text)}
 .pd-deep .sub{color:var(--rf-on-panel-2)}
 .pd-q{padding:clamp(22px,2.6vw,36px);border-radius:var(--r);background:var(--rf-white);box-shadow:var(--rf-ring);color:var(--rf-text)}

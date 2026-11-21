@@ -81,7 +81,7 @@ describe("T14a: the contract block of rf-graphics.css", () => {
     "--rf-wh-sell": "#1B2638",
     "--rf-wh-sell-2": "#27364C",
     "--rf-wh-sell-wall": "#04070D",
-    // SA-1203 A5: box art is kraft, not a copper tint
+    // SA-1203 A5: box art is kraft, not a copper tint; only these two values, SA-1203 A6 4(b)
     "--rf-box-front": "#9A8260",
     "--rf-box-side": "#6E5A40",
   };
@@ -320,11 +320,23 @@ describe("T14a: the two kraft box values (SA-1203 A6 4b)", () => {
 
   it("appear only as the value of --rf-box-front and --rf-box-side, once per place that defines them", () => {
     const hits: string[] = [];
-    for (const [name, text] of texts())
-      for (const m of text.matchAll(/(--[a-z0-9-]+)?\s*:?\s*(#[0-9a-f]{6})\b/gi)) {
-        if (KRAFT.includes((m[2] as string).toLowerCase()))
-          hits.push(`${name} ${m[1] ?? "(none)"}`);
+    const hex2 = (n: number) => n.toString(16).padStart(2, "0");
+    for (const [name, text] of texts()) {
+      // every spelling: #rrggbb, #rrggbbaa, %23rrggbb (inside a url), rgb(r, g, b) and rgba(r g b / a)
+      const found: Array<{ at: number; hex: string }> = [];
+      for (const m of text.matchAll(/(?:#|%23)([0-9a-f]{6})(?:[0-9a-f]{2})?(?![0-9a-z])/gi))
+        found.push({ at: m.index ?? 0, hex: `#${(m[1] as string).toLowerCase()}` });
+      for (const m of text.matchAll(/rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/gi))
+        found.push({
+          at: m.index ?? 0,
+          hex: `#${[m[1], m[2], m[3]].map((v) => hex2(Number(v))).join("")}`,
+        });
+      for (const { at, hex } of found) {
+        if (!KRAFT.includes(hex)) continue;
+        const owner = /(--[a-z0-9-]+)\s*:\s*$/.exec(text.slice(Math.max(0, at - 80), at));
+        hits.push(`${name} ${owner?.[1] ?? "(none)"}`);
       }
+    }
     expect(hits.sort()).toEqual([
       "landing.html --rf-box-front",
       "landing.html --rf-box-side",

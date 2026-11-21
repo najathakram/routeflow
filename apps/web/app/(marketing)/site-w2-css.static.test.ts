@@ -8,6 +8,7 @@
 // finds nothing throws.
 import * as fs from "fs";
 import * as path from "path";
+import { JSDOM } from "jsdom";
 import { readServedSitePage } from "@/lib/read-site-page";
 import { STATIC_SITE_PAGE_NAMES, type StaticSitePage } from "@/lib/static-site-page";
 
@@ -188,6 +189,26 @@ describe("P14: the plan-table header cells share a baseline", () => {
   });
 });
 
+/** Selectors that paint the panel but match nothing in a served static page: set at run time (SA-1203 A11 C6). */
+// .band-ink: used by no static page (a role class for the React pages); .site-header.on-dark: the class is set by script.
+const RUN_TIME_ONLY: string[] = [".band-ink", ".site-header.on-dark"];
+/** Surfaces painted with the ink token, directly or as --rf-text or --rf-btn (A10). None has a focusable element inside it; some (.btn-primary, .cta) are controls themselves. The walk reads rings on every row against the live backdrop, so it needs no list of bands. */
+const INK_SURFACES: string[] = [
+  ".ans-fill",
+  ".btn-primary",
+  ".cta",
+  ".dv",
+  ".gs-n",
+  ".home .inc-i .inc-ic",
+  ".home .uc-t h3",
+  ".pd-cross li",
+  ".pd-tick li",
+  ".st-phone",
+  ".upd-o i",
+];
+/** The tokens that resolve to the ink colour the walk calls a band: the ink itself, the text token and the button token (S4, S15). */
+const INK_TOKENS: string[] = ["--rf-ink", "--rf-text", "--rf-btn"];
+
 describe("D-4: one focus token, set by the band, never a list of selectors", () => {
   const CSS_FILES = (): string[] => {
     const out: string[] = [];
@@ -228,19 +249,193 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
     expect(sels.filter((s) => s.includes(":focus-visible"))).toEqual([":focus-visible"]);
   });
 
-  it("outside :root only the two dark panels set --rf-focus, to the on-panel text token", () => {
-    const setters: Array<{ sel: string; value: string }> = [];
-    const GRAPHICS = "public/site/graphics/rf-graphics.css";
-    for (const f of CSS_FILES()) {
-      for (const r of rulesOf(strip(read(f)))) {
-        // Only the token file's own bare :root rule may set it; a :root anywhere else, alone or in a list, is a setter.
-        if (f === GRAPHICS && r.selectors.length === 1 && r.selectors[0] === ":root") continue;
-        const v = r.decls["--rf-focus"];
-        if (v !== undefined) for (const sel of r.selectors) setters.push({ sel, value: v });
+  // SA-1203 A10: a dark panel carries its own ring colour. Any rule body, or inline style, that paints the
+  // panel background (var(--rf-panel)) must set --rf-focus:var(--rf-on-panel) in the SAME body, so a new
+  // panel cannot be added with the ink ring (1:1 on ink). It replaces the earlier pins of a fixed list of
+  // scopes (.pb, .end, .price) and pins no count. Every declaration is read: `!important`, extra values
+  // (`var(--rf-panel) url(...)`), inner spaces, and `background:none;background-color:var(--rf-panel)`.
+  const norm = (v: string) => v.replace(/!important/gi, "").replace(/\s+/g, "");
+  const paintsPanel = (decls: Record<string, string>) =>
+    ["background", "background-color"].some((k) =>
+      norm(decls[k] ?? "").includes("var(--rf-panel)"),
+    );
+  const setsOnPanel = (decls: Record<string, string>) =>
+    norm(decls["--rf-focus"] ?? "") === "var(--rf-on-panel)";
+  const inlineDecls = (style: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const d of style.split(";")) {
+      const k = d.indexOf(":");
+      if (k > 0) out[d.slice(0, k).trim().toLowerCase()] = d.slice(k + 1).trim();
+    }
+    return out;
+  };
+
+  // The only :root scopes that may set the ring: the graphics file's and landing's own <style> (the ink
+  // default is defined there). A :root anywhere else that sets it fails, whatever the value (SA-1203 A11 C7).
+  const judgeFocus = (
+    source: string,
+    rules: Rule[],
+    rootOk: boolean,
+    panelOffenders: string[],
+    setters: Array<{ where: string; ok: boolean }>,
+  ) => {
+    for (const r of rules) {
+      const where = `${source} :: ${r.selectors.join(", ")}`;
+      if (paintsPanel(r.decls) && !setsOnPanel(r.decls)) panelOffenders.push(where);
+      if (r.decls["--rf-focus"] === undefined) continue;
+      if (r.selectors.every((s) => s === ":root") && rootOk) continue;
+      if (r.selectors.includes(":root"))
+        panelOffenders.push(`${where} (a :root setter out of scope)`);
+      setters.push({ where, ok: setsOnPanel(r.decls) });
+    }
+  };
+
+  it("an out-of-scope :root setter and a new panel with no setter are both caught (planted fixtures, W5 and W7 static halves)", () => {
+    const run = (css: string, source: string, rootOk: boolean) => {
+      const offenders: string[] = [];
+      const setters: Array<{ where: string; ok: boolean }> = [];
+      judgeFocus(source, rulesOf(css), rootOk, offenders, setters);
+      return { offenders, setters };
+    };
+    // C7: a :root that sets --rf-focus outside the two exempt scopes is an offence, whatever the value
+    for (const v of ["var(--rf-white)", "var(--rf-on-panel)", "#fff"]) {
+      const r = run(`:root{--rf-focus:${v}}`, "public/site/css/site.css", false);
+      expect(r.offenders.join()).toContain("a :root setter out of scope");
+    }
+    // ...and is accepted in the graphics file and landing's <style>
+    expect(
+      run(":root{--rf-focus:var(--rf-text)}", "public/site/graphics/rf-graphics.css", true),
+    ).toEqual({
+      offenders: [],
+      setters: [],
+    });
+    // W5 (static half): a new dark band that paints the panel and sets no ring token
+    const w5 = run(
+      ".t16-w5{background:var(--rf-panel);padding:48px}",
+      "public/site/css/site.css",
+      false,
+    );
+    expect(w5.offenders).toEqual(["public/site/css/site.css :: .t16-w5"]);
+    expect(
+      run(".t16-w5{background:var(--rf-panel);--rf-focus:var(--rf-on-panel)}", "x.css", false)
+        .offenders,
+    ).toEqual([]);
+  });
+
+  it("the panel pin reads every form of the declaration (planted fixtures)", () => {
+    const bodies = [
+      "background:var(--rf-panel)!important",
+      "background:var(--rf-panel) url(x.png)",
+      "background:var( --rf-panel )",
+      "background:none;background-color:var(--rf-panel)",
+      "background-color:var(--rf-panel) !important",
+    ];
+    for (const b of bodies) {
+      const decls = rulesOf(`.x{${b}}`)[0]?.decls ?? {};
+      expect({ b, v: paintsPanel(decls) }).toEqual({ b, v: true });
+      expect({ b, v: setsOnPanel(decls) }).toEqual({ b, v: false });
+    }
+    expect(paintsPanel(inlineDecls("color:red;background:var(--rf-panel)"))).toBe(true);
+    expect(paintsPanel(rulesOf(".x{background:var(--rf-white)}")[0]?.decls ?? {})).toBe(false);
+    expect(
+      setsOnPanel(rulesOf(".x{--rf-focus:var(--rf-on-panel) !important}")[0]?.decls ?? {}),
+    ).toBe(true);
+    expect(setsOnPanel(rulesOf(".x{--rf-focus:var(--rf-white)}")[0]?.decls ?? {})).toBe(false);
+  });
+
+  // C6 (SA-1203 A11): the walk finds dark bands BY COLOUR (any element whose computed background is the
+  // resolved --rf-panel); A10 finds them by their CSS. As far as statics can tell, they are the same surfaces:
+  //  - COVERED: --rf-panel is the ink token; every selector A10 finds matches an element in a served page (or
+  //    is on the pinned list of selectors that exist only at run time); the surfaces painted with --rf-ink
+  //    directly (the walk's colour match finds them, A10 does not) are a pinned list with no focusable
+  //    element inside.
+  //  - NOT COVERABLE here: the computed cascade (a later rule overriding the background), classes added by
+  //    script (on-dark, open), @media state, the React pages (privacy, terms, sign-in, 404), pseudo-elements,
+  //    and surfaces painted a typed or other token that happens to equal ink. The slot walk covers those.
+  it("the selectors A10 pins are the surfaces the walk would call bands, as far as statics can tell", () => {
+    const decl = (css: string, sel: string, prop: string) =>
+      rulesOf(css)
+        .filter((r) => r.selectors.includes(sel))
+        .map((r) => r.decls[prop]);
+    expect(decl(graphics, ":root", "--rf-panel")).toEqual(["var(--rf-ink)"]);
+    const stateless = (sel: string) =>
+      sel.replace(/::?(?:before|after|hover|focus-visible|focus|active)\b/g, "");
+    const panelSelectors = new Set<string>();
+    const inkSelectors = new Set<string>();
+    const collect = (rules: Rule[]) => {
+      for (const r of rules) {
+        const bg = norm(r.decls["background"] ?? r.decls["background-color"] ?? "");
+        // SA-1203 A12 S15 (L3): --rf-text and --rf-btn are the ink token too, so a surface painted with them is an ink surface.
+        const set = bg.includes("var(--rf-panel)")
+          ? panelSelectors
+          : INK_TOKENS.some((t) => bg.includes(`var(${t})`))
+            ? inkSelectors
+            : null;
+        if (set) for (const sel of r.selectors) set.add(stateless(sel));
+      }
+    };
+    for (const f of CSS_FILES()) collect(rulesOf(strip(read(f))));
+    const docs: Document[] = [];
+    for (const name of STATIC_SITE_PAGE_NAMES) {
+      const html = readServedSitePage(name, { websiteId: undefined });
+      docs.push(new JSDOM(html).window.document);
+      for (const m of html.matchAll(/<style([^>]*)>([\s\S]*?)<\/style>/gi)) {
+        if (/\sid="brand-tokens"/.test(m[1] as string)) continue;
+        collect(rulesOf(strip(m[2] as string)));
       }
     }
-    expect(setters.map((x) => x.sel).sort()).toEqual([".end", ".pb"]);
-    for (const x of setters) expect(x.value).toBe("var(--rf-on-panel)");
+    const matches = (sel: string) => {
+      let n = 0;
+      for (const d of docs) {
+        try {
+          n += d.querySelectorAll(sel).length;
+        } catch {
+          return -1;
+        }
+      }
+      return n;
+    };
+    expect(panelSelectors.size).toBeGreaterThanOrEqual(12);
+    const unmatched = [...panelSelectors].filter((s) => matches(s) === 0).sort();
+    expect({ unmatched }).toEqual({ unmatched: RUN_TIME_ONLY });
+    // surfaces painted with the ink token itself: a pinned list, none holding a focusable element
+    expect([...inkSelectors].sort()).toEqual(INK_SURFACES);
+    const FOCUSABLE = [
+      "a[href]",
+      "button",
+      "input",
+      "select",
+      "textarea",
+      "summary",
+      '[tabindex]:not([tabindex="-1"])',
+    ];
+    for (const sel of INK_SURFACES)
+      for (const d of docs) {
+        const inside = FOCUSABLE.map((q) => `${sel} ${q}`).join(", ");
+        expect({ sel, n: d.querySelectorAll(inside).length }).toEqual({ sel, n: 0 });
+      }
+  });
+
+  it("every rule or inline style that paints the panel background sets --rf-focus to the on-panel text token in the same body", () => {
+    const panelOffenders: string[] = [];
+    const setters: Array<{ where: string; ok: boolean }> = [];
+    const GRAPHICS = "public/site/graphics/rf-graphics.css";
+    const judge = (source: string, rules: Rule[], rootOk: boolean) =>
+      judgeFocus(source, rules, rootOk, panelOffenders, setters);
+    for (const f of CSS_FILES()) judge(f, rulesOf(strip(read(f))), f === GRAPHICS);
+    for (const name of STATIC_SITE_PAGE_NAMES) {
+      const html = readServedSitePage(name, { websiteId: undefined });
+      for (const m of html.matchAll(/<style([^>]*)>([\s\S]*?)<\/style>/gi)) {
+        if (/\sid="brand-tokens"/.test(m[1] as string)) continue;
+        judge(`${name}.html <style>`, rulesOf(strip(m[2] as string)), name === "landing");
+      }
+      for (const m of html.matchAll(/\sstyle="([^"]*)"/g)) {
+        const d = inlineDecls(m[1] as string);
+        if (paintsPanel(d) && !setsOnPanel(d)) panelOffenders.push(`${name}.html style="${m[1]}"`);
+      }
+    }
+    expect(panelOffenders.sort()).toEqual([]);
+    expect(setters.filter((x) => !x.ok).map((x) => x.where)).toEqual([]);
   });
 
   it("the roles hold 3:1: the accent on white and bone, the on-panel accent on the panel", () => {

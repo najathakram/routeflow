@@ -27,7 +27,7 @@
 .pd .pd-t thead th,.pd .pd-note{color:var(--rf-text-2)}
 
 /* ---------- the dark band stays flat ---------- */
-.pd .pd-deep{background:var(--rf-panel)}
+.pd .pd-deep{background:var(--rf-panel);--rf-focus:var(--rf-on-panel)}
 
 /* ---------- life: press motion ---------- */
 .btn{transition:transform .18s var(--ease),background .2s}

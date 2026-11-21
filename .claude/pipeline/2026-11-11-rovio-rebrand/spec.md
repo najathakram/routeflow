@@ -81,7 +81,7 @@ Priority: **must** blocks the phase gate; **should** blocks launch unless waived
 | R14 | One token block holds the kit's colours and names each by job. No rule refers to a retired colour token (`--rf-brand-*`, `--rf-sun`, `--rf-coral`, `--rf-mint`, `--rf-ink-2`, `--rf-ink-3`, `--rf-sh-*`, `--pc-*`, `--fld-*`, `--navy`, `--sun`). The landing page's inline copy equals the block | must | T14 |
 | R15 | Every page band is white, bone or ink | must | T15 |
 | R16 | Buttons are ink (white on ink panels). Links are copper dark on light and copper light on ink. The focus ring is copper dark. All text meets WCAG AA contrast | must | T16 |
-| R17 | Copper appears only in its listed jobs (logo symbol and dot, the wheel part in focus, the step in view, pricing bars, eyebrow dot, one problem-section note, text links) and never as a status | must | T17, gate G-D |
+| R17 | Copper appears only in its listed jobs (logo symbol and dot, the wheel part in focus, the step in view, pricing bars, eyebrow dot, one problem-section note, text links; and inside pictures of the app, in brand colours (owner, 2026-11-21, SA-1203 A9)) and never as a status | must | T17, gate G-D |
 | R18 | Flat: no gradient, blur, glow, drop shadow or shading anywhere, in CSS, SVG or canvas. Cards sit on a one-pixel line | must | T18 |
 | R19 | The wheel is coloured by role: daily-work tiles bone, how-you-sell tiles ink, flat darker walls, the hub ink with the copper-light symbol. Exactly one tile is copper on the first screen (Payments) and at each stop; none when the legend shows | must | T19 |
 | R20 | Each section follows the guide's treatment (table in [ux-spec.md](./ux-spec.md) §5) on all 10 pages | should | T20, gate G-D |
