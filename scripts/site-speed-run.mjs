@@ -9,6 +9,10 @@
 // Exit 0: every rule held. Exit 1: at least one miss. Exit 2: preflight or environment failure (remote
 // URL, stale or dirty image, a page not 200, a missing LCP entry, missing constants, zero pages found).
 //
+// Where this and the static test differ, the static test wins (the two must not disagree). One known
+// gap: the static test weighs the HTML with the two analytics tags added (about 0.1-0.2 KB more after
+// gzip), so it is the stricter check at the 20 KB HTML cap; both run in the proof.
+//
 // Scope: weights only for T43 (total, html, own scripts, renderer scripts, raster icons, fonts). The
 // four structural rules (img sizes, font swap, prices.js, logo-as-SVG) stay with the static Jest test
 // (apps/web/app/(marketing)/site-speed-budget.static.test.ts). `logo-svg` is pending until switch day.
@@ -41,6 +45,7 @@ export const PAGES = [
   "/data-in-and-out",
   "/security",
 ];
+const PROOF_FILE = path.join(ROOT, "apps/web/e2e/helpers/site-proof.ts");
 const BUDGET_NAMES = [
   "GZIP_TOTAL_KB",
   "HTML_GZIP_KB",
@@ -62,6 +67,37 @@ const TAP_FAST_LABEL = "<16 ms, ok";
 /** A failure of the environment, not of the site: exit 2, nothing (more) measured. */
 export class PreflightError extends Error {}
 
+const KINDS = ["home", "inner", "landing"];
+const WIDTHS = ["desktop", "phone"];
+
+/** Every key the run reads must be a finite number; the first one that is not is named. */
+export function validateBudget(b) {
+  const num = (v, key) => {
+    if (typeof v !== "number" || !Number.isFinite(v))
+      throw new PreflightError(`budget key ${key} is missing or not a finite number`);
+  };
+  for (const n of ["GZIP_TOTAL_KB", "SCRIPT_GZIP_KB"])
+    for (const k of KINDS) num(b[n]?.[k], `${n}.${k}`);
+  for (const w of WIDTHS) {
+    for (const k of ["lcpMs", "cls", "tbtMs"])
+      num(b.TIMING_BUDGET?.[w]?.[k], `TIMING_BUDGET.${w}.${k}`);
+    for (const k of ["width", "height"]) num(b.VIEWPORTS?.[w]?.[k], `VIEWPORTS.${w}.${k}`);
+  }
+  for (const k of ["cpuRate", "downloadBytesPerSec", "uploadBytesPerSec", "latencyMs"])
+    num(b.PHONE_THROTTLE?.[k], `PHONE_THROTTLE.${k}`);
+  for (const n of [
+    "HTML_GZIP_KB",
+    "RENDERER_SCRIPT_GZIP_KB",
+    "RASTER_ICON_GZIP_KB",
+    "FONT_GZIP_KB",
+    "MENU_TAP_DURATION_MS",
+    "SPEED_RUNS",
+  ])
+    num(b[n], n);
+  if (b.SPEED_RUNS !== 3 || !Number.isInteger(b.SPEED_RUNS))
+    throw new PreflightError("budget key SPEED_RUNS must be the integer 3");
+}
+
 /** Reads the budget numbers out of the .ts as text. Any missing name throws. */
 export function loadBudget(file = BUDGET_FILE) {
   const text = readFileSync(file, "utf8");
@@ -79,7 +115,15 @@ export function loadBudget(file = BUDGET_FILE) {
     if (out[name] === undefined || out[name] === null)
       throw new PreflightError(`constant ${name} in ${file} is empty`);
   }
+  validateBudget(out);
   return out;
+}
+
+/** STATIC_ROUTES from site-proof.ts, read as text. */
+export function loadStaticRoutes(file = PROOF_FILE) {
+  const m = /export const STATIC_ROUTES = \[([\s\S]*?)\]/.exec(readFileSync(file, "utf8"));
+  if (!m) throw new PreflightError(`STATIC_ROUTES not found in ${file}`);
+  return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
 }
 
 export function isLocalUrl(url) {
@@ -246,7 +290,7 @@ async function weighPage(deps, budget, base, route) {
   const fontGz = sum(p.fonts);
   const totalGz = htmlGz + scriptGz + rendererGz + styleGz + imageGz + fontGz;
   const rasterKb = p.linked.images
-    .filter((u) => /\.(png|jpe?g|webp)$/i.test(u))
+    .filter((u) => /\.(png|jpe?g|webp|gif)$/i.test(u))
     .map((u) => kb(gzOf(u)));
   const iconMax = rasterKb.length ? Math.max(...rasterKb) : 0;
   const fontMax = p.fonts.length ? Math.max(...p.fonts.map((u) => kb(gzOf(u)))) : 0;
@@ -283,7 +327,12 @@ async function weighPage(deps, budget, base, route) {
   if (kb(rendererGz) > row.limits.renderer)
     miss("renderer scripts", kb(rendererGz), row.limits.renderer);
   if (iconMax > row.limits.icon) miss("raster icon", iconMax, row.limits.icon);
-  if (p.fonts.length > 1) row.misses.push(`T43 ${route} ${p.fonts.length} font files > 1`);
+  if (p.fonts.length !== 1)
+    row.misses.push(`T43 ${route} ${p.fonts.length} font files, exactly 1 is required`);
+  if (!/<link\b[^>]*rel="preload"[^>]*\.woff2/.test(p.html))
+    row.misses.push(`T43 ${route} the font is not preloaded`);
+  if (!p.linked.scripts.includes("/site/js/first-touch.js"))
+    row.misses.push(`T43 ${route} first-touch.js is not linked`);
   if (fontMax > row.limits.font) miss("font", fontMax, row.limits.font);
   return row;
 }
@@ -351,10 +400,11 @@ async function timePage(deps, budget, base, route, width) {
   if (width === "phone") {
     for (const r of runs)
       if (r.tapMiss) row.misses.push(`T44 ${route} ${width} menu tap: ${r.tapMiss}`);
-    const taps = runs.filter((r) => r.tap !== undefined && r.tap !== null).map((r) => r.tap);
+    // A tap faster than the 16 ms Event Timing threshold counts as 0 ms in the median.
+    const taps = runs.filter((r) => !r.tapMiss).map((r) => r.tap ?? 0);
     med.tap = median(taps);
     row.budget.tap = budget.MENU_TAP_DURATION_MS;
-    if (med.tap === null && runs.some((r) => r.tapLabel)) row.tapLabel = TAP_FAST_LABEL;
+    if (runs.some((r) => r.tapLabel)) row.tapLabel = TAP_FAST_LABEL;
     if (med.tap !== null && med.tap > budget.MENU_TAP_DURATION_MS)
       miss("menu tap", med.tap, budget.MENU_TAP_DURATION_MS, " ms");
   }
@@ -368,7 +418,12 @@ function timingLine(r) {
     `T44 ${r.page.padEnd(17)} ${String(px).padEnd(5)} LCP ${f(r.median.lcp, r.budget.lcp)}` +
     `   CLS ${f(r.median.cls, r.budget.cls, 3)}   TBT ${f(r.median.tbt, r.budget.tbt)}`;
   if (r.width === "phone") {
-    const tap = r.median.tap === null ? (r.tapLabel ?? "n/a") : f(r.median.tap, r.budget.tap);
+    const tap =
+      r.median.tap === null
+        ? "n/a"
+        : r.tapLabel && r.median.tap === 0
+          ? r.tapLabel
+          : f(r.median.tap, r.budget.tap);
     line += `   tap ${tap}`;
   }
   const lcps = r.runs.map((x) => Math.round(x.lcp)).join(" ");
@@ -401,6 +456,9 @@ export async function runSpeedRun(opts, deps) {
     // 1. Local only, before any network or Docker call. There is no --allow-remote.
     if (!isLocalUrl(opts.baseUrl))
       throw new PreflightError(`refusing ${opts.baseUrl}: not localhost (no remote mode exists)`);
+    const routes = deps.staticRoutes ?? loadStaticRoutes();
+    if (routes.length !== PAGES.length || !PAGES.every((p) => routes.includes(p)))
+      throw new PreflightError("PAGES differs from STATIC_ROUTES in e2e/helpers/site-proof.ts");
     const budget = deps.budget ?? loadBudget();
     const runBytes = opts.only !== "timing";
     const runTiming = opts.only !== "bytes";
@@ -438,7 +496,6 @@ export async function runSpeedRun(opts, deps) {
           });
           warm.untimedNavigations++;
         }
-      await deps.clock.sleep(SETTLE_MS);
     }
     result.warm = warm;
     // 4. T43.
@@ -451,6 +508,7 @@ export async function runSpeedRun(opts, deps) {
       }
     // 5. T44: three samples, median compared, never a second set.
     result.t44 = [];
+    if (runTiming) await deps.clock.sleep(SETTLE_MS);
     if (runTiming)
       for (const route of opts.pages)
         for (const width of widths) {
@@ -483,7 +541,10 @@ Exit 0 all held, 1 a miss, 2 environment failure.`;
 
 function realFetcher() {
   return async (url, { acceptEncoding }) => {
-    const res = await fetch(url, { headers: { "accept-encoding": acceptEncoding } });
+    const res = await fetch(url, {
+      headers: { "accept-encoding": acceptEncoding },
+      redirect: "manual",
+    });
     return {
       status: res.status,
       contentType: res.headers.get("content-type") ?? "",
@@ -551,6 +612,18 @@ function installProbes() {
 
 const WINDOW_MS = 3000;
 
+/** Polls aria-expanded until it is "true" or the timeout passes (spec 87 waits the same way). */
+export async function waitForMenuOpen(
+  read,
+  { timeoutMs = 2000, intervalMs = 50, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {},
+) {
+  for (let waited = 0; ; waited += intervalMs) {
+    if ((await read()) === "true") return true;
+    if (waited >= timeoutMs) return false;
+    await sleep(intervalMs);
+  }
+}
+
 /** Lazy browser probe: playwright is imported only when the first navigation happens. */
 function realProbe() {
   let browser = null;
@@ -616,10 +689,17 @@ function realProbe() {
         });
         if (width !== "phone") return m;
         const btn = page.locator(".menu-btn").first();
-        const menu = { hasButton: (await btn.count()) > 0, expanded: false };
+        const menu = {
+          hasButton: (await btn.count()) > 0 && (await btn.isVisible()),
+          expanded: false,
+        };
         if (menu.hasButton) {
-          await btn.tap();
-          menu.expanded = (await btn.getAttribute("aria-expanded")) === "true";
+          try {
+            await btn.tap({ timeout: 2000 });
+          } catch {
+            // a tap that cannot land leaves the menu closed, which scores as a miss below
+          }
+          menu.expanded = await waitForMenuOpen(() => btn.getAttribute("aria-expanded"));
           await page.waitForTimeout(600);
           const t = await page.evaluate(() => ({
             click: window.__speed.clicks.at(-1) ?? null,

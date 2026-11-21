@@ -7,7 +7,17 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DIRTY_LABEL, SHA_LABEL } from "./lib/proof-stack.mjs";
-import { PAGES, PreflightError, loadBudget, parseArgs, runSpeedRun } from "./site-speed-run.mjs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import {
+  PAGES,
+  PreflightError,
+  loadBudget,
+  loadStaticRoutes,
+  parseArgs,
+  runSpeedRun,
+  waitForMenuOpen,
+} from "./site-speed-run.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SHA = "a".repeat(40);
@@ -91,8 +101,15 @@ function fakeProbe(make = (c) => goodRaw(c.width)) {
   };
 }
 
-function deps({ site = fakeSite(), probe = fakeProbe(), labels, ancestor = true } = {}) {
+function deps({
+  site = fakeSite(),
+  probe = fakeProbe(),
+  labels,
+  ancestor = true,
+  staticRoutes,
+} = {}) {
   const sleeps = [];
+  const sleepAt = [];
   const log = [];
   let dockerCalls = 0;
   return {
@@ -107,11 +124,19 @@ function deps({ site = fakeSite(), probe = fakeProbe(), labels, ancestor = true 
       },
       isAncestor: () => ancestor,
       headSha: () => SHA,
-      clock: { now: () => new Date("2026-11-21T00:00:00Z"), sleep: async (ms) => sleeps.push(ms) },
+      clock: {
+        now: () => new Date("2026-11-21T00:00:00Z"),
+        sleep: async (ms) => {
+          sleeps.push(ms);
+          sleepAt.push(log.filter((l) => l.startsWith("T43")).length);
+        },
+      },
       host: { cpus: 4, node: "test" },
+      staticRoutes: staticRoutes ?? PAGES,
       log: (l) => log.push(l),
     },
     sleeps,
+    sleepAt,
     log,
     docker: () => dockerCalls,
   };
@@ -166,9 +191,9 @@ test("the total cap is >, not >=: exactly 115 KB passes, one byte more misses", 
     });
     return runSpeedRun(opts({ only: "bytes", pages: ["/pricing"] }), deps({ site }).d);
   };
-  eq((await run(98.5)).exit, 0, "exactly at the cap");
+  const at = await run(98.5);
+  if (at.result.misses.some((m) => m.includes("total"))) throw new Error("total missed at the cap");
   const over = await run(98.5, 1);
-  eq(over.exit, 1, "one byte over");
   if (!over.result.misses.some((m) => m.includes("total"))) throw new Error("no total miss");
 });
 
@@ -217,7 +242,7 @@ test("menu opened but no click or first-input entry: '<16 ms, ok', exit 0", asyn
   eq(exit, 0, "exit");
   const phone = result.t44.find((r) => r.width === "phone");
   eq(phone.tapLabel, "<16 ms, ok", "label");
-  eq(phone.median.tap, null, "stored as null");
+  eq(phone.median.tap, 0, "counted as 0 ms in the median");
   eq(phone.runs[0].tap, "<16 ms, ok", "run label");
 });
 
@@ -390,7 +415,9 @@ test("a raster icon over 15 KB is a miss (exit 1); a 16 KB svg is not", async ()
   const a = deps({ site: fakeSite({ over: { "/site/img/mark.png": bytes(16) } }) });
   eq((await runSpeedRun(opts({ only: "bytes" }), a.d)).exit, 1, "png");
   const html =
-    '<html><link rel="stylesheet" href="/site/css/site.css"><img src="/site/img/m.svg"></html>';
+    '<html><link rel="stylesheet" href="/site/css/site.css">' +
+    '<link rel="preload" href="/site/fonts/geist.woff2" as="font">' +
+    '<img src="/site/img/m.svg"><script src="/site/js/first-touch.js"></script></html>';
   const b = deps({
     site: fakeSite({ over: { "/site/img/m.svg": bytes(16) }, html: { "/company": html } }),
   });
@@ -454,6 +481,7 @@ test("warm: every page and file twice with gzip, one untimed navigation per page
   eq(gz.filter((c) => c.path === "/pricing").length, 2, "page fetched twice");
   eq(gz.filter((c) => c.path === "/site/fonts/geist.woff2").length, 20, "font twice per page");
   eq(x.sleeps, [2000], "settle");
+  eq(x.sleepAt, [10], "the settle comes after T43, directly before T44");
   eq(
     site.calls.filter((c) => c.acceptEncoding === "identity").length > 0,
     true,
@@ -526,6 +554,140 @@ test("CLI: a remote base URL exits 2 before touching the network or Docker", () 
   );
   eq(r.status, 2, "exit");
   if (!/not localhost/.test(r.stderr)) throw new Error(`stderr: ${r.stderr}`);
+});
+
+const GOOD_HTML =
+  '<html><link rel="stylesheet" href="/site/css/site.css">' +
+  '<link rel="preload" href="/site/fonts/geist.woff2" as="font">' +
+  '<script src="/site/js/first-touch.js"></script>';
+const FT = '<script src="/site/js/first-touch.js"></script>';
+const CSS_ONLY = '<html><link rel="stylesheet" href="/site/css/site.css">';
+const bytesRun = (site) =>
+  runSpeedRun(opts({ only: "bytes", pages: ["/company"] }), deps({ site }).d);
+
+test("a gif over 15 KB is a raster miss (exit 1)", async () => {
+  const site = fakeSite({
+    over: { "/site/img/a.gif": bytes(16) },
+    html: { "/company": GOOD_HTML + '<img src="/site/img/a.gif"></html>' },
+  });
+  const r = await bytesRun(site);
+  eq(r.exit, 1, "exit");
+  if (!r.result.misses.some((m) => m.includes("raster icon"))) throw new Error("no icon miss");
+});
+
+test("zero font files is a miss (exit 1), as is a missing preload", async () => {
+  const none = fakeSite({
+    over: { "/site/css/site.css": bytes(10) },
+    html: { "/company": CSS_ONLY + FT + "</html>" },
+  });
+  const r = await bytesRun(none);
+  eq(r.exit, 1, "zero fonts");
+  if (!r.result.misses.some((m) => m.includes("0 font files"))) throw new Error("no font miss");
+  const noPreload = fakeSite({ html: { "/company": CSS_ONLY + FT + "</html>" } });
+  const p = await bytesRun(noPreload);
+  eq(p.exit, 1, "no preload");
+  if (!p.result.misses.some((m) => m.includes("not preloaded"))) throw new Error("no preload miss");
+});
+
+test("a page without first-touch.js is a miss (exit 1)", async () => {
+  const bad = fakeSite({ html: { "/company": GOOD_HTML.replace(FT, "") + "</html>" } });
+  const r = await bytesRun(bad);
+  eq(r.exit, 1, "exit");
+  if (!r.result.misses.some((m) => m.includes("first-touch.js is not linked")))
+    throw new Error("no first-touch miss");
+  const good = fakeSite({ html: { "/company": GOOD_HTML + "</html>" } });
+  eq((await bytesRun(good)).exit, 0, "with it, exit 0");
+});
+
+const tapProbe = (clickFor) =>
+  fakeProbe((c) =>
+    c.width === "phone"
+      ? goodRaw("phone", {
+          menu: { hasButton: true, expanded: true, clickMs: clickFor(c.n), firstInputMs: null },
+        })
+      : goodRaw("desktop"),
+  );
+
+test("taps [<16, <16, 250]: fast taps count as 0 ms, the median passes with its label", async () => {
+  const o = { only: "timing", pages: ["/"] };
+  const r = await runSpeedRun(opts(o), deps({ probe: tapProbe((n) => (n === 3 ? 250 : null)) }).d);
+  eq(r.exit, 0, "exit");
+  const phone = r.result.t44.find((x) => x.width === "phone");
+  eq(phone.median.tap, 0, "median");
+  eq(phone.tapLabel, "<16 ms, ok", "label kept");
+  const slow = await runSpeedRun(
+    opts(o),
+    deps({ probe: tapProbe((n) => (n === 1 ? null : 250)) }).d,
+  );
+  eq(slow.exit, 1, "[<16, 250, 250]");
+});
+
+test("a hidden or missing .menu-btn is a recorded miss: exit 1 with the rows kept", async () => {
+  const probe = fakeProbe((c) =>
+    c.width === "phone"
+      ? goodRaw("phone", { menu: { hasButton: false, expanded: false } })
+      : goodRaw("desktop"),
+  );
+  const r = await runSpeedRun(opts({ only: "timing", pages: ["/"] }), deps({ probe }).d);
+  eq(r.exit, 1, "exit");
+  eq(r.result.t44.length, 2, "rows kept for the JSON");
+  eq(r.result.exit, 1, "result.exit");
+});
+
+test("waitForMenuOpen polls: true on the second poll passes; never true times out", async () => {
+  let n = 0;
+  const slept = [];
+  const sleep = async (ms) => slept.push(ms);
+  const late = await waitForMenuOpen(async () => (++n >= 2 ? "true" : "false"), { sleep });
+  eq([late, n], [true, 2], "second poll");
+  const never = await waitForMenuOpen(async () => "false", {
+    timeoutMs: 200,
+    intervalMs: 50,
+    sleep,
+  });
+  eq(never, false, "timeout");
+  eq(slept.length, 1 + 4, "bounded polling");
+});
+
+const withBudget = (edit) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "speed-run-"));
+  const file = path.join(dir, "budget.ts");
+  const real = path.join(HERE, "../apps/web/e2e/helpers/site-speed-budget.ts");
+  writeFileSync(file, edit(readFileSync(real, "utf8")));
+  return file;
+};
+
+test("a renamed or non-numeric budget key makes loadBudget throw, naming the key", () => {
+  const cases = [
+    ["lcpMs", (t) => t.replace(/lcpMs/g, "lcpMillis"), "lcpMs"],
+    ["SPEED_RUNS", (t) => t.replace("SPEED_RUNS = 3", "SPEED_RUNS = 4"), "SPEED_RUNS"],
+    ["home", (t) => t.replace("home: 175", "homepage: 175"), "GZIP_TOTAL_KB.home"],
+    ["latency", (t) => t.replace("latencyMs: 40", "latencyMs: NaN"), "latencyMs"],
+  ];
+  for (const [label, edit, key] of cases) {
+    let msg = null;
+    try {
+      loadBudget(withBudget(edit));
+    } catch (err) {
+      msg = err instanceof PreflightError ? err.message : "wrong error type";
+    }
+    if (!msg || !msg.includes(key)) throw new Error(label + ": " + msg);
+  }
+});
+
+test("a 302 on a page or on /login exits 2 (a redirect is not a page)", async () => {
+  for (const p of ["/pricing", "/login"]) {
+    const site = fakeSite({ status: { [p]: 302 } });
+    eq((await runSpeedRun(opts({ only: "bytes" }), deps({ site }).d)).exit, 2, p);
+  }
+});
+
+test("a route set that differs from STATIC_ROUTES exits 2; the real file matches PAGES", async () => {
+  const x = deps({ staticRoutes: PAGES.slice(1) });
+  eq((await runSpeedRun(opts(), x.d)).exit, 2, "missing route");
+  const y = deps({ staticRoutes: [...PAGES, "/extra"] });
+  eq((await runSpeedRun(opts(), y.d)).exit, 2, "extra route");
+  eq([...loadStaticRoutes()].sort(), [...PAGES].sort(), "site-proof.ts");
 });
 
 let failed = 0;
