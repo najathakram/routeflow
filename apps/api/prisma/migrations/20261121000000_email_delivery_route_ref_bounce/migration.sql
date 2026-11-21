@@ -68,7 +68,7 @@ CREATE TABLE "EmailBounceSourceState" (
 CREATE UNIQUE INDEX "EmailBounceNotice_noticeKey_key" ON "EmailBounceNotice"("noticeKey");
 
 -- CreateIndex
--- reason: "refToken" is a new all-null column; a plain unique index in Prisma's single transaction (SA-1202 A3, C8)
+-- reason: "refToken" is a new all-null column; a plain unique index in this file's transaction (SA-1202 A3, C8)
 -- squawk-ignore require-concurrent-index-creation
 CREATE UNIQUE INDEX "EmailDelivery_refToken_key" ON "EmailDelivery"("refToken");
 
