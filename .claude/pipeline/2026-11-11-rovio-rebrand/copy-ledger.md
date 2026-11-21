@@ -206,6 +206,8 @@ How to read it
 | GS-10 | getting-started.html:182-190 | "Getting your people on." staff, drivers, stores | KEEP | | CLAIM |
 | GS-11 | getting-started.html:196-219 | FAQ: trial length, no plan, change answer, who sets it up, help | KEEP | 203, 207 repeat 167-175 | CLAIM, EMAIL |
 | GS-12 | getting-started.html:230 | "Try RouteFlow free. 14 days free. No card needed." | As PR-21 | "free" twice | NAME |
+| GS-13 | getting-started.html:115 | "Click the link in your email" (step 2 heading) | "Open the link in your email" | R11 (no "click"), SA-1203 A3 1b; applied mechanically, no change of meaning or claim; cleared by the lead 2026-11-21 ~03:10Z | |
+| GS-14 | getting-started.html:116 | "We email you a link. It works for 24 hours. Click it, and your account opens on your dashboard." | "We email you a link. It works for 24 hours. Open it to go to your dashboard." | R11 (no "click"), SA-1203 A3 1b; same claim (24 hours, dashboard); cleared by the lead 2026-11-21 ~03:10Z | CLAIM |
 
 ## SC. security.html
 
