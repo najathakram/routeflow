@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import * as crypto from "crypto";
 
@@ -31,23 +32,49 @@ function walkTextFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function findSourceReferences(
+type PinnedExclusion = {
+  file: string;
+  lineMustContain: string;
+  count: number;
+  ruling: string;
+};
+
+// A hit is skipped ONLY when it is in the named file AND its own line holds the named text.
+function scanReferences(
   dirs: string[],
   needle: string,
-): Array<{ file: string; line: number }> {
+  root: string,
+  exclusion?: PinnedExclusion,
+  self?: string,
+): { hits: Array<{ file: string; line: number }>; excluded: number } {
   const hits: Array<{ file: string; line: number }> = [];
+  let excluded = 0;
   for (const dir of dirs) {
     for (const file of walkTextFiles(dir)) {
       // This file itself legitimately names every banned string as a
       // string literal for the scan below — never flag itself.
-      if (file === __filename) continue;
+      if (file === self) continue;
+      const rel = path.relative(root, file).split(path.sep).join("/");
       const text = fs.readFileSync(file, "utf8");
       text.split("\n").forEach((line, i) => {
-        if (line.includes(needle)) hits.push({ file: path.relative(REPO_ROOT, file), line: i + 1 });
+        if (!line.includes(needle)) return;
+        if (exclusion && rel === exclusion.file && line.includes(exclusion.lineMustContain)) {
+          excluded++;
+          return;
+        }
+        hits.push({ file: path.relative(root, file), line: i + 1 });
       });
     }
   }
-  return hits;
+  return { hits, excluded };
+}
+
+function findSourceReferences(
+  dirs: string[],
+  needle: string,
+  exclusion?: PinnedExclusion,
+): Array<{ file: string; line: number }> {
+  return scanReferences(dirs, needle, REPO_ROOT, exclusion, __filename).hits;
 }
 
 const SCAN_DIRS = [
@@ -65,6 +92,15 @@ const BANNED_LOGO_STRINGS = ["/logo.svg", "logo-buyer", "logo-seller", "favicon.
 // before the port lands; it still runs in the full `npx jest` suite.
 const PINNED_ABSENT_LOGO_STRINGS = ["favicon.svg"];
 
+// The one named exception (SA-1203 A31): the copper guard's own source names the brand favicon path
+// (its LEGIT_REDS entry and a plant). Exactly `count` such lines, in that file only.
+const PINNED_FAVICON_EXCLUSION: PinnedExclusion = {
+  file: "apps/web/app/(marketing)/site-repaint-1a.static.test.ts",
+  lineMustContain: "img/brand/favicon.svg",
+  count: 3,
+  ruling: "SA-1203 A31",
+};
+
 describe("dead logo/favicon references — R-MKT T5", () => {
   it.each(BANNED_LOGO_STRINGS)(
     'zero source references to "%s" under app/, components/, public/, packages/ui/src/web (R-MKT T5)',
@@ -79,10 +115,55 @@ describe("logo/favicon references that are already absent — MKT-PIN T5", () =>
   it.each(PINNED_ABSENT_LOGO_STRINGS)(
     'zero source references to "%s" under app/, components/, public/, packages/ui/src/web (MKT-PIN T5)',
     (needle) => {
-      const hits = findSourceReferences(SCAN_DIRS, needle);
+      const hits = findSourceReferences(SCAN_DIRS, needle, PINNED_FAVICON_EXCLUSION);
       expect(hits).toEqual([]);
     },
   );
+
+  it("the favicon exclusion matched exactly its pinned count of lines (SA-1203 A31)", () => {
+    const r = scanReferences(
+      SCAN_DIRS,
+      "favicon.svg",
+      REPO_ROOT,
+      PINNED_FAVICON_EXCLUSION,
+      __filename,
+    );
+    expect(r.excluded).toBe(PINNED_FAVICON_EXCLUSION.count);
+  });
+
+  describe("the exclusion is narrow (fixtures)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "mkt-pin-"));
+    const rel = "apps/web/app/(marketing)/site-repaint-1a.static.test.ts";
+    const brand = 'const a = "img/brand/favicon.svg";\n';
+    const run = (files: Record<string, string>) => {
+      for (const [name, body] of Object.entries(files)) {
+        fs.mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
+        fs.writeFileSync(path.join(root, name), body);
+      }
+      return scanReferences([path.join(root, "apps")], "favicon.svg", root, {
+        ...PINNED_FAVICON_EXCLUSION,
+        file: rel,
+      });
+    };
+    afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    it("three brand-path lines in the named file are skipped", () => {
+      const r = run({ [rel]: brand.repeat(3) });
+      expect(r.hits).toEqual([]);
+      expect(r.excluded).toBe(PINNED_FAVICON_EXCLUSION.count);
+    });
+    it("a bare /favicon.svg line in the named file is red", () => {
+      const r = run({ [rel]: brand.repeat(3) + 'const b = "/favicon.svg";\n' });
+      expect(r.hits).toHaveLength(1);
+    });
+    it("a fourth brand-path line moves the count off the pin, so the count test is red", () => {
+      expect(run({ [rel]: brand.repeat(4) }).excluded).not.toBe(PINNED_FAVICON_EXCLUSION.count);
+    });
+    it("the brand path in another file is red", () => {
+      const r = run({ [rel]: brand.repeat(3), "apps/web/app/other.ts": brand });
+      expect(r.hits).toHaveLength(1);
+    });
+  });
 });
 
 const RETIRED_FILES = [

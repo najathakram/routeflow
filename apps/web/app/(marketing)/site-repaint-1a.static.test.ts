@@ -1664,7 +1664,7 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
         "rule=copper-not-allowed",
       );
     });
-    it("32: a one-byte edit of favicon.svg is red by the hash", () => {
+    it("32: a one-byte edit of img/brand/favicon.svg is red by the hash", () => {
       const inp = withSvg("img/brand/favicon.svg", (t) => t + "\n");
       expect(rules(inp)).toContain("rule=legit-red-hash");
     });
