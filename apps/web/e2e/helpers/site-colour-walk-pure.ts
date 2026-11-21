@@ -22,10 +22,6 @@ export const CROPS_PER_PAGE = 3;
 export const CROPS_PER_RUN = 30;
 /** K2: at least this many TEXT rows are walked on every page and size (there is no floor on rings). */
 export const MIN_TEXT_ELEMENTS = 50;
-/** S8: where the top of a dark stop is put, under the header strip (the strip runs from 30 px down). */
-export const HEADER_STRIP_TOP = 45;
-/** S8: a panel element is a band, not a card, when it spans at least this share of the viewport width. */
-export const BAND_WIDTH_SHARE = 0.9;
 
 // ── shapes ──────────────────────────────────────────────────────────────────────────────────────────
 /** One focusable element, as the page reports it. */
@@ -42,7 +38,10 @@ export type FocusInfo = {
 };
 
 export type Part = "page" | "header" | "menu";
-export type HeaderState = "light" | "dark";
+/** N2: a header state is its class list plus its computed background, as the page reports it (no fixed names). */
+export type HeaderState = string;
+/** N2: one distinct header state seen in the scroll-through, with one scroll position it was seen at. */
+export type HeaderSeen = { state: HeaderState; scrollY: number; reproduced: boolean };
 /** What a focus read ended as. `measured` is the only green one. */
 export type ReadState = "measured" | "unsettled" | "obscured" | "focus-refused";
 
@@ -319,30 +318,42 @@ export function readProblems(r: RingRead): Problem[] {
   return out;
 }
 
-/** S8: the header states a page must reach. Light comes from the Tab pass, dark from the dark stops. */
+/**
+ * N2 (SA-1203 A13): the header states a page owes are the ones the scroll-through SAW, not a list. A state seen
+ * and not reproduced at measure time is a walk failure; so is a reproduced state with no header row read in it.
+ */
 export function headerStateProblems(
   label: string,
   sha: string,
-  o: { hasHeader: boolean; bands: number; headerRows: readonly RingRead[] },
+  o: { hasHeader: boolean; states: readonly HeaderSeen[]; headerRows: readonly RingRead[] },
 ): string[] {
   const out: string[] = [];
-  const seen = (s: HeaderState) => o.headerRows.some((r) => r.headerState === s);
-  const line = (detail: string) =>
+  const line = (headerState: string, detail: string) =>
     redLine({
       label,
       part: "header",
-      headerState: "-",
+      headerState,
       tab: null,
       settle: "-",
       kind: "state-not-reached",
       detail,
-      raw: `bands=${o.bands} headerRows=${o.headerRows.length}`,
-      repro: `open ${label}, Tab through the header, then scroll each dark band under it`,
+      raw: `states=${o.states.length} headerRows=${o.headerRows.length}`,
+      repro: `open ${label}, scroll from the top to the end and watch the header`,
       sha,
     });
-  if (o.hasHeader && !seen("light")) out.push(line("the header was never read in its light state"));
-  if (o.hasHeader && o.bands > 0 && !seen("dark"))
-    out.push(line(`${o.bands} full-width panel band(s) and the header never reached on-dark`));
+  if (o.hasHeader && o.states.length === 0)
+    out.push(line("-", "the scroll-through recorded no header state"));
+  for (const st of o.states) {
+    if (!st.reproduced)
+      out.push(
+        line(
+          st.state,
+          `header state ${st.state} was seen at scrollY ${st.scrollY} and could not be reproduced`,
+        ),
+      );
+    else if (!o.headerRows.some((r) => r.headerState === st.state))
+      out.push(line(st.state, `no header focusable was read in header state ${st.state}`));
+  }
   return out;
 }
 
@@ -386,6 +397,28 @@ export function unreachedProblems(
 }
 
 // ── clean / planted / clean comparison (S12) ────────────────────────────────────────────────────────
+/** N1: the rows a plant may change, as one predicate per kind of row. A kind with no predicate may change nothing. */
+export type RowSet = {
+  ring?: (r: RingRead) => boolean;
+  text?: (t: TextRow) => boolean;
+  unreached?: (s: Skip) => boolean;
+};
+/** The default declared set: the rows that carry a plant key. */
+export const KEYED_ROWS: RowSet = {
+  ring: (r) => r.plant !== null,
+  text: (t) => t.plant !== null,
+  unreached: (s) => s.plant !== null,
+};
+/** Nothing may differ: two clean runs. */
+export const NO_ROWS: RowSet = {};
+/** How many rows of a walk a declared set covers (a set that covers none proves nothing). */
+export function countInSet(w: Comparable, set: RowSet): number {
+  return (
+    w.rows.filter((r) => set.ring?.(r)).length +
+    w.texts.filter((t) => set.text?.(t)).length +
+    w.unreached.filter((u) => set.unreached?.(u)).length
+  );
+}
 type Comparable = {
   rows: readonly RingRead[];
   texts: readonly TextRow[];
@@ -393,11 +426,11 @@ type Comparable = {
 };
 
 /**
- * One signature per row, keyed by part, header state, name and the occurrence of that name. Rows that carry a
- * plant are left out, so a planted run may differ from a clean one on keyed rows only. Scroll and settle
- * numbers are left out too: they are timing, not a verdict.
+ * One signature per row, keyed by part, header state, name and the occurrence of that name. Rows inside the
+ * declared set are left out of BOTH runs, so a planted run may differ from a clean one inside that set only
+ * (N1). Scroll and settle numbers are left out too: they are timing, not a verdict.
  */
-export function signatures(w: Comparable): Map<string, string> {
+export function signatures(w: Comparable, set: RowSet = NO_ROWS): Map<string, string> {
   const out = new Map<string, string>();
   const nth = new Map<string, number>();
   const put = (key: string, sig: string) => {
@@ -406,7 +439,7 @@ export function signatures(w: Comparable): Map<string, string> {
     out.set(`${key}#${n}`, sig);
   };
   for (const r of w.rows)
-    if (r.plant === null)
+    if (!set.ring?.(r))
       put(
         `ring|${r.part}|${r.headerState}|${r.sel}`,
         [
@@ -420,9 +453,9 @@ export function signatures(w: Comparable): Map<string, string> {
         ].join("|"),
       );
   for (const t of w.texts)
-    if (t.plant === null) put(`text|${t.part}|${t.headerState}|${t.el}`, `${t.fg}|${t.bg}`);
+    if (!set.text?.(t)) put(`text|${t.part}|${t.headerState}|${t.el}`, `${t.fg}|${t.bg}`);
   for (const s of w.unreached)
-    if (s.plant === null) put(`unreached|${s.part}|${s.el}`, `${s.reason}|${s.sizeOnly}`);
+    if (!set.unreached?.(s)) put(`unreached|${s.part}|${s.el}`, `${s.reason}|${s.sizeOnly}`);
   return out;
 }
 

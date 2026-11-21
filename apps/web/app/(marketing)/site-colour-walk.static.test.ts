@@ -11,7 +11,9 @@ import {
   CROPS_PER_PAGE,
   CROPS_PER_RUN,
   EXEMPT_STATES,
+  KEYED_ROWS,
   MIN_TEXT_ELEMENTS,
+  NO_ROWS,
   PLANTS_TEST_HARD_MS,
   SETTLE_CAP_MS,
   SETTLE_STABLE_FRAMES,
@@ -19,6 +21,7 @@ import {
   T16_SIZE_ONLY_LENGTH,
   WALK_BUDGET_MS,
   WALK_RUN_HARD_MS,
+  countInSet,
   diffSignatures,
   equivalent,
   headerStateProblems,
@@ -35,6 +38,7 @@ import {
   unreachedVerdict,
   type FocusInfo,
   type RingRead,
+  type RowSet,
   type Skip,
   type TextRow,
 } from "../../e2e/helpers/site-colour-walk-pure";
@@ -286,39 +290,53 @@ describe("S4 + S5 + S10: what is red about one focus read", () => {
   });
 });
 
-describe("S8: the header states a page must reach", () => {
-  const h = (headerState: "light" | "dark") => read({ part: "header", headerState });
-  it("a page with a band and a header read in both states is green", () => {
+describe("N2: the header states a page owes are the ones its scroll-through saw", () => {
+  const h = (headerState: string) => read({ part: "header", headerState });
+  const seen = (state: string, reproduced = true, scrollY = 0) => ({ state, scrollY, reproduced });
+  const hs = (states: ReturnType<typeof seen>[], headerRows: RingRead[], hasHeader = true) =>
+    headerStateProblems("/ 1440x900", "sha", { hasHeader, states, headerRows });
+  it("a page whose header never changes has one state, and it passes", () => {
+    expect(hs([seen("site-header@a")], [h("site-header@a")])).toEqual([]);
+  });
+  it("two seen states, both reproduced and both read, pass", () => {
     expect(
-      headerStateProblems("/ 1440x900", "sha", {
-        hasHeader: true,
-        bands: 2,
-        headerRows: [h("light"), h("dark")],
-      }),
+      hs(
+        [seen("site-header@a"), seen("on-dark.site-header@b", true, 900)],
+        [h("site-header@a"), h("on-dark.site-header@b")],
+      ),
     ).toEqual([]);
   });
-  it("a band that never turns the header dark is state-not-reached", () => {
-    const p = headerStateProblems("/ 1440x900", "sha", {
-      hasHeader: true,
-      bands: 1,
-      headerRows: [h("light")],
-    });
+  it("a state seen but not reproduced is state-not-reached, naming the state and the scroll position", () => {
+    const p = hs(
+      [seen("site-header@a"), seen("on-dark.site-header@b", false, 900)],
+      [h("site-header@a")],
+    );
     expect(p).toHaveLength(1);
-    expect(p[0]).toContain("state-not-reached");
-    expect(p[0]).toContain("on-dark");
+    expect(p[0]?.startsWith("T16 RED / 1440x900 part=header header=on-dark.site-header@b")).toBe(
+      true,
+    );
+    expect(p[0]).toContain("kind=state-not-reached");
+    expect(p[0]).toContain("scrollY 900");
+    expect(p[0]).toContain("could not be reproduced");
   });
-  it("a header never read in the light state is state-not-reached; a page with no band owes no dark state", () => {
-    const hs = (bands: number, headerRows: RingRead[], hasHeader = true) =>
-      headerStateProblems("p", "sha", { hasHeader, bands, headerRows });
-    expect(hs(0, [h("dark")])[0]).toContain("light");
-    expect(hs(0, [h("light")])).toEqual([]);
-    // (c) the light half fires even when no header row was read at all
-    expect(hs(0, [])).toHaveLength(1);
-    expect(hs(0, [])[0]).toContain("light state");
-    expect(hs(3, [])).toHaveLength(2);
-    // a page with no header at all owes neither state
-    expect(hs(3, [], false)).toEqual([]);
-    expect(hs(1, [h("light")])[0]).toMatch(/^T16 RED p part=header/);
+  it("a reproduced state with no header row read in it is state-not-reached", () => {
+    const p = hs([seen("site-header@a"), seen("site-header.x@b")], [h("site-header@a")]);
+    expect(p).toHaveLength(1);
+    expect(p[0]).toContain("no header focusable was read in header state site-header.x@b");
+  });
+  it("a header with no recorded state is red; a page with no header owes nothing", () => {
+    expect(hs([], [])).toHaveLength(1);
+    expect(hs([], [], false)).toEqual([]);
+  });
+  it("there is no band share, no band/card split and no fixed list of states", () => {
+    const pureSrc = source("e2e/helpers/site-colour-walk-pure.ts");
+    const walkSrc = source("e2e/helpers/site-colour-walk.ts");
+    expect(pureSrc).not.toMatch(/BAND_WIDTH_SHARE|HEADER_STRIP_TOP/);
+    const code = stripComments(walkSrc);
+    expect(code).not.toMatch(/bandShare|BAND_WIDTH_SHARE|stopTo|bandEls|cards:/);
+    expect(code).not.toContain('"on-dark"');
+    expect(walkSrc).toMatch(/scrollThrough: async/);
+    expect(walkSrc).toMatch(/toState: async/);
   });
 });
 
@@ -378,10 +396,36 @@ describe("S12: clean, planted, clean compare on rows that carry no plant", () =>
     ]);
     expect(diffSignatures(signatures(a), signatures(c))).toHaveLength(1);
   });
-  it("a keyed row (it carries a plant) may differ or exist on one side only", () => {
+  it("a keyed row (it carries a plant) may differ or exist on one side only, inside the keyed set", () => {
     const clean = w([read()]);
     const planted = w([read(), read({ sel: 'a.p "Plant"', plant: "W1", ringContrast: 1 })]);
-    expect(diffSignatures(signatures(planted), signatures(clean))).toEqual([]);
+    expect(diffSignatures(signatures(planted, KEYED_ROWS), signatures(clean, KEYED_ROWS))).toEqual(
+      [],
+    );
+    // with nothing declared, the same difference is named
+    expect(diffSignatures(signatures(planted, NO_ROWS), signatures(clean, NO_ROWS))).toHaveLength(
+      1,
+    );
+  });
+  it("N1: a plant declares its row set; a difference inside it passes and one outside it is named", () => {
+    const light: RowSet = { ring: (r) => !r.bandDark };
+    const white = (over: Partial<RingRead>) => ({ ...over, focusTok: "rgb(255, 255, 255)" });
+    const clean = w([read({ sel: 'a.l "Light"' }), read({ sel: 'a.d "Dark"', bandDark: true })]);
+    const inside = w([
+      read(white({ sel: 'a.l "Light"', ringContrast: 1 })),
+      read({ sel: 'a.d "Dark"', bandDark: true }),
+    ]);
+    expect(diffSignatures(signatures(inside, light), signatures(clean, light))).toEqual([]);
+    expect(countInSet(inside, light)).toBe(1);
+    // the dark row changing is outside the declared set, so it is red
+    const outside = w([
+      read({ sel: 'a.l "Light"' }),
+      read({ sel: 'a.d "Dark"', bandDark: true, focusTok: "rgb(255, 255, 255)" }),
+    ]);
+    expect(diffSignatures(signatures(outside, light), signatures(clean, light))).toHaveLength(1);
+    // a set that covers no row proves nothing
+    expect(countInSet(clean, { ring: () => false })).toBe(0);
+    expect(countInSet(clean, NO_ROWS)).toBe(0);
   });
   it("the keyed element exists in BOTH runs, with the defect in the planted one only, and the runs still agree", () => {
     const keyed = (over: Partial<RingRead>) => read({ sel: 'a.k "Keyed"', plant: "W3", ...over });
@@ -390,7 +434,9 @@ describe("S12: clean, planted, clean compare on rows that carry no plant", () =>
       read(),
       keyed({ ringContrast: 0, ring: { ...read().ring, style: "none" } }),
     ]);
-    expect(diffSignatures(signatures(planted), signatures(clean))).toEqual([]);
+    expect(diffSignatures(signatures(planted, KEYED_ROWS), signatures(clean, KEYED_ROWS))).toEqual(
+      [],
+    );
     // the same defect on an element with no plant is a difference
     const unkeyed = w([read({ ringContrast: 0, ring: { ...read().ring, style: "none" } })]);
     expect(diffSignatures(signatures(unkeyed), signatures(w([read()])))).toHaveLength(1);
@@ -436,14 +482,14 @@ describe("S1 + S3 + S5 + S13: what the walk's source may do", () => {
     expect(scoped).toHaveLength(calls.length);
   });
 
-  it("S5: settleThenRead writes no scroll; the walk's scroll writes are the sweep (its start and each text), the dark stops and the top", () => {
+  it("S5: settleThenRead writes no scroll; the walk's scroll writes are the sweep (its start and each text), the scroll-through, the state revisits and the top", () => {
     const at = walk.search(/const settleThenRead\s*=/);
     expect(at).toBeGreaterThan(0);
     const body = blockAfter(walk, at);
     expect(body.length).toBeGreaterThan(500);
     expect(body).not.toMatch(/scrollTo|scrollIntoView|scrollBy|\.scroll\(|scrollTop\s*=/);
     const writers = walk.match(/scrollTo\(|scrollIntoView\(|scrollBy\(/g) ?? [];
-    expect(writers).toHaveLength(5);
+    expect(writers).toHaveLength(7);
   });
 
   it("S13: each walk runs in its own browser, closed in a finally and killed by a hard timer; crops go under local-assets", () => {
@@ -473,14 +519,6 @@ describe("S1 + S3 + S5 + S13: what the walk's source may do", () => {
     expect(body).not.toContain('block: "nearest"');
     expect(body).toContain("scrollTo({ top: 0");
     expect(walk).toContain('kind: "sweep-capped"');
-  });
-
-  it("S8: a dark stop never takes an ink control for a band: only a control a visitor can Tab to is excluded", () => {
-    const at = walk.indexOf("const insideTabbable = ");
-    const body = blockAfter(walk, at);
-    expect(body).toContain("Number(ti) < 0");
-    expect(body).toContain("disabled");
-    expect(walk).not.toContain("closest(`.site-header, #mobile-menu, $" + "{FOCUSABLE}");
   });
 
   it("S14: every red is a redLine, and each part row carries unreached-unlisted", () => {

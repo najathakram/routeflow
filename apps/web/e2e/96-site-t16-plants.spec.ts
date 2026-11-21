@@ -5,7 +5,8 @@
  * Each plant is injected from the test side (addStyleTag, evaluate, addInitScript; never a site file) and keyed
  * by `data-t16-plant="<id>"`. The walk reads the keyed element in its own state, and each assertion reads
  * THAT row's exact field. A planted page runs clean, planted, clean (S12): two clean runs that differ are
- * `nondeterministic` (red, never retried), and the planted run may differ from a clean one on keyed rows only.
+ * `nondeterministic` (red, never retried), and the planted run may differ from a clean one only inside the plant's
+ * DECLARED row set (N1, SA-1203 A13): the keyed rows by default, or a predicate (W7, W8).
  *
  *   W1  ring colour = backdrop, one link                  the keyed ring row is below 3:1
  *   W2  one desktop-nav link hidden, no equivalent        the keyed skip is unreached, red, not listed
@@ -13,8 +14,8 @@
  *   W4  infinite animation on one focusable               the keyed row is unsettled; its neighbour is measured
  *   W5  an ink ring on a new dark band, no setter         the keyed row: bandDark, below 3:1, not the on-panel token
  *   W6  low-contrast text in the open menu                the keyed menu text row is below the threshold
- *   W7  --rf-focus set to white out of scope              the keyed ring row is below 3:1 (set on the element)
- *   W8  .site-header.on-dark{--rf-focus:<ink>}            every dark header row is red
+ *   W7  :root{--rf-focus:#ffffff}, no setter touched      every light-surface ring row is white and red; every bandDark row is as clean and green
+ *   W8  .site-header.on-dark{--rf-focus:<ink>}            every header row in an on-dark state is red
  *   W9  contrast drop on one text                         the keyed text row is below the threshold
  *   W10 empty-target button, matching name                the keyed skip is red (not accepted)
  *   W11 600 ms fade, fail to pass; a twin that fails      green, settleFrames > 3; the twin is red
@@ -35,12 +36,16 @@ import {
   type Walk,
 } from "./helpers/site-colour-walk";
 import {
+  KEYED_ROWS,
+  NO_ROWS,
   PLANTS_TEST_HARD_MS,
+  countInSet,
   diffSignatures,
   readProblems,
   signatures,
   unreachedVerdict,
   type RingRead,
+  type RowSet,
   type TextRow,
 } from "./helpers/site-colour-walk-pure";
 
@@ -60,11 +65,15 @@ type Plant = {
   size: { w: number; h: number };
   tag: Step;
   defect: Step;
+  /** N1: the rows this plant may change. Default: the rows that carry a plant key. */
+  rows?: RowSet;
   /** An init script that belongs to the defect (a faked snap); the clean runs never get it. */
   defectBeforeGoto?: Step;
 };
 
-async function threeRuns(p: Plant): Promise<{ clean1: Walk; planted: Walk; clean2: Walk }> {
+type Runs = { clean1: Walk; planted: Walk; clean2: Walk; rows: RowSet };
+
+async function threeRuns(p: Plant): Promise<Runs> {
   const opts = { hardMs: WALK_HARD_MS };
   const clean: OpenHooks = { afterLoad: p.tag };
   const planted: OpenHooks = {
@@ -77,19 +86,24 @@ async function threeRuns(p: Plant): Promise<{ clean1: Walk; planted: Walk; clean
   const clean1 = await walkPageSize(p.route, p.size, { ...opts, hooks: clean });
   const plantedRun = await walkPageSize(p.route, p.size, { ...opts, hooks: planted });
   const clean2 = await walkPageSize(p.route, p.size, { ...opts, hooks: clean });
-  return { clean1, planted: plantedRun, clean2 };
+  return { clean1, planted: plantedRun, clean2, rows: p.rows ?? KEYED_ROWS };
 }
 
 /** S12: clean against clean must agree (else nondeterministic); planted against clean may differ on keyed rows only. */
-function expectStable(label: string, r: { clean1: Walk; planted: Walk; clean2: Walk }): void {
+function expectStable(label: string, r: Runs): void {
+  const set = r.rows;
   expect(
-    diffSignatures(signatures(r.clean1), signatures(r.clean2)),
+    diffSignatures(signatures(r.clean1, NO_ROWS), signatures(r.clean2, NO_ROWS)),
     `${label}: nondeterministic, two clean runs differ on these rows`,
   ).toEqual([]);
   expect(
-    diffSignatures(signatures(r.planted), signatures(r.clean1)),
-    `${label}: the planted run differs from the clean run on rows that carry no plant`,
+    diffSignatures(signatures(r.planted, set), signatures(r.clean1, set)),
+    `${label}: the planted run differs from the clean run on rows outside the declared set`,
   ).toEqual([]);
+  expect(
+    countInSet(r.planted, set),
+    `${label}: the declared row set covers at least one row`,
+  ).toBeGreaterThan(0);
 }
 
 const rowOf = (w: Walk, id: string): RingRead => {
@@ -297,35 +311,50 @@ if (process.env.T16_PLANTS === "1") {
     expect.soft(textContrast(t, "W6"), "W6: text contrast").toBeLessThan(3);
   });
 
-  test("T16 plant W7 a white --rf-focus out of scope is red", async () => {
+  test("T16 plant W7 a white :root --rf-focus is red on light surfaces and leaves every dark band alone", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
+    // N1: the declared set is every ring row on a light surface (bandDark false); nothing else may change.
+    const lightRings: RowSet = { ring: (x) => !x.bandDark };
     const r = await threeRuns({
       route: "/pricing",
       size: DESKTOP,
-      tag: (p) => appendPlants(p, '<a href="/pricing" data-t16-plant="W7">W7 link</a>'),
-      // Set on the keyed element, not on :root, so only the keyed row differs (S12); the walk reads the live ring either way.
-      defect: css('[data-t16-plant="W7"]{--rf-focus:#ffffff !important}'),
+      rows: lightRings,
+      tag: async () => undefined,
+      // A real :root token, from the test side (addStyleTag); no co-located setter is touched.
+      defect: css(":root{--rf-focus:#ffffff}"),
     });
     expectStable(`/pricing ${sizeName(DESKTOP)}`, r);
-    const w7 = rowOf(r.planted, "W7");
-    // SA-1203 A12 W7 (A11 verdict): the live token is white on a white backdrop, so the ring is below 3:1.
-    expect.soft(w7.focusTok, "W7: the live --rf-focus").toBe("rgb(255, 255, 255)");
-    expect.soft(w7.ringContrast ?? 99, "W7: ring contrast").toBeLessThan(3);
+    const light = r.planted.rows.filter((x) => !x.bandDark);
+    const dark = r.planted.rows.filter((x) => x.bandDark);
+    // SA-1203 A13 N1 (W7): every light-surface ring row reads the live white token and is red.
+    expect.soft(light.length, "W7: light-surface ring rows").toBeGreaterThan(0);
+    for (const row of light) {
+      expect.soft(row.focusTok, `W7: ${row.sel} live --rf-focus`).toBe("rgb(255, 255, 255)");
+      expect.soft(row.ringContrast ?? 0, `W7: ${row.sel} ring contrast`).toBeLessThan(3);
+    }
+    // SA-1203 A13 N1 (W7): every bandDark row is unchanged from clean and green (A10's setters, in the browser).
+    expect.soft(dark.length, "W7: bandDark ring rows").toBeGreaterThan(0);
+    for (const row of dark)
+      expect.soft(readProblems(row), `W7: ${row.sel} stays green on its dark band`).toEqual([]);
   });
 
   test("T16 plant W8 an ink ring on the dark header is red", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
+    // N1: the declared set is the header ring rows read in a header state with the on-dark class.
+    const onDark = (x: RingRead) => x.part === "header" && x.headerState.includes("on-dark");
+    const headerDark: RowSet = { ring: onDark };
     const r = await threeRuns({
       route: "/",
       size: DESKTOP,
-      tag: tagFirst(".site-header", "W8", "the site header"),
+      rows: headerDark,
+      tag: async () => undefined,
       defect: css(`.site-header.on-dark{--rf-focus:${INK} !important}`),
     });
     expectStable(`/ ${sizeName(DESKTOP)}`, r);
-    const dark = (w: Walk) => w.rows.filter((x) => x.part === "header" && x.headerState === "dark");
+    const dark = (w: Walk) => w.rows.filter(onDark);
     // SA-1203 A12 W8: every dark header row has the ink token and a ring below 3:1; the clean run's dark rows are green.
     expect
-      .soft(dark(r.planted).length, "W8: header rows read in the dark state")
+      .soft(dark(r.planted).length, "W8: header rows read in the on-dark state")
       .toBeGreaterThan(0);
     for (const row of dark(r.planted)) {
       expect.soft(row.focusTok, `W8: ${row.sel} --rf-focus`).toBe(INK);
@@ -410,9 +439,9 @@ if (process.env.T16_PLANTS === "1") {
   test("T16 B1 a clean page with the header light has no band red", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
     const w = await walkPageSize("/pricing", DESKTOP, { hardMs: WALK_HARD_MS });
-    const light = w.rows.filter((x) => x.part === "header" && x.headerState === "light");
+    const light = w.rows.filter((x) => x.part === "header");
     // SA-1203 A12 B1: header light rows exist and are green, and no band is red.
-    expect.soft(light.length, "B1: header rows read in the light state").toBeGreaterThan(0);
+    expect.soft(light.length, "B1: header rows read in the one header state").toBeGreaterThan(0);
     for (const row of light) expect.soft(readProblems(row), `B1: ${row.sel}`).toEqual([]);
     expect
       .soft(

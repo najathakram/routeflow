@@ -31,8 +31,6 @@ import {
 import {
   CROPS_PER_PAGE,
   CROPS_PER_RUN,
-  HEADER_STRIP_TOP,
-  BAND_WIDTH_SHARE,
   MIN_TEXT_ELEMENTS,
   SETTLE_CAP_MS,
   SETTLE_STABLE_FRAMES,
@@ -50,6 +48,7 @@ import {
   unreachedProblems,
   unreachedVerdict,
   type ButtonRow,
+  type HeaderSeen,
   type LinkRow,
   type Part,
   type RingRead,
@@ -106,12 +105,11 @@ export type Walk = {
   unreached: Skip[];
   shadows: { el: string; shadow: string }[];
   ringShadow: string;
-  /** S8: one printed line per dark stop. */
+  /** N2: one printed line per distinct header state the scroll-through saw. */
   flips: string[];
   hasHeader: boolean;
-  /** S8: full-width panel elements (bands) and narrower ones (cards). */
-  bands: number;
-  cards: number;
+  /** N2: each distinct header state seen in the scroll-through, one scroll position, and whether it was reproduced. */
+  headerStates: HeaderSeen[];
   tabbable: number;
   /** K3: for each T16_SIZE_ONLY entry of this page and size, how many reads or skips matched its state. */
   hits: number[];
@@ -153,8 +151,6 @@ type ReaderCfg = {
   sizeOnly: { selector: string; state: string }[];
   settleCapMs: number;
   stableFrames: number;
-  stripTop: number;
-  bandShare: number;
   /** Selectors of the dark bands a row is tagged as being inside (spec 85 requires rows inside each). */
   watch: string[];
 };
@@ -164,8 +160,8 @@ type Reader = {
   start(): Promise<number>;
   step(ctx: Ctx): Promise<StepOut>;
   sweepStep(): Promise<{ done: boolean }>;
-  bands(): { names: string[]; cards: number };
-  stopTo(i: number): Promise<{ name: string; headerState: string; scrollY: number }>;
+  scrollThrough(): Promise<{ state: string; scrollY: number }[]>;
+  toState(i: number): Promise<{ state: string; scrollY: number; reproduced: boolean }>;
   headerReads(how: string): Promise<RingRead[]>;
   toTop(): Promise<void>;
   menuPrep(): { available: boolean; count: number };
@@ -230,28 +226,15 @@ function installReader(cfg: ReaderCfg): void {
       const ti = e.getAttribute("tabindex");
       return !(ti !== null && Number(ti) < 0);
     });
-  const bandName = (b: Element) =>
-    `${b.tagName.toLowerCase()}${b.id ? `#${b.id}` : ""}${[...b.classList]
-      .slice(0, 2)
-      .map((c) => `.${c}`)
-      .join("")}`;
-  /** True when the element is, or sits inside, a control a visitor can really Tab to. */
-  const insideTabbable = (e: Element): boolean => {
-    for (let n: Element | null = e; n; n = n.parentElement) {
-      const ti = n.getAttribute("tabindex");
-      if (
-        n.matches(FOCUSABLE) &&
-        !(ti !== null && Number(ti) < 0) &&
-        !(n as HTMLButtonElement).disabled
-      )
-        return true;
-    }
-    return false;
-  };
   const headerEl = () => document.querySelector<HTMLElement>(".site-header");
   const menuEl = () => document.getElementById("mobile-menu");
-  const headerState = (): "light" | "dark" =>
-    headerEl()?.classList.contains("on-dark") ? "dark" : "light";
+  // N2: a header state is the class list plus the computed background; the site decides which exist.
+  const headerState = (): string => {
+    const h = headerEl();
+    return h
+      ? `${[...h.classList].sort().join(".")}@${getComputedStyle(h).backgroundColor}`
+      : "none";
+  };
   const partOf = (e: Element): "page" | "header" | "menu" =>
     e.closest("#mobile-menu") ? "menu" : e.closest(".site-header") ? "header" : "page";
   const plantOf = (e: Element): string | null =>
@@ -318,7 +301,7 @@ function installReader(cfg: ReaderCfg): void {
     buttons: [] as ButtonRow[],
     links: [] as LinkRow[],
     unread: [] as UnreadRow[],
-    bandEls: [] as Element[],
+    states: [] as { state: string; scrollY: number }[],
     hits: cfg.sizeOnly.map(() => 0),
   };
   const once = (map: Map<Element, Set<string>>, e: Element, key: string): boolean => {
@@ -361,7 +344,7 @@ function installReader(cfg: ReaderCfg): void {
   // S3: the signature that must stay equal for 3 frames: scrollY, the header's class list, the element and every
   // ancestor (rect, opacity, visibility), and for a focus stop its computed ring and its backdrop.
   const sigOf = (el: Element, kind: "focus" | "text" | "plain"): string => {
-    const parts: string[] = [String(window.scrollY), headerEl()?.className ?? ""];
+    const parts: string[] = [String(window.scrollY), headerState()];
     for (let e: Element | null = el; e; e = e.parentElement) {
       const r = e.getBoundingClientRect();
       const cs = getComputedStyle(e);
@@ -428,7 +411,7 @@ function installReader(cfg: ReaderCfg): void {
     return !!h && (e.contains(h) || h.contains(e));
   };
   const seenAny = (e: Element) => (S.seenText.get(e)?.size ?? 0) > 0;
-  const collectInView = (hs: "light" | "dark") => {
+  const collectInView = (hs: string) => {
     for (const e of withText()) {
       const part = partOf(e);
       const key = part === "header" ? hs : "*";
@@ -608,37 +591,37 @@ function installReader(cfg: ReaderCfg): void {
         });
       return { done: false };
     },
-    // S8: the dark stops, from the live DOM: every outermost element painted with the resolved --rf-panel.
-    bands: () => {
-      const panel = tokens().panel;
-      const matched: Element[] = [];
-      for (const e of body.querySelectorAll("*")) {
-        // An ink button or link is painted with the panel colour, but it is a control, not a band.
-        if (skipEl(e) || e.closest(".site-header, #mobile-menu") || insideTabbable(e)) continue;
-        const cs = getComputedStyle(e);
-        const c = parse(cs.backgroundColor);
-        if (c[3] !== 1 || rgb(c) !== panel) continue;
-        if (cs.position === "fixed" || cs.position === "sticky") continue;
-        if (e.getClientRects().length === 0 || e.getBoundingClientRect().height < 40) continue;
-        matched.push(e);
-      }
-      const outer = matched.filter((e) => !matched.some((o) => o !== e && o.contains(e)));
-      const wide = outer.filter(
-        (e) => e.getBoundingClientRect().width >= window.innerWidth * cfg.bandShare,
-      );
-      S.bandEls = outer;
-      return { names: outer.map(bandName), cards: outer.length - wide.length };
-    },
-    stopTo: async (i: number) => {
-      const b = S.bandEls[i] as HTMLElement;
-      const top = window.scrollY + b.getBoundingClientRect().top - cfg.stripTop;
-      window.scrollTo({ top: Math.max(0, top), left: 0, behavior: "instant" as ScrollBehavior });
-      await settle(headerEl() ?? body, "plain");
-      return {
-        name: bandName(b),
-        headerState: headerState(),
-        scrollY: window.scrollY,
+    // N2: scroll from the top to the end in steps; at each settled step record the header state (class list and
+    // computed background). Each distinct state keeps the first scroll position it was seen at.
+    scrollThrough: async () => {
+      const step = Math.max(100, Math.min(200, Math.floor(window.innerHeight / 2)));
+      const seen: { state: string; scrollY: number }[] = [];
+      const note = () => {
+        const state = headerState();
+        if (!seen.some((x) => x.state === state)) seen.push({ state, scrollY: window.scrollY });
       };
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
+      await settle(headerEl() ?? body, "plain");
+      note();
+      for (let i = 1; i <= 600; i++) {
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        const to = Math.min(i * step, Math.max(0, max));
+        window.scrollTo({ top: to, left: 0, behavior: "instant" as ScrollBehavior });
+        await settle(headerEl() ?? body, "plain");
+        note();
+        if (to >= max) break;
+      }
+      S.states = seen;
+      return seen;
+    },
+    // N2: back to the scroll position of one seen state; settled when the header's class list is stable for 3 frames.
+    toState: async (i: number) => {
+      const want = S.states[i];
+      if (!want) return { state: "-", scrollY: 0, reproduced: false };
+      window.scrollTo({ top: want.scrollY, left: 0, behavior: "instant" as ScrollBehavior });
+      await settle(headerEl() ?? body, "plain");
+      const state = headerState();
+      return { state, scrollY: window.scrollY, reproduced: state === want.state };
     },
     headerReads: async (how: string) => {
       const out: RingRead[] = [];
@@ -874,11 +857,11 @@ async function walkPage(
     sizeOnly: entries,
     settleCapMs: SETTLE_CAP_MS,
     stableFrames: SETTLE_STABLE_FRAMES,
-    stripTop: HEADER_STRIP_TOP,
-    bandShare: BAND_WIDTH_SHARE,
     watch: DARK_BAND_SELECTORS,
   };
   await page.evaluate(installReader, cfg);
+  // N2: the scroll-through that finds the header states (the Tab pass starts from the top again).
+  const seenStates = await call(page, "scrollThrough");
 
   const accept = async (row: RingRead, ts: number) => {
     row.stepMs = Date.now() - ts;
@@ -949,8 +932,8 @@ async function walkPage(
       }),
     );
 
-  // S8: the header in its dark state, at stops found by colour; at the first dark stop the phone menu is opened (S9).
-  const bandInfo = await call(page, "bands");
+  // N2: revisit one position per header state seen, settle it, and measure every header focusable there.
+  const headerStates: HeaderSeen[] = [];
   let menuDone = false;
   let menuShadows: { el: string; shadow: string }[] = [];
   const menuPass = async (how: string) => {
@@ -992,16 +975,18 @@ async function walkPage(
     await page.keyboard.press("Enter");
     await call(page, "menuClosed");
   };
-  for (let i = 0; i < bandInfo.names.length && !over(); i++) {
-    const stop = await call(page, "stopTo", i);
+  for (let i = 0; i < seenStates.length && !over(); i++) {
+    const want = seenStates[i] as { state: string; scrollY: number };
+    const at = await call(page, "toState", i);
+    headerStates.push({ state: want.state, scrollY: want.scrollY, reproduced: at.reproduced });
     flips.push(
-      `${label} header flip at ${stop.name} (scrollY ${stop.scrollY}): ${stop.headerState}`,
+      `${label} header state seen at scrollY ${want.scrollY}: ${want.state} (${at.reproduced ? "reproduced" : "NOT reproduced"})`,
     );
-    if (stop.headerState !== "dark") continue;
+    if (!at.reproduced) continue;
     const ts = Date.now();
-    for (const row of await call(page, "headerReads", `header-stop:${stop.name}`))
-      await accept(row, ts);
-    if (!menuDone) await menuPass(`header-stop:${stop.name}`);
+    for (const row of await call(page, "headerReads", `header-state:${i}`)) await accept(row, ts);
+    // The phone menu is opened once, at the first state that differs from the top one (or at the top).
+    if (!menuDone && i > 0) await menuPass(`header-state:${i}`);
   }
   if (!menuDone && !over()) {
     await call(page, "toTop");
@@ -1025,8 +1010,7 @@ async function walkPage(
     ringShadow: all.ringShadow,
     flips,
     hasHeader: await call(page, "hasHeader"),
-    bands: bandInfo.names.length - bandInfo.cards,
-    cards: bandInfo.cards,
+    headerStates,
     tabbable: fin.tabbable,
     hits: fin.hits,
     entries,
@@ -1203,7 +1187,7 @@ export function judgeColours(walk: Walk): {
   problems.push(
     ...headerStateProblems(label, sha, {
       hasHeader: walk.hasHeader,
-      bands: walk.bands,
+      states: walk.headerStates,
       headerRows: walk.rows.filter((r) => r.part === "header"),
     }),
   );
@@ -1220,11 +1204,11 @@ export function judgeColours(walk: Walk): {
     const min = ratios.length ? Math.min(...ratios) : 0;
     const count = (s: string) => rs.filter((r) => r.state === s).length;
     report.push(
-      `${label} part=${part}: reads ${rs.length}, measured ${count("measured")}, obscured ${count("obscured")}, unsettled@cap ${count("unsettled")}, drift>0 ${rs.filter((r) => r.scrollY1 !== r.scrollY0).length}, min ring ${min.toFixed(2)}:1, unreached-unlisted ${lost}, light ${rs.filter((r) => r.headerState === "light").length}, dark ${rs.filter((r) => r.headerState === "dark").length}`,
+      `${label} part=${part}: reads ${rs.length}, measured ${count("measured")}, obscured ${count("obscured")}, unsettled@cap ${count("unsettled")}, drift>0 ${rs.filter((r) => r.scrollY1 !== r.scrollY0).length}, min ring ${min.toFixed(2)}:1, unreached-unlisted ${lost}, header states ${new Set(rs.map((r) => r.headerState)).size}`,
     );
   }
   report.push(
-    `${label}: tabbable ${walk.tabbable}, reached ${walk.rows.length}, unreached accepted(C1) ${un.accepted}, listed(C2) ${un.listed}, unreached-unlisted ${un.unlisted}; text rows ${walk.texts.length}, text-unread ${walk.unread.length}; dark stops ${walk.flips.filter((f) => f.endsWith(": dark")).length} of ${walk.flips.length}, bands ${walk.bands}, cards ${walk.cards}; ${walk.budget.ms} ms, walk ${sha}`,
+    `${label}: tabbable ${walk.tabbable}, reached ${walk.rows.length}, unreached accepted(C1) ${un.accepted}, listed(C2) ${un.listed}, unreached-unlisted ${un.unlisted}; text rows ${walk.texts.length}, text-unread ${walk.unread.length}; header states ${walk.headerStates.length}; ${walk.budget.ms} ms, walk ${sha}`,
   );
   report.push(...walk.flips);
   return { problems, report, accepted: un.accepted };

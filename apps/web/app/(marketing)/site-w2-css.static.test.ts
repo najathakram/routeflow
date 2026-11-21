@@ -192,7 +192,7 @@ describe("P14: the plan-table header cells share a baseline", () => {
 /** Selectors that paint the panel but match nothing in a served static page: set at run time (SA-1203 A11 C6). */
 // .band-ink: used by no static page (a role class for the React pages); .site-header.on-dark: the class is set by script.
 const RUN_TIME_ONLY: string[] = [".band-ink", ".site-header.on-dark"];
-/** Surfaces painted with the ink token, directly or as --rf-text or --rf-btn. The walk finds them by colour; A10 does not. None has a focusable element inside it; some (.btn-primary, .cta) are controls themselves, which the walk's dark stops leave out because a control is not a band. */
+/** Surfaces painted with the ink token, directly or as --rf-text or --rf-btn (A10). None has a focusable element inside it; some (.btn-primary, .cta) are controls themselves. The walk reads rings on every row against the live backdrop, so it needs no list of bands. */
 const INK_SURFACES: string[] = [
   ".ans-fill",
   ".btn-primary",
