@@ -1,5 +1,5 @@
 {
-  "mappedSha": "2954af2ab5a73de0b5be88463f5cc2c7ef006a87",
+  "mappedSha": "e259ccfaab13cfc486ddc752b97eea18edcf3737",
   "generatedAt": "2026-11-21T12:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1160,
-  "notes": "2026-11-21 (master 2954af2ab5): api, web and mobile landing notes for window 38 (36 PRs since the window 54 to 59 note), six INDEX rows, TOC rows; see CHANGELOG.md. Earlier 2026-11-19 (master 8faa1a09e5): api and web landing notes for windows 54 to 59, TOC rows. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
+  "notes": "2026-11-21 (master e259ccfaab): api, web and mobile landing notes for window 38 (38 PRs since the window 54 to 59 note), six INDEX rows, TOC rows; see CHANGELOG.md. Earlier 2026-11-19 (master 8faa1a09e5): api and web landing notes for windows 54 to 59, TOC rows. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
 }
