@@ -147,3 +147,47 @@ describe("home.html structured data (SA-1178)", () => {
     expect(unsafeJsonLdKeys({ ...real, titleSeparator: " &'\" " })).toEqual([]);
   });
 });
+
+describe("the footer line", () => {
+  const b = loadBrand();
+
+  // SA-1203 A2 (P5a): the D5 footer becomes the token form, the year kept
+  it("the filled D5 footer tokenises to name and formerly tokens, keeping its year", () => {
+    expect(tokenise(`<span>© 2031 ${b.name}, formerly ${b.formerly}</span>`, b)).toBe(
+      "<span>© 2031 {{brand:name}}, formerly {{brand:formerly}}</span>",
+    );
+  });
+
+  // SA-1203 A2 (P5b): a body sentence is not a footer; the previous name there stays literal
+  it("the previous name in a body sentence stays literal", () => {
+    expect(tokenise(`<p>see ${b.formerly} here</p>`, b)).toBe(`<p>see ${b.formerly} here</p>`);
+  });
+
+  // SA-1203 A2 (P5c): with formerly equal to name there is no previous name to token; both stay the name
+  it("formerly equal to name tokenises the name twice and never a formerly token", () => {
+    const same = { ...b, formerly: b.name };
+    const out = tokenise(`<span>© 2026 ${b.name}, formerly ${b.name}</span>`, same);
+    expect(out).toBe("<span>© 2026 {{brand:name}}, formerly {{brand:name}}</span>");
+    expect(out).not.toContain("{{brand:formerly}}");
+  });
+
+  // SA-1203 A2 (P5e): only the whole text of an element is the footer; prose around it stays literal
+  it("a footer-shaped phrase inside prose is not tokenised as the previous name", () => {
+    const lead = `<p>Since © 2026 ${b.name}, formerly ${b.formerly}, we grew.</p>`;
+    const tail = `<span>© 2026 ${b.name}, formerly ${b.formerly} and partners</span>`;
+    expect(tokenise(lead, b)).toContain(`formerly ${b.formerly}`);
+    expect(tokenise(lead, b)).not.toContain("{{brand:formerly}}");
+    expect(tokenise(tail, b)).toContain(`formerly ${b.formerly}`);
+    expect(tokenise(tail, b)).not.toContain("{{brand:formerly}}");
+  });
+
+  // SA-1203 A2 (P5f): both names are escaped, so regex characters match themselves and nothing else
+  it("names with regex characters round-trip and a near miss is not matched", () => {
+    const rx = { ...b, name: "A.B+", formerly: "C(D)" };
+    expect(tokenise("<span>© 2026 A.B+, formerly C(D)</span>", rx)).toBe(
+      "<span>© 2026 {{brand:name}}, formerly {{brand:formerly}}</span>",
+    );
+    const miss = "<span>© 2026 AxB+, formerly C(D)</span>";
+    expect(tokenise(miss, rx)).not.toContain("{{brand:formerly}}");
+  });
+});

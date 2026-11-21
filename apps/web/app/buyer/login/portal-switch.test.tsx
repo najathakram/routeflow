@@ -5,6 +5,7 @@ import BuyerLoginPage from "./page";
 const push = jest.fn();
 const searchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push }),
   useSearchParams: () => searchParams,
 }));

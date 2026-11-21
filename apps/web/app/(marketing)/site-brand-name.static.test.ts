@@ -7,7 +7,7 @@
 // lane 2.5b owns; its assertion joins this test there.
 import * as fs from "fs";
 import * as path from "path";
-import { BRAND } from "@routeflow/types/brand";
+import { BRAND, footerLine } from "@routeflow/types/brand";
 import { STATIC_SITE_PAGE_NAMES, type StaticSitePage } from "@/lib/static-site-page";
 import { readServedSitePage } from "@/lib/read-site-page";
 import { SITE_EMAIL } from "@/components/site-frame/site-frame-nav";
@@ -16,6 +16,23 @@ import { site } from "./lib/site";
 const WEB = path.resolve(__dirname, "../..");
 const pageHtml = (page: StaticSitePage): string =>
   readServedSitePage(page, { websiteId: undefined });
+
+/** What the renderer does to a value placed in HTML (written out here on purpose). */
+const escapeHtml = (v: string): string =>
+  v
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+/** SA-1203 A1: the footer line occurs exactly once and equals footerLine(); it is removed, and the
+ *  rest of the page is held to the old rule. */
+function withoutFooterLine(html: string): string {
+  const line = escapeHtml(footerLine());
+  expect(html.split(line)).toHaveLength(2);
+  return html.replace(line, "");
+}
 
 /** The visible text of a page: tags, scripts and styles removed. */
 function visibleText(html: string): string {
@@ -42,9 +59,11 @@ describe("the served pages", () => {
   it.each([...STATIC_SITE_PAGE_NAMES])("%s shows the everyday name and no other", (page) => {
     const html = pageHtml(page);
     const text = visibleText(html);
+    // SA-1203 A1: the one footer line may name the previous name; nothing else may
+    const rest = visibleText(withoutFooterLine(html));
     expect(text).toContain(BRAND.name);
     expect(html).toContain(`<meta property="og:site_name" content="${BRAND.name}">`);
-    expect(text).not.toContain(BRAND.formerly);
+    expect(rest).not.toContain(BRAND.formerly);
     expect(text).not.toContain(BRAND.officialName);
   });
 
@@ -53,6 +72,15 @@ describe("the served pages", () => {
     expect(addresses.length).toBeGreaterThan(0);
     for (const address of addresses) expect([BRAND.email, BRAND.securityEmail]).toContain(address);
   });
+
+  it.each([...STATIC_SITE_PAGE_NAMES])(
+    "%s prints the copyright line footerLine() builds",
+    (page) => {
+      const lines = [...pageHtml(page).matchAll(/©[^<]*/g)].map((m) => m[0]);
+      expect(lines).toEqual([footerLine()]);
+      expect(lines[0]).toContain("formerly");
+    },
+  );
 
   it("the home page structured data names officialName", () => {
     const raw = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(pageHtml("home"));
@@ -74,7 +102,20 @@ describe("the frame and the libs", () => {
   it("the frame file types no name", () => {
     const frame = fs.readFileSync(path.join(WEB, "components/site-frame/SiteFrame.tsx"), "utf8");
     expect(frame).toContain("footerLine");
+    expect(frame).toContain("<span>{footerLine()}</span>");
     expect(frame).not.toContain(BRAND.name);
     expect(frame).not.toContain(BRAND.formerly);
+  });
+});
+
+describe("footerLine", () => {
+  it("names the previous name when it is set and differs from the name", () => {
+    expect(footerLine()).toBe(`© 2026 ${BRAND.name}, formerly ${BRAND.formerly}`);
+  });
+
+  it("is the bare line when the previous name equals the name or is empty", () => {
+    const bare = `© 2026 ${BRAND.name}`;
+    expect(footerLine(2026, { ...BRAND, formerly: BRAND.name })).toBe(bare);
+    expect(footerLine(2026, { ...BRAND, formerly: "" })).toBe(bare);
   });
 });

@@ -93,9 +93,12 @@ describe("pageTitle and footerLine", () => {
     expect(() => pageTitle("x".repeat(70))).toThrow(/over 60/);
   });
 
-  it("the footer line is the year and the name", () => {
-    expect(footerLine()).toBe(`© 2026 ${BRAND.name}`);
-    expect(footerLine(2030)).toBe(`© 2030 ${BRAND.name}`);
+  // SA-1203 A1: D5 names the previous name in the footer line while it is set and differs
+  it("the footer line follows D5", () => {
+    expect(footerLine()).toBe(`© 2026 ${BRAND.name}, formerly ${BRAND.formerly}`);
+    expect(footerLine(2030)).toBe(`© 2030 ${BRAND.name}, formerly ${BRAND.formerly}`);
+    expect(footerLine(2026, { ...BRAND, formerly: BRAND.name })).toBe(`© 2026 ${BRAND.name}`);
+    expect(footerLine(2026, { ...BRAND, formerly: "" })).toBe(`© 2026 ${BRAND.name}`);
   });
 });
 

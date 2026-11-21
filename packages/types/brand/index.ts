@@ -31,9 +31,13 @@ export function pageTitle(page?: string, brand: Brand = loadBrand()): string {
   return title;
 }
 
-/** The copyright line in the footer. */
+/** The copyright line in the footer. While the previous name is set and differs from the name, the
+ *  line says so (the owner's six-month notice); otherwise it is the bare line. */
 export function footerLine(year = 2026, brand: Brand = loadBrand()): string {
-  return `© ${year} ${brand.name}`;
+  const bare = `© ${year} ${brand.name}`;
+  return brand.formerly && brand.formerly !== brand.name
+    ? `${bare}, formerly ${brand.formerly}`
+    : bare;
 }
 
 /** The brand's two share lines, as the share image and the og:image alt print them. */

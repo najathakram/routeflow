@@ -5,6 +5,7 @@ import LoginPage from "./page";
 
 const push = jest.fn();
 jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push }),
 }));
 
