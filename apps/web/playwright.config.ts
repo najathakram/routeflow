@@ -849,7 +849,8 @@ export default defineConfig({
     // ENTRY THE SPEC NEVER RUNS.
     {
       name: "site-proof",
-      testMatch: /85-site-proof-pages\.spec\.ts/,
+      // 96 holds the T16 plants (SA-1203 A11); its tests exist only when T16_PLANTS=1.
+      testMatch: /(85-site-proof-pages|96-site-t16-plants)\.spec\.ts/,
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },

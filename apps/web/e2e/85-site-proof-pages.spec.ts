@@ -663,6 +663,13 @@ const RING_BANDS: Record<string, string> = {
   "/pricing": ".pcard.featured",
 };
 
+/** Does a band label (tag#id.class.class) carry every class of a simple selector like .pcard.featured? */
+const bandHas = (label: string, sel: string): boolean =>
+  sel
+    .split(".")
+    .filter(Boolean)
+    .every((c) => label.includes(`.${c}`));
+
 test.describe("T16 T18c colour walk", () => {
   test("the walk covers 17 pages", () => {
     expect(new Set(WALK_ROUTES).size).toBe(17);
@@ -673,9 +680,14 @@ test.describe("T16 T18c colour walk", () => {
     for (const size of WALK_SIZES) {
       test(`T16 T18c colour walk ${route} ${sizeName(size)}`, async ({ page }) => {
         test.setTimeout(240_000);
+        const label = `${route} ${sizeName(size)}`;
         await openForWalk(page, route, size);
-        const walk = await readWalk(page);
-        const { problems, report } = judgeColours(walk);
+        const walk = await readWalk(page, route, size);
+        const { problems, report } = judgeColours(walk, label);
+        await test.info().attach("T16 focusable table", {
+          body: report.join(String.fromCharCode(10)),
+          contentType: "text/plain",
+        });
         for (const line of report)
           test.info().annotations.push({
             type: "focus-ring",
@@ -684,7 +696,7 @@ test.describe("T16 T18c colour walk", () => {
         const band = RING_BANDS[route];
         if (band)
           expect(
-            walk.rings.filter((r) => r.band === band).length,
+            walk.rings.filter((r) => r.bands.some((b) => bandHas(b, band))).length,
             `T16 ${route} ${sizeName(size)}: focusable elements measured inside ${band}`,
           ).toBeGreaterThan(0);
         expect.soft(problems, `T16 ${route} ${sizeName(size)}`).toEqual([]);
