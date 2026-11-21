@@ -461,6 +461,12 @@ const PICTURE = "picture of the app (owner, 2026-11-21, SA-1203 A4)";
 const TOKEN_DEF = "token definition";
 // Picture-of-the-app rows the owner has not yet ruled on (SA-1203 A6 1); not an allowed tag.
 const PENDING_OWNER = "PENDING-OWNER R17";
+// R17's eighth job: copper accents inside pictures of the app, knowingly apart from the app (SA-1203 A9, A15).
+const PICTURE_BRAND = "picture of the app in brand colours (owner, 2026-11-21, SA-1203 A9)";
+const PICTURE_BRAND_PREFIX = "picture of the app in brand colours";
+// A custom property that aliases a copper token; it paints nothing, so it is judged by its readers (SA-1203 A16).
+const COPPER_ALIAS = "copper alias, every reader tagged (SA-1203 A16)";
+const COPPER_ALIAS_COUNT = 5;
 
 const [LOGO, WHEEL, STEP, BARS, DOT, NOTE, LINK] = R17_JOBS;
 const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, tag: string]> = [
@@ -475,26 +481,26 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ],
   ["css/home-up.css", ".featured .pm-bar i", "background", BARS],
   ["css/home-up.css", ".pm-bar i", "background", BARS],
-  ["css/home.css", ".a-av", "color", PENDING_OWNER],
-  ["css/home.css", ".a-link2", "color", PENDING_OWNER],
-  ["css/home.css", ".a-nav li.on", "border-left", PENDING_OWNER],
-  ["css/home.css", ".a-nav li.on .ico", "color", PENDING_OWNER],
-  ["css/home.css", ".ans-i--p .ans-bar", "background", PENDING_OWNER],
-  ["css/home.css", ".b-nav li.on", "border-left", PENDING_OWNER],
-  ["css/home.css", ".b-nav li.on .ico", "color", PENDING_OWNER],
+  ["css/home.css", ".a-av", "color", PICTURE_BRAND],
+  ["css/home.css", ".a-link2", "color", PICTURE_BRAND],
+  ["css/home.css", ".a-nav li.on", "border-left", PICTURE_BRAND],
+  ["css/home.css", ".a-nav li.on .ico", "color", PICTURE_BRAND],
+  ["css/home.css", ".ans-i--p .ans-bar", "background", PICTURE_BRAND],
+  ["css/home.css", ".b-nav li.on", "border-left", PICTURE_BRAND],
+  ["css/home.css", ".b-nav li.on .ico", "color", PICTURE_BRAND],
   ["css/home.css", ".end-mail a", "color", LINK],
   ["css/home.css", ".fd-more", "color", LINK],
   ["css/home.css", ".fd-note a", "color", LINK],
-  ["css/home.css", ".home", "--c-pay", PENDING_OWNER],
+  ["css/home.css", ".home", "--c-pay", COPPER_ALIAS],
   ["css/home.css", ".home .fq a", "color", LINK],
   ["css/home.css", ".home #pricing .pl-inc a", "color", LINK],
   ["css/home.css", ".hx-more", "color", LINK],
   ["css/home.css", ".n3", "background", NOTE],
   ["css/home.css", ".rt-d--now", "fill", STEP],
   ["css/home.css", ".sp-all", "color", LINK],
-  ["css/home.css", ".sp-q em", "color", PENDING_OWNER],
-  ["css/home.css", ".sp-q i", "color", PENDING_OWNER],
-  ["css/home.css", ".sp-top span", "color", PENDING_OWNER],
+  ["css/home.css", ".sp-q em", "color", PICTURE_BRAND],
+  ["css/home.css", ".sp-q i", "color", PICTURE_BRAND],
+  ["css/home.css", ".sp-top span", "color", PICTURE_BRAND],
   ["css/product.css", ".pd main a:not(.btn):not(.pd-tile):not(.link):not(.pd-go)", "color", LINK],
   ["css/product.css", ".pd-go", "color", LINK],
   ["css/product.css", ".pd-more summary", "color", LINK],
@@ -504,10 +510,10 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ["css/site.css", ".link", "color", LINK],
   ["css/site.css", ".pg-top .eyebrow::before", "background", DOT],
   ["css/start.css", ".gs-step a:not(.link)", "color", LINK],
-  ["graphics/rf-graphics.css", ":root", "--app-deep", PENDING_OWNER],
-  ["graphics/rf-graphics.css", ":root", "--app-on", PENDING_OWNER],
-  ["graphics/rf-graphics.css", ":root", "--buy-deep", PENDING_OWNER],
-  ["graphics/rf-graphics.css", ":root", "--buy-on", PENDING_OWNER],
+  ["graphics/rf-graphics.css", ":root", "--app-deep", COPPER_ALIAS],
+  ["graphics/rf-graphics.css", ":root", "--app-on", COPPER_ALIAS],
+  ["graphics/rf-graphics.css", ":root", "--buy-deep", COPPER_ALIAS],
+  ["graphics/rf-graphics.css", ":root", "--buy-on", COPPER_ALIAS],
   ["graphics/rf-graphics.css", ":root", "--rf-accent", TOKEN_DEF],
   ["graphics/rf-graphics.css", ":root", "--rf-accent-on-panel", TOKEN_DEF],
   ["graphics/rf-graphics.css", ":root", "--rf-copper", TOKEN_DEF],
@@ -550,7 +556,10 @@ function citeOk(tag: string): boolean {
   return /copper/i.test(line) || COPPER_HEXES.some((h) => line.toLowerCase().includes(h));
 }
 const isAllowedTag = (tag: string) =>
-  (R17_JOBS as readonly string[]).includes(tag) || tag === TOKEN_DEF || citeOk(tag);
+  (R17_JOBS as readonly string[]).includes(tag) ||
+  tag === TOKEN_DEF ||
+  tag === PICTURE_BRAND ||
+  tag === COPPER_ALIAS;
 
 type UseInfo = { nonApp: boolean };
 /** Why each picture row fails, if it does: no app cite, not the app's copper, not a css rule, or not
@@ -587,6 +596,125 @@ function pictureOffences(
   }
   return [...new Set(offenders)];
 }
+
+type BrandUse = { value: string; status: boolean };
+/** Why each brand-colour picture row fails, if it does (SA-1203 A9): outside a labelled figure, a typed
+ *  colour or a token that is not a palette copper token, a status rule, or an app file cite. */
+function brandPictureOffences(
+  rows: Array<[string, string, string, string]>,
+  uses: Map<string, BrandUse>,
+  docs: Document[],
+  aliases: ReadonlySet<string> = new Set(),
+): string[] {
+  const offenders: string[] = [];
+  for (const [source, selectors, property, tag] of rows) {
+    if (!tag.startsWith(PICTURE_BRAND_PREFIX)) continue;
+    const key = copperKey(source, selectors, property);
+    if (property.startsWith("--"))
+      offenders.push(`${key} (a definition: A9 is for uses in figures)`);
+    if (tag !== PICTURE_BRAND) offenders.push(`${key} (no app file cite is allowed on this tag)`);
+    const use = uses.get(key);
+    if (!use) offenders.push(`${key} (not a copper use)`);
+    else {
+      if (use.status) offenders.push(`${key} (a status rule)`);
+      const refs = [...use.value.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]);
+      if (literalsOf(use.value).length > 0) offenders.push(`${key} (a typed colour)`);
+      if (!refs.some((t) => /^--rf-(copper|accent)/.test(t) || aliases.has(t)))
+        offenders.push(`${key} (not var(--rf-copper...) or var(--rf-accent...))`);
+    }
+    if (!source.endsWith(".css")) offenders.push(`${key} (only a css rule can be a picture row)`);
+    let matched = 0;
+    for (const sel of selectors.split(", ")) {
+      for (const d of docs) {
+        let els: Element[] = [];
+        try {
+          els = [...d.querySelectorAll(stripState(sel))];
+        } catch {
+          offenders.push(`${key} (selector not readable)`);
+        }
+        for (const el of els) {
+          matched++;
+          if (!closestIllustration(el)) offenders.push(`${key} (outside a figure: ${sel})`);
+        }
+      }
+    }
+    if (matched === 0) offenders.push(`${key} (matches nothing)`);
+  }
+  return [...new Set(offenders)];
+}
+const aliasNames = (rows: Array<[string, string, string, string]>) =>
+  new Set(rows.filter((r) => r[3] === COPPER_ALIAS).map((r) => r[2]));
+
+/** The copper-alias guard (SA-1203 A16): each A16 row is exactly var(--rf-copper...), var(--rf-accent...) or
+ *  another A16 alias, has at least one reader, and every reader (found by name, in every stylesheet, <style>
+ *  and style="" of the site pages, and their other text and scripts) is a tagged row. */
+function aliasOffences(
+  rows: Array<[string, string, string, string]>,
+  rules: CopperRule[],
+  texts: Array<{ name: string; text: string }>,
+): string[] {
+  const out: string[] = [];
+  const names = aliasNames(rows);
+  const tagOf = new Map(rows.map(([s, sel, p, t]) => [copperKey(s, sel, p), t]));
+  for (const [source, selectors, property, tag] of rows) {
+    if (tag !== COPPER_ALIAS) continue;
+    const key = copperKey(source, selectors, property);
+    const def = rules.find(
+      (r) => r.source === source && r.selectors.join(", ") === selectors && property in r.decls,
+    );
+    const m = def ? /^var\(\s*(--[\w-]+)\s*\)$/.exec(def.decls[property].trim()) : null;
+    if (!m || !(/^--rf-(copper|accent)/.test(m[1]) || names.has(m[1])))
+      out.push(`${key} (value is not a copper token or an alias row)`);
+    const re = new RegExp("var\\(\\s*" + property + "(?![\\w-])");
+    let readers = 0;
+    for (const r of rules)
+      for (const [p, v] of Object.entries(r.decls)) {
+        if (!re.test(v)) continue;
+        readers++;
+        const rk = copperKey(r.source, r.selectors.join(", "), p);
+        const t = tagOf.get(rk);
+        const ok =
+          t === PICTURE_BRAND ||
+          (R17_JOBS as readonly string[]).includes(t ?? "") ||
+          (t === COPPER_ALIAS && names.has(p));
+        if (!ok) out.push(`${key} (untagged reader: ${rk})`);
+      }
+    for (const t of texts)
+      if (re.test(t.text)) {
+        readers++;
+        out.push(`${key} (untagged reader in ${t.name})`);
+      }
+    if (readers === 0) out.push(`${key} (a dead alias: no reader)`);
+  }
+  if (rows.filter((r) => r[3] === COPPER_ALIAS).length !== COPPER_ALIAS_COUNT)
+    out.push(`copper alias rows are not ${COPPER_ALIAS_COUNT}`);
+  return [...new Set(out)];
+}
+/** Site scripts and the page text outside <style> and style="": a reader found here is never tagged. */
+const aliasTexts = (): Array<{ name: string; text: string }> => {
+  const out: Array<{ name: string; text: string }> = [];
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(path.join(WEB, dir), { withFileTypes: true })) {
+      const rel = dir + "/" + e.name;
+      if (e.isDirectory()) walk(rel);
+      else if (e.name.endsWith(".js")) out.push({ name: rel, text: read(rel) });
+    }
+  };
+  walk("public/site");
+  for (const { name, html } of siteHtml())
+    out.push({
+      name,
+      text: html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/\sstyle="[^"]*"/g, ""),
+    });
+  return out;
+};
+const brandUses = (extra: CopperRule[] = []) =>
+  new Map<string, BrandUse>(
+    copperScan(extra).uses.map((u) => [
+      u.key,
+      { value: u.rule.decls[u.prop], status: isStatusRule(u.rule) || STATUS_WORDS.test(u.prop) },
+    ]),
+  );
 
 describe("T17 static: copper only in listed jobs, never a status", () => {
   it("(a) every copper use is on the allow-list, and every allow-list row is still a copper use", () => {
@@ -717,6 +845,121 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
     const docs = siteHtml().map((p) => new JSDOM(p.html).window.document);
     const byKey = new Map(copperScan().uses.map((u) => [u.key, { nonApp: u.nonApp }]));
     expect(pictureOffences(COPPER_ALLOW, byKey, docs)).toEqual([]);
+  });
+
+  it("(a) the brand-colour picture rows stand: figure scope, a copper token, no status, no cite", () => {
+    const docs = siteHtml().map((p) => new JSDOM(p.html).window.document);
+    expect(brandPictureOffences(COPPER_ALLOW, brandUses(), docs, aliasNames(COPPER_ALLOW))).toEqual(
+      [],
+    );
+  });
+
+  it("(a) the copper aliases: 5 rows, each a copper token, each reader tagged (SA-1203 A16)", () => {
+    expect(aliasNames(COPPER_ALLOW).size).toBe(COPPER_ALIAS_COUNT);
+    expect(aliasOffences(COPPER_ALLOW, copperSources(), aliasTexts())).toEqual([]);
+  });
+
+  it("(a) strict tags: only R17's jobs, the token definition, A9 and A16; none pending", () => {
+    const n = (t: string) => COPPER_ALLOW.filter((r) => r[3] === t).length;
+    const jobs = COPPER_ALLOW.filter((r) => (R17_JOBS as readonly string[]).includes(r[3])).length;
+    expect(n(PENDING_OWNER)).toBe(0);
+    expect(jobs + n(TOKEN_DEF) + n(PICTURE_BRAND) + n(COPPER_ALIAS)).toBe(COPPER_ALLOW.length);
+    expect([n(TOKEN_DEF), n(PICTURE_BRAND), n(COPPER_ALIAS)]).toEqual([10, 10, 5]);
+  });
+
+  describe("planted brand-picture and alias fixtures (SA-1203 A9, A16)", () => {
+    type Row = [string, string, string, string];
+    const doc = () =>
+      new JSDOM(
+        '<figure role="img" aria-label="Screen."><i class="in">x</i></figure><p class="out">x</p>',
+      ).window.document;
+    const A9 = (sel: string, prop = "color"): Row => ["css/x.css", sel, prop, PICTURE_BRAND];
+    const useOf = (value: string, status = false, sel = ".in", prop = "color") =>
+      new Map<string, BrandUse>([[copperKey("css/x.css", sel, prop), { value, status }]]);
+    it("accepts a copper-token use inside a figure", () => {
+      expect(brandPictureOffences([A9(".in")], useOf("var(--rf-copper)"), [doc()])).toEqual([]);
+    });
+    it("P-A9a: the A9 tag outside a figure is red", () => {
+      const u = useOf("var(--rf-copper)", false, ".out");
+      expect(brandPictureOffences([A9(".out")], u, [doc()]).join()).toContain("outside a figure");
+    });
+    it("P-A9b: the A9 tag with a typed copper hex is red", () => {
+      const u = useOf("#" + COPPER_HEXES[0]);
+      expect(brandPictureOffences([A9(".in")], u, [doc()]).join()).toContain("typed colour");
+    });
+    it("P-A9c: the A9 tag on a status rule is red", () => {
+      const u = useOf("var(--rf-copper)", true);
+      expect(brandPictureOffences([A9(".in")], u, [doc()]).join()).toContain("status rule");
+    });
+    it("P-A6: the A9 tag on a definition is red", () => {
+      const u = useOf("var(--rf-copper)", false, ".in", "--x");
+      expect(brandPictureOffences([A9(".in", "--x")], u, [doc()]).join()).toContain("a definition");
+    });
+
+    const def = (prop: string, value: string): CopperRule => ({
+      source: "css/x.css",
+      selectors: [":root"],
+      decls: { [prop]: value },
+    });
+    const reader = (sel: string, value: string, prop = "color"): CopperRule => ({
+      source: "css/x.css",
+      selectors: [sel],
+      decls: { [prop]: value },
+    });
+    const AL = (prop: string): Row => ["css/x.css", ":root", prop, COPPER_ALIAS];
+    const LINK_ROW = (sel: string): Row => ["css/x.css", sel, "color", R17_JOBS[6]];
+    // five aliases, each with one tagged link reader: a green fixture
+    const fixture = () => {
+      const rows: Row[] = [];
+      const rules: CopperRule[] = [];
+      for (let i = 0; i < COPPER_ALIAS_COUNT; i++) {
+        const prop = "--a" + i;
+        rows.push(AL(prop), LINK_ROW(".r" + i));
+        rules.push(def(prop, i % 2 ? "var(--rf-accent)" : "var(--rf-copper-dark)"));
+        rules.push(reader(".r" + i, "var(" + prop + ")"));
+      }
+      return { rows, rules };
+    };
+    it("accepts five tagged aliases with tagged readers", () => {
+      const f = fixture();
+      expect(aliasOffences(f.rows, f.rules, [])).toEqual([]);
+    });
+    it("P-A1: an untagged reader is red", () => {
+      const f = fixture();
+      f.rules.push(reader(".u", "var(--a0)", "background"));
+      expect(aliasOffences(f.rows, f.rules, []).join()).toContain("untagged reader");
+    });
+    it("P-A1b: a reader in a script or page text is red", () => {
+      const f = fixture();
+      const t = [{ name: "x.js", text: "s.color='var(--a0)'" }];
+      expect(aliasOffences(f.rows, f.rules, t).join()).toContain("untagged reader in x.js");
+    });
+    it("P-A2: a second-level alias with an untagged reader is red", () => {
+      const f = fixture();
+      f.rules.push(def("--x", "var(--a0)"));
+      expect(aliasOffences(f.rows, f.rules, []).join()).toContain("untagged reader");
+    });
+    it("P-A3: an alias with a typed hex is red", () => {
+      const f = fixture();
+      f.rules[0] = def("--a0", "#" + COPPER_HEXES[0]);
+      expect(aliasOffences(f.rows, f.rules, []).join()).toContain("value is not a copper token");
+    });
+    it("P-A4: an alias with no readers is red", () => {
+      const f = fixture();
+      f.rules.splice(1, 1);
+      expect(aliasOffences(f.rows, f.rules, []).join()).toContain("a dead alias");
+    });
+    it("P-A5: a sixth alias row breaks the count pin", () => {
+      const f = fixture();
+      f.rows.push(AL("--a5"), LINK_ROW(".r5"));
+      f.rules.push(def("--a5", "var(--rf-copper)"), reader(".r5", "var(--a5)"));
+      expect(aliasOffences(f.rows, f.rules, []).join()).toContain("not 5");
+    });
+  });
+
+  it("(a) every allow-list row carries exactly one allowed tag, none pending", () => {
+    const bad = COPPER_ALLOW.filter(([, , , tag]) => !isAllowedTag(tag));
+    expect(bad.map(([s, sel, p]) => copperKey(s, sel, p))).toEqual([]);
   });
 
   it("(b) no status rule, and no status-named property, references copper", () => {
