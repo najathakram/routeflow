@@ -36,7 +36,7 @@ const PENDING_WAVE: Record<string, { wave: string; reason: string }> = {
     STATIC_SITE_PAGE_NAMES.map((p): [string, { wave: string; reason: string }] => [
       `logo-svg:${p}`,
       {
-        wave: "W4 2.5",
+        wave: "switch day (SA-1178 A2 K2)",
         reason: "the logo (and on home the symbol and end-mark) is still a png; becomes SVG",
       },
     ]),
