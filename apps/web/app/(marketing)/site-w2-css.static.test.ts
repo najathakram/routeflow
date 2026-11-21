@@ -228,33 +228,39 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
     expect(sels.filter((s) => s.includes(":focus-visible"))).toEqual([":focus-visible"]);
   });
 
-  it("outside :root only the two dark panels and the landing price band set --rf-focus, to the on-panel text token", () => {
+  // SA-1203 A10: a dark panel carries its own ring colour. Any rule body that paints the panel background
+  // (var(--rf-panel)) must set --rf-focus:var(--rf-on-panel) in the SAME body, so a new panel cannot
+  // be added with the ink ring (1:1 on ink). It supersedes the earlier pin of a fixed list of three scopes
+  // (.pb, .end, .price), and it pins no count. Any setter anywhere must still be the on-panel value.
+  it("every rule that paints the panel background sets --rf-focus to the on-panel text token in the same body", () => {
+    const panelOffenders: string[] = [];
     const setters: Array<{ sel: string; value: string }> = [];
-    const GRAPHICS = "public/site/graphics/rf-graphics.css";
-    for (const f of CSS_FILES()) {
-      for (const r of rulesOf(strip(read(f)))) {
-        // Only the token file's own bare :root rule may set it; a :root anywhere else, alone or in a list, is a setter.
-        if (f === GRAPHICS && r.selectors.length === 1 && r.selectors[0] === ":root") continue;
+    const judge = (source: string, rules: Rule[]) => {
+      for (const r of rules) {
+        const bg = r.decls["background"] ?? r.decls["background-color"];
+        if (bg === "var(--rf-panel)" && r.decls["--rf-focus"] !== "var(--rf-on-panel)")
+          panelOffenders.push(`${source} :: ${r.selectors.join(", ")}`);
         const v = r.decls["--rf-focus"];
-        if (v !== undefined) for (const sel of r.selectors) setters.push({ sel, value: v });
+        if (v === undefined) continue;
+        // the root token (the graphics file, and the landing token block copy) sets the default ring
+        if (r.selectors.length === 1 && r.selectors[0] === ":root") continue;
+        for (const sel of r.selectors) setters.push({ sel, value: v });
       }
+    };
+    for (const f of CSS_FILES()) {
+      const rules = rulesOf(strip(read(f)));
+      judge(f, rules);
     }
-    // The <style> blocks of the served pages too (SA-1203 A6 follow-up): the landing token block's own bare
-    // :root is the contract copy and may set it; any other setter is one of the allowed scopes or a failure.
     for (const name of STATIC_SITE_PAGE_NAMES) {
       const html = readServedSitePage(name, { websiteId: undefined });
       for (const m of html.matchAll(/<style([^>]*)>([\s\S]*?)<\/style>/gi)) {
         if (/\sid="brand-tokens"/.test(m[1] as string)) continue;
-        for (const r of rulesOf(strip(m[2] as string))) {
-          if (name === "landing" && r.selectors.length === 1 && r.selectors[0] === ":root")
-            continue;
-          const v = r.decls["--rf-focus"];
-          if (v !== undefined) for (const sel of r.selectors) setters.push({ sel, value: v });
-        }
+        judge(`${name}.html <style>`, rulesOf(strip(m[2] as string)));
       }
     }
-    expect(setters.map((x) => x.sel).sort()).toEqual([".end", ".pb", ".price"]);
-    for (const x of setters) expect(x.value).toBe("var(--rf-on-panel)");
+    expect(panelOffenders.sort()).toEqual([]);
+    for (const x of setters)
+      expect({ ...x, ok: x.value === "var(--rf-on-panel)" }).toEqual({ ...x, ok: true });
   });
 
   it("the roles hold 3:1: the accent on white and bone, the on-panel accent on the panel", () => {

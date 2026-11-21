@@ -9,7 +9,7 @@
 .co-body p+p{margin-top:1em}
 .co-body a{color:var(--rf-link);text-decoration:underline;text-underline-offset:3px}
 .co-body .co-sig{display:flex;align-items:center;gap:14px;margin-top:clamp(24px,3vw,36px);color:var(--rf-text)}
-.co-mono{display:grid;place-items:center;flex:none;width:48px;height:48px;border-radius:50%;background:var(--rf-panel);color:var(--rf-on-panel);font-size:16px;font-weight:650;letter-spacing:.02em}
+.co-mono{display:grid;place-items:center;flex:none;width:48px;height:48px;border-radius:50%;background:var(--rf-panel);color:var(--rf-on-panel);font-size:16px;font-weight:650;letter-spacing:.02em;--rf-focus:var(--rf-on-panel)}
 .co-sig b{display:block;font-weight:600;color:var(--rf-text)}
 .co-sig span span{display:block;font-size:16px;color:var(--rf-text-2)}
 .co-ask{padding:clamp(40px,6vw,88px) 0 clamp(72px,9vw,128px);border-top:1px solid var(--rf-line);text-align:center}

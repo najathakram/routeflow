@@ -324,6 +324,7 @@ Used here because the UX ledger (ux-ledger-p12-p16.md) holds P-rows for layout d
 | DS-08 | `--rf-focus` (rf-graphics.css contract block, landing.html token block, `.pb`, `.end`, `.price`) | copper | `--rf-text` at the root, `--rf-on-panel` on the dark panels | one token change for the focus ring; contrast is measured later in the slot (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
 | DS-09 | `--rf-box-front`, `--rf-box-side` (box art), home.html truck inline fills, landing `.f-box` `.f-flap` | copper-tinted | kraft #9A8260 and #6E5A40; no box value equals a copper token value (pinned) | box and truck art have no R17 job (R17, SA-1203 A5; lead clearance, lead, 2026-11-21, after 03:31Z) |
 | DS-10 | graphics/rf-graphics.css:42 `--rf-skin-b`, `--rf-skin-c` (unused skin tones) | typed tones with a copper hue, no reader | deleted with their allow-list rows (7c8634b3c9) | no reader anywhere; F39 (R17, SA-1203 A6 3; lead clearance, lead, 2026-11-21) |
+| DS-11 | every rule that paints `var(--rf-panel)` (12 selectors, 13 rule bodies: .band-ink, .pcard.featured, .cta-band, .risk, .site-header.on-dark, .pd-deep in two files, #founder .fd-in, landing .carry, .co-mono, .pb-b--me, .jr-n, .fd-mono) | ink focus ring on an ink panel (1:1) | `--rf-focus:var(--rf-on-panel)` in the same rule body; pinned for any new panel | the ring must reach 3:1 on every dark band (R17, SA-1203 A5, A10; lead clearance, lead, 2026-11-21) |
 
 ## Counts
 
