@@ -248,12 +248,14 @@ for (const { route, scope } of [
 }
 
 // SA-1200 A3 (owner answer A): the K3 empty-band row is retired. Its intent (no hole inside a plan card) is carried
-// by the two exact checks below: the list tops of a row start level (K1), and each button sits right after its own list (A).
+// by exact checks: the list tops of a row start level (K1, below), each list starts right after its own button (A4,
+// below), and the buttons of a row share one top (spec 95, K4). SA-1200 A4: the card order is .pfor, the button, then
+// the list, every child a row of the card's subgrid.
 
 // SA-1200 K1 / A1 M1: the card rows come from the grid (css/site.css, .pgrid--4 .pcard subgrid), so a row reads across: the
 // lists of the four cards start at one top. Only the list tops are pinned. The prices cannot see a wrapping description
-// (every card's price row is as tall as its tallest card either way), and the buttons sit under a list of a different
-// length, so neither is a row-alignment fact. Two widths, both four columns (the grid is two columns at 1080 and under):
+// (every card's price row is as tall as its tallest card either way); the button tops are spec 95's K4 row. Two widths,
+// both four columns (the grid is two columns at 1080 and under):
 // 1440, where every description wraps to 2 lines, and 1100, where they wrap unevenly. Measured (A1): the wrap is
 // 3-2-2-2 lines from 1084 to 1108 and 2-2-2-2 from 1120, so 1100 is uneven (Starter's .pfor takes 3 lines, the others 2)
 // and 1440 is even. Without the grid rows (a planted no-subgrid) Starter's list starts lower at 1100 and this goes red.
@@ -301,13 +303,15 @@ for (const route of ["/pricing", "/"] as const) {
   }
 }
 
-// SA-1200 A1-2 option A: each plan card's button sits right after its own list. The gap from the list's border box
-// bottom to the button's top is the designed one, read from the page's own computed style (the wrapper's row-gap, the
-// list's margin-bottom, the button's margin-top), +-1px. This is what catches a hole between a list and its button (the
-// 249px band that a whole-card subgrid left under a shorter list). The list is ul.checks on /pricing and the .pm meter on "/".
+// SA-1200 A4-4: each plan card's list starts right after its own button. The gap from the button's border box bottom
+// to the list's top is the designed one, read from the page's own computed style (the card's row-gap, the button's
+// margin-bottom, the list's margin-top), +-1px. This is what catches a hole between a button and its list (a button row
+// taller than its buttons, or a list moved without a margin). A margin change is a design change and moves the designed
+// gap with it (SA-1200 A6). The list is ul.checks on /pricing and the .pm meter on "/". The cards are hidden under
+// 900px (the plan table shows), so this runs at the K1 widths.
 for (const route of ["/pricing", "/"] as const) {
   for (const w of PLAN_ALIGN_WIDTHS) {
-    test(`A the button sits right after its own list: ${route} @${w}x900`, async ({ page }) => {
+    test(`A4 the list starts right after its own button: ${route} @${w}x900`, async ({ page }) => {
       await open(page, route, w, 900);
       const listSel = route === "/" ? ".pm" : "ul.checks";
       const read = await page.evaluate((sel) => {
@@ -318,15 +322,16 @@ for (const route of ["/pricing", "/"] as const) {
           const list = c.querySelector(sel);
           const btn = c.querySelector(".pbtn");
           if (!list || !btn) throw new Error(`no ${sel} or .pbtn in a plan card`);
-          const wrap = btn.parentElement as Element;
+          if (btn.parentElement !== c || list.parentElement !== c)
+            throw new Error(`the button and ${sel} must be the card's own rows`);
           const px = (v: string) => parseFloat(v) || 0;
           const designed =
-            px(getComputedStyle(wrap).rowGap) +
-            px(getComputedStyle(list).marginBottom) +
-            px(getComputedStyle(btn).marginTop);
+            px(getComputedStyle(c).rowGap) +
+            px(getComputedStyle(btn).marginBottom) +
+            px(getComputedStyle(list).marginTop);
           return {
             name: (c.querySelector("h2,h3")?.textContent ?? "plan").trim(),
-            actual: btn.getBoundingClientRect().top - list.getBoundingClientRect().bottom,
+            actual: list.getBoundingClientRect().top - btn.getBoundingClientRect().bottom,
             designed,
           };
         });

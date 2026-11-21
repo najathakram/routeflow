@@ -50,10 +50,26 @@ describe("sync-site-port tokenise", () => {
     expect(renderSitePage(out, b)).toBe(snippet);
   });
 
-  it("whole words only: an identifier that starts with the name is left intact", () => {
+  it("an identifier that starts with the name, and is not allow-listed, throws", () => {
     const b = loadBrand();
-    const html = `<p>${b.name}Shell and ${b.name}.</p>`;
-    expect(tokenise(html, b)).toBe(`<p>${b.name}Shell and {{brand:name}}.</p>`);
+    expect(() => tokenise(`<p>${b.name}Shell and ${b.name}.</p>`, b)).toThrow(/cannot tokenise/);
+  });
+
+  it("the allow-listed identifiers pass untouched next to a bare name, which is tokenised", () => {
+    const b = loadBrand();
+    // the three identifiers the tokeniser allows, spelled from the previous name the identifiers carry
+    const old = b.formerly;
+    const allowed = [`${old}Shell`, `${old.toLowerCase()}-v4`, `/brand/${old.toLowerCase()}-mark`];
+    expect(allowed).toHaveLength(3);
+    // Once under the live name, and once with the previous name as the brand's name: only then does an
+    // allowed identifier hold the name, so the tokeniser's allow-list strip is what lets it through.
+    for (const brand of [b, { ...b, name: b.formerly }]) {
+      for (const id of allowed) {
+        expect(tokenise(`<p>${id} and ${brand.name}.</p>`, brand)).toBe(
+          `<p>${id} and {{brand:name}}.</p>`,
+        );
+      }
+    }
   });
 
   it("a name inside a host or path it cannot tokenise throws instead of corrupting", () => {
@@ -96,20 +112,27 @@ describe("home.html structured data (SA-1178)", () => {
     expect(homeJsonLdProblems(home, real)).toEqual([]);
   });
 
-  it("a brand whose name, formerly and officialName all differ goes red: alternateName is stale", () => {
+  it("a brand whose name, formerly and officialName all differ gets both in alternateName, not stale", () => {
     const fx = { ...real, name: "Fx Name", formerly: "Fx Former", officialName: "Fx-Official" };
-    expect(homeJsonLd(fx)).toContain('"alternateName":["{{brand:name}}","{{brand:formerly}}"]');
-    expect(homeJsonLdProblems(home, fx).join("\n")).toContain(
-      "regenerate home: alternateName is stale",
-    );
+    // the alternateName the generator builds from this fixture's fields: both distinct values
+    const expected = `"alternateName":["{{brand:name}}","{{brand:formerly}}"]`;
+    expect(new Set([fx.name, fx.formerly, fx.officialName]).size).toBe(3);
+    expect(homeJsonLd(fx)).toContain(expected);
+    expect(homeJsonLdProblems(home, fx)).toEqual([]);
   });
 
   it("alternateName drops duplicates and the official name, and is left out when empty", () => {
-    expect(homeJsonLd(real)).not.toContain("alternateName");
-    const one = homeJsonLd({ ...real, name: "A", formerly: "A", officialName: "B" });
-    expect(one).toContain('"alternateName":["{{brand:name}}"]');
-    const none = homeJsonLd({ ...real, name: "A", formerly: "B", officialName: "A" });
-    expect(none).toContain('"alternateName":["{{brand:formerly}}"]');
+    // fixture brands whose values repeat; nothing here reads the real brand.json
+    const base = { ...real, name: "Fx A", formerly: "Fx A", officialName: "Fx B" };
+    const nameOnly = homeJsonLd(base);
+    expect(nameOnly).toContain('"alternateName":["{{brand:name}}"]');
+    expect(nameOnly).not.toContain("{{brand:formerly}}");
+    const swapped = { ...base, name: "Fx B", formerly: "Fx A", officialName: "Fx B" };
+    const formerlyOnly = homeJsonLd(swapped);
+    expect(formerlyOnly).toContain('"alternateName":["{{brand:formerly}}"]');
+    expect(formerlyOnly).not.toContain('"{{brand:name}}"');
+    const empty = homeJsonLd({ ...base, name: "Fx B", formerly: "Fx B", officialName: "Fx B" });
+    expect(empty).not.toContain("alternateName");
   });
 
   it("a brand value with & < > \" or ' in a tokenised key goes red and names the key", () => {
