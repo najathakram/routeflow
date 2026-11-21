@@ -84,9 +84,14 @@ describe("site-css-rules: the hand-written rule readers that remain (SA-1203 A20
   });
 });
 
-describe("site-css-rules: an escape is found even beside a comment (SA-1203 A24 M1)", () => {
-  it("a quote inside a comment does not open a string, so the escape after it is red", () => {
-    const css = '.zz{color:var(/*"*/\\2d\\2drf-copper)}';
+describe("site-css-rules: an escape beside a /* is still found (SA-1203 A24 M1)", () => {
+  // inside an unquoted url(...) a /* is plain text to a browser, so it must never hide an escape
+  const forms = [
+    ".zz{background:url(x/*) var(\\2d\\2drf-copper)}",
+    ".zz{background:url(x/*) var(\\2d\\2drf-copper) url(y*/)}",
+    '.zz{background:url("x/*") var(\\2d\\2drf-copper)}',
+  ];
+  it.each(forms)("%s is red", (css) => {
     expect(readCss(css, "f.css").problems.join()).toContain("rule=escape-outside-string");
   });
   it("a comment with a quote and no escape is green, and a quoted escape is green", () => {

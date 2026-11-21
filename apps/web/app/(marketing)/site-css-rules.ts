@@ -43,7 +43,7 @@ export type CssRead = { decls: CssDecl[]; rules: CssRule[]; problems: string[] }
 
 const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 
-/** The index of the first backslash outside a string and a comment, or -1. A backslash inside a quoted string is
+/** The index of the first backslash outside a string, or -1. A backslash inside a quoted string is
  *  ordinary text, as in a content string; anywhere else it starts a CSS escape the matchers cannot see. */
 export function escapeOutsideString(text: string): number {
   let quote = "";
@@ -52,10 +52,6 @@ export function escapeOutsideString(text: string): number {
     if (quote) {
       if (c === "\\") i++;
       else if (c === quote) quote = "";
-    } else if (c === "/" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
-      if (end < 0) return -1;
-      i = end + 1;
     } else if (c === '"' || c === "'") quote = c;
     else if (c === "\\") return i;
   }
