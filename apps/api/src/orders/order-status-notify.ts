@@ -130,6 +130,7 @@ export async function notifyOrderStatusChange(
         customerId: order.customerId,
         senderId: userSub || null,
         vars,
+        entity: { type: "Order", id: order.id }, // W-1286 (SA-1202 C7): the email's delivery row names the order
       })
       .catch(() => {});
   }

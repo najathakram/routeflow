@@ -3,6 +3,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import type { EmailDeliveryStatus } from "@routeflow/types";
 import type { EmailKind } from "./email-kinds";
 import { redactAddresses } from "./redact-addresses";
+import {
+  normalizeMessageId,
+  type EmailFallbackClass,
+  type EmailRoute,
+} from "./bounces/email-bounce-keys";
 
 const ERROR_MAX = 500;
 
@@ -18,6 +23,11 @@ export interface EmailDeliveryContext {
   kind: EmailKind;
   entityType?: string;
   entityId?: string;
+  /**
+   * W-1286 (SA-1202 C6): the other entities one email is about (a completion email names several invoices). Each gets
+   * its own row with the same status, route and message id; only the first row carries the unique `refToken`.
+   */
+  alsoEntityIds?: string[];
 }
 
 export interface EmailDeliveryRecord {
@@ -31,6 +41,12 @@ export interface EmailDeliveryRecord {
   error?: string | null;
   attempts?: number;
   sentAt?: Date | null;
+  /** C6: see EmailDeliveryContext.alsoEntityIds. */
+  alsoEntityIds?: string[];
+  /** C5: the route the send took. C4': the per-send reference token. C29: the fallback class, never provider text. */
+  route?: EmailRoute | null;
+  refToken?: string | null;
+  fallbackReason?: EmailFallbackClass | null;
 }
 
 /** Best-effort audit writer for outbound email attempts. Never stores a subject or body. */
@@ -43,20 +59,33 @@ export class EmailDeliveryService {
   /** Writes one row; NEVER throws (an audit failure must not change a send result). */
   async record(row: EmailDeliveryRecord): Promise<void> {
     try {
-      await this.prisma.forTenant().emailDelivery.create({
-        data: {
-          tenantId: row.tenantId,
-          kind: row.kind,
-          toAddress: row.toAddress,
-          entityType: row.entityType ?? null,
-          entityId: row.entityId ?? null,
-          status: row.status,
-          providerMessageId: row.providerMessageId ?? null,
-          error: sanitizeDeliveryError(row.error),
-          attempts: row.attempts ?? (row.status === "SENT" || row.status === "FAILED" ? 1 : 0),
-          sentAt: row.sentAt ?? null,
-        },
-      });
+      const db = this.prisma.forTenant();
+      const ids = [row.entityId ?? null, ...(row.alsoEntityIds ?? [])].filter(
+        (id, i, all) => all.indexOf(id) === i,
+      );
+      for (const [i, entityId] of ids.entries()) {
+        await db.emailDelivery.create({
+          data: {
+            tenantId: row.tenantId,
+            kind: row.kind,
+            toAddress: row.toAddress,
+            entityType: row.entityType ?? null,
+            entityId,
+            status: row.status,
+            // C3: the bare form (brackets off, lower case); the lookup asks for both forms.
+            providerMessageId: row.providerMessageId
+              ? normalizeMessageId(row.providerMessageId)
+              : null,
+            error: sanitizeDeliveryError(row.error),
+            attempts: row.attempts ?? (row.status === "SENT" || row.status === "FAILED" ? 1 : 0),
+            sentAt: row.sentAt ?? null,
+            route: row.route ?? null,
+            // `refToken` is unique: the first row holds it, the siblings are found by the shared message id.
+            refToken: i === 0 ? (row.refToken ?? null) : null,
+            fallbackReason: row.fallbackReason ?? null,
+          },
+        });
+      }
     } catch (err) {
       this.logger.warn(
         `EmailDelivery row not written (${row.kind}/${row.status}): ${sanitizeDeliveryError(

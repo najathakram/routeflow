@@ -1437,6 +1437,17 @@ model EmailDelivery {
   createdAt         DateTime            @default(now())
   // SHA-256 of the rendered subject+body computed in the app, stored as a hash never the content; no index yet.
   contentFingerprint String?
+  // W-1286 (SA-1202 C5): the route the send took (app list: tenant-smtp | platform-smtp | mailbox | resend | none);
+  // `transport` is never the route (both SMTP paths say "smtp").
+  route             String?
+  // W-1286 (SA-1202 C4'): the X-Delivery-Ref header value of this send, 128 random bits as hex, never the row id.
+  // Unique and nullable; a completion email's sibling rows carry none (the message id finds them).
+  refToken          String?             @unique
+  // W-1286 (SA-1202 C29): why a tenant-server send fell back, a class only (AUTH | CONNECT | TLS | OTHER).
+  fallbackReason    String?
+  // W-1286 (SA-1202 C8): written by the bounce reader (PR-2) when a delivery-status notice names this send.
+  bouncedAt         DateTime?
+  bounceCode        String?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -1444,4 +1455,30 @@ model EmailDelivery {
   @@index([tenantId, kind, createdAt])
   @@index([entityType, entityId])
   @@index([providerMessageId])
+}
+
+/// W-1286 (SA-1202 C8, C9): one read bounce notice, so a notice seen twice is applied once. `noticeKey` is a sha256 of
+/// the source name plus the source's own stable notice id. No address, header or body is stored (C23). `deliveryId`
+/// and `tenantId` are plain text: the notice outlives neither (pruned at 90 days) and a missing match has neither.
+model EmailBounceNotice {
+  id          String    @id @default(uuid())
+  noticeKey   String    @unique
+  // App-level lists (email/bounces): source name, outcome, match key (REF | MESSAGE_ID).
+  source      String
+  outcome     String
+  code        String?
+  matchKey    String?
+  deliveryId  String?
+  tenantId    String?
+  processedAt DateTime  @default(now())
+  notifiedAt  DateTime?
+}
+
+/// W-1286 (SA-1202 C8, C22): one heartbeat row per bounce source, written every tick. Staleness is computed on read.
+model EmailBounceSourceState {
+  source         String   @id
+  lastAttemptAt  DateTime
+  lastSuccessAt  DateTime?
+  lastErrorClass String?
+  updatedAt      DateTime @updatedAt
 }

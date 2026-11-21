@@ -177,6 +177,9 @@ model Customer {
   deliveryWindowStart   String?
   deliveryWindowEnd     String?
   email                 String?
+  // W-1286 (SA-1202 C8): set by the bounce reader (PR-2) when a hard bounce names this address; no writer yet.
+  emailBouncedAt        DateTime?
+  emailBounceCode       String?
   mobile                String?
   customerType          String      @default("BUSINESS")
   supplierOnly          Boolean     @default(false) // true = this contact is a vendor/supplier; hide from Customers list
