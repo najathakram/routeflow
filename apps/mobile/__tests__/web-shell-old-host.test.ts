@@ -47,8 +47,13 @@ describe("T40a: the shell loads the old host only", () => {
 
   it("web.tsx hands the WebView the shell's own allow-list and types no host", () => {
     const src = readFileSync(join(ROOT, "app", "(shell)", "web.tsx"), "utf8");
-    expect(src).toContain("originWhitelist={SHELL.allowed.map((o) => `${o}*`)}");
-    expect(src).toContain('import { SHELL_CONFIG } from "../../lib/web-shell/shell-env"');
+    // tolerant of spacing and quote style, not of a typed host
+    expect(src).toMatch(
+      /originWhitelist=\{\s*SHELL\.allowed\s*\.map\(\s*\(?\s*o\s*\)?\s*=>\s*[`'"]\$\{o\}\*[`'"]\s*\)\s*\}/,
+    );
+    expect(src).toMatch(
+      /import\s*\{\s*SHELL_CONFIG\s*\}\s*from\s*['"]\.\.\/\.\.\/lib\/web-shell\/shell-env['"]/,
+    );
     expect(src).not.toMatch(/https?:\/\/[a-z0-9]/i);
   });
 
