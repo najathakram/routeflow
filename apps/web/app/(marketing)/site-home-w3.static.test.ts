@@ -134,13 +134,14 @@ describe("SA-1180 (2): a status colour marks a status", () => {
     for (const mark of STATUS_MARKS) expect(users).toContain(mark);
   });
 
-  it("the price change is the accent and the stock marks are text", () => {
+  // SA-1203 A5: the change amount is ink, as R17 allows copper only in its listed jobs.
+  it("the change amount and the stock marks are text", () => {
     const body = (sel: string) =>
       rulesOf(css)
         .filter((r) => r.selectors.includes(sel))
         .map((r) => r.body)
         .join(";");
-    expect(body(".c-chg b")).toContain("color:var(--rf-accent)");
+    expect(body(".c-chg b")).toContain("color:var(--rf-text)");
     expect(body(".b-stk.ok")).toContain("color:var(--rf-text)");
     expect(body(".b-stk.lo")).toContain("color:var(--rf-text-2)");
   });

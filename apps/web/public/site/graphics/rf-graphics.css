@@ -13,7 +13,7 @@
   --rf-btn:var(--rf-ink);--rf-btn-press:var(--rf-ink-press);--rf-btn-fg:var(--rf-white);
   --rf-panel:var(--rf-ink);--rf-on-panel:var(--rf-white);--rf-on-panel-2:var(--rf-bone);
   --rf-soft:var(--rf-bone);
-  --rf-link:var(--rf-copper-dark);--rf-link-on-panel:var(--rf-copper-light);--rf-focus:var(--rf-accent);
+  --rf-link:var(--rf-copper-dark);--rf-link-on-panel:var(--rf-copper-light);--rf-focus:var(--rf-text);
   --rf-accent:var(--rf-copper);--rf-accent-on-panel:var(--rf-copper-light);
   /* Status: Paid, Pending, Overdue and nothing else. */
   --rf-paid-bg:var(--brand-paid-bg);--rf-paid:var(--brand-paid-text);--rf-pending-bg:var(--brand-pending-bg);--rf-pending:var(--brand-pending-text);--rf-overdue-bg:var(--brand-overdue-bg);--rf-overdue:var(--brand-overdue-text);
@@ -21,6 +21,7 @@
   --rf-wh-work:#E9E4DB;--rf-wh-work-2:#DCD6CB;--rf-wh-work-wall:#C2BBAE;
   --rf-wh-sell:#1B2638;--rf-wh-sell-2:#27364C;--rf-wh-sell-wall:#04070D;
   --rf-wh-focus:var(--brand-copper);--rf-wh-focus-wall:var(--brand-copper-dark);
+  --rf-box-front:#9A8260;--rf-box-side:#6E5A40;
   /* The only edge treatment: a one-pixel line. */
   --rf-ring:0 0 0 1px var(--rf-line);
   --rf-font:"Geist","Geist Fallback",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
@@ -37,7 +38,7 @@
 /*tokens:end*/
 /* Art only: cartons, people, and the roles the scenes use. A slot on a colour band changes the roles and the art follows. */
 :root{
-  --rf-biscuit:#f6bd7c;--rf-biscuit-deep:#e9a45a;--rf-box-top:#EACBB3;--rf-box-front:var(--rf-copper-light);--rf-box-side:var(--rf-copper);
+  --rf-biscuit:#f6bd7c;--rf-biscuit-deep:#e9a45a;--rf-box-top:#EACBB3;
   --rf-skin-a:#f7cdac;--rf-skin-b:#dc9f72;--rf-skin-c:#99643f;--rf-hair:#2a2c3f;
   --rf-road:var(--rf-line);
   --rf-disc-a:var(--rf-bone);--rf-disc-b:var(--rf-bone);--rf-disc-c:var(--rf-bone);

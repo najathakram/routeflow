@@ -23,7 +23,7 @@
 .rfw-s{gap:22px}
 .rfw-h .rfw-title{font-size:clamp(40px,3.9vw,56px)}
 .rfw-t .rfw-title{font-size:clamp(34px,3vw,44px);letter-spacing:-.03em}
-.rfw-hint{position:absolute;margin:0;font-size:16px;line-height:20px;font-weight:500;white-space:nowrap;color:var(--rf-link);will-change:transform,opacity}
+.rfw-hint{position:absolute;margin:0;font-size:16px;line-height:20px;font-weight:500;white-space:nowrap;color:var(--rf-text-2);will-change:transform,opacity}
 .rfw-h,.rfw-t,.rfw-card{visibility:hidden}
 .rfw-t,.rfw-card{opacity:0}
 /* Words and cards fade and rise on their own layers, so a beat changing never repaints the page. */

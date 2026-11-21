@@ -81,6 +81,9 @@ describe("T14a: the contract block of rf-graphics.css", () => {
     "--rf-wh-sell": "#1B2638",
     "--rf-wh-sell-2": "#27364C",
     "--rf-wh-sell-wall": "#04070D",
+    // SA-1203 A5: box art is kraft, not a copper tint
+    "--rf-box-front": "#9A8260",
+    "--rf-box-side": "#6E5A40",
   };
   /** The old names are gone (lane 2.1b-last): nothing typed in the block may be a legacy alias. */
   const LEGACY_TYPED = new Set<string>();
@@ -145,7 +148,8 @@ describe("T14a: the contract block of rf-graphics.css", () => {
       "--rf-soft": "var(--rf-bone)",
       "--rf-link": "var(--rf-copper-dark)",
       "--rf-link-on-panel": "var(--rf-copper-light)",
-      "--rf-focus": "var(--rf-accent)",
+      // SA-1203 A5: the ring is ink, not the accent.
+      "--rf-focus": "var(--rf-text)",
       "--rf-accent": "var(--rf-copper)",
       "--rf-accent-on-panel": "var(--rf-copper-light)",
       "--rf-ring": "0 0 0 1px var(--rf-line)",

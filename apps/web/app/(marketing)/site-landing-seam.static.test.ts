@@ -373,6 +373,7 @@ describe("review fixes: phone bar, art contrast, art tokens", () => {
       if (key.startsWith("--brand-")) return palette[key.slice(8)] as string;
       t = new RegExp(`${key}:([^;}]+)`).exec(stripCss(block).replace(/\s+/g, ""))?.[1] ?? "";
     }
+    if (/^#[0-9a-f]{6}$/i.test(t)) return t; // SA-1203 A5: the box tokens are typed kraft values
     throw new Error(`cannot resolve ${token}`);
   };
   const lum = (hex: string) => {

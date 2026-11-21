@@ -204,9 +204,10 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
   };
   const graphics = strip(read("public/site/graphics/rf-graphics.css"));
 
-  it("the global ring reads --rf-focus, and the root sets it to the accent token", () => {
+  // SA-1203 A5: the ring is ink (on-panel on the two dark panels), one token change; R17 has no ring job.
+  it("the global ring reads --rf-focus, and the root sets it to the text token", () => {
     expect(declOf(SITE, ":focus-visible", "outline")).toEqual(["3px solid var(--rf-focus)"]);
-    expect(declOf(graphics, ":root", "--rf-focus")).toEqual(["var(--rf-accent)"]);
+    expect(declOf(graphics, ":root", "--rf-focus")).toEqual(["var(--rf-text)"]);
   });
 
   it("the retired --ring-c is named nowhere in the site css", () => {
@@ -227,7 +228,7 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
     expect(sels.filter((s) => s.includes(":focus-visible"))).toEqual([":focus-visible"]);
   });
 
-  it("outside :root only the two dark panels set --rf-focus, to the on-panel accent", () => {
+  it("outside :root only the two dark panels set --rf-focus, to the on-panel text token", () => {
     const setters: Array<{ sel: string; value: string }> = [];
     const GRAPHICS = "public/site/graphics/rf-graphics.css";
     for (const f of CSS_FILES()) {
@@ -239,7 +240,7 @@ describe("D-4: one focus token, set by the band, never a list of selectors", () 
       }
     }
     expect(setters.map((x) => x.sel).sort()).toEqual([".end", ".pb"]);
-    for (const x of setters) expect(x.value).toBe("var(--rf-accent-on-panel)");
+    for (const x of setters) expect(x.value).toBe("var(--rf-on-panel)");
   });
 
   it("the roles hold 3:1: the accent on white and bone, the on-panel accent on the panel", () => {
@@ -289,9 +290,16 @@ describe("T21: the box art tokens read the palette", () => {
     return 0.2126 * (r as number) + 0.7152 * (g as number) + 0.0722 * (b as number);
   };
 
-  it("the front is copper light and the side is copper, read from palette.json", () => {
-    expect(resolve("--rf-box-front")).toBe((PALETTE["copper-light"] as string).toUpperCase());
-    expect(resolve("--rf-box-side")).toBe((PALETTE.copper as string).toUpperCase());
+  // SA-1203 A5: box art is not an app picture, so it leaves copper for kraft; the pins are the two values,
+  // and neither may equal any copper value in the palette (site-repaint-1a pins the same by value).
+  it("the front and side are kraft values, and neither is a copper value of the palette", () => {
+    expect(resolve("--rf-box-front")).toBe("#9A8260");
+    expect(resolve("--rf-box-side")).toBe("#6E5A40");
+    const copper = Object.entries(PALETTE)
+      .filter(([k]) => k.startsWith("copper"))
+      .map(([, v]) => v.toUpperCase());
+    expect(copper).not.toContain(resolve("--rf-box-front"));
+    expect(copper).not.toContain(resolve("--rf-box-side"));
   });
 
   it("the top is a lighter warm tint that is no palette value", () => {
