@@ -179,6 +179,7 @@ test("the total cap is >, not >=: exactly 115 KB passes, one byte more misses", 
   // html 5 + css 10 + first-touch 0.5 + analytics 1 (fetched directly) + a pad svg = 115 KB exactly.
   const head =
     '<html><link rel="stylesheet" href="/site/css/site.css"><img src="/site/img/pad.svg">' +
+    '<link rel="preload" href="/site/fonts/geist.woff2" as="font">' +
     '<script src="/site/js/first-touch.js"></script>';
   const html = head + " ".repeat(5 * KB - Buffer.byteLength(head));
   const run = async (padKb, extra = 0) => {
@@ -191,9 +192,10 @@ test("the total cap is >, not >=: exactly 115 KB passes, one byte more misses", 
     });
     return runSpeedRun(opts({ only: "bytes", pages: ["/pricing"] }), deps({ site }).d);
   };
-  const at = await run(98.5);
-  if (at.result.misses.some((m) => m.includes("total"))) throw new Error("total missed at the cap");
-  const over = await run(98.5, 1);
+  // the 20 KB font is linked now, so the pad is 78.5 KB
+  eq((await run(78.5)).exit, 0, "exactly at the cap");
+  const over = await run(78.5, 1);
+  eq(over.exit, 1, "one byte over");
   if (!over.result.misses.some((m) => m.includes("total"))) throw new Error("no total miss");
 });
 
@@ -615,6 +617,21 @@ test("taps [<16, <16, 250]: fast taps count as 0 ms, the median passes with its 
   const phone = r.result.t44.find((x) => x.width === "phone");
   eq(phone.median.tap, 0, "median");
   eq(phone.tapLabel, "<16 ms, ok", "label kept");
+  const none = await runSpeedRun(opts(o), deps({ probe: tapProbe(() => 120) }).d);
+  eq(
+    "tapLabel" in none.result.t44.find((x) => x.width === "phone"),
+    false,
+    "no label on a real tap",
+  );
+  const mixed = await runSpeedRun(
+    opts(o),
+    deps({ probe: tapProbe((n) => (n === 1 ? null : 120)) }).d,
+  );
+  eq(
+    "tapLabel" in mixed.result.t44.find((x) => x.width === "phone"),
+    false,
+    "median not 0: no label",
+  );
   const slow = await runSpeedRun(
     opts(o),
     deps({ probe: tapProbe((n) => (n === 1 ? null : 250)) }).d,
@@ -660,7 +677,6 @@ const withBudget = (edit) => {
 test("a renamed or non-numeric budget key makes loadBudget throw, naming the key", () => {
   const cases = [
     ["lcpMs", (t) => t.replace(/lcpMs/g, "lcpMillis"), "lcpMs"],
-    ["SPEED_RUNS", (t) => t.replace("SPEED_RUNS = 3", "SPEED_RUNS = 4"), "SPEED_RUNS"],
     ["home", (t) => t.replace("home: 175", "homepage: 175"), "GZIP_TOTAL_KB.home"],
     ["latency", (t) => t.replace("latencyMs: 40", "latencyMs: NaN"), "latencyMs"],
   ];
@@ -688,6 +704,44 @@ test("a route set that differs from STATIC_ROUTES exits 2; the real file matches
   const y = deps({ staticRoutes: [...PAGES, "/extra"] });
   eq((await runSpeedRun(opts(), y.d)).exit, 2, "extra route");
   eq([...loadStaticRoutes()].sort(), [...PAGES].sort(), "site-proof.ts");
+});
+
+test("SPEED_RUNS is 3 today; the loader only requires a positive integer", () => {
+  eq(budget.SPEED_RUNS, 3, "SPEED_RUNS today");
+  const ok = loadBudget(withBudget((t) => t.replace("SPEED_RUNS = 3", "SPEED_RUNS = 5")));
+  eq(ok.SPEED_RUNS, 5, "5 loads");
+  for (const bad of ["0", "2.5"]) {
+    let threw = false;
+    try {
+      loadBudget(withBudget((t) => t.replace("SPEED_RUNS = 3", "SPEED_RUNS = " + bad)));
+    } catch (err) {
+      threw = err instanceof PreflightError;
+    }
+    eq(threw, true, "SPEED_RUNS " + bad);
+  }
+});
+
+test("a redirect error names the status and location; a non-local host is masked", async () => {
+  const redirecting = (location) => {
+    const site = fakeSite();
+    const inner = site.fetcher;
+    site.fetcher = async (url, o) =>
+      new URL(url).pathname === "/pricing"
+        ? { status: 301, contentType: "text/html", body: tag(""), location }
+        : inner(url, o);
+    return runSpeedRun(opts({ only: "bytes" }), deps({ site }).d);
+  };
+  const local = await redirecting("http://localhost:3001/login");
+  eq(local.exit, 2, "exit");
+  if (
+    !/301/.test(local.result.error) ||
+    !local.result.error.includes("http://localhost:3001/login")
+  )
+    throw new Error(local.result.error);
+  const remote = await redirecting("https://other.example.org/secret/path");
+  eq(remote.exit, 2, "remote exit");
+  if (remote.result.error.includes("other.example.org") || !/301/.test(remote.result.error))
+    throw new Error(remote.result.error);
 });
 
 let failed = 0;

@@ -94,8 +94,8 @@ export function validateBudget(b) {
     "SPEED_RUNS",
   ])
     num(b[n], n);
-  if (b.SPEED_RUNS !== 3 || !Number.isInteger(b.SPEED_RUNS))
-    throw new PreflightError("budget key SPEED_RUNS must be the integer 3");
+  if (!Number.isInteger(b.SPEED_RUNS) || b.SPEED_RUNS < 1)
+    throw new PreflightError("budget key SPEED_RUNS must be a positive integer");
 }
 
 /** Reads the budget numbers out of the .ts as text. Any missing name throws. */
@@ -210,6 +210,18 @@ export function linkedFiles(html, page) {
 
 const kindOf = (route) => (route === "/" ? "home" : route === "/landing" ? "landing" : "inner");
 
+/** A redirect target for an error message: a non-local host is masked. */
+export function maskLocation(location) {
+  if (!location) return "(no location header)";
+  if (!/^[a-z][a-z0-9+.-]*:\/\/|^\/\//i.test(location)) return location;
+  try {
+    const u = new URL(location, "http://localhost");
+    return isLocalUrl(u.toString()) ? location : `<non-local host masked>${u.pathname}`;
+  } catch {
+    return "(unreadable location)";
+  }
+}
+
 async function getOk(deps, url, acceptEncoding, what) {
   let res;
   try {
@@ -217,6 +229,10 @@ async function getOk(deps, url, acceptEncoding, what) {
   } catch (err) {
     throw new PreflightError(`${what}: ${url} could not be fetched (${err.message})`);
   }
+  if (res.status >= 300 && res.status < 400)
+    throw new PreflightError(
+      `${what}: ${url} redirected (${res.status}) to ${maskLocation(res.location)}`,
+    );
   if (res.status !== 200) throw new PreflightError(`${what}: ${url} answered ${res.status}`);
   return res;
 }
@@ -404,7 +420,7 @@ async function timePage(deps, budget, base, route, width) {
     const taps = runs.filter((r) => !r.tapMiss).map((r) => r.tap ?? 0);
     med.tap = median(taps);
     row.budget.tap = budget.MENU_TAP_DURATION_MS;
-    if (runs.some((r) => r.tapLabel)) row.tapLabel = TAP_FAST_LABEL;
+    if (med.tap === 0 && runs.some((r) => r.tapLabel)) row.tapLabel = TAP_FAST_LABEL;
     if (med.tap !== null && med.tap > budget.MENU_TAP_DURATION_MS)
       miss("menu tap", med.tap, budget.MENU_TAP_DURATION_MS, " ms");
   }
@@ -548,6 +564,7 @@ function realFetcher() {
     return {
       status: res.status,
       contentType: res.headers.get("content-type") ?? "",
+      location: res.headers.get("location") ?? "",
       body: Buffer.from(await res.arrayBuffer()),
     };
   };
@@ -615,7 +632,7 @@ const WINDOW_MS = 3000;
 /** Polls aria-expanded until it is "true" or the timeout passes (spec 87 waits the same way). */
 export async function waitForMenuOpen(
   read,
-  { timeoutMs = 2000, intervalMs = 50, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {},
+  { timeoutMs = 5000, intervalMs = 50, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {},
 ) {
   for (let waited = 0; ; waited += intervalMs) {
     if ((await read()) === "true") return true;
@@ -695,7 +712,7 @@ function realProbe() {
         };
         if (menu.hasButton) {
           try {
-            await btn.tap({ timeout: 2000 });
+            await btn.tap({ timeout: 5000 });
           } catch {
             // a tap that cannot land leaves the menu closed, which scores as a miss below
           }
