@@ -11,6 +11,7 @@ import * as path from "path";
 import { closestIllustration } from "../../e2e/helpers/site-figure-scope";
 import { readServedSitePage } from "@/lib/read-site-page";
 import { STATIC_SITE_PAGE_NAMES } from "@/lib/static-site-page";
+import { KNOWN_AT_RULES, readCss, readStyleAttr, type CssRule } from "./site-css-rules";
 
 const WEB = path.resolve(__dirname, "../..");
 const read = (rel: string) => fs.readFileSync(path.join(WEB, rel), "utf8");
@@ -137,46 +138,13 @@ describe("T18a scoped: flat, one ring", () => {
   });
 });
 
-// A small rule reader: top-level rules and the rules inside @media / @supports.
-// `at` is the chain of @media / @supports heads the rule sits in ("" at the top level).
-type Rule = { selectors: string[]; decls: Record<string, string>; at: string };
-const rulesOf = (css: string): Rule[] => {
-  const out: Rule[] = [];
-  const walk = (text: string, chain: string[] = []) => {
-    let i = 0;
-    while (i < text.length) {
-      const open = text.indexOf("{", i);
-      if (open < 0) break;
-      const head = text.slice(i, open).trim();
-      let depth = 1;
-      let j = open + 1;
-      while (j < text.length && depth > 0) {
-        if (text[j] === "{") depth++;
-        else if (text[j] === "}") depth--;
-        j++;
-      }
-      const body = text.slice(open + 1, j - 1);
-      if (head.startsWith("@media") || head.startsWith("@supports"))
-        walk(body, [...chain, head.replace(/\s+/g, " ")]);
-      else if (!head.startsWith("@")) {
-        const decls: Record<string, string> = {};
-        for (const d of body.split(";")) {
-          const k = d.indexOf(":");
-          if (k > 0) decls[d.slice(0, k).trim()] = d.slice(k + 1).trim();
-        }
-        out.push({ selectors: head.split(",").map((s) => s.trim()), decls, at: chain.join(" > ") });
-      }
-      i = j;
-    }
-  };
-  walk(stripComments(css));
-  return out;
-};
+// Every stylesheet read goes through the shared postcss reader (SA-1203 A20 R1).
+const cssRulesOf = (css: string, source = "css") => readCss(css, source).rules;
 
 describe("T15 static: colour only through tokens; every band is white, bone or ink", () => {
   it.each(MINE)("%s types no colour literal in a declaration", (file) => {
     const bad: string[] = [];
-    for (const r of rulesOf(read(file))) {
+    for (const r of cssRulesOf(read(file))) {
       for (const [prop, value] of Object.entries(r.decls)) {
         if (/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(/i.test(value)) {
           bad.push(`${r.selectors[0]} { ${prop}: ${value} }`);
@@ -212,7 +180,7 @@ describe("T15 static: colour only through tokens; every band is white, bone or i
   const THREE = new Set(["var(--rf-white)", "var(--rf-soft)", "var(--rf-panel)"]);
 
   it.each(Object.entries(BANDS))("%s: each band background is white, bone or ink", (file, sels) => {
-    const rules = rulesOf(read(file));
+    const rules = cssRulesOf(read(file));
     for (const sel of sels) {
       const hits = rules.filter((r) => r.selectors.includes(sel));
       const painted = hits.filter((r) => r.decls.background || r.decls["background-color"]);
@@ -233,7 +201,7 @@ describe("T15 static: colour only through tokens; every band is white, bone or i
 
 describe("review fixes: disc, hero figure, dark-panel pairs", () => {
   const ruleFor = (file: string, sel: string) =>
-    rulesOf(read(file)).filter((r) => r.selectors.includes(sel));
+    cssRulesOf(read(file)).filter((r) => r.selectors.includes(sel));
   const lin = (v: number) => {
     const c = v / 255;
     return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
@@ -364,7 +332,16 @@ type CopperRule = {
   selectors: string[];
   decls: Record<string, string>;
   at?: string;
+  line?: number;
 };
+
+const toCopper = (r: CssRule): CopperRule => ({
+  source: r.source,
+  selectors: r.selectors,
+  decls: r.decls,
+  at: r.at,
+  line: r.line,
+});
 
 // Pages are read as served (the page-read pin): the <style> blocks and inline style stay in the served html.
 const siteHtml = (): Array<{ name: string; html: string }> =>
@@ -374,45 +351,53 @@ const siteHtml = (): Array<{ name: string; html: string }> =>
   }));
 
 // Inline style="" attributes of one page, one rule each.
-const inlineStyleRules = (name: string, html: string): CopperRule[] => {
-  const out: CopperRule[] = [];
-  for (const m of html.matchAll(/\sstyle="([^"]*)"/g)) {
-    const decls: Record<string, string> = {};
-    for (const d of m[1].split(";")) {
-      const k = d.indexOf(":");
-      if (k > 0) decls[d.slice(0, k).trim()] = d.slice(k + 1).trim();
-    }
-    out.push({ source: `${name} style=""`, selectors: ["style"], decls });
-  }
-  return out;
-};
+const inlineStyleRules = (name: string, html: string): CopperRule[] =>
+  [...html.matchAll(/\sstyle=(?:"([^"]*)"|'([^']*)')/g)].flatMap((m) =>
+    readStyleAttr(m[1] ?? m[2], `${name} style=""`).rules.map(toCopper),
+  );
 
-const copperSources = (): CopperRule[] => {
-  const out: CopperRule[] = [];
-  for (const f of allSiteCss())
-    for (const r of rulesOf(read(f)))
-      out.push({
-        source: f.replace("public/site/", ""),
-        selectors: r.selectors,
-        decls: r.decls,
-        at: r.at,
-      });
+/** Every site CSS source, read once: each stylesheet, each <style> block of each served page, and each
+ *  style="" attribute (SA-1203 A20 R4). The injected palette block is the source of the --brand-* values,
+ *  not a use of them, so it is counted and left out. */
+type SiteRead = {
+  rules: CopperRule[];
+  problems: string[];
+  census: { stylesheets: number; styleBlocks: number; paletteBlocks: number; styleAttrs: number };
+};
+let siteReadCache: SiteRead | null = null;
+const siteRead = (): SiteRead => {
+  if (siteReadCache) return siteReadCache;
+  const rules: CopperRule[] = [];
+  const problems: string[] = [];
+  const census = { stylesheets: 0, styleBlocks: 0, paletteBlocks: 0, styleAttrs: 0 };
+  for (const f of allSiteCss()) {
+    census.stylesheets++;
+    const r = readCss(read(f), f.replace("public/site/", ""));
+    rules.push(...r.rules.map(toCopper));
+    problems.push(...r.problems);
+  }
   for (const { name, html } of siteHtml()) {
     for (const m of html.matchAll(/<style([^>]*)>([\s\S]*?)<\/style>/gi)) {
-      // the injected palette block is the source of the --brand-* values, not a use of them
-      if (/\sid="brand-tokens"/.test(m[1])) continue;
-      for (const r of rulesOf(m[2]))
-        out.push({
-          source: `${name} <style>`,
-          selectors: r.selectors,
-          decls: r.decls,
-          at: r.at,
-        });
+      if (/\sid="brand-tokens"/.test(m[1])) {
+        census.paletteBlocks++;
+        continue;
+      }
+      census.styleBlocks++;
+      const offset = html.slice(0, (m.index ?? 0) + m[0].indexOf(">") + 1).split("\n").length - 1;
+      const r = readCss(m[2], `${name} <style>`, offset);
+      rules.push(...r.rules.map(toCopper));
+      problems.push(...r.problems);
     }
-    out.push(...inlineStyleRules(name, html));
+    for (const m of html.matchAll(/\sstyle=(?:"([^"]*)"|'([^']*)')/g)) {
+      census.styleAttrs++;
+      const r = readStyleAttr(m[1] ?? m[2], `${name} style=""`);
+      rules.push(...r.rules.map(toCopper));
+      problems.push(...r.problems);
+    }
   }
-  return out;
+  return (siteReadCache = { rules, problems, census });
 };
+const copperSources = (): CopperRule[] => siteRead().rules;
 
 const COPPER_SEEDS = ["--brand-copper", "--brand-copper-light", "--brand-copper-dark"];
 
@@ -462,7 +447,7 @@ const copperUses = (): string[] => copperScan().uses.map((u) => u.key);
 // A status rule is one whose selector names a status, or whose declarations also use a status token.
 const STATUS_WORDS =
   /(?:^|[^a-z])(?:status|success|ok|paid|pending|overdue|late|warn(?:ing)?|error|danger|fail(?:ed|ure)?|alert|invalid|valid|bad)(?![a-z])/i;
-const STATUS_TOKEN = /var\(\s*--(?:rf|brand)-(?:paid|pending|overdue)/;
+const STATUS_TOKEN = /[vV][aA][rR]\(\s*--(?:rf|brand)-(?:paid|pending|overdue)/;
 // The :root block defines every token, status and copper alike, so "it also uses a status token" cannot
 // apply to it; its tokens are judged by property name (STATUS_WORDS on the property) and by value.
 const isStatusRule = (r: { selectors: string[]; decls: Record<string, string> }) =>
@@ -702,13 +687,16 @@ function aliasOffences(
       if (!m || !(/^--rf-(copper|accent)/.test(m[1]) || names.has(m[1])))
         out.push(`${key} (value is not a copper token or an alias row)`);
     }
-    const byName = new RegExp("(?<![\\w-])" + escapeRe(property) + "(?![\\w-])", "i");
+    // R6: in css a read is var(--name (any case of the function, the name exact; nested fallbacks count, a bare
+    // name in fallback text does not); in html and js it is the full name as a token
+    const inCss = new RegExp("[vV][aA][rR]\\(\\s*" + escapeRe(property) + "(?![\\w-])");
+    const asToken = new RegExp("(?<![\\w-])" + escapeRe(property) + "(?![\\w-])");
     let readers = 0;
     for (const r of rules)
       for (const [p, v] of Object.entries(r.decls)) {
         const rk = ruleKey(r, p);
         const isDef = p === property;
-        if (!isDef && !byName.test(v)) continue;
+        if (!isDef && !inCss.test(v)) continue;
         if (isDef) {
           // another definition of the same name must itself be this tagged row
           if (tagOf.get(rk) !== COPPER_ALIAS) out.push(`${key} (untagged definition: ${rk})`);
@@ -723,7 +711,7 @@ function aliasOffences(
         if (!ok) out.push(`${key} (untagged reader: ${rk})`);
       }
     for (const t of texts)
-      if (byName.test(t.text)) {
+      if (asToken.test(t.text)) {
         readers++;
         out.push(`${key} (untagged reader in ${t.name})`);
       }
@@ -734,6 +722,17 @@ function aliasOffences(
   return [...new Set(out)];
 }
 /** Site scripts and the page text outside <style> and style="": a reader found here is never tagged. */
+/** A custom-property name built by concatenation or a template (SA-1203 A20 R7). */
+const dynamicPropertyNames = (text: string): string[] =>
+  [
+    ...text.matchAll(/["']--["']\s*\+/g),
+    ...text.matchAll(/\+\s*["']--/g),
+    ...text.matchAll(/`[^`]*--\$\{/g),
+  ].map((m) => m[0]);
+// The pinned source census (R4); a new stylesheet, <style> block or style attribute is a reviewed diff.
+// Third-party minified scripts are not site code; the one that builds names is pinned by its own test.
+const VENDOR_JS = "public/site/js/vendor/";
+const CENSUS_NOW = { stylesheets: 13, styleBlocks: 1, paletteBlocks: 10, styleAttrs: 24 };
 const aliasTexts = (): Array<{ name: string; text: string }> => {
   const out: Array<{ name: string; text: string }> = [];
   const walk = (dir: string) => {
@@ -747,7 +746,9 @@ const aliasTexts = (): Array<{ name: string; text: string }> => {
   for (const { name, html } of siteHtml())
     out.push({
       name,
-      text: html.replace(/<style[\s\S]*?<\/style>/gi, "").replace(/\sstyle="[^"]*"/g, ""),
+      text: html
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/\sstyle=(?:"[^"]*"|'[^']*')/g, ""),
     });
   return out;
 };
@@ -907,9 +908,99 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
   });
 
   it("(a) the copper aliases: 5 rows, each a copper token, each reader tagged (SA-1203 A16)", () => {
-    expect(copperScan().dupes).toEqual([]);
     expect(aliasNames(COPPER_ALLOW).size).toBe(COPPER_ALIAS_COUNT);
     expect(aliasOffences(COPPER_ALLOW, copperSources(), aliasTexts())).toEqual([]);
+  });
+
+  it("(a) no copper key is read twice with a different value (SA-1203 A20 R8)", () => {
+    expect(copperScan().dupes).toEqual([]);
+  });
+
+  it("(a) the site css reads clean: no unknown at-rule, no nested rule, no syntax error (R2, R3)", () => {
+    expect(KNOWN_AT_RULES).toHaveLength(5);
+    expect(siteRead().problems).toEqual([]);
+  });
+
+  it("(a) the source census is pinned: a new stylesheet, <style> block or style attribute is reviewed (R4)", () => {
+    expect(siteRead().census).toEqual(CENSUS_NOW);
+  });
+
+  it("(a) the vendored script that builds a custom-property name is the one reviewed file (R7)", () => {
+    const hits = aliasTexts()
+      .filter((t) => t.name.startsWith(VENDOR_JS) && dynamicPropertyNames(t.text).length > 0)
+      .map((t) => t.name);
+    expect(hits).toEqual(["public/site/js/vendor/SplitText.min.js"]);
+  });
+
+  it("(a) no site script builds a custom-property name at run time (R7)", () => {
+    const bad = aliasTexts()
+      .filter((t) => t.name.endsWith(".js"))
+      .filter((t) => !t.name.startsWith(VENDOR_JS))
+      .flatMap((t) => dynamicPropertyNames(t.text).map((m) => t.name + ": " + m));
+    expect(bad).toEqual([]);
+  });
+
+  describe("planted reader fixtures (SA-1203 A20 X1-X8)", () => {
+    const read1 = (css: string) => readCss(css, "css/x.css");
+    const keysOf = (css: string) =>
+      copperScan(read1(css).rules.map(toCopper)).uses.map((u) => u.key);
+    const allowedKeys = () => COPPER_ALLOW.map(([x, sel, pr]) => copperKey(x, sel, pr));
+    it("X1: @layer is an unknown at-rule", () => {
+      expect(read1("@layer x{.zz{color:#B5683A}}").problems.join()).toContain(
+        "unknown at-rule @layer",
+      );
+    });
+    it("X2: @container is an unknown at-rule", () => {
+      const css = "@container (min-width:1px){.zz{color:var(--rf-copper)}}";
+      expect(read1(css).problems.join()).toContain("unknown at-rule @container");
+    });
+    it("X3: copper in a @keyframes frame is a use that needs its own row", () => {
+      const keys = keysOf("@keyframes k{50%{color:var(--rf-copper)}}");
+      expect(keys).toContain("css/x.css :: @keyframes k :: 50% :: color");
+      expect(allowedKeys()).not.toContain("css/x.css :: @keyframes k :: 50% :: color");
+    });
+    it("X4: a nested style rule is a problem", () => {
+      const css = ".zz{ .yy{color:var(--rf-copper)} }";
+      expect(read1(css).problems.join()).toContain("nested rule at css/x.css");
+    });
+    it("X5: a ; inside a url string does not hide the copper after it", () => {
+      const css = '.zz{background:url("a;b.png");color:VAR(--rf-copper)}';
+      const keys = keysOf(css);
+      expect(keys).toContain("css/x.css :: .zz :: color");
+      expect(allowedKeys()).not.toContain("css/x.css :: .zz :: color");
+    });
+    it("X6: VAR(--rf-paid) makes the rule a status rule, and a picture row on it is red", () => {
+      const rule = toCopper(
+        read1(".zz{color:VAR(--rf-copper);border-color:VAR(--rf-paid)}").rules[0],
+      );
+      expect(isStatusRule(rule)).toBe(true);
+      const d = new JSDOM('<figure role="img" aria-label="Screen."><i class="zz">x</i></figure>')
+        .window.document;
+      const row: [string, string, string, string] = ["css/x.css", ".zz", "color", PICTURE_BRAND];
+      expect(brandPictureOffences([row], brandUses([rule]), [d]).join()).toContain("status rule");
+    });
+    it("X7: a name only in fallback text is not a read, so the alias is dead", () => {
+      const rows: Array<[string, string, string, string]> = [
+        ["css/x.css", ":root", "--a0", COPPER_ALIAS],
+      ];
+      const rules = read1(":root{--a0:var(--rf-copper)} .r{color:var(--rf-link, --a0)}").rules.map(
+        toCopper,
+      );
+      expect(aliasOffences(rows, rules, []).join()).toContain("a dead alias");
+      const nested = read1(
+        ":root{--a0:var(--rf-copper)} .r{color:var(--rf-link, var(--a0))}",
+      ).rules;
+      expect(aliasOffences(rows, nested.map(toCopper), []).join()).toContain("untagged reader");
+    });
+    it("X8: a script that builds a custom-property name at run time is red", () => {
+      for (const text of [
+        'el.style.setProperty("--" + x, v)',
+        "el.style.setProperty(`--${x}`, v)",
+        "k = 'a' + '--' + x",
+      ])
+        expect(dynamicPropertyNames(text)).not.toEqual([]);
+      expect(dynamicPropertyNames('el.style.setProperty("--a0", v)')).toEqual([]);
+    });
   });
 
   it("(a) strict tags: only R17's jobs, the token definition, A9 and A16; none pending", () => {
@@ -954,7 +1045,7 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
     });
     it("P-A9b3: a typed hex read from real css text, in an @media block, is red", () => {
       const css = ".in{color:var(--rf-copper)} @media (min-width:1px){.in{color:" + HEX + "}}";
-      const rules = rulesOf(css).map((r) => ({ source: "css/x.css", ...r }));
+      const rules = cssRulesOf(css, "css/x.css");
       const u = usesOf(...rules);
       expect(brandPictureOffences([A9(".in")], u, [doc()]).join()).toContain("typed colour");
     });
@@ -1066,7 +1157,7 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
     });
     it("P-A1d: an upper-case VAR( reader is red", () => {
       const f = fixture();
-      f.rules.push(reader(".u", "VAR(--A0)", "background"));
+      f.rules.push(reader(".u", "VAR(--a0)", "background"));
       expect(aliasOffences(f.rows, f.rules, []).join()).toContain("untagged reader");
     });
     it("P-A2: a tagged second-level alias goes red only through its own untagged reader", () => {
@@ -1092,8 +1183,8 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
       expect(aliasOffences(f.rows, f.rules, []).join()).toContain("value is not a copper token");
       const css = ":root{--a0:var(--rf-copper)} @media (min-width:1px){:root{--a0:" + HEX + "}}";
       const g = fixture();
-      g.rules[0] = { source: "css/x.css", ...rulesOf(css)[0] };
-      g.rules.push({ source: "css/x.css", ...rulesOf(css)[1] });
+      g.rules[0] = cssRulesOf(css, "css/x.css")[0];
+      g.rules.push(cssRulesOf(css, "css/x.css")[1]);
       expect(g.rules[g.rules.length - 1].at).toBe(MEDIA);
       expect(aliasOffences(g.rows, g.rules, []).join()).toContain("value is not a copper token");
     });
@@ -1136,7 +1227,7 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
   it("(b) the status tokens resolve to the status palette, not to copper", () => {
     const decls = Object.assign(
       {},
-      ...rulesOf(read("public/site/graphics/rf-graphics.css")).map((r) => r.decls),
+      ...cssRulesOf(read("public/site/graphics/rf-graphics.css")).map((r) => r.decls),
     ) as Record<string, string>;
     const status = Object.keys(decls).filter((k) => /^--rf-(paid|pending|overdue)/.test(k));
     expect(status.length).toBeGreaterThanOrEqual(6);
