@@ -17,9 +17,30 @@ export const COUNTER_COPY = {
   completeConfirm: "Complete",
   completed: "Completed at counter.",
   completedEmailed: "Completed at counter. The invoice was emailed to the customer.",
+  /** W-1286 (SA-1202 C28): the two ways a completion invoice email did not go, and the no-email action (web link; the phone shell shows the words) */
+  completedNoEmail: "Completed at counter. No email on file, so the invoice was not emailed.",
+  completedEmailNotSent:
+    "Completed at counter. The invoice email did not send. Email it from the invoice.",
+  addEmail: "Add an email",
   /** SA-913 R8: the run confirm's action; it re-sends the same request with `takeOffRun: true` */
   takeOffRun: "Take off run and complete",
 } as const;
+
+/**
+ * W-1286 (SA-1202 C28): the outcome line of a finished "Complete at counter", one rule for web and mobile. `emailOutcome`
+ * is the api's typed answer (absent when no email was due: a walk-in, or already emailed); `emailed: true` is the older
+ * server's EMAILED. Never says "Delivered".
+ */
+export function completedCopy(res: {
+  emailed?: boolean;
+  emailOutcome?: "EMAILED" | "NO_EMAIL_ON_FILE" | "NOT_SENT";
+}): string {
+  if (res.emailOutcome === "NO_EMAIL_ON_FILE") return COUNTER_COPY.completedNoEmail;
+  if (res.emailOutcome === "NOT_SENT") return COUNTER_COPY.completedEmailNotSent;
+  return res.emailed || res.emailOutcome === "EMAILED"
+    ? COUNTER_COPY.completedEmailed
+    : COUNTER_COPY.completed;
+}
 
 /**
  * B1372 (SA-1177 K4.2): the api's 409 COUNTER_COMPLETE_SHIPPED message, one copy. It names the next step: an unmark keeps

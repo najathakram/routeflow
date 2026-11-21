@@ -11,6 +11,7 @@ import {
   canRecordAnyway,
   creditOverLimitSentence,
   COUNTER_COPY,
+  completedCopy,
 } from "@routeflow/types";
 import type {
   CounterSalePaymentMethod,
@@ -444,9 +445,7 @@ export function PickupCompleteDialog({
             ) : (
               <p className="text-sm font-semibold text-navy">
                 {completeMode
-                  ? outcome.emailed
-                    ? COUNTER_COPY.completedEmailed
-                    : COUNTER_COPY.completed
+                  ? completedCopy(outcome)
                   : outcome.toCollect === "TO_COLLECT" && outcome.balanceDue > 0
                     ? `Picked up. To collect: ${money(outcome.balanceDue)}.`
                     : outcome.balanceDue > 0
@@ -457,6 +456,18 @@ export function PickupCompleteDialog({
                   : ""}
               </p>
             )}
+            {/* W-1286 (SA-1202 C28): no email on file: one step to the customer, where the address is added. */}
+            {!unrecorded &&
+              completeMode &&
+              outcome.emailOutcome === "NO_EMAIL_ON_FILE" &&
+              customerId && (
+                <Link
+                  href={`/customers/${customerId}`}
+                  className="text-sm font-semibold text-brand-600 underline"
+                >
+                  {COUNTER_COPY.addEmail}
+                </Link>
+              )}
             {unrecorded && (
               <p className="text-xs text-navy/70">
                 {duplicateMessage

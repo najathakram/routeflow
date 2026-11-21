@@ -22,6 +22,7 @@ jest.mock("../../common/db-locks", () => ({
   },
 }));
 
+import { BadRequestException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { PickupCompleteService } from "./pickup-complete.service";
 import { OrdersService } from "../orders.service";
@@ -30,6 +31,7 @@ import { PrismaService } from "../../prisma/prisma.service";
 import { createMockPrisma } from "../../testing/prisma-mock";
 import { FULFILMENT_CAPABILITY_READER } from "./fulfilment-capability-reader";
 import { UNSET_FULFILMENT_CAPABILITIES } from "@routeflow/types";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 
 /**
  * I-120 "Complete at counter" (SA-861): the hand-over engine widened to any not-yet-delivered order, on the mocked
@@ -404,6 +406,58 @@ describe("PickupCompleteService.complete: Complete at counter (I-120, SA-861)", 
     order = orderRow("CONFIRMED", { ...onRun("COMPLETED", "COMPLETED"), routeRunId: "run-done" });
     await run();
     expect(calls[0]).toBe("updateFulfillPath:PICKUP");
+  });
+
+  // W-1286 PR-0 (SA-1202 C28): the result says why no invoice email went. `emailOutcome` is absent when none was due.
+  describe("emailOutcome (W-1286, C28)", () => {
+    const noEmail = (message: string) =>
+      new BadRequestException({ code: API_ERROR_CODES.INVOICE_RECIPIENT_MISSING, message });
+
+    it("T26 a customer with no email on file: NO_EMAIL_ON_FILE, and not emailed", async () => {
+      inv.sendCompletionEmail.mockRejectedValue(noEmail("No email address on file."));
+      const res: any = await run();
+      expect(res.emailOutcome).toBe("NO_EMAIL_ON_FILE");
+      expect(res.emailed).toBeUndefined();
+    });
+
+    it("T27 a send that is not delivered, or throws without the code: NOT_SENT", async () => {
+      inv.sendCompletionEmail.mockResolvedValue({ delivered: false });
+      expect(((await run()) as any).emailOutcome).toBe("NOT_SENT");
+      claims.length = 0;
+      order = orderRow("OUT_FOR_DELIVERY");
+      invoices[0].payments = [];
+      inv.sendCompletionEmail.mockRejectedValue(new Error("SMTP down"));
+      expect(((await run(cash, "key-2")) as any).emailOutcome).toBe("NOT_SENT");
+    });
+
+    it("T27b a delivered send: EMAILED, with emailed still true", async () => {
+      const res: any = await run();
+      expect(res.emailOutcome).toBe("EMAILED");
+      expect(res.emailed).toBe(true);
+    });
+
+    it("T28 a walk-in, and a replay after the email went: no emailOutcome at all", async () => {
+      order = orderRow("OUT_FOR_DELIVERY", { customer: { isWalkIn: true } });
+      const walkIn: any = await run();
+      expect("emailOutcome" in walkIn).toBe(false);
+      order = orderRow("OUT_FOR_DELIVERY");
+      claims.length = 0;
+      await run(cash, "key-2");
+      const again: any = await run(cash, "key-2");
+      expect("emailOutcome" in again).toBe(false);
+    });
+
+    it("T29 the reason is the typed code, never the message text: reworded still NO_EMAIL_ON_FILE, text alone is NOT_SENT", async () => {
+      inv.sendCompletionEmail.mockRejectedValue(noEmail("Totally different wording."));
+      expect(((await run()) as any).emailOutcome).toBe("NO_EMAIL_ON_FILE");
+      claims.length = 0;
+      order = orderRow("OUT_FOR_DELIVERY");
+      invoices[0].payments = [];
+      inv.sendCompletionEmail.mockRejectedValue(
+        new BadRequestException("No email address on file for this customer."),
+      );
+      expect(((await run(cash, "key-2")) as any).emailOutcome).toBe("NOT_SENT");
+    });
   });
 
   // SA-913 R8 WITH the confirm (the locked take-off, its CAS, the skipped stop, the resume): R8b-d in
