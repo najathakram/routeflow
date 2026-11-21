@@ -586,6 +586,48 @@ describe("WP1 T3: tenant-plan-lite migration is additive-only", () => {
   });
 });
 
+// ─── SA-1204 PR-1: TenantPlan gains CORE and ALL_IN (schema only) ──────────────────────────
+
+describe("SA-1204 PR-1 T2: Prisma TenantPlan has CORE and ALL_IN", () => {
+  it("generated Prisma TenantPlan enum contains CORE and ALL_IN", () => {
+    const values = Object.values(PrismaEnums.TenantPlan as unknown as Record<string, string>);
+    expect(values).toContain("CORE");
+    expect(values).toContain("ALL_IN");
+  });
+});
+
+describe("SA-1204 PR-1 T3: tenant-plan-core-all-in migration is additive-only", () => {
+  const MIGRATIONS_DIR = path.join(REPO_ROOT, "apps/api/prisma/migrations");
+
+  it("exactly one migration dir matches *_tenant_plan_core_all_in and its SQL is the two additive statements", () => {
+    const entries = fs.existsSync(MIGRATIONS_DIR) ? fs.readdirSync(MIGRATIONS_DIR) : [];
+    const matches = entries.filter((name) => /_tenant_plan_core_all_in$/.test(name));
+    expect(matches.length).toBe(1);
+
+    const raw = fs.readFileSync(path.join(MIGRATIONS_DIR, matches[0], "migration.sql"), "utf8");
+    const stripped = raw
+      .split("\n")
+      .map((line) => line.replace(/--.*$/, "").trim())
+      .filter((line) => line.length > 0)
+      .join("\n");
+    expect(stripped).toBe(
+      [
+        "BEGIN;",
+        "SET LOCAL lock_timeout = '5s';",
+        `ALTER TYPE "TenantPlan" ADD VALUE 'CORE';`,
+        `ALTER TYPE "TenantPlan" ADD VALUE 'ALL_IN';`,
+        "COMMIT;",
+      ].join("\n"),
+    );
+
+    expect(stripped.match(/^BEGIN;$/gm)).toHaveLength(1);
+    expect(stripped.match(/^SET LOCAL lock_timeout/gm)).toHaveLength(1);
+    expect(stripped.match(/^COMMIT;$/gm)).toHaveLength(1);
+    expect(raw).not.toMatch(/\bDROP\b/i);
+    expect(raw).not.toMatch(/\bRENAME\b/i);
+  });
+});
+
 // ─── (d) #2728 M1 follow-up, pre-merge BLOCK: sell-level values were a bare literal union with no
 // parity pin against the generated PackagingLevel enum — pin it directly (a subset check, since
 // PackagingLevel also has values SELL_LEVEL_VALUES deliberately excludes, e.g. any future level). ──
