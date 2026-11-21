@@ -296,3 +296,194 @@ describe("review fixes: disc, hero figure, dark-panel pairs", () => {
     expect(css).toMatch(/tbody tr:last-child\s*td[\s\S]*?border-bottom:\s*0/);
   });
 });
+
+// T17 static (a, b): copper stays inside its listed jobs and is never a status colour (R17).
+// Copper reaches a rule three ways: a palette hex, a --brand-copper* token, or any token that resolves to one
+// (found by following var() to a fixed point). A use is keyed `file :: selectors :: property`.
+const COPPER_HEXES = Object.entries(
+  JSON.parse(fs.readFileSync(path.join(WEB, "../../packages/types/brand/palette.json"), "utf8"))
+    .color as Record<string, string>,
+)
+  .filter(([k]) => k.startsWith("copper"))
+  .map(([, v]) => v.replace("#", "").toLowerCase());
+
+const copperUses = (): string[] => {
+  const files = allSiteCss();
+  const parsed = files.map((f) => ({ f, rules: rulesOf(read(f)) }));
+  const tokens = new Set(["--brand-copper", "--brand-copper-light", "--brand-copper-dark"]);
+  const hasHex = (v: string) => COPPER_HEXES.some((h) => v.toLowerCase().includes(h));
+  const hasCopper = (v: string) =>
+    hasHex(v) || [...v.matchAll(/var\(\s*(--[\w-]+)/g)].some((m) => tokens.has(m[1]));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const { rules } of parsed)
+      for (const r of rules)
+        for (const [p, v] of Object.entries(r.decls))
+          if (p.startsWith("--") && !tokens.has(p) && hasCopper(v)) {
+            tokens.add(p);
+            grew = true;
+          }
+  }
+  const out = new Set<string>();
+  for (const { f, rules } of parsed)
+    for (const r of rules)
+      for (const [p, v] of Object.entries(r.decls))
+        if (hasCopper(v))
+          out.add(`${f.replace("public/site/", "")} :: ${r.selectors.join(", ")} :: ${p}`);
+  return [...out].sort();
+};
+
+const COPPER_ALLOW: Array<[file: string, selectors: string, property: string, job: string]> = [
+  ["components/site-frame/site-frame.css", ".rf-legal a", "color", "text link"],
+  ["css/color-deep.css", ".pd .kick::before", "background", "eyebrow dot"],
+  ["css/company.css", ".co-body a", "color", "text link"],
+  [
+    "css/home-color.css",
+    ".home .hx .kick::before, .home #sell .kick::before, .home #journey .kick::before, .home #stores .kick::before, .home #counter .kick::before, .home #use-cases .kick::before",
+    "background",
+    "eyebrow dot",
+  ],
+  [
+    "css/home-color.css",
+    ".home .inc-i:hover .inc-ic",
+    "background",
+    "tile a card turns to on hover",
+  ],
+  ["css/home-color.css", ".home .uc-t h3::before", "background", "eyebrow dot"],
+  ["css/home-up.css", "#founder .kick", "color", "eyebrow label on the ink panel"],
+  ["css/home-up.css", ".featured .pm-bar i", "background", "pricing bars"],
+  ["css/home-up.css", ".pm-bar i", "background", "pricing bars"],
+  ["css/home.css", ".a-av", "color", "picture of the app: avatar initials"],
+  ["css/home.css", ".a-link2", "color", "picture of the app: link"],
+  ["css/home.css", ".a-nav li.on .ico", "color", "picture of the app: current nav item"],
+  ["css/home.css", ".a-nav li.on", "border-left", "picture of the app: current nav item"],
+  ["css/home.css", ".ans-i--p .ans-bar", "background", "step in view: the Payments bar"],
+  ["css/home.css", ".b-nav li.on .ico", "color", "picture of the app: current nav item"],
+  ["css/home.css", ".b-nav li.on", "border-left", "picture of the app: current nav item"],
+  ["css/home.css", ".bi-3::before", "background", "box art in the copper tints"],
+  ["css/home.css", ".bx-f", "fill", "box art in the copper tints"],
+  ["css/home.css", ".bx-s", "fill", "box art in the copper tints"],
+  [
+    "css/home.css",
+    ".c-chg b",
+    "color",
+    "picture of the app: the change amount at the counter (an amount, not a status)",
+  ],
+  ["css/home.css", ".dv-go", "background", "picture of the app: the driver go button"],
+  ["css/home.css", ".end", "--rf-focus", "focus ring on the ink end band"],
+  ["css/home.css", ".end-mail a", "color", "text link on ink"],
+  ["css/home.css", ".fd-more", "color", "text link"],
+  ["css/home.css", ".fd-note a", "color", "text link"],
+  ["css/home.css", ".home #pricing .pl-inc a", "color", "text link"],
+  ["css/home.css", ".home .fq a", "color", "text link"],
+  ["css/home.css", ".home", "--c-pay", "step in view: the Payments bar colour"],
+  ["css/home.css", ".hx-more", "color", "text link"],
+  ["css/home.css", ".inc-plus", "color", "text link: the plus on a phone row"],
+  ["css/home.css", ".n3", "background", "the one problem-section note"],
+  ["css/home.css", ".pb", "--rf-focus", "focus ring on the ink band"],
+  [
+    "css/home.css",
+    ".rt-d--now",
+    "fill",
+    "picture of the app: the marker for the current stop (a position, not a status)",
+  ],
+  ["css/home.css", ".sp-all", "color", "text link"],
+  ["css/home.css", ".sp-q em", "color", "picture of the app: store price line"],
+  ["css/home.css", ".sp-q i", "color", "picture of the app: store price button"],
+  ["css/home.css", ".sp-top span", "color", "picture of the app: store price label"],
+  ["css/home.css", ".st .kick", "color", "eyebrow label"],
+  ["css/home.css", ".st-note", "color", "the one note under the stores section"],
+  [
+    "css/mobile.css",
+    ".home .hx-up .hx-over",
+    "background-image",
+    "small decorative rings in the copper tints",
+  ],
+  [
+    "css/product.css",
+    ".pd main a:not(.btn):not(.pd-tile):not(.link):not(.pd-go)",
+    "color",
+    "text link",
+  ],
+  ["css/product.css", ".pd-go", "color", "text link"],
+  ["css/product.css", ".pd-more summary", "color", "text link"],
+  ["css/site.css", ".band-ink .eyebrow, .band-ink .kick", "color", "eyebrow label on ink"],
+  ["css/site.css", ".band-ink a:not(.btn)", "color", "text link on ink"],
+  ["css/site.css", ".cap::before", "background", "eyebrow dot"],
+  ["css/site.css", ".eyebrow, .kick", "color", "eyebrow label"],
+  ["css/site.css", ".faq summary .ico", "color", "text link: the open and close mark"],
+  ["css/site.css", ".footer-grid a:hover", "color", "text link on hover"],
+  ["css/site.css", ".link", "color", "text link"],
+  [
+    "css/site.css",
+    ".pcard.featured .checks .ico",
+    "color",
+    "pricing bars family: check marks on the featured ink card (style only; the card copy is frozen)",
+  ],
+  ["css/site.css", ".pg-top .eyebrow::before", "background", "eyebrow dot"],
+  ["css/site.css", ":focus-visible", "outline", "focus ring"],
+  ["css/start.css", ".gs-step a:not(.link)", "color", "text link"],
+  ["graphics/rf-graphics.css", ".rf-hit:focus-visible", "outline-color", "focus ring"],
+  ["graphics/rf-graphics.css", ":root", "--app-deep", "token: app picture deep colour"],
+  ["graphics/rf-graphics.css", ":root", "--app-on", "token: app picture current-item colour"],
+  ["graphics/rf-graphics.css", ":root", "--buy-deep", "token: app picture deep colour"],
+  ["graphics/rf-graphics.css", ":root", "--buy-on", "token: app picture current-item colour"],
+  ["graphics/rf-graphics.css", ":root", "--rf-accent", "token: accent job"],
+  ["graphics/rf-graphics.css", ":root", "--rf-accent-on-panel", "token: accent job on ink"],
+  ["graphics/rf-graphics.css", ":root", "--rf-box-front", "token: box art"],
+  ["graphics/rf-graphics.css", ":root", "--rf-box-side", "token: box art"],
+  ["graphics/rf-graphics.css", ":root", "--rf-copper", "token: palette"],
+  ["graphics/rf-graphics.css", ":root", "--rf-copper-dark", "token: palette"],
+  ["graphics/rf-graphics.css", ":root", "--rf-copper-light", "token: palette"],
+  ["graphics/rf-graphics.css", ":root", "--rf-focus", "token: focus ring job"],
+  ["graphics/rf-graphics.css", ":root", "--rf-link", "token: text link job"],
+  ["graphics/rf-graphics.css", ":root", "--rf-link-on-panel", "token: text link job on ink"],
+  ["graphics/rf-graphics.css", ":root", "--rf-wh-focus", "token: the wheel part in focus"],
+  [
+    "graphics/rf-graphics.css",
+    ":root",
+    "--rf-wh-focus-wall",
+    "token: the wheel part in focus (wall)",
+  ],
+  ["graphics/rf-wheel-up.css", ".rfw-hint", "color", "text link: the hint under the wheel"],
+  ["graphics/rf-wheel-up.css", ".rfw-t .rfw-eye::before", "background", "eyebrow dot"],
+  ["graphics/rf-wheel-up.css", ".rfw-w.f", "fill", "the wheel part in focus"],
+  ["graphics/rf-wheel-up.css", ".rfw-w.f", "stroke", "the wheel part in focus"],
+];
+const copperKey = (file: string, selectors: string, property: string) =>
+  `${file} :: ${selectors} :: ${property}`;
+
+// Words that name a status in a selector or a property. Paid, Pending and Overdue are the site's status set.
+const STATUS_WORDS =
+  /(?:^|[^a-z])(?:status|success|ok|paid|pending|overdue|late|warn(?:ing)?|error|danger|fail(?:ed|ure)?|alert|invalid|valid)(?![a-z])/i;
+
+describe("T17 static: copper only in listed jobs, never a status", () => {
+  it("(a) every copper use is on the allow-list, and every allow-list row is still a copper use", () => {
+    const allowed = COPPER_ALLOW.map(([f, s, p]) => copperKey(f, s, p));
+    expect(new Set(allowed).size).toBe(allowed.length);
+    for (const row of COPPER_ALLOW) expect(row[3]).toMatch(/\S/);
+    const uses = copperUses();
+    expect(uses.filter((u) => !allowed.includes(u))).toEqual([]);
+    expect(allowed.filter((a) => !uses.includes(a))).toEqual([]);
+  });
+
+  it("(b) no status rule or status token references copper", () => {
+    const bad = copperUses().filter((u) => {
+      const [, sel, prop] = u.split(" :: ");
+      return STATUS_WORDS.test(sel) || STATUS_WORDS.test(prop);
+    });
+    expect(bad).toEqual([]);
+  });
+
+  it("(b) the status tokens resolve to the status palette, not to copper", () => {
+    const decls = Object.assign(
+      {},
+      ...rulesOf(read("public/site/graphics/rf-graphics.css")).map((r) => r.decls),
+    ) as Record<string, string>;
+    const status = Object.keys(decls).filter((k) => /^--rf-(paid|pending|overdue)/.test(k));
+    expect(status.length).toBeGreaterThanOrEqual(6);
+    for (const k of status) {
+      expect(decls[k]).toMatch(/^var\(--brand-(paid|pending|overdue)-(bg|text)\)$/);
+    }
+  });
+});
