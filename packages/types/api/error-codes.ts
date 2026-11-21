@@ -539,6 +539,8 @@ export const API_ERROR_CODES = {
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
+  /** W-1286 (SA-1202 C28): an invoice email has no routable recipient (none on file, or an import sentinel). Read the code, never the message. */
+  INVOICE_RECIPIENT_MISSING: "INVOICE_RECIPIENT_MISSING",
   EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
   /** #2088: the same invoice was emailed too many times in a short window (429). */
   EMAIL_SEND_THROTTLED: "EMAIL_SEND_THROTTLED",

@@ -11,6 +11,9 @@ import type { RestrictionAck } from "./restrictions";
 export const COUNTER_SALE_PAYMENT_METHOD_VALUES = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
 export type CounterSalePaymentMethod = (typeof COUNTER_SALE_PAYMENT_METHOD_VALUES)[number];
 
+/** W-1286 (SA-1202 C28): the completion email's outcome on the pickup-complete result; the field is absent when no email was due. */
+export type PickupEmailOutcome = "EMAILED" | "NO_EMAIL_ON_FILE" | "NOT_SENT";
+
 export interface CounterSaleItem {
   productId: string;
   /** a selling-unit quantity (the line's own unit) — or `boxes` / `pieces` for a boxed product */
@@ -265,6 +268,11 @@ export interface PickupCompleteResponse {
   alreadyPickedUp?: boolean;
   /** I-120 (SA-861 rule 8): true when THIS call sent the ONE completion email (a named customer, the tender final). */
   emailed?: boolean;
+  /**
+   * W-1286 (SA-1202 C28): why the completion email did or did not go. Absent when none was due (a walk-in, or already
+   * emailed). `emailed: true` is kept for older clients and equals EMAILED.
+   */
+  emailOutcome?: PickupEmailOutcome;
   /**
    * I-120 (SA-872 cond. 2, SA-849 on the hand-over): the delivery credit gate counted this hand-over's till tender, the
    * tender did not record, and without it the customer is over their limit (ENFORCED). Omitted otherwise.

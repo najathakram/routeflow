@@ -1337,3 +1337,43 @@ describe("PickupCompleteDialog: W-778 complete-at-counter refusals (apple-ux 202
     expect(screen.queryByRole("alert")).toBeNull();
   });
 });
+
+// W-1286 PR-0 (SA-1202 C28, T26-T28): the outcome line says why no invoice email went; never "Delivered".
+describe("PickupCompleteDialog: the invoice email outcome (W-1286)", () => {
+  const completeWith = async (over: Record<string, unknown>) => {
+    balance(25);
+    post.mockResolvedValueOnce(result(over));
+    mount({ completeMode: true, customerId: "c1" });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "25" } });
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+    return screen.findByTestId("pickup-outcome");
+  };
+
+  it("T26 NO_EMAIL_ON_FILE: says so and offers Add an email on the customer", async () => {
+    const outcome = await completeWith({ emailOutcome: "NO_EMAIL_ON_FILE" });
+    expect(outcome).toHaveTextContent(
+      "Completed at counter. No email on file, so the invoice was not emailed.",
+    );
+    expect(within(outcome).getByRole("link", { name: "Add an email" })).toHaveAttribute(
+      "href",
+      "/customers/c1",
+    );
+    expect(outcome).not.toHaveTextContent(/delivered/i);
+  });
+
+  it("T27 NOT_SENT: says the email did not send, with no Add an email", async () => {
+    const outcome = await completeWith({ emailOutcome: "NOT_SENT" });
+    expect(outcome).toHaveTextContent(
+      "Completed at counter. The invoice email did not send. Email it from the invoice.",
+    );
+    expect(within(outcome).queryByRole("link", { name: "Add an email" })).toBeNull();
+  });
+
+  it("T28 no emailOutcome (walk-in or already emailed): the plain line, no email words", async () => {
+    const outcome = await completeWith({});
+    expect(outcome).toHaveTextContent(/^Completed at counter\./);
+    expect(outcome).not.toHaveTextContent(/email/i);
+    expect(within(outcome).queryByRole("link", { name: "Add an email" })).toBeNull();
+  });
+});
