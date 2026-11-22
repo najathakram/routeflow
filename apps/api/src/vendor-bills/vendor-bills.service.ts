@@ -54,7 +54,11 @@ import {
   NO_IDENTITY,
   type StoredBillItemIdentity,
 } from "./bill-item-data";
-import { carryStoredIdentities, resolveCreateIdentities } from "./bill-line-identity";
+import {
+  assertWholeLotReceive,
+  carryStoredIdentities,
+  resolveCreateIdentities,
+} from "./bill-line-identity";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { calendarFieldStamp } from "../common/calendar-date";
 import Anthropic from "@anthropic-ai/sdk";
@@ -1358,13 +1362,6 @@ export class VendorBillsService {
           );
         }
         const receiveQty = new Prisma.Decimal(String(req.qty));
-        // S2b spec 8: a lot is one unit of a stated size; a fraction of it is no number of pieces.
-        if (billLineUnit(item).kind === "lot" && !receiveQty.isInteger()) {
-          throw new BadRequestException({
-            code: API_ERROR_CODES.RECEIVE_PARTIAL_UNIT,
-            message: `"${item.description}" is one unit of ${billLineUnit(item).factor} pieces and can't be received in part.`,
-          });
-        }
         const remaining = remainingOf(item);
         if (receiveQty.gt(remaining)) {
           // Structured fields so a client builds its own sentence (product + quantities) without
@@ -1384,6 +1381,8 @@ export class VendorBillsService {
         .map((item) => ({ item, receiveQty: remainingOf(item) }))
         .filter((p) => p.receiveQty.gt(0));
     }
+    // S2b spec 8 / SA-1223 M2: a lot is received whole, on every plan.
+    for (const p of plan) assertWholeLotReceive(p.item, p.receiveQty);
 
     // B743: a bill line billed in the supplier's own denomination (cases when
     // packSize > 1) but with no pack stated silently posts as pieces at the

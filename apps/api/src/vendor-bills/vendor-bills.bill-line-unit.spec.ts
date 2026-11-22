@@ -307,3 +307,104 @@ describe("S2b spec 5, 7: write shape and the minted group", () => {
     expect(src).not.toMatch(/tenantId: this.prisma.getTenantId(),s*productId: item.productId/);
   });
 });
+
+describe("SA-1223 M1-M3: duplicate ids, whole lots, relabel on a pack change", () => {
+  const echo = (i: any, over: any = {}) => ({
+    id: i.id,
+    productId: i.productId,
+    description: i.description,
+    qty: Number(i.qty),
+    unitCost: Number(i.unitCost),
+    packSize: i.packSize ?? undefined,
+    ...over,
+  });
+  async function edit(stored: any[], items: any[]) {
+    const { service, prisma } = await make();
+    prisma.vendorBill.findUnique.mockResolvedValue(draft(stored));
+    prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "DRAFT", totalOwed: 1 });
+    const res = await outcome(service.update("bill-1", { items }));
+    return { res, prisma };
+  }
+
+  it("M1: the same locked id twice is 400 DUPLICATE_LINE_ID and nothing is written", async () => {
+    const { res, prisma } = await edit([LOT, CHILD2], [echo(LOT), echo(LOT), echo(CHILD2)]);
+    expect(res).toEqual({ status: 400, code: "DUPLICATE_LINE_ID" });
+    expect(prisma.vendorBill.update).not.toHaveBeenCalled();
+  });
+
+  it("M2a: creating a lot with qty 0.5 is 400 LOT_QTY_NOT_WHOLE", async () => {
+    const { service, prisma } = await make();
+    prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1" }]);
+    prisma.vendorBill.findFirst.mockResolvedValue(null);
+    prisma.vendorBill.create.mockResolvedValue({ id: "b", items: [] });
+    const res = await outcome(
+      service.create({
+        supplierId: "sup-1",
+        items: [
+          {
+            productId: "p-1",
+            description: "x",
+            qty: 0.5,
+            unitCost: 3,
+            packSize: 6,
+            unitLabel: "6 Pieces",
+          },
+        ],
+      }),
+    );
+    expect(res).toEqual({ status: 400, code: "LOT_QTY_NOT_WHOLE" });
+    expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+  });
+
+  async function receive(items: any[], dto: any) {
+    const { service, prisma } = await make();
+    const withProduct = items.map((i) => ({
+      ...i,
+      product: { id: "p-1", name: "Soda", currentStock: D(0), averageCost: null },
+    }));
+    prisma.vendorBill.findUnique.mockResolvedValue({
+      ...draft(withProduct),
+      supplier: { id: "sup-1", name: "Acme" },
+      billDate: new Date("2026-06-01"),
+    });
+    prisma.product.findFirst.mockResolvedValue({
+      currentStock: D(0),
+      averageCost: null,
+      costingMethod: "AVCO",
+    });
+    const res = await outcome(service.receive("bill-1", dto, "u1"));
+    return { res, prisma };
+  }
+  const lot6 = {
+    ...LOT,
+    packSize: 6,
+    unitLabel: "6 Pieces",
+    familyGroupId: null,
+    familyProductId: null,
+  };
+
+  it("M2b: a stored lot of qty 0.5 on a full receive is 400 RECEIVE_PARTIAL_UNIT, no stock", async () => {
+    const { res, prisma } = await receive([{ ...lot6, qty: D(0.5) }], {});
+    expect(res).toEqual({ status: 400, code: "RECEIVE_PARTIAL_UNIT" });
+    expect(prisma.stockLot.create).not.toHaveBeenCalled();
+  });
+
+  it("M2b control: 2 lots with 1 received, then a full receive, posts exactly 6 pieces", async () => {
+    const { res, prisma } = await receive([{ ...lot6, qty: D(2), qtyReceived: D(1) }], {});
+    expect(res).toBeNull();
+    expect(prisma.stockLot.create.mock.calls[0][0].data.qty.toString()).toBe("6");
+  });
+
+  it("M3: a stated 1 Piece line edited to pack 6 is not stored as a lot of 6 under its old label", async () => {
+    const piece = { ...PLAIN, id: "it-pc", unitLabel: "1 Piece", packSize: null };
+    const { res, prisma } = await edit([piece], [echo(piece, { packSize: 6 })]);
+    expect(res).toBeNull();
+    expect(updateRows(prisma)[0]).toMatchObject({ packSize: 6, unitLabel: null });
+  });
+
+  it("M3 control: the same pack keeps the stored label", async () => {
+    const piece = { ...PLAIN, id: "it-pc", unitLabel: "1 Piece", packSize: null };
+    const { prisma } = await edit([piece], [echo(piece)]);
+    expect(updateRows(prisma)[0]).toMatchObject({ unitLabel: "1 Piece" });
+  });
+});

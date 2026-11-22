@@ -247,6 +247,7 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.SPLIT_LINE_LOCKED]:
     "A split line can change its price only. Edit this bill on the web.",
   [API_ERROR_CODES.RECEIVE_PARTIAL_UNIT]: "A lot is received whole, not in part.",
+  [API_ERROR_CODES.LOT_QTY_NOT_WHOLE]: "A pack line needs a whole number of packs.",
   // Row 648: vendor bill refusals the page used to explain by rendering the server message.
   [API_ERROR_CODES.BILL_NOT_EDITABLE]:
     "Only draft bills can be edited. Revert the bill to draft first.",
