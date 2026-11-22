@@ -20,14 +20,26 @@ export function buildProductListWhere(
     andWhere?: Record<string, unknown>[];
     /** The tenant's LOW-stock ids (`lowStockProductIds`): required when `stockStatus` is LOW or IN_STOCK (SA-1002). */
     lowStockIds?: string[];
+    /** The caller's tenant: the family-name match only follows a parent of the same tenant (B1211). No tenant, no family match. */
+    tenantId?: string | null;
   },
 ): any {
   const where: any = {};
   if (query.search) {
     where.OR = [
       { name: { contains: query.search, mode: "insensitive" } },
-      // SA-1216: a variant is stored as just its flavor; its family's name finds it too.
-      { parent: { name: { contains: query.search, mode: "insensitive" } } },
+      // SA-1216: a variant is stored as just its flavor; its family's name finds it too. A parent from
+      // another tenant is ignored (B1211): the relation filter carries its own tenant clause.
+      ...(opts?.tenantId
+        ? [
+            {
+              parent: {
+                tenantId: opts.tenantId,
+                name: { contains: query.search, mode: "insensitive" },
+              },
+            },
+          ]
+        : []),
       { sku: { contains: query.search, mode: "insensitive" } },
       { barcode: { contains: query.search, mode: "insensitive" } },
       { unitSku: { contains: query.search, mode: "insensitive" } },

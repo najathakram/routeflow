@@ -47,4 +47,47 @@ describe("SA-1216 product-name census", () => {
   it("the detector catches a planted bare name", () => {
     expect(bareNames("<p>{product?.name}</p>")).toEqual(["product.name"]);
   });
+
+  /**
+   * The names the products page keeps outside its rows (the rule editor's chips, the bulk-delete skip
+   * list) must CALL the rule: a block that reads `.name` through a lookup passes the JSX census above.
+   */
+  const NON_JSX_SITES = ["const fullNameOf ="];
+
+  /** The two sites read a product's name only through `fullNameOf(` (which calls the rule). */
+  const NAME_SITES = ["const selectedNames =", "setSkipNames("];
+
+  /** The text of the statement that starts at `anchor` (to the first blank-line-free 600 chars). */
+  function siteBlock(source: string, anchor: string): string {
+    const at = source.indexOf(anchor);
+    return at < 0 ? "" : source.slice(at, at + 600);
+  }
+
+  /** True when the block calls the rule and reads no `.name` of its own. */
+  function callsRuleOnly(block: string): boolean {
+    return /displayProductName\(/.test(block) && !/\)\??\.name\b/.test(block);
+  }
+
+  it.each(NON_JSX_SITES)("products page: %s goes through a call of the rule", (anchor) => {
+    const source = fs.readFileSync(path.join(WEB, "app/(dashboard)/products/page.tsx"), "utf8");
+    const block = siteBlock(source, anchor);
+    expect(block).not.toBe("");
+    expect(callsRuleOnly(block)).toBe(true);
+  });
+
+  it.each(NAME_SITES)(
+    "products page: %s takes the name from fullNameOf, not from .name",
+    (anchor) => {
+      const source = fs.readFileSync(path.join(WEB, "app/(dashboard)/products/page.tsx"), "utf8");
+      const block = siteBlock(source, anchor);
+      expect(block).toMatch(/fullNameOf\(/);
+      expect(block).not.toMatch(/\)\??\.name\b/);
+    },
+  );
+
+  it("the call check catches a planted bare lookup and a bare name that only imports the rule", () => {
+    expect(callsRuleOnly("const name = productById.get(id)?.name;")).toBe(false);
+    expect(callsRuleOnly("// displayProductName\nconst name = byId.get(id)?.name;")).toBe(false);
+    expect(callsRuleOnly("const name = displayProductName(byId.get(id));")).toBe(true);
+  });
 });

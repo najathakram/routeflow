@@ -82,6 +82,13 @@ describe("Products list: full names (SA-1216)", () => {
     expect(screen.getByText("Acme Lighter")).toBeInTheDocument();
   });
 
+  it("the clamped grid name carries the full name as its title (the variant is the end of it)", () => {
+    renderWithProviders(<ProductsPage />);
+    const clamped = screen.getByText("Acme Vape - Blueberry").closest("p");
+    expect(clamped).toHaveClass("line-clamp-2");
+    expect(clamped).toHaveAttribute("title", "Acme Vape - Blueberry");
+  });
+
   it("the table row reads the family and the variant together", async () => {
     renderWithProviders(<ProductsPage />);
     await userEvent.setup().click(screen.getByTitle("Table view"));

@@ -245,7 +245,10 @@ function ProductCard({
       <div className="flex flex-1 flex-col gap-2 p-3" onClick={selectionMode ? undefined : onClick}>
         <div>
           <p className="font-mono text-[11px] text-navy/40">{product.sku}</p>
-          <p className="mt-0.5 text-sm font-semibold leading-snug text-navy line-clamp-2">
+          <p
+            className="mt-0.5 text-sm font-semibold leading-snug text-navy line-clamp-2"
+            title={displayProductName(product)}
+          >
             {/* SA-1216: a variant reads "<Family> - <Variant>" (the one rule; a legacy row that
                 already carries the family prefix is not doubled). */}
             {selectionMode ? (
@@ -1199,15 +1202,24 @@ export default function ProductsPage() {
     productById.has(id),
   );
 
+  // SA-1216: the full "<Family> - <Variant>" name of a product this page holds ("" when it is off the page).
+  const fullNameOf = React.useCallback(
+    (id: string) => {
+      const product = productById.get(id);
+      return product ? displayProductName(product) : "";
+    },
+    [productById],
+  );
+
   // Names of the selected products this page holds (the rule editor labels its chips from them).
   const selectedNames = React.useMemo(() => {
     const out: Record<string, string> = {};
     selected.forEach((id) => {
-      const name = productById.get(id)?.name;
+      const name = fullNameOf(id);
       if (name) out[id] = name;
     });
     return out;
-  }, [selected, productById]);
+  }, [selected, fullNameOf]);
 
   const toggleOne = (id: string) =>
     setSelected((prev) => {
@@ -1233,7 +1245,7 @@ export default function ProductsPage() {
       // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
       // processed-vs-skipped shape); the hook merges those three across chunks.
       const res = await bulkDelete.mutateAsync(ids);
-      setSkipNames(new Map(ids.map((id) => [id, productById.get(id)?.name ?? ""])));
+      setSkipNames(new Map(ids.map((id) => [id, fullNameOf(id)])));
       setSelected(new Set());
       const { softDeleted, skipped } = res;
       const parts = [`${res.deleted} deleted`];
