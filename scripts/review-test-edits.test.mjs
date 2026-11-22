@@ -6,6 +6,7 @@ import { mkdtempSync, realpathSync, writeFileSync, mkdirSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "review-test-edits.mjs");
 const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), "rte-")));
@@ -26,7 +27,7 @@ const git = (...a) =>
       "core.hooksPath=",
       ...a,
     ],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: scrubbedGitEnv() },
   ).trim();
 const put = (f, text) => {
   mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
