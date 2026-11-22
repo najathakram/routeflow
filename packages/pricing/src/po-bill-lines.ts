@@ -141,3 +141,29 @@ export function billLinesFromPO(
   });
   return out;
 }
+
+/** SA-1207 P2b F1/F2: every PO line accounted for, in one call, keyed by INDEX (ids can be null or repeat). */
+export interface BillPlanFromPO {
+  lines: BillLineFromPO[];
+  /** `lineIndex[k]` = the index in `poLines` that `lines[k]` came from. */
+  lineIndex: number[];
+  /** Indexes to enter by hand. */
+  byHand: number[];
+  /** Indexes whose quantity to bill is explicitly 0. */
+  zero: number[];
+}
+
+export function billPlanFromPO(
+  poLines: readonly PoLineForBill[],
+  piecesToBill: readonly number[] = billQuantitiesFromPO(poLines),
+): BillPlanFromPO {
+  const lines = billLinesFromPO(poLines, piecesToBill);
+  const lineIndex = poLines.flatMap((l, i) =>
+    lines.some((x) => x.productId === l.productId) ? [i] : [],
+  );
+  const byHand = poLines.flatMap((l, i) =>
+    notPrefilled(l, Number(piecesToBill[i] ?? 0)) ? [i] : [],
+  );
+  const zero = poLines.flatMap((_, i) => (lineIndex.includes(i) || byHand.includes(i) ? [] : [i]));
+  return { lines, lineIndex, byHand, zero };
+}

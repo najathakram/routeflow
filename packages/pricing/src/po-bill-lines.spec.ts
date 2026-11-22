@@ -1,5 +1,6 @@
 import {
   billLinesFromPO,
+  billPlanFromPO,
   billQuantitiesFromPO,
   lotUnitLabel,
   poLinesNotPrefilled,
@@ -137,5 +138,70 @@ describe("lotUnitLabel", () => {
     expect(lotUnitLabel(25, 24)).toBe("1 Box + 1 Piece");
     expect(lotUnitLabel(1, null)).toBe("1 Piece");
     expect(lotUnitLabel(48, 24)).toBe("2 Boxes");
+  });
+});
+
+// SA-1207 P2b carry F1/F2: one call accounts for EVERY PO line, and its keys are indexes (never ids).
+describe("billPlanFromPO (SA-1207 P2b F1, F2)", () => {
+  const piece = (id: string | null) => ({
+    ...poLine({ qtyOrdered: 4, unitCost: 2.5 }),
+    id,
+  });
+  const boxed = (id: string | null) => ({ ...poLine({ packSize: 12, caseCost: 6, cases: 2 }), id });
+
+  it("a quantity of 0 is a zero line; NaN, a missing entry and a negative are listed, never dropped", () => {
+    const poLines = [piece("a"), piece("b"), piece("c"), piece("d")];
+    const plan = billPlanFromPO(poLines, [0, Number.NaN, -3]);
+    expect(plan.zero).toEqual([0]);
+    expect(plan.byHand).toEqual([1, 2, 3]);
+    expect(plan.lines).toEqual([]);
+  });
+
+  it("an infinite or non-numeric quantity is listed too", () => {
+    const plan = billPlanFromPO([piece("a"), piece("b")], [Infinity, "x" as unknown as number]);
+    expect(plan.byHand).toEqual([0, 1]);
+    expect(plan.zero).toEqual([]);
+  });
+
+  it("a line whose own money is not a number is listed, not billed as NaN", () => {
+    const bad = { ...piece("a"), totalCost: "n/a" };
+    const plan = billPlanFromPO([bad], [4]);
+    expect(plan.byHand).toEqual([0]);
+    expect(plan.lines).toEqual([]);
+  });
+
+  it("keys are indexes: an id that equals another line's index never collides", () => {
+    // line 0 carries the id "1"; line 1 has no id (its old key was the string "1").
+    const plan = billPlanFromPO([boxed("1"), boxed(null)], [1.5, 1.5]);
+    expect(plan.byHand).toEqual([0, 1]);
+    expect(poLinesNotPrefilled([boxed("1"), boxed(null)], [1.5, 1.5])).toEqual(["1", "1"]);
+  });
+
+  it("lineIndex names the PO line each bill line came from, with two lines of one product", () => {
+    const a = piece("a");
+    const b = { ...piece("b"), qtyOrdered: 2, totalCost: 5 };
+    const plan = billPlanFromPO([a, b, boxed("c")], [4, 2, 1.5]);
+    expect(plan.lines.map((l) => l.poItemId)).toEqual(["a", "b"]);
+    expect(plan.lineIndex).toEqual([0, 1]);
+    expect(plan.byHand).toEqual([2]);
+  });
+
+  it("prefilled + listed + zero cover every PO line exactly once, for every odd quantity", () => {
+    const poLines = [piece("a"), boxed(null), piece(null), boxed("a"), piece("b")];
+    const odd = [120, 0, -1, Number.NaN, 1.5, Infinity, undefined as unknown as number, 7];
+    for (const q of odd) {
+      for (const shift of [0, 1, 2]) {
+        const pieces = poLines.map((_, i) => odd[(i + shift) % odd.length] ?? q);
+        const plan = billPlanFromPO(poLines, pieces);
+        const all = [...plan.lineIndex, ...plan.byHand, ...plan.zero].sort((x, y) => x - y);
+        expect(all).toEqual(poLines.map((_, i) => i));
+        expect(plan.lines).toHaveLength(plan.lineIndex.length);
+      }
+    }
+  });
+
+  it("poLinesNotPrefilled lists the same lines the plan does", () => {
+    const poLines = [piece("a"), piece("b"), boxed("c")];
+    expect(poLinesNotPrefilled(poLines, [Number.NaN, -1, 1.5])).toEqual(["a", "b", "c"]);
   });
 });
