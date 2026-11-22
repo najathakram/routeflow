@@ -110,6 +110,16 @@ function payloadLineItems(payload: unknown): DraftLineItem[] {
  * Dock display fields for a draft: a title, item count, and running subtotal
  * (computed with the shared money helper so it matches the builder exactly).
  */
+/**
+ * SA-1222: the drafts an ORDER surface (Parked window, orders page) may show. A PURCHASE_ORDER draft belongs to the Create PO surface;
+ * its payload carries `unitCost` lines and must never open as an order. A non-array (a loading or mocked read) is no drafts.
+ */
+export function orderSideDrafts(drafts: unknown): SaleDraft[] {
+  return Array.isArray(drafts)
+    ? (drafts as SaleDraft[]).filter((d) => d.kind !== "PURCHASE_ORDER")
+    : [];
+}
+
 export function draftSummary(draft: SaleDraft): {
   title: string;
   itemCount: number;

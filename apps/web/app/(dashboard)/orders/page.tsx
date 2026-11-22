@@ -50,6 +50,7 @@ import { apiClient } from "@/lib/api-client";
 import { useDeliveryAccess, useFleetAccess } from "@/lib/api/addons";
 import { useOrderStatusLabel, useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { useDrafts } from "@/lib/api/drafts";
+import { orderSideDrafts } from "@/lib/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
 import { bulkCancelFailureTitle } from "@/lib/bulk-cancel-summary";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -516,8 +517,7 @@ export default function OrdersPage() {
   // clearance (the spacer after the pager) only when a draft is actually parked, so the last card can clear the dock — same
   // react-query cache key as the dock's own fetch, so this costs no extra request.
   const { data: drafts } = useDrafts();
-  // SA-1222: a PURCHASE_ORDER draft is not an order draft
-  const hasDrafts = Array.isArray(drafts) && drafts.some((d) => d.kind !== "PURCHASE_ORDER");
+  const hasDrafts = orderSideDrafts(drafts).length > 0; // SA-1222: a PO draft is not an order draft
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => {

@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { Button, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useDeleteDraft, useDrafts, type SaleDraft } from "@/lib/api/drafts";
+import { orderSideDrafts } from "@/lib/drafts";
 import { setCounterAutoParkHook } from "@/lib/counter-cart-signal";
 import { formatMoney } from "@/lib/format";
 import { cartTotals } from "@/lib/counter-sale";
@@ -140,10 +141,8 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
       onDismiss: () => toastClosed(token, () => commitDraft(token)),
     });
   };
-  const drafts = (Array.isArray(draftRows) ? draftRows : []).filter(
-    // SA-1222: a PURCHASE_ORDER draft belongs to the Create PO surface, never to the order window
-    (d) => d.kind !== "PURCHASE_ORDER" && !draftWaiting.hidden.has(d.id),
-  );
+  // SA-1222: a PURCHASE_ORDER draft belongs to the Create PO surface, never to the order window
+  const drafts = orderSideDrafts(draftRows).filter((d) => !draftWaiting.hidden.has(d.id));
   const router = useRouter();
   const { data: settings } = useQuery<{ taxRate?: number | null }>({
     queryKey: ["settings"],
