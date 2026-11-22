@@ -1,4 +1,5 @@
-import { CatchupCheckoutService } from "./catchup-checkout.service";
+import { CatchupCheckoutService, catchupReportJson } from "./catchup-checkout.service";
+import { buildCatchupSessionParams } from "./catchup-session-params";
 import { CatchupClaimService } from "./catchup-claim.service";
 import { PaymentDueService } from "./payment-due.service";
 import { effectiveCycle, nextBillingWindow } from "./rf-invoice/calendar-windows";
@@ -19,7 +20,12 @@ function harness(o: {
   sub: Record<string, unknown>;
   invoices?: Record<string, unknown>[];
   activation?: { start: string; end: string };
+  /** Plan price in dollars (default 310) and its recurring add-ons: {sku, cents, quantity}. */
+  monthly?: number;
+  addons?: { sku: string; cents: number; quantity: number }[];
 }) {
+  const monthly = o.monthly ?? 310;
+  const addons = o.addons ?? [];
   const db = fakeCatchupDb({
     subs: [{ tenantId: "t1", planKey: "GROWTH", ...o.sub }],
     invoices: o.invoices ?? [],
@@ -48,7 +54,16 @@ function harness(o: {
   }
   const prisma: any = {
     ...db.prisma,
-    tenantAddon: { findMany: jest.fn(async () => []) },
+    tenantAddon: {
+      findMany: jest.fn(async () =>
+        addons.map((a) => ({
+          sku: a.sku,
+          addonKey: null,
+          quantity: a.quantity,
+          priceSnapshot: a.cents / 100,
+        })),
+      ),
+    },
     tenantConfig: { findUnique: jest.fn(async () => ({ timezone: "America/Chicago" })) },
     tenant: {
       findUnique: jest.fn(async () => ({
@@ -64,19 +79,31 @@ function harness(o: {
   const pricing: any = {
     resolveTenantPricing: jest.fn(async () => ({
       planKey: "GROWTH",
-      monthly: 310,
+      monthly,
       source: "catalog",
       currency: "usd",
     })),
     checkoutPriceData: jest.fn(async () => ({
       currency: "usd",
-      unit_amount: 31000,
+      unit_amount: Math.round(monthly * 100),
       recurring: { interval: "month" },
       product_data: { name: "RouteFlow Growth" },
     })),
   };
   const mutations: any = {
-    checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [], invalid: [] })),
+    checkoutAddonLines: jest.fn(async () => ({
+      lineItems: addons.map((a) => ({
+        price_data: {
+          currency: "usd",
+          unit_amount: a.cents,
+          recurring: { interval: "month" },
+          product_data: { name: a.sku, metadata: { addonSku: a.sku } },
+        },
+        quantity: a.quantity,
+      })),
+      skus: addons.map((a) => a.sku),
+      invalid: [],
+    })),
     recordInvalidCatalogAddons: jest.fn(async () => undefined),
   };
   const claim = new CatchupClaimService(prisma, stripe as any, { emit: jest.fn() } as any);
@@ -90,7 +117,7 @@ function harness(o: {
     billing,
   );
   const due = new PaymentDueService(prisma, catchup, claim, stripe as any);
-  return { catchup, due };
+  return { catchup, due, claim };
 }
 
 describe("a business that owes money stays eligible (SA-1210 G1, #4404')", () => {
@@ -155,5 +182,65 @@ describe("a business that owes money stays eligible (SA-1210 G1, #4404')", () =>
     if (!r.plan.ok) return;
     expect(iso(r.plan.paidThrough)).toBe("2026-11-26T12:00:00.000Z");
     expect(iso(r.plan.stub.from)).toBe("2026-11-26T12:00:00.000Z");
+  });
+});
+
+describe("recurringCents is what the session will bill every month (SA-1210 G1, M1)", () => {
+  const NOW = new Date("2026-10-09T10:00:00Z");
+  const OCT_OPEN = {
+    id: "inv_oct",
+    tenantId: "t1",
+    status: "OPEN",
+    number: "RF-1",
+    periodStart: new Date("2026-10-01T12:00:00Z"),
+    periodEnd: new Date("2026-11-01T12:00:00Z"),
+    periodKey: "k1",
+  };
+  const withAddon = () =>
+    harness({
+      now: NOW,
+      sub: {},
+      invoices: [OCT_OPEN],
+      monthly: 99,
+      addons: [{ sku: "FORECASTING", cents: 4900, quantity: 1 }],
+    });
+
+  it("a $99 plan plus one $49 add-on reports 14800, not the base plan's 9900", async () => {
+    const r = await withAddon().catchup.plan("t1", NOW);
+    expect(r.eligible).toBe(true);
+    expect(r.monthlyCents).toBe(9900);
+    expect(catchupReportJson(r).recurringCents).toBe(14800);
+  });
+
+  it("parity: recurringCents equals the sum of the session's own recurring line amounts", async () => {
+    const r = await withAddon().catchup.plan("t1", NOW);
+    expect(r.plan.ok).toBe(true);
+    if (!r.plan.ok || !r._inputs) return;
+    const params = buildCatchupSessionParams({
+      tenantId: "t1",
+      slug: "qa-acme",
+      planKey: "GROWTH",
+      customerId: "cus_1",
+      planPriceData: r._inputs.planPriceData,
+      addonLines: r._inputs.addonLines,
+      addonSkus: r._inputs.addonSkus,
+      plan: r.plan,
+      now: NOW,
+      successUrl: "https://app.example.test/ok",
+      cancelUrl: "https://app.example.test/no",
+    });
+    const billedEachMonth = (params.line_items as any[])
+      .filter((l) => l.price_data?.recurring)
+      .reduce((sum, l) => sum + l.price_data.unit_amount * l.quantity, 0);
+    expect(billedEachMonth).toBe(14800);
+    expect(r.recurringCents).toBe(billedEachMonth);
+  });
+
+  it("a plan with no add-on reports the plan price alone", async () => {
+    const r = await harness({ now: NOW, sub: {}, invoices: [OCT_OPEN], monthly: 99 }).catchup.plan(
+      "t1",
+      NOW,
+    );
+    expect(catchupReportJson(r).recurringCents).toBe(9900);
   });
 });

@@ -70,8 +70,8 @@ function previewLines(r: CatchupReportView): string[] {
       ? "Nothing is charged today"
       : `When they pay, they're charged ${usdCents(p.stub.totalCents)} for the ${p.stub.label}`,
   );
-  if (r.monthlyCents != null) {
-    lines.push(`${usdCents(r.monthlyCents)}/month from ${fmtCalendarDate(p.trialEndAt)}`);
+  if (r.recurringCents != null) {
+    lines.push(`${usdCents(r.recurringCents)}/month from ${fmtCalendarDate(p.trialEndAt)}`);
   }
   const n = p.voidInvoiceIds.length;
   if (n > 0) {

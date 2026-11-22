@@ -48,7 +48,8 @@ const eligible = (over: Record<string, unknown> = {}) => ({
   claimState: null,
   hasStripeSubscription: false,
   externalPayment: true,
-  monthlyCents: 9900,
+  monthlyCents: 9900, // the base plan alone
+  recurringCents: 14800, // the plan plus one $49 add-on: what the session bills every month
   rfInvoices: { open: 1, paid: 1 },
   plan: {
     ok: true,
@@ -115,7 +116,7 @@ describe("TenantPricingCard: the card payment link block", () => {
         "When they pay, they're charged $61.25 for the Oct 26 to Oct 31, 2026 subscription",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("$99.00/month from Nov 1, 2026")).toBeInTheDocument();
+    expect(screen.getByText("$148.00/month from Nov 1, 2026")).toBeInTheDocument();
     expect(
       screen.getByText("1 open RouteFlow invoice is closed when they pay"),
     ).toBeInTheDocument();

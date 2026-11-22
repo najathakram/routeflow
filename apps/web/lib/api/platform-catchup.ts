@@ -40,6 +40,8 @@ export interface CatchupReportView {
   hasStripeSubscription: boolean;
   externalPayment: boolean;
   monthlyCents: number | null;
+  /** What the checkout bills every month: the plan plus its add-ons, whole cents. The card prints this, never `monthlyCents`. */
+  recurringCents: number | null;
   rfInvoices: { open: number; paid: number };
   plan: CatchupPlanView;
 }
