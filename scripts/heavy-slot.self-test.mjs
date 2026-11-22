@@ -38,6 +38,7 @@ import {
   isCappedLabel,
   parseCappedMax,
   inspectSlotsFile,
+  inspectMaxCpuFile,
   readSlotsFile,
   cpuPctFromTimes,
   loadOverReason,
@@ -1963,6 +1964,72 @@ check(
     "Q9 the ticket records priority only when the env switch is high",
     [pHigh, pNone],
     ["high", undefined],
+  );
+}
+
+{
+  // R: a machine-wide <dir>/max-cpu file (percent 1..100) overrides every waiter's own RF_HEAVY_SLOT_MAX_CPU_PCT,
+  // re-read on each check, like the slots file. Invalid or absent = ignored.
+  const dir = mkTmp();
+  const f = path.join(dir, "max-cpu");
+  const read = (txt) => {
+    if (txt === null) rmSync(f, { force: true });
+    else writeFileSync(f, txt);
+    return inspectMaxCpuFile(dir);
+  };
+  check(
+    "R1 inspectMaxCpuFile: valid, invalid and absent",
+    [read("95"), read(" 100\n"), read("0"), read("101"), read("9.5"), read("hot"), read(null)],
+    [
+      { state: "ok", value: 95 },
+      { state: "ok", value: 100 },
+      { state: "invalid", reason: "0 is outside 1..100" },
+      { state: "invalid", reason: "101 is outside 1..100" },
+      { state: "invalid", reason: 'not a plain decimal integer: "9.5"' },
+      { state: "invalid", reason: 'not a plain decimal integer: "hot"' },
+      { state: "absent" },
+    ],
+  );
+  // R2: a waiter whose own cap is 80 runs at 90% cpu when the file says 95; invalid/absent file keeps its 80 (K6-style).
+  const attempt = async (txt) => {
+    const d = mkTmp();
+    if (txt !== null) writeFileSync(path.join(d, "max-cpu"), txt);
+    let ran = false;
+    await withHeavySlot(
+      {
+        label: "hot",
+        branch: "b",
+        dir: d,
+        env: {},
+        ...FAST,
+        maxWaitMs: 300,
+        maxCpuPct: 80,
+        ...NO_LOG,
+        sampleLoad: async () => ({ cpuPct: 90, memPct: 10 }),
+      },
+      async () => void (ran = true),
+    ).catch(() => {});
+    return ran;
+  };
+  check(
+    "R2 the file's 95 lets a 90% cpu start; an invalid or absent file keeps the waiter's own 80",
+    [await attempt("95"), await attempt("junk"), await attempt(null)],
+    [true, false, false],
+  );
+  const d3 = mkTmp();
+  const st = (txt) => {
+    if (txt === null) rmSync(path.join(d3, "max-cpu"), { force: true });
+    else writeFileSync(path.join(d3, "max-cpu"), txt);
+    return formatStatus(d3);
+  };
+  check(
+    "R3 status names the max-cpu file: value, invalid, none",
+    [
+      /max-cpu file: .* = 95/.test(st("95")),
+      /max-cpu file: .*INVALID/.test(st("x")),
+      /max-cpu file: none/.test(st(null)),
+    ],
+    [true, true, true],
   );
 }
 

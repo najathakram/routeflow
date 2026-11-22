@@ -25,6 +25,8 @@
 // FIFO and may still take a free slot (the atomic `wx` lock picks one winner), so nobody is stranded; it just does not
 // defer to a high ticket that queued behind it. Priority is therefore guaranteed only against new-code waiters.
 //
+// A `max-cpu` file in the dir (integer percent 1..100) overrides every waiter's cpu cap, re-read on each check (like `slots`).
+//
 // Knobs (env): RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default
 // 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 90; the HOLDER enforces it too, W-759: at the cap it ends its own job's
 // process tree and releases the slot with exit 76 and `capped: true` in history; waiters give up only HOLD_GRACE after the cap, so a
@@ -134,6 +136,30 @@ export function inspectSlotsFile(dir) {
 export function readSlotsFile(dir) {
   const f = inspectSlotsFile(dir);
   return f.state === "ok" ? f.value : null;
+}
+
+/**
+ * The machine-wide cpu cap file `<dir>/max-cpu` (owner 2026-11-22): a plain integer percent 1..100 that overrides every
+ * waiter's own RF_HEAVY_SLOT_MAX_CPU_PCT, re-read on each check like `slots`, so the cap moves without restarting
+ * waiters. { state: "absent" } | { state: "ok", value } | { state: "invalid", reason } (invalid = ignored).
+ */
+export function inspectMaxCpuFile(dir) {
+  let raw;
+  try {
+    raw = decodeSlotsBytes(fs.readFileSync(path.join(dir, "max-cpu")))?.trim();
+  } catch {
+    return { state: "absent" };
+  }
+  if (raw === undefined) return { state: "invalid", reason: "UTF-16 body has an odd byte count" };
+  if (!/^[0-9]+$/.test(raw))
+    return {
+      state: "invalid",
+      reason: `not a plain decimal integer: ${JSON.stringify(raw.slice(0, 20))}`,
+    };
+  const n = Number(raw);
+  return n >= 1 && n <= 100
+    ? { state: "ok", value: n }
+    : { state: "invalid", reason: `${n} is outside 1..100` };
 }
 
 function parseMinutesMs(raw, fallbackMin) {
@@ -912,9 +938,14 @@ async function acquire(cfg, state) {
       // here (sampling takes ~3 s), so a job queued behind another holder costs nothing. A sampler that
       // throws fails open: the cap is a load guard, never a reason to wedge the queue.
       let busy = null;
-      if (g.grant && (cfg.maxCpuPct < 100 || cfg.maxMemPct < 100)) {
+      const cf = inspectMaxCpuFile(cfg.dir); // the machine-wide file wins over this waiter's own cap
+      const maxCpuPct = cf.state === "ok" ? cf.value : cfg.maxCpuPct;
+      if (g.grant && (maxCpuPct < 100 || cfg.maxMemPct < 100)) {
         try {
-          busy = loadOverReason(await sampleWithin(cfg.sampleLoad, cfg.sampleTimeoutMs), cfg);
+          busy = loadOverReason(await sampleWithin(cfg.sampleLoad, cfg.sampleTimeoutMs), {
+            maxCpuPct,
+            maxMemPct: cfg.maxMemPct,
+          });
           now = cfg.now(); // the sample took ~3 s: judge the max wait and the wait line on the clock after it
         } catch {
           busy = null;
@@ -1165,6 +1196,14 @@ export function formatStatus(
       : sf.state === "invalid"
         ? `slots file: ${path.join(dir, "slots")} is INVALID (${sf.reason}) — ignored`
         : "slots file: none (each waiter uses its own RF_HEAVY_SLOTS)",
+  );
+  const cf = inspectMaxCpuFile(dir);
+  out.push(
+    cf.state === "ok"
+      ? `max-cpu file: ${path.join(dir, "max-cpu")} = ${cf.value}% (overrides every waiter's RF_HEAVY_SLOT_MAX_CPU_PCT)`
+      : cf.state === "invalid"
+        ? `max-cpu file: ${path.join(dir, "max-cpu")} is INVALID (${cf.reason}) — ignored`
+        : "max-cpu file: none (each waiter uses its own RF_HEAVY_SLOT_MAX_CPU_PCT)",
   );
   if (!st.holders.length) out.push("holder: none (slot free)");
   for (const h of st.holders) {
