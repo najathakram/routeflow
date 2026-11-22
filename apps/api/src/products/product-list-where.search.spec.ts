@@ -1,3 +1,4 @@
+import "reflect-metadata";
 import { buildProductListWhere } from "./product-list-where";
 
 describe("buildProductListWhere: search matches the full name (SA-1216)", () => {

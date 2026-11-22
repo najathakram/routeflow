@@ -16,10 +16,10 @@ const RULE = /from "@\/lib\/product-display"/;
 const CENSUS: Record<string, { allowedBare: Record<string, number> }> = {
   "app/(dashboard)/products/page.tsx": { allowedBare: {} },
   // The rows these read are composed once in `stockItems` (its `name` is the full name): the stock
-  // table row, the adjust picker row, the search suggestion (title + text). `s.name` also appears
+  // table row, the adjust picker row and its selected value, the search suggestion (title + text). `s.name` also appears
   // once for a supplier row. The panels fed by their own read use `fullName(...)`.
   "app/(dashboard)/inventory/page.tsx": {
-    allowedBare: { "item.name": 1, "p.name": 1, "s.name": 3 },
+    allowedBare: { "item.name": 1, "p.name": 1, "s.name": 3, "selectedProduct.name": 1 },
   },
   "app/(dashboard)/inventory/movements/page.tsx": { allowedBare: { "m.supplier.name": 1 } },
   "app/(dashboard)/inventory/stock-counts/[id]/page.tsx": { allowedBare: {} },
