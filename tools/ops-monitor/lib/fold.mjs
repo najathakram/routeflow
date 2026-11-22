@@ -58,6 +58,7 @@ function newItem(id, fields, ts) {
     statusText: fields.statusText ?? null,
     harm: fields.harm ?? null,
     lane: fields.lane ?? null,
+    role: fields.role ?? null,
     train: fields.train ?? null,
     area: fields.area ?? null,
     parent: fields.parent ?? null,
@@ -81,6 +82,7 @@ function newItem(id, fields, ts) {
     answeredAt: null,
     children: [],
     claimedBy: null,
+    claimedActor: null, // who claimed it: a member id, or the lane itself for a lane session
     claimedAt: null,
     claimConflict: null,
     blocked: null,
@@ -194,6 +196,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     it.status = status;
     if (DONE_STATUSES.includes(status)) {
       it.claimedBy = null;
+      it.claimedActor = null;
       it.claimedAt = null;
       it.claimConflict = null;
     }
@@ -322,6 +325,7 @@ export function fold(events, { bugs = new Map() } = {}) {
           );
         } else {
           it.claimedBy = ev.lane;
+          it.claimedActor = ev.actor;
           it.claimedAt = ts;
           it.claimConflict = null;
           if (d.branch) mergeLinks(it.links, { branches: [d.branch] });
@@ -334,6 +338,7 @@ export function fold(events, { bugs = new Map() } = {}) {
         if (!it) break;
         if (it.claimedBy === ev.lane) {
           it.claimedBy = null;
+          it.claimedActor = null;
           it.claimedAt = null;
           it.claimConflict = null;
         } else if (it.claimConflict && it.claimConflict[1] === ev.lane) {

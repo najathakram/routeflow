@@ -2,7 +2,7 @@
 // comment reads on one line, and an item's thread. Members on other computers and other Claude
 // accounts cannot message a session, so comments on the item are the only channel.
 //
-// "Me" is { lane, actor } (later also a member id): a comment is mine to read when it mentions my
+// "Me" is { lane, actor, member }: a comment is mine to read when it mentions my
 // lane or my name (`to`), answers a comment I wrote (`replyTo`), or sits on an item my lane has
 // claimed. Comments I wrote myself are never in my inbox.
 //
@@ -51,10 +51,20 @@ export function commentsFor(state, me) {
     let reason = null;
     if (c.to.some((t) => keys.has(t))) reason = "mention";
     else if (c.replyTo && keys.has(byId.get(c.replyTo)?.actor)) reason = "reply";
-    else if (me.lane && state.items.get(c.item)?.claimedBy === me.lane) reason = "claimed";
+    else if (claimedByMe(state.items.get(c.item), me)) reason = "claimed";
     if (reason) out.push({ comment: c, reason });
   }
   return out;
+}
+
+/**
+ * True when I hold the item's claim: the claimer's name is mine (a member, or a lane session whose
+ * name is the lane); an old claim with no name falls back to the lane.
+ */
+function claimedByMe(it, me) {
+  if (!it?.claimedBy) return false;
+  if (it.claimedActor) return it.claimedActor === me.actor || it.claimedActor === me.member;
+  return Boolean(me.lane) && it.claimedBy === me.lane;
 }
 
 /** True when the comment comes after the read marker `{ lastEventId, ts }` (fold order). */

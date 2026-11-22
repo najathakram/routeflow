@@ -253,6 +253,10 @@
     return m ? m[1] : s;
   }
   const JARGON = /[:/_`]|\b[A-Z]{2,}\b|[a-z][A-Z]|\d/;
+  // "@macmini (Alex Rivera)" when a team member holds the claim, else "@macmini".
+  function claimLabel(it, prefix) {
+    return `${prefix}${it.claimedBy}${it.claimedByName ? ` (${it.claimedByName})` : ""}`;
+  }
   // "Routeflow Mac mini lane" -> "the Mac mini lane".
   function laneName(id) {
     if (!id) return null;
@@ -1712,7 +1716,7 @@
         i.type !== "feature" ? el("span", { class: "muted", text: i.type }) : null,
         i.blocked ? pill("BLOCKED", "err", `Blocked by ${i.blocked.by}`) : null,
         i.claimedBy
-          ? el("span", { class: "muted", text: `@${i.claimedBy}` })
+          ? el("span", { class: "muted", text: claimLabel(i, "@") })
           : i.lane
             ? el("span", { class: "muted", text: laneName(i.lane).replace(/^the /, "") })
             : null,
@@ -2343,7 +2347,7 @@
     row(
       "Claimed by",
       it.claimedBy
-        ? `${it.claimedBy}${it.claimedAt ? `, ${sinceWords(now() - Date.parse(it.claimedAt))}` : ""}`
+        ? `${claimLabel(it, "")}${it.claimedAt ? `, ${sinceWords(now() - Date.parse(it.claimedAt))}` : ""}`
         : null,
     );
     row("Release", it.train);
