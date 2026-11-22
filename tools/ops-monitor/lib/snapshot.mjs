@@ -577,6 +577,7 @@ export function buildSnapshot({
       claimedBy: it.claimedBy,
       claimedByName: memberName(cfg, it.claimedActor),
       reportedByName: memberName(cfg, it.reportedBy),
+      assigneeName: memberName(cfg, it.assignee),
       blocked: it.blocked
         ? {
             ...it.blocked,

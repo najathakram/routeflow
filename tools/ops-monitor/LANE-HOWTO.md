@@ -25,6 +25,9 @@ monitor brief, and the lead gets a "since you last looked" line on each prompt.
 - Talk:           rf comment <id> "<text>" [--to <lane|member>,...] [--reply-to <eventId>]
                   rf inbox (comments for you; the brief and each prompt show new ones). The board
                   is the ONLY channel: sessions on other computers or accounts cannot message you.
+- Hand work over: rf assign <id> --to <member> [--note "…"] (tops their rf next; --to - clears)
+- Wait for work:  rf inbox --wait [--timeout 1800] as ONE background command when idle; it exits
+                  (0) as soon as a comment or assignment for you arrives, (3) on timeout: re-run it.
 - Bugs: only lead/coordinator file them: rf bug file "<title>" --location … --severity … (wraps bugs.mjs)
 - Tester reports: a tester files rf item new --type bug --steps "…" --screen /route [--evidence https://…]
                   (always a draft). The lead or coordinator runs rf triage, then rf triage promote <id>

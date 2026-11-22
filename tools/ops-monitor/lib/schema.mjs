@@ -214,6 +214,15 @@ export const KINDS = {
       replyTo: [(v) => typeof v === "string" && EVENT_ID_RE.test(v), false],
     },
   },
+  // Hands an item to one team member (rf assign): it tops their rf next and lands in their inbox.
+  // to: a member id, or null to clear. The CLI checks the id against the members list.
+  assign: {
+    needsItem: "required",
+    data: {
+      to: [(v) => v === null || (typeof v === "string" && LANE_RE.test(v)), true],
+      note: [optStr(500), false],
+    },
+  },
   // Session heartbeat from a machine's status file (hooks -> `rf status-sync`). Never touches items.
   heartbeat: {
     needsItem: "none",

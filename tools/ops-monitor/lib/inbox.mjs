@@ -37,9 +37,23 @@ export function myKeys(me = {}) {
 /** The author's name as the board shows it: the actor (a member id or a lane). */
 export const authorOf = (c) => c.actor || c.lane || c.machine;
 
+/** An assignment as an inbox entry (kind "assign"), so one list, marker and renderer serve both. */
+const assignEntry = (a) => ({
+  id: a.id,
+  ts: a.ts,
+  item: a.item,
+  kind: "assign",
+  text: a.note ? `assigned to you: ${a.note}` : "assigned to you",
+  to: [a.to],
+  replyTo: null,
+  actor: a.actor,
+  lane: a.lane,
+  machine: a.machine,
+});
+
 /**
- * The comments for `me`, oldest first: `[{ comment, reason }]`, reason "mention" | "reply" |
- * "claimed" (first that applies).
+ * The comments and assignments for `me`, oldest first: `[{ comment, reason }]`, reason "mention" |
+ * "reply" | "claimed" | "assigned" (first that applies). An assignment entry has kind "assign".
  */
 export function commentsFor(state, me) {
   const keys = myKeys(me);
@@ -54,7 +68,22 @@ export function commentsFor(state, me) {
     else if (claimedByMe(state.items.get(c.item), me)) reason = "claimed";
     if (reason) out.push({ comment: c, reason });
   }
-  return out;
+  for (const a of state.assignments ?? []) {
+    if (keys.has(a.actor) || !keys.has(a.to)) continue;
+    out.push({ comment: assignEntry(a), reason: "assigned" });
+  }
+  // One fold order (ts, then id) for both kinds, so the read marker works for either.
+  return out.sort((x, y) => x.comment.ts - y.comment.ts || (x.comment.id < y.comment.id ? -1 : 1));
+}
+
+/** "2 new comments and 1 assignment" (either part alone when the other is zero). */
+export function inboxHeadline(entries) {
+  const k = entries.filter((x) => x.comment.kind === "assign").length;
+  const c = entries.length - k;
+  const word = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  if (k === 0) return `${word(c, "new comment")}`;
+  if (c === 0) return `${word(k, "new assignment")}`;
+  return `${word(c, "new comment")} and ${word(k, "assignment")}`;
 }
 
 /**
@@ -85,7 +114,11 @@ export function renderComment(
 ) {
   void state;
   const text = clip(one(maskText(c.text, clientNames)), TEXT_CLIP);
-  const hint = replyHint ? ` (reply: rf comment ${c.item} --reply-to ${c.id})` : "";
+  const hint = !replyHint
+    ? ""
+    : c.kind === "assign"
+      ? ` (rf next; rf claim ${c.item})`
+      : ` (reply: rf comment ${c.item} --reply-to ${c.id})`;
   return maskText(`- [${c.item}] ${authorOf(c)}, ${ago(c.ts, now)}: ${text}${hint}`, clientNames);
 }
 

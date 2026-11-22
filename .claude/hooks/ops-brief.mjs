@@ -94,11 +94,15 @@ export function briefFor(payload, env, now, deps) {
   const loaded = deps.loadClientNames?.({ env, home }) ?? { names: [], error: null };
   const clientNames = Array.isArray(loaded) ? loaded : (loaded.names ?? []);
   const namesError = Array.isArray(loaded) ? null : (loaded.error ?? null);
-  const lane = lanes.laneForCwd(cwd, env, { config, home });
+  // A team member (rf whoami --member / RF_MEMBER) reads as themselves, as rf writes their events.
+  const member = deps.findMember?.(config, deps.memberId?.(env))?.id ?? null;
+  const lane =
+    lanes.laneForCwd(cwd, env, { config, home }) ??
+    (member ? (deps.findMember(config, member)?.lanes?.[0] ?? null) : null);
   const markerFile = join(home, "seen", `${turn.sanitizeSessionId(payload.session_id)}.json`);
   // Who reads the comments: the lane, and the name events are written under (as rf writes them).
-  const actor = env.RF_ACTOR || lane || `${deps.machine}:${basename(cwd)}`;
-  const me = { lane, actor };
+  const actor = env.RF_ACTOR || member || lane || `${deps.machine}:${basename(cwd)}`;
+  const me = { lane, actor, member };
   const events = readAllEvents(dir);
   const newest = brief.lastEventId(events);
 
@@ -138,7 +142,7 @@ export function briefFor(payload, env, now, deps) {
       writeJson(markerFile, { lastEventId: newest, ts: now });
       return { text: "", refresh };
     }
-    const own = (e) => (lane ? e.lane === lane : e.actor === actor);
+    const own = (e) => (member || !lane ? e.actor === actor : e.lane === lane);
     const { before, after, sorted } = brief.splitAtMarker(events, marker, own);
     let text = "";
     if (before.length !== sorted.length) {
@@ -161,7 +165,8 @@ export function briefFor(payload, env, now, deps) {
           .slice(-3)
           .map((x) => deps.inbox.renderComment(x.comment, nowState, { now, clientNames }));
         const more = n > 3 ? [`  (${n - 3} more: rf inbox)`] : [];
-        const head = `[ops monitor] ${n} new comment${n === 1 ? "" : "s"} for you:`;
+        const words = deps.inbox.inboxHeadline?.(mine) ?? `${n} new comment${n === 1 ? "" : "s"}`;
+        const head = `[ops monitor] ${words} for you:`;
         text = [text, head, ...lines, ...more].filter(Boolean).join("\n");
       }
     }
@@ -194,6 +199,8 @@ async function main() {
     brief: await import(lib("brief.mjs")),
     turn: await import(lib("turn-actions.mjs")),
     inbox: await import(lib("inbox.mjs")),
+    findMember: config.findMember,
+    memberId: config.memberId,
     machine: "",
   };
   deps.machine = config.machineId(config.loadConfig(config.specsDir()), process.env);
