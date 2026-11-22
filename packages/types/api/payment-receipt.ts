@@ -23,7 +23,7 @@ export type ReceiptKind =
 export interface ReceiptHeader {
   /** The group id, or the row's own id for a one-row view. */
   key: string;
-  /** The lowest live `paymentNumber` (compared numerically), else the reference, else null. Never from a VOID row. */
+  /** The lowest PAID `paymentNumber` (compared numerically), else the lowest live one, else the reference, else null. Never from a VOID row. */
   number: string | null;
   reference: string | null;
   method: string | null;
@@ -46,8 +46,10 @@ export interface ReceiptTender {
   method: string;
   reference: string | null;
   amount: number;
-  /** True: every row of this entry is VOID (shown struck through, not in the total). */
+  /** True: every row of this entry is VOID (shown struck through, not in the total). Equals `status === "VOID"`. */
   voided: boolean;
+  /** The status every row of this entry shares (rows of different statuses are never merged). Only PAID lines are in `header.total`. */
+  status: string;
   paymentIds: string[];
 }
 

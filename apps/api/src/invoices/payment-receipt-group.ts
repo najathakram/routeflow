@@ -19,7 +19,6 @@ import type {
   ReceiptUnapplied,
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
-import { isCounterTenderRow } from "../orders/counter-sale/counter-tender-row";
 import { pickupTenderGroupId } from "../orders/counter-sale/pickup-tender-group";
 
 /** The row fields a kind is decided from (and the order the pickup id derives from). */
@@ -118,10 +117,13 @@ function buildView(
   // scan-ok: draft-payment-not-void - a DISPLAY split (struck-through vs live) and the number's source, never a sum or a
   // capacity check: the total below reads `sumConfirmed` (PAID only), so a DRAFT row never counts toward money.
   const live = sorted.filter((r) => r.status !== "VOID");
-  const head = live[0] ?? sorted[0];
-  const methods = new Set(live.map((r) => r.method));
-  const numbered = live.find((r) => numberTail(r.paymentNumber) != null);
-  const reference = live.find((r) => r.reference != null)?.reference ?? head?.reference ?? null;
+  // The head is the lowest PAID row, else the lowest live row (SA-1220): a DRAFT number never names a receipt with a PAID row.
+  const paid = sorted.filter((r) => r.status === "PAID");
+  const heads = paid.length ? paid : live;
+  const head = heads[0] ?? sorted[0];
+  const methods = new Set(heads.map((r) => r.method));
+  const numbered = heads.find((r) => numberTail(r.paymentNumber) != null);
+  const reference = heads.find((r) => r.reference != null)?.reference ?? head?.reference ?? null;
   const order = head?.invoice.order ?? null;
   const header: ReceiptHeader = {
     key,
@@ -139,12 +141,13 @@ function buildView(
   const tenders = new Map<string, ReceiptTender>();
   for (const r of sorted) {
     const voided = r.status === "VOID";
-    const k = `${r.method}\u0000${r.reference ?? ""}\u0000${voided}`;
+    const k = `${r.method}\u0000${r.reference ?? ""}\u0000${r.status}`;
     const t = tenders.get(k) ?? {
       method: r.method,
       reference: r.reference,
       amount: 0,
       voided,
+      status: r.status,
       paymentIds: [],
     };
     t.amount = roundMoney(t.amount + Number(r.amount));
@@ -215,19 +218,12 @@ export async function readReceiptGroup(
     where: { paymentGroupId: key, invoice: { customerId } },
     include: { invoice: RECEIPT_INVOICE_SELECT },
   })) as ReceiptRow[];
+  // SA-1220: ONE key decides membership. A row is in this receipt iff its own `receiptKeyOf` is the anchor's, so every
+  // row of a receipt reads the same view. No till rule here (the pin spec bans it): any method or status shows, only
+  // PAID counts toward the total, and a credit use is a different kind.
   const members = siblings.filter((r) => {
-    if (r.invoice.customerId !== customerId || isCreditUse(r.method)) return false;
-    if (kind !== "PICKUP_TENDERS") return true;
-    // H1 of #4406: the receipt asks WHO handed this over, not where a check is now. A check deposited after the
-    // hand-over is still the customer's tender, so the bank's `checkStatus` is not read here.
-    return (
-      r.status === "VOID" ||
-      isCounterTenderRow(
-        r.invoice.orderId ?? "",
-        { ...r, checkStatus: null },
-        r.invoice.order ?? {},
-      )
-    );
+    const k = receiptKeyOf(r);
+    return r.invoice.customerId === customerId && k.kind === kind && k.key === key;
   });
   if (!members.some((r) => r.id === anchor.id)) members.push(anchor); // the row clicked is always on its own view
   const view = buildView(kind, key, members, NOT_RECORDED);

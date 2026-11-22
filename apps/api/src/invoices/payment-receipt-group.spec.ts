@@ -8,7 +8,7 @@ import { groupWindowPayments } from "../orders/counter-sale/window-payment-group
 import { pickupTenderGroupId } from "../orders/counter-sale/pickup-tender-group";
 import { PrismaService } from "../prisma/prisma.service";
 import { findPaymentById } from "./payment-list-query";
-import { readReceiptGroup, receiptKeyOf } from "./payment-receipt-group";
+import { readReceiptGroup, receiptKeyOf, type ReceiptKeyRow } from "./payment-receipt-group";
 
 type Row = Record<string, any>;
 let seq = 0;
@@ -160,7 +160,14 @@ describe("readReceiptGroup: the office check (case table D1)", () => {
       [b.invoice.invoiceNumber, 1000],
     ]);
     expect(view.tenders).toEqual([
-      { method: "CHECK", reference: "1042", amount: 4000, voided: false, paymentIds: [a.id, b.id] },
+      {
+        method: "CHECK",
+        reference: "1042",
+        amount: 4000,
+        voided: false,
+        status: "PAID",
+        paymentIds: [a.id, b.id],
+      },
     ]);
   });
 
@@ -370,11 +377,17 @@ describe("readReceiptGroup: pins H1-H4, P4 and the pickup grain", () => {
     const { prisma } = await reader([voidedCash, cash, card, foreign]);
     const view = await readReceiptGroup(prisma, cash.id);
     expect(view.kind).toBe("PICKUP_TENDERS");
-    expect(view.header).toMatchObject({ orderId, orderNumber: "ORD-ACME-1", total: 65, key: gid });
-    expect(view.tenders.map((t) => [t.method, t.amount, t.voided])).toEqual([
-      ["CASH", 60, true],
-      ["CASH", 40, false],
-      ["CREDIT_CARD", 25, false],
+    expect(view.header).toMatchObject({
+      orderId,
+      orderNumber: "ORD-ACME-1",
+      total: 1064,
+      key: gid,
+    }); // SA-1220: the ACH row carries this pickup key, so it is a member
+    expect(view.tenders.map((t) => [t.method, t.amount, t.voided, t.status])).toEqual([
+      ["CASH", 60, true, "VOID"],
+      ["CASH", 40, false, "PAID"],
+      ["CREDIT_CARD", 25, false, "PAID"],
+      ["ACH", 999, false, "PAID"],
     ]);
   });
 });
@@ -503,5 +516,99 @@ describe("readReceiptGroup: read B of #4406 (H1, L1 to L4)", () => {
     const view = await readReceiptGroup(prisma, a.id);
     expect(view.unapplied.advancePaymentId).toBe("adv-z");
     expect(view.unapplied.amount).toBe(300);
+  });
+});
+
+describe("readReceiptGroup: SA-1220 one key decides membership (R1-R9)", () => {
+  const order = { counterSale: false, orderNumber: "ORD-ACME-1" };
+  const gid = pickupTenderGroupId("order-1");
+  const pk = (amount: number, over: Row = {}) =>
+    pay({ paymentGroupId: gid, orderId: "order-1", order, method: "CHECK", amount, ...over });
+  const other = (over: Row = {}) =>
+    pay({ paymentGroupId: gid, orderId: "order-2", order, method: "CHECK", amount: 500, ...over });
+  const A = () => pk(3000, { reference: "1042", paymentNumber: "PAY-ACME-0099" });
+  const fixtures: Record<string, () => Row[]> = {
+    R1: () => [A(), pk(1000, { method: "ACH", reference: "9" })],
+    R1b: () => [A(), pk(1000, { method: "ZELLE", reference: "9" })],
+    R2: () => [A(), pk(1000, { status: "DRAFT" })],
+    R4: () => [A(), pk(1000, { status: "DRAFT", paymentNumber: "PAY-ACME-0098" })],
+    R5: () => [A(), pk(1000), other()],
+    R6: () => [A(), pk(1000), other({ status: "VOID" })],
+    R7: () => [A(), pk(999, { method: "ACH" })],
+  };
+  const norm = (v: any) => ({
+    kind: v.kind,
+    header: v.header,
+    ids: v.applications.map((x: any) => x.paymentId).sort(),
+    tenders: v.tenders.map((t: any) => ({ ...t, paymentIds: [...t.paymentIds].sort() })),
+  });
+
+  it.each(["R1", "R1b"])(
+    "%s. a sibling edited to ACH or ZELLE is a member: 4000, 2 applications, method null",
+    async (name) => {
+      const rows = fixtures[name]();
+      const view = await readReceiptGroup((await reader(rows)).prisma, rows[0].id);
+      expect(view.header).toMatchObject({ total: 4000, method: null });
+      expect(view.applications).toHaveLength(2);
+    },
+  );
+
+  it("R2. a sibling edited to DRAFT is shown (2 applications) and never counted (3000)", async () => {
+    const rows = fixtures.R2();
+    const view = await readReceiptGroup((await reader(rows)).prisma, rows[0].id);
+    expect(view.applications).toHaveLength(2);
+    expect(view.header?.total).toBe(3000);
+  });
+
+  it("R3. a DRAFT row is never merged into a PAID tender line", async () => {
+    const rows = fixtures.R2();
+    const view = await readReceiptGroup((await reader(rows)).prisma, rows[1].id);
+    expect(view.tenders.map((t: any) => [t.method, t.amount, t.status])).toEqual([
+      ["CHECK", 3000, "PAID"],
+      ["CHECK", 1000, "DRAFT"],
+    ]);
+  });
+
+  it("R4. a DRAFT number never names a receipt that has a PAID row: 0099 from both rows", async () => {
+    const rows = fixtures.R4();
+    const { prisma } = await reader(rows);
+    for (const r of rows)
+      expect((await readReceiptGroup(prisma, r.id)).header?.number).toBe("PAY-ACME-0099");
+  });
+
+  it("R5. an order-2 row that carries order-1's pickup id is its own office group of 500", async () => {
+    const rows = fixtures.R5();
+    const { prisma } = await reader(rows);
+    const view = await readReceiptGroup(prisma, rows[2].id);
+    expect(view.kind).toBe("OFFICE_GROUP");
+    expect(view.applications).toHaveLength(1);
+    expect(view.header?.total).toBe(500);
+    expect((await readReceiptGroup(prisma, rows[0].id)).header?.total).toBe(4000);
+  });
+
+  it("R6. a VOID order-2 row with the same group is no part of order-1's receipt", async () => {
+    const rows = fixtures.R6();
+    const view = await readReceiptGroup((await reader(rows)).prisma, rows[0].id);
+    expect(view.header?.partlyVoided).toBe(false);
+    expect(view.tenders.some((t: any) => t.voided)).toBe(false);
+    expect(view.applications).toHaveLength(2);
+  });
+
+  it("R8/R9. every member reads the same receipt, and the PAID tender lines add up to the total", async () => {
+    for (const [name, make] of Object.entries(fixtures)) {
+      const rows = make();
+      const { prisma } = await reader(rows);
+      const anchor = receiptKeyOf(rows[0] as ReceiptKeyRow);
+      const members = rows.filter((r) => {
+        const k = receiptKeyOf(r as ReceiptKeyRow);
+        return k.kind === anchor.kind && k.key === anchor.key;
+      });
+      const views = await Promise.all(members.map((m) => readReceiptGroup(prisma, m.id)));
+      for (const v of views) {
+        expect([name, norm(v)]).toEqual([name, norm(views[0])]);
+        const paid = v.tenders.filter((t: any) => t.status === "PAID");
+        expect([name, paid.reduce((s, t) => s + t.amount, 0)]).toEqual([name, v.header?.total]);
+      }
+    }
   });
 });

@@ -61,6 +61,14 @@ export const BUYER_ROUTE_EXCEPTION = {
   expires: "2026-11-25",
   reason: "buyer list reads rows itself and shows no receipt; the buyer receipt is M1-04",
 };
+/** True once the named exception's date has passed: the pin goes red then if M1-04 slipped (deliberate, SA-1220). */
+export const exceptionExpired = (e: { expires: string }, now: Date): boolean =>
+  now.getTime() > new Date(`${e.expires}T23:59:59Z`).getTime();
+
+/** A till predicate in the receipt file: membership is `receiptKeyOf` alone (SA-1220). */
+export const usesTillPredicate = (text: string): boolean =>
+  /\b(isCounterTenderRow|isCounterTenderGroup)\b/.test(codeOnly(text));
+
 /** Reads one row to authorise a file download; it never shows the payment. */
 const FILE_AUTH_READ = "uploads/uploads.controller.ts";
 
@@ -177,6 +185,21 @@ ${body}
     // the exception cannot quietly become a second reader: once the buyer route imports the reader, delete the exception
     const buyer = files.find((f) => f.file === BUYER_ROUTE_EXCEPTION.file)!;
     expect(importsReceiptReader(buyer.text)).toBe(false);
+  });
+
+  it("R10. the receipt file imports no till predicate (a till rule never decides membership again)", () => {
+    expect(usesTillPredicate('import { isCounterTenderRow } from "../orders/x";')).toBe(true);
+    expect(usesTillPredicate("// isCounterTenderGroup")).toBe(false);
+    const reader = files.find((f) => f.file === "invoices/payment-receipt-group.ts")!;
+    expect(usesTillPredicate(reader.text)).toBe(false);
+  });
+
+  it("R11. the buyer exception has not expired (red after 2026-11-25 if M1-04 slips)", () => {
+    expect(exceptionExpired({ expires: "2020-01-01" }, new Date("2026-11-22T00:00:00Z"))).toBe(
+      true,
+    );
+    expect(exceptionExpired(BUYER_ROUTE_EXCEPTION, new Date("2026-11-25T12:00:00Z"))).toBe(false);
+    expect(exceptionExpired(BUYER_ROUTE_EXCEPTION, new Date())).toBe(false);
   });
 
   it("the controller detector flags a planted direct read and ignores a comment", () => {
