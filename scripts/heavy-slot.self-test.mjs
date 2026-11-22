@@ -34,6 +34,7 @@ import {
   formatWaitLine,
   historyRecord,
   nextGrant,
+  parsePriority,
   isCappedLabel,
   parseCappedMax,
   inspectSlotsFile,
@@ -1869,6 +1870,99 @@ check(
         [true, "-e", 3],
       ],
     ],
+  );
+}
+
+{
+  // Q: priority lane (RF_HEAVY_SLOT_PRIORITY=high). A ticket with no priority field behaves exactly as before.
+  const ord = ["n1", "n2", "n3", "h1", "h2"];
+  const high = new Set(["h1", "h2"]);
+  const g = (myName, extra = {}) => nextGrant({ order: ord, myName, freeSlots: 1, ...extra });
+  check(
+    "Q1 a high ticket queued behind 3 normal ones gets the next free slot; the normals wait",
+    [g("h1", { high }).grant, g("n1", { high }).grant, g("h1", { high }).position],
+    [true, false, 1],
+  );
+  check(
+    "Q2 two highs stay FIFO between themselves",
+    [g("h1", { high }).grant, g("h2", { high }).grant, g("h2", { high }).position],
+    [true, false, 2],
+  );
+  check(
+    "Q3 no priority anywhere: the order is exactly as today (oldest first)",
+    [g("n1").grant, g("h1").grant, g("n1", { high: new Set() }).grant, g("n3").position],
+    [true, false, true, 3],
+  );
+  const atCap = { capped: new Set(["h1"]), cappedHeld: 2, cappedMax: 2 };
+  check(
+    "Q4 a capped high ticket is still skipped at the cap; the oldest normal goes",
+    [
+      g("h1", { high, ...atCap }).grant,
+      g("h2", { high, ...atCap }).grant, // the next high one is eligible
+      g("n1", { high: new Set(["h1"]), ...atCap }).grant,
+    ],
+    [false, true, true],
+  );
+  check(
+    "Q5 stale high tickets do not block anyone",
+    g("n1", { high, stale: new Set(["h1", "h2"]) }).grant,
+    true,
+  );
+  // Q6: an OLD-code waiter ignores `high` (it calls nextGrant without it): with a high ticket behind it, it still
+  // believes it is first and may take a free slot; the high waiter believes the same. Both may try the slot; the
+  // atomic `wx` lock file picks one, so nobody waits on a slot nobody takes. A new-code normal waiter defers.
+  const two = { order: ["n1", "h1"], freeSlots: 1 };
+  check(
+    "Q6 old-code waiter ahead of a high ticket still takes a free slot; a new-code normal waiter defers to it",
+    [
+      nextGrant({ ...two, myName: "n1" }).grant,
+      nextGrant({ ...two, myName: "h1", high: new Set(["h1"]) }).grant,
+      nextGrant({ ...two, myName: "n1", high: new Set(["h1"]) }).grant,
+    ],
+    [true, true, false],
+  );
+  check(
+    "Q7 the wait line marks a high ticket",
+    [
+      formatWaitLine({ position: 1, total: 4, holder: null, now: 0, priority: "high" }).includes(
+        "(priority)",
+      ),
+      formatWaitLine({ position: 1, total: 4, holder: null, now: 0 }).includes("priority"),
+    ],
+    [true, false],
+  );
+  check(
+    "Q8 parsePriority: only `high` (any case) counts",
+    [
+      parsePriority("high"),
+      parsePriority(" HIGH "),
+      parsePriority("low"),
+      parsePriority(undefined),
+    ],
+    ["high", "high", null, null],
+  );
+  // Q9: on disk. A waiter started with the env switch writes priority:"high" on its ticket; a normal one writes none.
+  const dirQ = mkTmp();
+  ghost(dirQ, {}, 0);
+  const prio = async (env) => {
+    const W = withHeavySlot(
+      { label: "wt-db-1", branch: "b", dir: dirQ, env, slots: 1, ...FAST, ...NO_LOG },
+      async () => {},
+    );
+    await until(() => queued(dirQ).length === 1);
+    const f = path.join(dirQ, "queue", queued(dirQ)[0]);
+    const t = JSON.parse(readFileSync(f, "utf8"));
+    rmSync(lockFile(dirQ, 0), { force: true }); // let the waiter take the slot and finish
+    await W;
+    ghost(dirQ, {}, 0);
+    return t.priority;
+  };
+  const pHigh = await prio({ RF_HEAVY_SLOT_PRIORITY: "high" });
+  const pNone = await prio({});
+  check(
+    "Q9 the ticket records priority only when the env switch is high",
+    [pHigh, pNone],
+    ["high", undefined],
   );
 }
 

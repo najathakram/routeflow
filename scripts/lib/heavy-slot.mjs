@@ -18,6 +18,13 @@
 // alive), or the total wait passed the long MAX_WAIT backstop. A queue of several healthy jobs is
 // NOT a reason to give up.
 //
+// Priority lane (owner 2026-11-22): `RF_HEAVY_SLOT_PRIORITY=high git push ...` (set in the env of the WAITING
+// process) writes `priority: "high"` on its ticket. Grant order is then: high tickets first (FIFO among themselves),
+// then normal tickets (FIFO); the capped and stale rules still apply. A ticket without the field is normal, so with no
+// switch the order is exactly the old one. GRANT_RULE is NOT bumped: a waiter on older code ignores the field, sees plain
+// FIFO and may still take a free slot (the atomic `wx` lock picks one winner), so nobody is stranded; it just does not
+// defer to a high ticket that queued behind it. Priority is therefore guaranteed only against new-code waiters.
+//
 // Knobs (env): RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default
 // 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 90; the HOLDER enforces it too, W-759: at the cap it ends its own job's
 // process tree and releases the slot with exit 76 and `capped: true` in history; waiters give up only HOLD_GRACE after the cap, so a
@@ -485,6 +492,15 @@ export function staleReason(
 const CAPPED_LABEL = /verify|pre-?push|\bpush\b/i;
 export const DEFAULT_CAPPED_MAX = 2;
 
+/** RF_HEAVY_SLOT_PRIORITY: "high" (any case) or null. */
+export function parsePriority(raw) {
+  return String(raw ?? "")
+    .trim()
+    .toLowerCase() === "high"
+    ? "high"
+    : null;
+}
+
 export function isCappedLabel(label) {
   return CAPPED_LABEL.test(label ?? "");
 }
@@ -508,7 +524,11 @@ export function nextGrant({
   cappedHeld = 0,
   cappedMax = Infinity,
   stale,
+  high,
 }) {
+  // `high` (names of priority tickets): they go first, FIFO among themselves, then the rest. Empty/absent = plain FIFO.
+  if (high?.size)
+    order = [...order.filter((n) => high.has(n)), ...order.filter((n) => !high.has(n))];
   const idx = order.indexOf(myName);
   const atCap = cappedHeld >= cappedMax;
   // A ticket written under an older grant rule (or none) is not first in line: its waiter does not apply this rule, so
@@ -522,13 +542,13 @@ export function nextGrant({
   };
 }
 
-export function formatWaitLine({ position, total, holder, now }) {
+export function formatWaitLine({ position, total, holder, now, priority }) {
   const held = holder
     ? `held by ${holder.label} on ${holder.branch || "?"}, pid ${holder.pid}, ${(
         Math.max(0, now - (holder.startedAt ?? now)) / 60_000
       ).toFixed(1)} min`
     : "held by (none yet)";
-  return `heavy-slot: waiting (position ${position} of ${total}) — ${held}`;
+  return `heavy-slot: waiting${priority === "high" ? " (priority)" : ""} (position ${position} of ${total}) — ${held}`;
 }
 
 /** Keep the last `max` non-empty lines of a history file's text. */
@@ -773,6 +793,7 @@ function resolveConfig(opts, env) {
     heartbeatMs: opts.heartbeatMs ?? parseMs(env.RF_HEAVY_SLOT_HEARTBEAT_MS, HEARTBEAT_MS),
     waitLogMs: opts.waitLogMs ?? WAIT_LOG_MS,
     maxCpuPct: opts.maxCpuPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_CPU_PCT),
+    priority: parsePriority(opts.priority ?? env.RF_HEAVY_SLOT_PRIORITY),
     cappedMax: opts.cappedMax ?? parseCappedMax(env.RF_HEAVY_SLOT_CAPPED_MAX),
     maxMemPct: opts.maxMemPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_MEM_PCT),
     sampleLoad: opts.sampleLoad ?? sampleMachineLoad,
@@ -824,6 +845,7 @@ async function acquire(cfg, state) {
     queuedAt,
     heartbeatAt: queuedAt,
     rule: GRANT_RULE,
+    ...(cfg.priority ? { priority: cfg.priority } : {}),
   };
   writeJson(ticketFile, base);
   const beat = setInterval(() => {
@@ -872,6 +894,10 @@ async function acquire(cfg, state) {
       );
       if (isCappedLabel(cfg.label)) capped.add(name);
       if (!entries.some((t) => t.name === name)) entries.push({ name }); // just (re)written
+      const high = new Set(
+        snap.tickets.filter((t) => t.entry.priority === "high").map((t) => t.name),
+      );
+      if (cfg.priority) high.add(name); // my own ticket, even if just (re)written
       const g = nextGrant({
         order: orderTickets(entries).map((t) => t.name),
         myName: name,
@@ -880,6 +906,7 @@ async function acquire(cfg, state) {
         cappedHeld: snap.holders.filter((h) => isCappedLabel(h.entry.label)).length,
         cappedMax: cfg.cappedMax,
         stale: new Set(snap.tickets.filter((t) => ticketStale(t.entry)).map((t) => t.name)),
+        high,
       });
       // Owner cap: first in line with a free slot, but the machine is too busy -> keep waiting. Sampled only
       // here (sampling takes ~3 s), so a job queued behind another holder costs nothing. A sampler that
@@ -948,6 +975,7 @@ async function acquire(cfg, state) {
             total: g.total,
             holder: snap.holders[0]?.entry,
             now,
+            priority: cfg.priority,
           }),
         );
         lastLog = now;
@@ -1153,7 +1181,7 @@ export function formatStatus(
   st.tickets.forEach((t, i) => {
     const e = t.entry;
     out.push(
-      `queue ${i + 1} of ${st.tickets.length}: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, waiting ${min(now - e.queuedAt)} min` +
+      `queue ${i + 1} of ${st.tickets.length}${e.priority === "high" ? " (priority)" : ""}: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, waiting ${min(now - e.queuedAt)} min` +
         (ticketStale(e)
           ? ` **OLD GRANT RULE (ticket rule ${Number.isInteger(e.rule) ? e.rule : "none"}, current ${GRANT_RULE}): fresh waiters skip it; its waiter needs a restart**`
           : ""),
