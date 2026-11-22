@@ -4,6 +4,7 @@ import { NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { clampLimit } from "../common/pagination";
 import { RECEIVED_METHOD_FILTER } from "./payment-predicates";
+import { readReceiptGroup } from "./payment-receipt-group";
 import { buildPaymentsCsv } from "./payments-csv";
 import { tenantCalendarDayEnd, tenantCalendarDayStart } from "./paid-window-bounds";
 
@@ -148,7 +149,8 @@ export async function findPaymentById(prisma: PrismaService, paymentId: string) 
     },
   });
   if (!payment) throw new NotFoundException("Payment not found");
-  return payment;
+  // SA-1208 D1 (M1-02): the payment as before, plus what it covered, read through the one receipt reader.
+  return { ...payment, receipt: await readReceiptGroup(prisma, paymentId) };
 }
 
 export async function exportPayments(
