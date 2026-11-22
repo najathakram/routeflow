@@ -33,6 +33,7 @@ import {
 } from "@/lib/api/products";
 import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
 import { productTierLabel } from "@/lib/tier-one-label";
+import { displayProductName } from "@/lib/product-display";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
@@ -223,7 +224,7 @@ function ProductCard({
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={product.thumbnailUrl}
-            alt={product.name}
+            alt={displayProductName(product)}
             className="h-full w-full object-cover"
             style={{ objectPosition: objectPositionForUrl(product.thumbnailUrl) }}
             draggable={false}
@@ -245,15 +246,13 @@ function ProductCard({
         <div>
           <p className="font-mono text-[11px] text-navy/40">{product.sku}</p>
           <p className="mt-0.5 text-sm font-semibold leading-snug text-navy line-clamp-2">
-            {/* Variants display just their flavor / variety name. Parent
-                context is rendered below as a small caption. Falls back to
-                full `name` for variants whose row still has the legacy
-                "Parent - Variant" composite name (pre-fix data). */}
+            {/* SA-1216: a variant reads "<Family> - <Variant>" (the one rule; a legacy row that
+                already carries the family prefix is not doubled). */}
             {selectionMode ? (
-              (product.variantName ?? product.name)
+              displayProductName(product)
             ) : (
               <ProductNameLink id={product.id} stretched srNote={trackedTypeTitle}>
-                {product.variantName ?? product.name}
+                {displayProductName(product)}
               </ProductNameLink>
             )}
           </p>
@@ -271,10 +270,6 @@ function ProductCard({
             </span>
           )}
         </div>
-        {/* Variant indicator */}
-        {product.variantName && product.parent && (
-          <p className="text-[10px] text-navy/70 truncate">{product.parent.name}</p>
-        )}
         <div className="flex items-center gap-1.5">
           <ProductStatusBadge status={status} currentStock={product.currentStock} />
           <MerchBadges product={product} />
@@ -356,7 +351,7 @@ function makeTableColumns(
           <div onClick={(e) => e.stopPropagation()}>
             <SectionEditCell
               productId={p.id}
-              productName={p.name}
+              productName={displayProductName(p)}
               trackedCategoryId={p.trackedCategoryId ?? null}
               trackedSubcategoryId={p.trackedSubcategoryId ?? null}
               activeSections={activeSections}
@@ -398,7 +393,7 @@ function makeTableColumns(
           <div onClick={(e) => e.stopPropagation()}>
             <QuickEditCell
               productId={p.id}
-              productName={p.name}
+              productName={displayProductName(p)}
               field="msrp"
               type="number"
               value={p.msrp != null ? parseFloat(String(p.msrp)).toFixed(2) : ""}
@@ -473,7 +468,7 @@ function makeTableColumns(
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={p.thumbnailUrl}
-                  alt={p.name}
+                  alt={displayProductName(p)}
                   className="h-full w-full object-cover"
                   style={{ objectPosition: objectPositionForUrl(p.thumbnailUrl) }}
                   draggable={false}
@@ -484,7 +479,11 @@ function makeTableColumns(
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-navy">
-                {selectMode ? p.name : <ProductNameLink id={p.id}>{p.name}</ProductNameLink>}
+                {selectMode ? (
+                  displayProductName(p)
+                ) : (
+                  <ProductNameLink id={p.id}>{displayProductName(p)}</ProductNameLink>
+                )}
                 {(p as any).isTobacco && (
                   <span
                     title="Tobacco product — tracked separately for monthly tax reports"
@@ -522,7 +521,7 @@ function makeTableColumns(
             <QuickEditCell
               ref={thisRef}
               productId={p.id}
-              productName={p.name}
+              productName={displayProductName(p)}
               field="sku"
               value={p.sku}
               placeholder="Scan or type SKU…"
@@ -536,7 +535,7 @@ function makeTableColumns(
                 onScan={async (code) => {
                   await onQuickSave(p, "sku", code, {
                     productId: p.id,
-                    productName: p.name,
+                    productName: displayProductName(p),
                     field: "sku",
                     oldValue: p.sku ?? null,
                     newValue: code,
@@ -563,7 +562,7 @@ function makeTableColumns(
           <div onClick={(e) => e.stopPropagation()}>
             <QuickEditCell
               productId={p.id}
-              productName={p.name}
+              productName={displayProductName(p)}
               field="category"
               value={p.category}
               options={categories}
@@ -668,7 +667,7 @@ function makeTableColumns(
             <div onClick={(e) => e.stopPropagation()}>
               <QuickEditCell
                 productId={p.id}
-                productName={p.name}
+                productName={displayProductName(p)}
                 field="unitsPerBox"
                 type="number"
                 min={1}
@@ -701,7 +700,7 @@ function makeTableColumns(
             <div onClick={(e) => e.stopPropagation()}>
               <QuickEditCell
                 productId={p.id}
-                productName={p.name}
+                productName={displayProductName(p)}
                 field={`priceTier${tier}`}
                 value={parseFloat(String(val)) > 0 ? parseFloat(String(val)).toFixed(2) : ""}
                 quickEditMode={quickEditMode}
@@ -983,7 +982,7 @@ export default function ProductsPage() {
         ...prev.slice(-19),
         {
           productId: product.id,
-          productName: product.name,
+          productName: displayProductName(product),
           kind: product.kind,
           field: "section",
           oldValue: fullPrior,

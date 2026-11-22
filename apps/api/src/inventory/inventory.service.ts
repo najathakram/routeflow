@@ -266,7 +266,17 @@ export class InventoryService {
         take: limit,
         orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         include: {
-          product: { select: { id: true, name: true, sku: true, unit: true } },
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              unit: true,
+              variantName: true,
+              parentProductId: true,
+              parent: { select: { name: true } },
+            },
+          },
           supplier: { select: { id: true, name: true } },
           performedBy: { select: { id: true, username: true } },
         },
@@ -2769,6 +2779,9 @@ export class InventoryService {
         select: {
           id: true,
           name: true,
+          variantName: true,
+          parentProductId: true,
+          parent: { select: { name: true } },
           sku: true,
           unit: true,
           unitsPerBox: true,

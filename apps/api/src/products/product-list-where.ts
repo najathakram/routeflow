@@ -26,6 +26,8 @@ export function buildProductListWhere(
   if (query.search) {
     where.OR = [
       { name: { contains: query.search, mode: "insensitive" } },
+      // SA-1216: a variant is stored as just its flavor; its family's name finds it too.
+      { parent: { name: { contains: query.search, mode: "insensitive" } } },
       { sku: { contains: query.search, mode: "insensitive" } },
       { barcode: { contains: query.search, mode: "insensitive" } },
       { unitSku: { contains: query.search, mode: "insensitive" } },
