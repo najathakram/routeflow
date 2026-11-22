@@ -18,6 +18,7 @@ import {
 import { overdueCutoff } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { toCollectSummary } from "../invoices/to-collect";
+import { creditNoteRemaining, loadAvailableCredit } from "./available-credit";
 
 /**
  * The customer statement builds, moved verbatim out of `CustomersService` (size-ratchet headroom, no
@@ -96,13 +97,14 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
   const LEDGER_INVOICE_CAP = 50;
   const LEDGER_CREDIT_NOTE_CAP = 50;
 
+  const now = new Date();
   const [
     openInvoices,
     ledgerInvoicesRaw,
-    openCreditNotes,
     ledgerCreditNotesRaw,
     lifetimeInvoicedAgg,
     lifetimeReceivedAgg,
+    walletCredit,
   ] = await Promise.all([
     prisma.forTenant().invoice.findMany({
       // The ONE open-balance basis (SA-1164 22:05Z): settled/dead/forgiven out, an unsent DRAFT in only on a post-delivery order.
@@ -114,10 +116,6 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
       orderBy: { createdAt: "desc" },
       take: LEDGER_INVOICE_CAP + 1,
       select: INVOICE_SELECT,
-    }),
-    prisma.forTenant().creditNote.findMany({
-      where: { customerId: customer.id, status: { not: "VOID" } },
-      select: CREDIT_NOTE_SELECT,
     }),
     prisma.forTenant().creditNote.findMany({
       where: { customerId: customer.id },
@@ -145,6 +143,8 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
         invoice: { customerId: customer.id },
       },
     }),
+    // SA-1208 D7: open notes plus advances, the one available-credit read (uncapped, this customer only).
+    loadAvailableCredit(prisma.forTenant(), customer.id, now),
   ]);
 
   // Each ledger read asks for one row MORE than its cap; a read that comes
@@ -177,20 +177,8 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
 
   const overdue = statementOverdueAmount(openInvoicesWithPaid, statementZone);
 
-  // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
-  // (not face amount) prevents the double-count — a partial credit already sits on
-  // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
-  const now = new Date();
-  const availableCredit = roundMoney(
-    openCreditNotes
-      .filter(
-        (c) =>
-          c.status !== "VOID" &&
-          Number(c.amount) - Number(c.amountUsed) > 0.001 &&
-          (!c.expiresAt || new Date(c.expiresAt) > now),
-      )
-      .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
-  );
+  // SA-1208 D7: P5-13's wallet (open note remainders) PLUS advance balances, from available-credit.ts only.
+  const availableCredit = walletCredit.total;
 
   // True whenever the transactions ledger below is a partial view of the
   // customer's full history (the ledger reads ALL statuses, capped) —
@@ -216,16 +204,14 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
       status: i.status,
     })),
     ...ledgerCreditNotes.map((c) => {
-      const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
-      const remaining =
-        c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
+      const remaining = creditNoteRemaining(c, now);
       return {
         type: "CREDIT_NOTE" as const,
         id: c.id,
         description: `Credit Note #${c.creditNoteNumber}`,
         date: c.createdAt.toISOString(),
         amount: -Number(c.amount),
-        runningBalance: remaining > 0.001 ? remaining : 0,
+        runningBalance: remaining,
         status: c.status,
         expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
       };
@@ -288,18 +274,18 @@ export async function buildOperatorStatement(
   const LEDGER_CREDIT_NOTE_CAP = 50;
   const LEDGER_ADVANCE_CAP = 50;
 
+  const now = new Date();
   const [
     openInvoices,
     ledgerInvoicesRaw,
-    openCreditNotes,
     ledgerCreditNotesRaw,
-    openAdvancePayments,
     ledgerAdvancePaymentsRaw,
     pendingOrders,
     lifetimeInvoicedAgg,
     lifetimeReceivedAgg,
     exposure,
     sweepable,
+    walletCredit,
   ] = await Promise.all([
     prisma.forTenant().invoice.findMany({
       // The ONE open-balance basis (SA-1164 22:05Z): settled/dead/forgiven out, an unsent DRAFT in only on a post-delivery order.
@@ -313,18 +299,10 @@ export async function buildOperatorStatement(
       select: INVOICE_SELECT,
     }),
     prisma.forTenant().creditNote.findMany({
-      where: { customerId, status: { not: "VOID" } },
-      select: CREDIT_NOTE_SELECT,
-    }),
-    prisma.forTenant().creditNote.findMany({
       where: { customerId },
       orderBy: { createdAt: "desc" },
       take: LEDGER_CREDIT_NOTE_CAP + 1,
       select: CREDIT_NOTE_SELECT,
-    }),
-    prisma.forTenant().advancePayment.findMany({
-      where: { customerId, balance: { gt: 0 } },
-      select: ADVANCE_PAYMENT_SELECT,
     }),
     prisma.forTenant().advancePayment.findMany({
       where: { customerId },
@@ -377,6 +355,8 @@ export async function buildOperatorStatement(
           now: new Date(),
         })
       : Promise.resolve(null),
+    // SA-1208 D7: the one available-credit read. The staff statement keeps its two tiles (notes, advances).
+    loadAvailableCredit(prisma.forTenant(), customerId, now),
   ]);
 
   // Each ledger read asks for one row MORE than its cap; a read that comes
@@ -411,24 +391,9 @@ export async function buildOperatorStatement(
 
   const overdue = statementOverdueAmount(openInvoicesWithPaid, statementZone);
 
-  // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
-  // (not face amount) prevents the double-count — a partial credit already sits on
-  // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
-  const now = new Date();
-  const availableCredit = roundMoney(
-    openCreditNotes
-      .filter(
-        (c) =>
-          c.status !== "VOID" &&
-          Number(c.amount) - Number(c.amountUsed) > 0.001 &&
-          (!c.expiresAt || new Date(c.expiresAt) > now),
-      )
-      .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
-  );
-
-  const advanceBalance = roundMoney(
-    openAdvancePayments.reduce((sum, a) => sum + Number(a.balance), 0),
-  );
+  // SA-1208 D7: the staff tiles stay two (notes, advances); both come from available-credit.ts, never recomputed.
+  const availableCredit = walletCredit.notes;
+  const advanceBalance = walletCredit.advances;
 
   const pendingOrdersAmount = roundMoney(
     pendingOrders.reduce((sum, o) => sum + Number(o.total), 0),
@@ -458,16 +423,14 @@ export async function buildOperatorStatement(
       status: i.status,
     })),
     ...ledgerCreditNotes.map((c) => {
-      const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
-      const remaining =
-        c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
+      const remaining = creditNoteRemaining(c, now);
       return {
         type: "CREDIT_NOTE" as const,
         id: c.id,
         description: `Credit Note #${c.creditNoteNumber}`,
         date: c.createdAt.toISOString(),
         amount: -Number(c.amount),
-        runningBalance: remaining > 0.001 ? remaining : 0,
+        runningBalance: remaining,
         status: c.status,
         expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
       };
