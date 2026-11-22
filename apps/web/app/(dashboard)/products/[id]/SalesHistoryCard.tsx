@@ -15,6 +15,16 @@ import { useProductSales, type ProductSaleLine } from "@/lib/api/product-sales";
  * page.tsx is already ~2.7k lines.
  */
 
+const SALE_COMPARATORS: Partial<
+  Record<string, (a: ProductSaleLine, b: ProductSaleLine) => number>
+> = {
+  date: (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+  customer: (a, b) => a.customerName.localeCompare(b.customerName),
+  qty: (a, b) => a.qty - b.qty,
+  unitPrice: (a, b) => a.unitPrice - b.unitPrice,
+  lineTotal: (a, b) => a.lineTotal - b.lineTotal,
+};
+
 function SummaryChip({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div
@@ -53,13 +63,7 @@ export function SalesHistoryCard({
   const { sorted, sortKey, sortDir, requestSort } = useSortableData<ProductSaleLine>(lines, {
     defaultKey: "date",
     defaultDir: "desc",
-    comparators: {
-      date: (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-      customer: (a, b) => a.customerName.localeCompare(b.customerName),
-      qty: (a, b) => a.qty - b.qty,
-      unitPrice: (a, b) => a.unitPrice - b.unitPrice,
-      lineTotal: (a, b) => a.lineTotal - b.lineTotal,
-    },
+    comparators: SALE_COMPARATORS,
   });
 
   const neverSold = !!data && data.summary.count === 0;

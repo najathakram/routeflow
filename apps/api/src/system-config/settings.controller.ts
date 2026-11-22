@@ -37,6 +37,11 @@ import { FALLBACK_ZONE, TENANT_ZONE_SELECT, zoneFromConfig } from "../common/ten
 import { changeTenantTimeZone, prepareTenantTimeZoneChange } from "./tenant-timezone.writer";
 import { QuickKeysSettingsService } from "./quick-keys-settings.service";
 import { sanitizeReceiptFooter } from "./receipt-footer";
+import {
+  NAV_LAYOUT_CONFIG_KEY,
+  parseNavLayoutSettings,
+  validateNavLayoutInput,
+} from "./nav-layout-settings";
 
 import { RequirePermission, PermissionBase } from "../auth/permissions/permission.decorators";
 import { INVOICE_LAYOUT_KEYS, readInvoiceLayout } from "../invoices/invoice-layout";
@@ -141,6 +146,8 @@ export class SettingsController {
       timezone,
       // SA-747: the counter quick keys (pins, hides, window, cap), defaults filled; a corrupt value is the defaults.
       quickKeys: this.quickKeys.fromAll(all),
+      // SA-1209: the sidebar layout, defaults filled; a missing or corrupt value is the default. Every staff role reads it here.
+      navLayout: parseNavLayoutSettings(all[NAV_LAYOUT_CONFIG_KEY]),
     };
   }
 
@@ -157,6 +164,12 @@ export class SettingsController {
     if (dto.paymentDueDays !== undefined) {
       throw new BadRequestException(
         "paymentDueDays is not saved by PATCH /settings. Payment terms are the invoice default terms: set defaultTerms via PATCH /settings/invoice (Due on Receipt, Net 15, Net 30, Net 45, Net 60).",
+      );
+    }
+    // SA-1209: the sidebar layout has its own TENANT_ADMIN route; this FINANCE-level write must not be a second way in.
+    if (dto.navLayout !== undefined || dto[NAV_LAYOUT_CONFIG_KEY] !== undefined) {
+      throw new BadRequestException(
+        "navLayout is not saved by PATCH /settings. A tenant admin saves the sidebar layout with PATCH /settings/nav-layout.",
       );
     }
     // B1231: same story. The profile form sent these two and the save said "saved" while nothing changed.
@@ -745,6 +758,24 @@ export class SettingsController {
   ) {
     await this.svc.setMarginConfig(dto);
     return this.svc.getMarginConfig();
+  }
+
+  // ─── Sidebar layout (SA-1209) ─────────────────────────────────────────────────
+  // Read: with GET /settings (every staff role). Write: admin only, a role check (the roles guard refuses a
+  // role mismatch before any permission group). The server checks the shape only; the layout is display only.
+
+  @Patch("nav-layout")
+  @Roles(UserRole.TENANT_ADMIN)
+  async updateNavLayout(@Body() dto: unknown) {
+    if (!this.prisma.getTenantId()) {
+      throw new ForbiddenException(
+        "The sidebar layout is saved per business; no business is selected",
+      );
+    }
+    const layout = validateNavLayoutInput(dto);
+    const stored = JSON.stringify(layout);
+    await this.svc.set(NAV_LAYOUT_CONFIG_KEY, stored);
+    return parseNavLayoutSettings(stored);
   }
 
   // ─── Remittance / how-to-pay config (P5-14) ────────────────────────────────

@@ -32,6 +32,7 @@ import { EmailService } from "../email/email.service";
 import { EncryptionService } from "../common/encryption.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { PREFERENCE_KEYS } from "../users/dto/update-preferences.dto";
+import { NAV_LAYOUT_CONFIG_KEY } from "./nav-layout-settings";
 import { QUICK_KEYS_CONFIG_KEY } from "./quick-keys-settings";
 import { TOBACCO_EXCLUDE_KEY } from "../analytics/analytics.service";
 import {
@@ -489,6 +490,8 @@ describe("settings registry — structural source scan of every SystemConfig wri
     },
     // the invoice display switches are written by PATCH /settings/invoice under the one layout key map
     "system-config/settings.controller.ts": {
+      // SA-1209: the sidebar layout, one JSON value written by PATCH /settings/nav-layout
+      NAV_LAYOUT_CONFIG_KEY: [NAV_LAYOUT_CONFIG_KEY],
       "INVOICE_LAYOUT_KEYS.hideBarcodes": [INVOICE_LAYOUT_KEYS.hideBarcodes],
       "INVOICE_LAYOUT_KEYS.hideOriginalPrice": [INVOICE_LAYOUT_KEYS.hideOriginalPrice],
       "INVOICE_LAYOUT_KEYS.hidePerPiece": [INVOICE_LAYOUT_KEYS.hidePerPiece],

@@ -14,19 +14,24 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  *     mistyped item — carries money the PO never authorised, so a linked bill
  *     can't have one; charges like that belong on their own bill);
  *   - per product, billed PIECES <= ordered pieces;
- *   - per line, the billed value <= the pieces at the PO's per-piece cost, give or
- *     take a cent of entry rounding (a PO hand-raised at 3.33 a piece still
+ *   - per line, the billed value <= the larger of the PO line's two stored figures
+ *     for the billed pieces (pieces x `unitCost`, or `totalCost` x pieces / ordered),
+ *     give or take a cent of entry rounding (a PO hand-raised at 3.33 a piece still
  *     accepts a 3-pack billed at 10.00);
- *   - overall, the billed value <= the PO's value (so a mixed-cost PO can't have
- *     its cheap lines billed at its dear price).
+ *   - overall, the billed value <= the larger of the PO's two sums (so a mixed-cost
+ *     PO can't have its cheap lines billed at its dear price).
  *
  * One bill per PO (`VendorBill.purchaseOrderId` is unique), so "remaining" is the
  * whole ordered quantity. Three-way match against goods receipts is deferred.
  * Tax is not compared here: the PO carries no tax to compare against.
  *
- * Bill lines arrive already converted to the PO's denomination — pieces and a
- * per-piece cost, via VendorBillsService.lineInventoryDelta — so a case-priced
- * line (packSize > 1) compares like for like.
+ * Check X (SA-1207 P2a): QTY is judged in pieces, but line MONEY is judged in the
+ * line's OWN unit (`ownQty` x `ownUnitCost`: boxes, a lot of 1, or pieces), never
+ * re-derived through a 4-decimal piece cost: 122 pieces at 0.2084 is not the 25.42
+ * the PO stores. No stored figure changes, and R-005 stays a hard 409.
+ *
+ * Bill lines arrive converted to pieces, via VendorBillsService.lineInventoryDelta,
+ * and carry the line as billed in `ownQty` / `ownUnitCost`.
  */
 
 /** Tolerance for entry rounding, per bill line, in money. */
@@ -36,6 +41,8 @@ export interface PoLineLike {
   productId: string;
   qtyOrdered: Prisma.Decimal | number | string;
   unitCost: Prisma.Decimal | number | string;
+  /** The stored line total. Absent (old callers, specs) = pieces x `unitCost`. */
+  totalCost?: Prisma.Decimal | number | string | null;
 }
 
 export interface BillLinePieces {
@@ -45,6 +52,9 @@ export interface BillLinePieces {
   qty: Prisma.Decimal | number | string;
   /** Per PIECE. */
   unitCost: Prisma.Decimal | number | string;
+  /** The line AS BILLED, in its own unit (boxes, 1 lot, or pieces). Absent = a piece line (`qty` x `unitCost`). */
+  ownQty?: Prisma.Decimal | number | string;
+  ownUnitCost?: Prisma.Decimal | number | string;
 }
 
 export type PoMatchReason =
@@ -63,21 +73,48 @@ export interface PoMatchViolation {
 
 const D = (n: Prisma.Decimal | number | string) => new Prisma.Decimal(n);
 
+/**
+ * Does ONE PO line allow `lineValue` for `pieces`? The larger of its two stored figures, plus a cent:
+ * pieces x `unitCost`, or `totalCost` x pieces / ordered (compared cross-multiplied, so a cent that
+ * lands exactly on the limit is never lost to a division).
+ */
+function lineWithinPoLine(
+  p: PoLineLike,
+  pieces: Prisma.Decimal,
+  lineValue: Prisma.Decimal,
+): boolean {
+  const net = lineValue.sub(PO_LINE_TOLERANCE);
+  if (net.lte(pieces.mul(D(p.unitCost)))) return true;
+  const ordered = D(p.qtyOrdered);
+  return p.totalCost != null && ordered.gt(0) && net.mul(ordered).lte(D(p.totalCost).mul(pieces));
+}
+
+/** The PO line's best per-piece rate, for the refusal message only. */
+function bestPieceRate(p: PoLineLike): Prisma.Decimal {
+  const unit = D(p.unitCost);
+  const ordered = D(p.qtyOrdered);
+  return p.totalCost != null && ordered.gt(0)
+    ? Prisma.Decimal.max(unit, D(p.totalCost).div(ordered))
+    : unit;
+}
+
 /** Pure: every way the bill's lines exceed the PO. Empty = the bill is within the PO. */
 export function findPoMatchViolations(
   poItems: PoLineLike[],
   billLines: BillLinePieces[],
 ): PoMatchViolation[] {
   const ordered = new Map<string, Prisma.Decimal>();
-  const maxCost = new Map<string, Prisma.Decimal>();
+  const poLines = new Map<string, PoLineLike[]>();
   let poValue = D(0);
+  let poStored = D(0);
   for (const i of poItems) {
     ordered.set(i.productId, (ordered.get(i.productId) ?? D(0)).add(D(i.qtyOrdered)));
-    const cost = D(i.unitCost);
-    const seen = maxCost.get(i.productId);
-    if (!seen || cost.gt(seen)) maxCost.set(i.productId, cost);
-    poValue = poValue.add(D(i.qtyOrdered).mul(cost));
+    poLines.set(i.productId, [...(poLines.get(i.productId) ?? []), i]);
+    const pieceSum = D(i.qtyOrdered).mul(D(i.unitCost));
+    poValue = poValue.add(pieceSum);
+    poStored = poStored.add(i.totalCost != null ? D(i.totalCost) : pieceSum);
   }
+  poValue = Prisma.Decimal.max(poValue, poStored);
 
   const violations: PoMatchViolation[] = [];
   const billedQty = new Map<string, Prisma.Decimal>();
@@ -107,21 +144,25 @@ export function findPoMatchViolations(
       continue;
     }
     const qty = D(line.qty);
-    const lineValue = qty.mul(D(line.unitCost));
+    const lineValue =
+      line.ownQty != null && line.ownUnitCost != null
+        ? D(line.ownQty).mul(D(line.ownUnitCost))
+        : qty.mul(D(line.unitCost));
     billedValue = billedValue.add(lineValue);
     tolerance = tolerance.add(PO_LINE_TOLERANCE);
     billedQty.set(line.productId, (billedQty.get(line.productId) ?? D(0)).add(qty));
     if (!firstDescription.has(line.productId))
       firstDescription.set(line.productId, line.description);
 
-    const allowedCost = maxCost.get(line.productId)!;
-    if (lineValue.gt(qty.mul(allowedCost).add(PO_LINE_TOLERANCE))) {
+    const lines = poLines.get(line.productId)!;
+    if (!lines.some((p) => lineWithinPoLine(p, qty, lineValue))) {
+      const allowedCost = Prisma.Decimal.max(...lines.map(bestPieceRate));
       violations.push({
         reason: "PRICE_EXCEEDS_PO",
         productId: line.productId,
         description: line.description,
         billed: D(line.unitCost).toString(),
-        allowed: allowedCost.toString(),
+        allowed: allowedCost.toDecimalPlaces(4, Prisma.Decimal.ROUND_UP).toString(),
       });
     }
   }
