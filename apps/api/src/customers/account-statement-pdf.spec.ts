@@ -23,7 +23,11 @@ jest.mock("./account-statement", () => ({
 }));
 
 import { StatementPdfService } from "../buyer/statement-pdf.service";
-import { buildAccountStatementPdfModel, methodWords } from "./account-statement-pdf-model";
+import {
+  buildAccountStatementPdfModel,
+  fmtMoney,
+  methodWords,
+} from "./account-statement-pdf-model";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 const invoice = (
@@ -110,6 +114,11 @@ const allText = (s: AccountStatement): string => {
 };
 
 describe("PD1: every figure on the page is the read's, to the cent", () => {
+  it("SA-1211 BF-7: a figure of 5500 groups its thousands (red on $5500.00)", () => {
+    expect(fmtMoney(5500)).toBe("$5,500.00");
+    expect(fmtMoney(-1234.5)).toBe("$1,234.50");
+  });
+
   it("carries the open balance, overdue, credit, after credit, waiting, each row and the foot", () => {
     const m = buildAccountStatementPdfModel(statement());
     expect(m.summary).toEqual([

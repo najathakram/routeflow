@@ -12,15 +12,14 @@ import {
   type StatementTenantInfo,
 } from "./statement-pdf-shared";
 
-import { roundMoney } from "@routeflow/pricing";
+import { fmtPdfMoney } from "../common/pdf-money";
 
 export type { StatementTenantInfo };
 
 // B954: the shared UTC-anchored PDF date (calendar dates are UTC-midnight instants).
 const fmtDate = fmtPdfDate;
-const fmt = (n: number) => `$${roundMoney(Math.abs(n)).toFixed(2)}`;
-const fmtSigned = (n: number) =>
-  n < 0 ? `−$${roundMoney(Math.abs(n)).toFixed(2)}` : `$${roundMoney(n).toFixed(2)}`;
+const fmt = (n: number) => fmtPdfMoney(Math.abs(n));
+const fmtSigned = (n: number) => (n < 0 ? `−${fmtPdfMoney(Math.abs(n))}` : fmtPdfMoney(n));
 
 export function StatementPdfTemplate({
   statement,

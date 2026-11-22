@@ -359,3 +359,31 @@ describe("the invoice PDF's Generated stamp (SA-1209 D3)", () => {
     expect(stamp({})).toContain("Generated Nov 21, 2026, 10:46 PM UTC");
   });
 });
+
+// SA-1211 BF-7: the PDF's money groups thousands (red on "$5500.00").
+describe("the invoice PDF's money text (BF-7)", () => {
+  it("a 5500 invoice total prints $5,500.00 in the Total row and the line subtotal", () => {
+    const tree = walk(
+      InvoicePdfTemplate({
+        invoice: {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          subtotal: 5500,
+          taxAmount: 0,
+          discount: 0,
+          shippingFee: 0,
+          total: 5500,
+          issueDate: new Date("2026-10-30T12:00:00Z"),
+          dueDate: new Date("2026-11-30T12:00:00Z"),
+          customer: { businessName: "Acme Foods", contactName: "Pat" },
+          items: [{ ...baseItem, qty: 1, unitPrice: 5500, subtotal: 5500 }],
+          payments: [],
+        },
+      }),
+    );
+    const texts = tree.flatMap((el) => textsOf({ props: { children: el.props?.children } }));
+    expect(texts).toContain("$5,500.00");
+    expect(texts).not.toContain("$5500.00");
+  });
+});

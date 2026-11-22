@@ -1,4 +1,4 @@
-import { roundMoney } from "@routeflow/pricing";
+import { fmtPdfMoney } from "../common/pdf-money";
 import type { AccountStatement, PaymentMethod } from "@routeflow/types";
 import { fmtPdfDate } from "../common/pdf-date";
 
@@ -8,7 +8,7 @@ import { fmtPdfDate } from "../common/pdf-date";
  * so the words and figures are testable under Jest (which cannot load react-pdf) and no figure is ever re-derived.
  */
 
-export const fmtMoney = (n: number): string => `$${roundMoney(Math.abs(n)).toFixed(2)}`;
+export const fmtMoney = (n: number): string => fmtPdfMoney(Math.abs(n));
 export const dayOf = (day: string): string => fmtPdfDate(`${day}T00:00:00.000Z`);
 
 /** What a stored method prints as. An unknown future method reads as "Payment", never as its raw code. */
