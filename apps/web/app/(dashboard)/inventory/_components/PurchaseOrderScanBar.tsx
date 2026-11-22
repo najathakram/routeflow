@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useToast } from "@routeflow/ui/web";
+import type { SellLevel } from "@routeflow/pricing";
 import {
   CounterLiveMatches,
   useCounterLiveMatches,
@@ -17,23 +18,37 @@ export function PurchaseOrderScanBar({
   onAdd,
   hasLine,
   addedIds,
+  disabled = false,
+  hint,
 }: {
-  onAdd: (product: any) => { created: boolean; refused?: boolean };
+  /** `level` is what the scanned code carries (absent for a name pick). */
+  onAdd: (product: any, level?: SellLevel) => { created: boolean; refused?: boolean };
+  disabled?: boolean;
+  hint?: string;
   hasLine: (productId: string) => boolean;
   addedIds: ReadonlySet<string>;
 }) {
   const { toast } = useToast();
   const [text, setText] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement>(null);
-  const add = (product: any) => {
-    const r = onAdd(product);
-    setText("");
+  const lastCode = React.useRef("");
+  const [note, setNote] = React.useState("");
+  const add = (product: any, level?: SellLevel) => {
+    const r = onAdd(product, level);
+    if (r.refused) {
+      // A family is a container: keep what was typed and say what to do.
+      setText(lastCode.current);
+      setNote(`Pick a flavour: ${product.name} has variants`);
+    } else {
+      setText("");
+      setNote("");
+    }
     inputRef.current?.focus();
     return r;
   };
-  const live = useCounterLiveMatches({ text, enabled: true, onPick: add, addedIds });
+  const live = useCounterLiveMatches({ text, enabled: true, onPick: (p) => add(p), addedIds });
   const scanRef = useScanCodeHandler({
-    addLineItem: (product) => add(product),
+    addLineItem: (product, level) => add(product, level),
     onUnknownCode: (code) =>
       toast({
         variant: "error",
@@ -54,18 +69,28 @@ export function PurchaseOrderScanBar({
         className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         {...live.nav.inputProps}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        disabled={disabled}
+        onChange={(e) => {
+          setNote("");
+          setText(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (live.nav.onKeyDown(e)) return;
           if (e.key !== "Enter") return;
           e.preventDefault(); // never submits the order
           const code = text.trim();
           if (!code) return;
+          lastCode.current = code;
           setText("");
           void scanRef.current(code);
         }}
       />
-      <CounterLiveMatches live={live} onPick={add} />
+      {(hint || note) && (
+        <p role="status" className="mt-1 text-xs text-navy/70">
+          {hint ?? note}
+        </p>
+      )}
+      <CounterLiveMatches live={live} onPick={(p) => add(p)} />
     </div>
   );
 }

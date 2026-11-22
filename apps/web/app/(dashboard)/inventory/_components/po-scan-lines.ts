@@ -1,3 +1,4 @@
+import { normalizeBoxesPieces, type SellLevel } from "@routeflow/pricing";
 import { displayProductName } from "@/lib/product-display";
 import { isFamilyProduct } from "@/lib/product-search-groups";
 import { emptyPOLine, type POLineItem } from "./purchase-orders-shared";
@@ -52,20 +53,27 @@ export function poSelectOptions(
 const isBlank = (l: POLineItem) => !l.productId && !l.qty && !l.unitCost && !l.boxes && !l.pieces;
 
 /**
- * One scan or pick: a product already on a line gains ONE entry unit (a box for a boxed product, a piece
- * otherwise); a new product fills the first empty row, else a new row. Never adds a family.
+ * One scan or pick adds ONE unit of the level it is given (SA-1218): a BOX code adds a box; a UNIT code on a
+ * boxed product adds a piece, rolled into boxes by `normalizeBoxesPieces`; an unboxed product always gains 1 in
+ * Quantity. No level (a name pick) adds the entry unit. A product already on a line gains on that line; a new
+ * product fills the first empty row, else a new row. Never adds a family.
  */
 export function addEntryUnit(
   lines: POLineItem[],
   product: { id: string; kind?: string | null },
   unitsPerBox: number,
+  level?: SellLevel,
 ): { lines: POLineItem[]; created: boolean } {
   if (isFamilyProduct(product)) return { lines, created: false };
   const boxed = unitsPerBox > 1;
-  const bump = (l: POLineItem): POLineItem =>
-    boxed
-      ? { ...l, boxes: String((Math.trunc(Number(l.boxes)) || 0) + 1) }
-      : { ...l, qty: String(Math.round(((Number(l.qty) || 0) + 1) * 1000) / 1000) };
+  const bump = (l: POLineItem): POLineItem => {
+    if (!boxed) return { ...l, qty: String(Math.round(((Number(l.qty) || 0) + 1) * 1000) / 1000) };
+    const boxes = Math.trunc(Number(l.boxes)) || 0;
+    const pieces = Math.trunc(Number(l.pieces)) || 0;
+    if (level !== "UNIT") return { ...l, boxes: String(boxes + 1) };
+    const split = normalizeBoxesPieces({ boxes, pieces: pieces + 1, unitsPerBox });
+    return { ...l, boxes: String(split.boxes ?? 0), pieces: String(split.pieces ?? 0) };
+  };
   const at = lines.findIndex((l) => l.productId === product.id);
   if (at >= 0) return { lines: lines.map((l, i) => (i === at ? bump(l) : l)), created: false };
   const fresh = bump({ ...emptyPOLine(), productId: product.id });

@@ -16,7 +16,7 @@ import {
   type POLineItem,
   type Supplier,
 } from "./purchase-orders-shared";
-import { unitWords } from "@routeflow/pricing";
+import { unitWords, type SellLevel } from "@routeflow/pricing";
 
 // U-3a: a PO line carries no per-product label yet, so this prints the default words.
 const UW = unitWords();
@@ -49,11 +49,16 @@ export function CreatePOModal({
     [products, picked],
   );
   // Parent and kind per product (the stock list carries neither): one catalog read, for the full-name sort.
-  const { data: catalog } = useProducts({ includeVariants: true, isActive: true, limit: 0 });
+  // The Stock tab's exact params, so the two share one cached read. Until it arrives the modal fails
+  // closed: no options (a bare variant name or a family must never be offered) and the bar is off.
+  const { data: catalog, isError: catalogError } = useProducts({ includeVariants: true, limit: 0 });
+  const catalogReady = catalog !== undefined;
   const options = React.useMemo(
-    () => poSelectOptions(allProducts, catalogMetaById(catalog?.data ?? [])),
-    [allProducts, catalog],
+    () => (catalogReady ? poSelectOptions(allProducts, catalogMetaById(catalog?.data ?? [])) : []),
+    [allProducts, catalog, catalogReady],
   );
+  /** Line numbers (0-based) submitted with a quantity but no cost. */
+  const [missingCost, setMissingCost] = React.useState<number[]>([]);
   const productById = React.useMemo(
     () => new Map(allProducts.map((p) => [p.id, p])),
     [allProducts],
@@ -63,9 +68,9 @@ export function CreatePOModal({
 
   const linesRef = React.useRef(lines);
   linesRef.current = lines;
-  const onScanAdd = (product: any) => {
+  const onScanAdd = (product: any, level?: SellLevel) => {
     const upb = Number(productById.get(product.id)?.unitsPerBox ?? product.unitsPerBox ?? 0);
-    const next = addEntryUnit(linesRef.current, product, upb);
+    const next = addEntryUnit(linesRef.current, product, upb, level);
     if (next.lines === linesRef.current) return { created: false, refused: true };
     linesRef.current = next.lines;
     if (!productById.has(product.id))
@@ -89,6 +94,18 @@ export function CreatePOModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const hasQty = (l: POLineItem) =>
+      unitsPerBoxFor(l.productId) > 1 ? Number(l.boxes) > 0 || Number(l.pieces) > 0 : !!l.qty;
+    const costless = lines.flatMap((l, i) => (l.productId && hasQty(l) && !l.unitCost ? [i] : []));
+    setMissingCost(costless);
+    if (costless.length > 0) {
+      toast({
+        title: "Validation",
+        description: `Add a cost for line ${costless[0] + 1}.`,
+        variant: "warning",
+      });
+      return;
+    }
     const items = lines
       .filter((l) => {
         if (!l.productId || !l.unitCost) return false;
@@ -137,6 +154,10 @@ export function CreatePOModal({
         </div>
         <form
           onSubmit={handleSubmit}
+          onKeyDown={(e) => {
+            // Enter in a field (a scan, a quantity, a cost) never creates the order: only the button does.
+            if (e.key === "Enter" && e.target instanceof HTMLInputElement) e.preventDefault();
+          }}
           className="space-y-5 overflow-y-auto px-6 py-5"
           style={{ maxHeight: "80vh" }}
         >
@@ -172,6 +193,14 @@ export function CreatePOModal({
           {/* Line items */}
           <div>
             <PurchaseOrderScanBar
+              disabled={!catalogReady}
+              hint={
+                catalogReady
+                  ? undefined
+                  : catalogError
+                    ? "Couldn't load products. Reopen this window to try again."
+                    : "Loading products…"
+              }
               onAdd={onScanAdd}
               hasLine={(id) => lines.some((l) => l.productId === id)}
               addedIds={new Set(lines.map((l) => l.productId).filter(Boolean))}
@@ -211,7 +240,7 @@ export function CreatePOModal({
                         <td className="px-3 py-2">
                           <select
                             name={`product-${i}`}
-                            aria-label="Product"
+                            aria-label={`Product, line ${i + 1}`}
                             value={line.productId}
                             onChange={(e) => updateLine(i, "productId", e.target.value)}
                             className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -234,7 +263,7 @@ export function CreatePOModal({
                                 placeholder="0"
                                 title={UW.pack.other}
                                 name={fieldName("boxes", i)}
-                                aria-label={UW.pack.other}
+                                aria-label={`${UW.pack.other}, line ${i + 1}`}
                                 value={line.boxes}
                                 onChange={(e) => updateLine(i, "boxes", e.target.value)}
                                 className="w-full min-w-[3.5rem] rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -248,7 +277,7 @@ export function CreatePOModal({
                                 placeholder="0"
                                 title={`Extra ${UW.base.lowerOther}`}
                                 name={fieldName("pieces", i)}
-                                aria-label={`Extra ${UW.base.lowerOther}`}
+                                aria-label={`Extra ${UW.base.lowerOther}, line ${i + 1}`}
                                 value={line.pieces}
                                 onChange={(e) => updateLine(i, "pieces", e.target.value)}
                                 className="w-full min-w-[3.5rem] rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -261,7 +290,7 @@ export function CreatePOModal({
                               step={0.001}
                               placeholder="0"
                               name={`qty-${i}`}
-                              aria-label="Quantity"
+                              aria-label={`Quantity, line ${i + 1}`}
                               value={line.qty}
                               onChange={(e) => updateLine(i, "qty", e.target.value)}
                               className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -290,6 +319,11 @@ export function CreatePOModal({
                           <p className="mt-0.5 text-[10px] text-navy/50">
                             per {isBoxed ? UW.pack.lower : UW.base.lower}
                           </p>
+                          {missingCost.includes(i) && !line.unitCost && (
+                            <p role="alert" className="mt-0.5 text-[11px] text-red-600">
+                              Add a cost for line {i + 1}
+                            </p>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right text-navy/70">
                           {subtotal > 0 ? formatMoney(subtotal) : "—"}
@@ -297,6 +331,7 @@ export function CreatePOModal({
                         <td className="px-2 py-2">
                           <button
                             type="button"
+                            aria-label={`Remove line ${i + 1}`}
                             onClick={() => removeLine(i)}
                             disabled={lines.length === 1}
                             className="rounded p-1 text-navy/30 hover:bg-red-50 hover:text-red-500 disabled:opacity-30"
