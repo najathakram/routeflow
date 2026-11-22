@@ -105,14 +105,31 @@ export interface BuyerStatementTransaction {
   expiresAt?: string | null;
 }
 
+/** One spendable credit row on the buyer's credit list (SA-1214). `description` never carries a staff reference. */
+export interface BuyerCreditItem {
+  kind: "NOTE" | "ADVANCE";
+  id: string;
+  date: string;
+  remaining: number;
+  description: string;
+}
+
 export interface BuyerStatement {
   outstandingAmount: number;
   overdueAmount: number;
-  /** Available credit (SA-1208 D7): the unused remainder of open, non-expired, non-VOID credit notes
-   *  PLUS advance payment balances, one figure on every statement surface. Shown on its own row,
-   *  never netted against the open balance. */
+  /** Available credit (SA-1208 D7), per route, and the two fields are NEVER added together:
+   *  - `GET /buyer/statement` (the portal and phone tiles): the TOTAL, unused open non-expired non-VOID credit
+   *    notes PLUS spendable advance balances. Shown on its own row, never netted against the open balance.
+   *  - the staff statement (`GET /customers/:id/statement`): the credit NOTES only.
+   *  Spendable advance: no source payment, or its source payment is PAID (B839). */
   availableCredit: number;
+  /** The advance part only. On the buyer route it is already INSIDE `availableCredit`, so no buyer screen reads it
+   *  (a pin in web and mobile jest fails if one does). On the staff statement it is the second tile. */
   advanceBalance: number;
+  /** Buyer route only (SA-1214): the spendable credit rows behind `availableCredit`, newest first, at most 50.
+   *  Their `remaining` sums to `availableCredit` unless `creditItemsTruncated`. Absent on older servers. */
+  creditItems?: BuyerCreditItem[];
+  creditItemsTruncated?: boolean;
   pendingOrdersAmount: number;
   /** Lifetime billed total (every non-DRAFT, non-VOID invoice), summed by the
    *  DATABASE over the whole history — never a reduce over the capped

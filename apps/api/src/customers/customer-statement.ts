@@ -15,10 +15,13 @@ import {
   classifyInvoiceBalance,
   type ClassifiableInvoice,
 } from "../invoices/invoice-balance-classify";
-import { overdueCutoff } from "../common/calendar-date";
+import { overdueCutoff, tenantTodayDay } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { toCollectSummary } from "../invoices/to-collect";
 import { creditNoteRemaining, loadAvailableCredit } from "./available-credit";
+
+/** SA-1214: the buyer's credit list is capped at this many rows (newest first); a longer list says so. */
+export const BUYER_CREDIT_ITEMS_CAP = 50;
 
 /**
  * The customer statement builds, moved verbatim out of `CustomersService` (size-ratchet headroom, no
@@ -394,6 +397,20 @@ export async function buildOperatorStatement(
   // SA-1208 D7: the staff tiles stay two (notes, advances); both come from available-credit.ts, never recomputed.
   const availableCredit = walletCredit.notes;
   const advanceBalance = walletCredit.advances;
+  // SA-1214: the buyer route shows the TOTAL and a list that sums to it, both from this one read (buyer-statement-view.ts).
+  const creditTotal = walletCredit.total;
+  const creditItemsTruncated = walletCredit.items.length > BUYER_CREDIT_ITEMS_CAP;
+  const creditItems = walletCredit.items.slice(0, BUYER_CREDIT_ITEMS_CAP).map((i) => ({
+    kind: i.kind,
+    id: i.id,
+    date: i.date.toISOString(),
+    remaining: i.remaining,
+    // F8: a buyer never sees the staff-typed reference or method; an advance reads only as credit from a payment.
+    description:
+      i.kind === "NOTE"
+        ? `Credit Note #${i.number}`
+        : `Credit from payment, ${tenantTodayDay(statementZone, i.date)}`,
+  }));
 
   const pendingOrdersAmount = roundMoney(
     pendingOrders.reduce((sum, o) => sum + Number(o.total), 0),
@@ -451,6 +468,9 @@ export async function buildOperatorStatement(
     overdueAmount: overdue,
     availableCredit,
     advanceBalance,
+    creditTotal,
+    creditItems,
+    creditItemsTruncated,
     pendingOrdersAmount,
     lifetimeInvoiced,
     lifetimeReceived,

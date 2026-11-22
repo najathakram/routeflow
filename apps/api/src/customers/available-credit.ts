@@ -24,6 +24,21 @@ export interface CreditNoteLike {
 
 export interface AdvanceLike {
   balance: unknown;
+  /** The InvoicePayment this advance was created from (a group's excess), a plain id with no relation. */
+  sourcePaymentId?: string | null;
+}
+
+/**
+ * B839 (read half): is this advance spendable credit? No source payment: yes (as always). A source payment: only
+ * when it is PAID (confirmed). A DRAFT or PENDING group's excess, or a VOID one, is never shown as credit.
+ * `sourceStatus` is the linked payment's status, undefined when the advance has no source or the row is gone.
+ */
+export function isAdvanceAvailable(
+  advance: AdvanceLike,
+  sourceStatus: string | null | undefined,
+): boolean {
+  if (!advance.sourcePaymentId) return true;
+  return sourceStatus === "PAID";
 }
 
 /** What is left on a credit note: 0 for a VOID, expired or used-up note, else amount - amountUsed to the cent. */
@@ -40,6 +55,15 @@ export function advanceRemaining(advance: AdvanceLike): number {
   return remaining > OPEN_CREDIT_EPSILON ? remaining : 0;
 }
 
+/** One spendable credit row, newest first in `AvailableCredit.items`. `number` is a note's credit-note number. */
+export interface CreditItem {
+  kind: "NOTE" | "ADVANCE";
+  id: string;
+  date: Date;
+  remaining: number;
+  number?: string;
+}
+
 export interface AvailableCredit {
   /** Unused remainder of open credit notes. */
   notes: number;
@@ -47,25 +71,69 @@ export interface AvailableCredit {
   advances: number;
   /** notes + advances, the figure every surface shows as "available credit". */
   total: number;
+  /** The rows behind the sums (remaining > 0), newest first: the buyer's credit list reads these, never a re-read. */
+  items: CreditItem[];
 }
 
 /** Sum the credit of rows already read for ONE customer. Pure; the caller owns the tenant and customer scope. */
 export function sumAvailableCredit(input: {
   notes: ReadonlyArray<CreditNoteLike>;
-  advances: ReadonlyArray<AdvanceLike>;
+  advances: ReadonlyArray<AdvanceLike & { id?: string; receivedAt?: Date }>;
+  /** Linked source-payment statuses by id (B839); an advance with no source never needs one. */
+  sourceStatuses?: ReadonlyMap<string, string>;
   now: Date;
 }): AvailableCredit {
+  const spendable = input.advances.filter((a) =>
+    isAdvanceAvailable(
+      a,
+      a.sourcePaymentId ? input.sourceStatuses?.get(a.sourcePaymentId) : undefined,
+    ),
+  );
   const notes = roundMoney(
     input.notes.reduce((sum, n) => sum + creditNoteRemaining(n, input.now), 0),
   );
-  const advances = roundMoney(input.advances.reduce((sum, a) => sum + advanceRemaining(a), 0));
-  return { notes, advances, total: roundMoney(notes + advances) };
+  const advances = roundMoney(spendable.reduce((sum, a) => sum + advanceRemaining(a), 0));
+  const items: CreditItem[] = [
+    ...input.notes.map((n: any) => ({
+      kind: "NOTE" as const,
+      id: String(n.id),
+      date: new Date(n.createdAt),
+      remaining: creditNoteRemaining(n, input.now),
+      number: n.creditNoteNumber as string | undefined,
+    })),
+    ...spendable.map((a) => ({
+      kind: "ADVANCE" as const,
+      id: String(a.id),
+      date: new Date(a.receivedAt as Date),
+      remaining: advanceRemaining(a),
+    })),
+  ]
+    .filter((i) => i.remaining > 0)
+    .sort((x, y) => y.date.getTime() - x.date.getTime());
+  return { notes, advances, total: roundMoney(notes + advances), items };
 }
 
 /** The tenant-scoped client the loader needs: pass `prisma.forTenant()`, never a bare client. */
 export interface AvailableCreditDb {
   creditNote: { findMany: (args: any) => Promise<any[]> };
   advancePayment: { findMany: (args: any) => Promise<any[]> };
+  invoicePayment: { findMany: (args: any) => Promise<any[]> };
+}
+
+/** B839: the statuses of the payments these advances came from, in ONE tenant-scoped `id in` read (none when unlinked). */
+export async function loadAdvanceSourceStatuses(
+  db: Pick<AvailableCreditDb, "invoicePayment">,
+  advances: ReadonlyArray<AdvanceLike>,
+): Promise<Map<string, string>> {
+  const ids = [...new Set(advances.map((a) => a.sourcePaymentId).filter(Boolean))] as string[];
+  const out = new Map<string, string>();
+  if (ids.length === 0) return out;
+  const rows = await db.invoicePayment.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, status: true },
+  });
+  for (const r of rows) out.set(r.id, r.status);
+  return out;
 }
 
 /**
@@ -80,12 +148,59 @@ export async function loadAvailableCredit(
   const [notes, advances] = await Promise.all([
     db.creditNote.findMany({
       where: { customerId, status: { not: "VOID" } },
-      select: { amount: true, amountUsed: true, status: true, expiresAt: true },
+      select: {
+        id: true,
+        creditNoteNumber: true,
+        createdAt: true,
+        amount: true,
+        amountUsed: true,
+        status: true,
+        expiresAt: true,
+      },
     }),
     db.advancePayment.findMany({
       where: { customerId, balance: { gt: 0 } },
-      select: { balance: true },
+      select: { id: true, balance: true, receivedAt: true, sourcePaymentId: true },
     }),
   ]);
-  return sumAvailableCredit({ notes, advances, now });
+  const sourceStatuses = await loadAdvanceSourceStatuses(db, advances);
+  return sumAvailableCredit({ notes, advances, sourceStatuses, now });
+}
+
+/**
+ * The same figures for a PAGE of customers (the staff list, the CSV): three bounded tenant-scoped `in` reads (notes,
+ * advances, advance sources), never a query per customer. Every id gets an entry, zeros when it holds no credit.
+ */
+export async function loadAvailableCreditByCustomer(
+  db: AvailableCreditDb,
+  customerIds: ReadonlyArray<string>,
+  now: Date = new Date(),
+): Promise<Map<string, Pick<AvailableCredit, "notes" | "advances" | "total">>> {
+  const out = new Map<string, Pick<AvailableCredit, "notes" | "advances" | "total">>();
+  if (customerIds.length === 0) return out;
+  const [notes, advances] = await Promise.all([
+    db.creditNote.findMany({
+      where: { customerId: { in: [...customerIds] }, status: { not: "VOID" } },
+      select: { customerId: true, amount: true, amountUsed: true, status: true, expiresAt: true },
+    }),
+    db.advancePayment.findMany({
+      where: { customerId: { in: [...customerIds] }, balance: { gt: 0 } },
+      select: { customerId: true, balance: true, sourcePaymentId: true },
+    }),
+  ]);
+  const sourceStatuses = await loadAdvanceSourceStatuses(db, advances);
+  for (const id of customerIds) {
+    const {
+      notes: n,
+      advances: a,
+      total,
+    } = sumAvailableCredit({
+      notes: notes.filter((r) => r.customerId === id),
+      advances: advances.filter((r) => r.customerId === id),
+      sourceStatuses,
+      now,
+    });
+    out.set(id, { notes: n, advances: a, total });
+  }
+  return out;
 }

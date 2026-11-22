@@ -15,7 +15,7 @@ export interface CustomerCsvRow {
 }
 
 export const CUSTOMERS_CSV_HEADER =
-  "Business Name,Contact Name,Email,Phone,Customer Type,Status,Open Balance,Credits";
+  "Business Name,Contact Name,Email,Phone,Customer Type,Status,Open Balance,Credit";
 
 /**
  * The customers export format (B953). Names, emails and phones are user-typed, so every text cell
