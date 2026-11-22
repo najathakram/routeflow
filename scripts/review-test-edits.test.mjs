@@ -37,6 +37,7 @@ const run = (base, head, ...extra) =>
   spawnSync("node", [CLI, "--base", base, "--head", head, ...extra], {
     cwd: dir,
     encoding: "utf8",
+    env: scrubbedGitEnv(),
   });
 
 const BASE_SPEC = `describe("eligibility", () => {
