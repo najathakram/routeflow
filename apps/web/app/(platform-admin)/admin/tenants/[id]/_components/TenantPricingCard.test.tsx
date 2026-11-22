@@ -12,6 +12,14 @@ jest.mock("@/lib/api/platform-pricing", () => ({
   createTenantCheckout: jest.fn(),
 }));
 
+// SA-1206 R2: the card reads how the business pays first. These specs are about a Stripe-billed business.
+const mockFetchPlan = jest.fn();
+jest.mock("@/lib/api/platform-catchup", () => ({
+  ...jest.requireActual("@/lib/api/platform-catchup"),
+  fetchCatchupPlan: (id: string) => mockFetchPlan(id),
+}));
+const STRIPE_BILLED = { externalPayment: false, hasStripeSubscription: true };
+
 const TENANT_ID = "tenant-1";
 
 const pricing = (stripeSubId: string | null = "sub_123") => ({
@@ -46,6 +54,7 @@ async function saveWith(monthly: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockFetchPlan.mockResolvedValue(STRIPE_BILLED);
   mockUpdate.mockResolvedValue({
     ...pricing(),
     sync: { synced: true, proration: "none" },

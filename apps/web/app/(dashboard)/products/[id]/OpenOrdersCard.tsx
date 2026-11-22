@@ -17,6 +17,14 @@ import { useProductOpenOrders, type ProductOpenOrderLine } from "@/lib/api/produ
  * Sales card, staff only. Same shell, header type and chip grid as SalesHistoryCard. No money.
  */
 
+const OPEN_ORDER_COMPARATORS: Partial<
+  Record<string, (a: ProductOpenOrderLine, b: ProductOpenOrderLine) => number>
+> = {
+  date: (a, b) => new Date(a.orderDate).getTime() - new Date(b.orderDate).getTime(),
+  customer: (a, b) => a.customerName.localeCompare(b.customerName),
+  qty: (a, b) => a.remainingQty - b.remainingQty,
+};
+
 const TH = "px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70";
 
 function SummaryChip({ label, value }: { label: string; value: string }) {
@@ -48,11 +56,7 @@ export function OpenOrdersCard({
   const { sorted, sortKey, sortDir, requestSort } = useSortableData<ProductOpenOrderLine>(lines, {
     defaultKey: "date",
     defaultDir: "desc",
-    comparators: {
-      date: (a, b) => new Date(a.orderDate).getTime() - new Date(b.orderDate).getTime(),
-      customer: (a, b) => a.customerName.localeCompare(b.customerName),
-      qty: (a, b) => a.remainingQty - b.remainingQty,
-    },
+    comparators: OPEN_ORDER_COMPARATORS,
   });
 
   const empty = !!data && data.lines.length === 0;

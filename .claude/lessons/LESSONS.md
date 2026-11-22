@@ -77,13 +77,6 @@
 - **Lesson:** **Map an empty conclusion to `-` explicitly (`if . == "" then "-" else . end`), read rows as JSON rather than splitting on tabs, and key every timer by run id and attempt so a rerun gets its own clock.**
 - **Guard:** none in the repo (lead tooling); the window script carries the explicit mapping.
 
-### L-358 · 2026-10-30 · tooling · api check-types in a tree that did not build the workspace packages drowns in TS2307; build `packages/*` first
-
-- **Symptom:** the api type-check on a freshly installed train tree reported 913 diagnostics (baseline 551), nearly all "Cannot find module '@routeflow/pricing'".
-- **Root cause:** `@routeflow/pricing`, `returns` and `scanning` resolve their types from `dist/`; `npm ci --ignore-scripts` builds nothing, so every importer fails.
-- **Lesson:** **Before reading a type-check count in a new tree, build the workspace packages that publish `dist/`. A count far above baseline with TS2307 on a package name is a missing build, not a member defect. After a `packages/*` change lands or is edited, rebuild `dist/` in every tree that tests against it: web specs import the built `dist`, so a stale one fails silently with wrong money figures, not an error (archived L-176).**
-- **Guard:** the train check script runs the package builds first, then api and web check-types.
-
 ## testing
 
 ### L-396 · 2026-11-19 · testing · a change to a hook, or to a file a hook calls, runs every `*-script.spec.ts` that builds a hook fixture; a by-path review run misses them (#4363, fix round 2)
@@ -156,20 +149,6 @@
 - **Lesson:** **When code under test reads the clock, pin it (`jest.useFakeTimers().setSystemTime(NOW)`) or derive every fixture date from that NOW; a literal future date is a failure with a date on it. Before assembling a train, run the gate on bare `origin/master` first, so a red that is master's own is fixed on its own and never charged to a member.**
 - **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335. Extended 2026-11-01 (train q): two billing specs left the clock real, and the checkout anchor refuses a start within 91 minutes of the 1st at 12:00Z, so every api Verify that reached them between 10:29Z and 12:00Z on that day failed (33 tests, 2 suites) while the code was right; a run before 10:29Z had passed. Pin the clock in each spec whose subject reads it (`apps/api/src/testing/pin-clock.ts`, #4084), and when a month-boundary window exists, expect the red on the 1st and 2nd, not only on the day a commit lands. Extended 2026-11-13 (B1327): `CounterSaleScreen.date-scan.test.tsx` called `jest.useFakeTimers()` without a system date, and fake timers start at the real now, so its "fri" scan and TODAY/BACK chips failed on one weekday. Now pinned to Wed 2026-06-17 12:00Z in the same `beforeEach`. Put `setSystemTime` next to every `useFakeTimers`; a weekday-relative case is red one day in seven. No automatic scan for a fake-timer spec with no pinned date yet.
 
-### L-322 · 2026-10-20 · testing · a move-only extraction re-runs the static source-pin specs, and the pin reads the moved files too
-
-- **Symptom:** a refactor that only moved code into new files passed a move-only review and its unit tests, then failed the pre-push run: specs that read a source file's text and assert on it no longer found the code.
-- **Root cause:** a source-pin spec asserts on one named file; moving the code out makes the assertion fail (or, worse, pass vacuously when it pins an absence). A diff review of a pure move cannot see that.
-- **Lesson:** **After a move-only extraction run every static source-pin and scan spec that names the touched files, and repoint each pin to read the original AND the new files (a shared source reader), so it keeps guarding the code wherever it lives. A move-only review does not replace the run.**
-- **Guard:** none automatic; pins that walk the tree through `apps/api/src/testing/source-scan.ts` survive a move, single-file pins do not. Cf. [[L-205]].
-
-### L-323 · 2026-10-20 · testing · a changed-since pre-push skips repo-wide static scans, so a train gate runs them in full
-
-- **Symptom:** a branch passed the fast pre-push (`--changedSince`) and a repo-wide static scan (such as the accessible-labels scan) then failed on the train tip.
-- **Root cause:** an affected-only run selects specs by the files a branch touches; a scan that walks the whole repo has no dependency edge to the changed file, so it is never selected.
-- **Lesson:** **Treat the fast or affected run as a convenience, not a gate. A train or merge gate runs the repo-wide scans in full (`FULL_VERIFY=1`) on the landing tree, whatever the members ran alone.**
-- **Guard:** `FULL_VERIFY=1` in the train gate; none automatic for a single branch. Cf. [[L-290]]. Extended 2026-10-21: a builder's targeted gate (touched specs only) missed three whole-source structural pins in one night (an "only N callers" billing pin, an "every DB-writing script is guarded or exempt" guard, a mobile source-regex pin), because pins live outside the touched files. Before reporting, a builder runs the WHOLE jest of every touched workspace (through the heavy slot, [[L-325]]).
-
 ### L-326 · 2026-10-20 · testing · a migration that retires a known edge updates, in the same train, every spec that pins the edge's old behavior
 
 - **Symptom:** after a column widen retired a rounding edge (B296, a 4-dp rate), a spec that asserted the old 4-dp clamp stayed in the tree; it was green on its own branch and red only on the combined R5 tree.
@@ -183,20 +162,6 @@
 - **Root cause:** those specs asserted the old error code as a stand-in for "the second writer lost"; the new guard fires first on the same input, so the invariant still held but the expected code was stale.
 - **Lesson:** **When a new guard or error code is inserted ahead of an existing one, grep the specs for the old code and update each; keep the invariant the spec proves (one writer wins, nothing written) and change only the expected code, never loosen the assertion to accept any error.**
 - **Guard:** none automatic; the train gate runs the full suite (cf. [[L-264]]).
-
-### L-247 · 2026-09-29 · testing · swapping a constructor dependency has construction sites tsc does not check (#2241)
-
-- **Symptom:** #2241 replaced `EntitlementsService` with `EntitlementAuthority` in two services; 12 specs
-  built those services with a `useValue` stub of the dead dependency, and only a boot or a spec run
-  shows a wrong provider (the L-113 class).
-- **Root cause:** a Nest constructor change is type-checked at the class, but every spec provider
-  array and every importing module is a construction site that `useValue` stubs and mocks hide from
-  tsc.
-- **Lesson:** **When a constructor dependency is added, removed or swapped, grep every construction
-  site of the class (spec provider arrays, other modules' providers, test builders) and change them in
-  the same PR; then boot the real container.**
-- **Guard:** the compose boot gate (`local:up`) proves the real DI graph; no automated
-  construction-site scan yet.
 
 ### L-262 · 2026-10-05 · testing · a generated Prisma client is per install: a worktree that shares or hoists `node_modules` verifies against another tree's schema
 
@@ -213,6 +178,20 @@
 - **Guard:** none automatic. SA-E111 records the miss; the red pin for the floor (B1330) lands with F-1, and B1336 tracks the silent `qty: 0` skip itself.
 
 ## domain
+
+### L-401 · 2026-11-21 · domain · a background or send step that can fail writes a status the screen reads and tells the operator; a log line is not a report (#4381, #4372, #4399)
+
+- **Symptom:** a recurring invoice whose auto-send email failed still wrote `SUCCESS`, so the card read "Succeeded" for an invoice nobody had been sent; a standing order that failed for any reason but one was only logged, the 06:00 run placed nothing and no one was told; a counter sale that did not email the invoice said nothing about why.
+- **Root cause:** each step handled its failure with a warning log and went on to the success write, so the only record of the failure was a log nobody reads. Judging "did it work" from message text (or from the absence of a throw) hid the typed cause.
+- **Lesson:** **Write the outcome after the step that can fail, from a typed code (`INVOICE_RECIPIENT_MISSING`, not message text): the status the card or run summary reads, and one operator notice per failed item per run. A step that committed its work before a later step threw is created, never failed. Declare a shared text such as a status prefix once in `@routeflow/types` and pin a single source.**
+- **Guard:** `recurring-invoices.service.spec.ts` and `run-prefix-single-source.spec.ts` (#4381); `order-templates.customer-prices-unavailable.spec.ts` (#4372); `pickup-complete.complete-at-counter.spec.ts` and `invoice-reminder-email.recipient.spec.ts` (#4399).
+
+### L-400 · 2026-11-21 · domain · a confirm the page shows is not enforcement; the server refuses without the ack field, under the lock (#4387, #4396)
+
+- **Symptom:** the order page asked "edit anyway?" before an items save turned a sent invoice back into a draft, but any other caller of the same route (an older page, a script, a second tab with a stale read) reverted the invoice with no confirm.
+- **Root cause:** the first PR put the rule only in the web: the read sent a flag and the page confirmed. The write route never asked for proof that the person had seen it, so the confirm was advice. A "changed since sent" test that compared the stored fingerprint to one stage only also listed an invoice emailed as a draft and later sent final with the same lines.
+- **Lesson:** **When a screen confirms before a write has a side effect the person did not ask for, the route takes an explicit ack field and refuses without it (a coded 409 that names what would change), checked after the row lock and after the older refusals, with the exempt callers listed. The page sends the ack after the confirm and handles a 409 from a read that went stale by opening the same confirm with the server's numbers.**
+- **Guard:** `orders.service.sent-revert-ack.spec.ts`, `order-edit-revert-set.ack.spec.ts`, `invoice-changed-since-sent.spec.ts` and `SentInvoiceEditConfirm.n2.test.tsx` (#4396).
 
 ### L-375 · 2026-11-12 · domain · a flag the middleware reads to route a browser is set by every path that starts a session, impersonation included (B1304)
 
@@ -321,6 +300,13 @@
 
 ## security
 
+### L-399 · 2026-11-21 · security · when a storage key is renamed, the reader drops the old key and logout clears it once; a fallback read keeps a signed-out person signed in (#4371)
+
+- **Symptom:** a buyer who signed in with Google and then signed out was read as signed in again, and revisiting the portal showed it.
+- **Root cause:** the Google callback still wrote the pre-namespacing `buyerAccessToken` key, the token reader fell back to it, and logout cleared only the namespaced keys. A second page read yet another key (`buyerToken`) that nothing writes, so its request went out with no Authorization header.
+- **Lesson:** **After a storage-key migration the writer stops writing the old key, the reader stops falling back to it, and logout removes it once for browsers that still hold it. Every page reads the token through the one accessor, never by a key literal.**
+- **Guard:** `apps/web/lib/buyer-auth.legacy-token.test.ts`, `page.code-only.test.tsx` (callback) and `page.merge-request.test.tsx` (settings), #4371.
+
 ### L-328 · 2026-10-21 · security · a same-origin form POST under `Referrer-Policy: no-referrer` sends `Origin: null`; an Origin-equals-Host check then refuses every login
 
 - **Symptom:** after the control dashboard set `Referrer-Policy: no-referrer`, every login was refused with 403, although the page and the form were on the same host.
@@ -336,6 +322,20 @@
 - **Guard:** none yet; propose a lint/review checklist item flagging `token`/`code`/`secret`-named query params on any new route. Restored 2026-11-01 (it was archived on 2026-10-31 for room): this is a rule about RouteFlow's own routes, and the agent privacy rules cover what an agent does with URLs, not what the app puts in them.
 
 ## web
+
+### L-398 · 2026-11-21 · web · a file input fires no change when the same file is picked again; clear its value after every pick (#4397)
+
+- **Symptom:** an edited CSV re-picked from the same place kept the old File, and the next Preview ran on stale content.
+- **Root cause:** the browser raises `change` only when the selected path differs, and the panel kept the first File in state; the first fix pass tested picking a different file.
+- **Lesson:** **Set `input.value = ""` after reading the file on every pick, and test the second pick of the same file (a test that picks two different files proves nothing here).**
+- **Guard:** `apps/web/components/import/ImportCsvPanel.repick.test.tsx` (#4397).
+
+### L-397 · 2026-11-21 · web · a Next page file exports only page fields; helpers and components used elsewhere live in their own module (#4370)
+
+- **Symptom:** `tsc` failed TS2344 on two pages (estimates and a platform-admin tenant page), and only in a tree that had a local `.next`; a clean checkout passed.
+- **Root cause:** with `.next` present, tsc reads the per-page type guards Next emits, and a guard rejects any export that is not a page field. Two pages exported a date helper and a section component for other files to import.
+- **Lesson:** **Move any non-page export out of a `page.tsx` (or layout, route) file into a sibling module before another file imports it, and read a type-check in a tree that has run `next build` or `next dev`, not only a clean one.**
+- **Guard:** `apps/web/app/page-file-exports.static.test.ts` (fails on a page file with a non-page export; #4370).
 
 ### L-394 · 2026-11-19 · web · a scroll snap with inertia on reads its speed from the scrub's catch-up, not the hand, and throws a stopped scroll to a far beat; keep inertia off and drive the snap with real wheel input (#4367)
 
@@ -402,9 +402,3 @@
 - **Lesson:** **Start every CI run at window open, close on the watchdog, and spend the window on merge, deploy SUCCESS and the private read-back. Never flip on BUILDING.**
 - **Guard:** none automatic; the window sheet lists CI start times next to the merge order. Cf. [[L-003]]. A watchdog left running from a window that never opened blocks a fresh start and costs the wait: read visibility first, and if it reads PRIVATE replace the idle watchdog (no public time is added); if it reads PUBLIC, never replace, stop and ask. Extended 2026-10-31: never flip private while a train's hosted CI run is in progress unless the watchdog forces it. A hosted job was cancelled about 3 minutes after the flip with every real step already passed and only the post-run step cancelled; a cancelled run is not green, so read the run's conclusion (as [[L-337]] refuses CANCELLED), and a second short window may re-run the failed job. Extended 2026-11-01 (train n): push the train branch while the repo is still private, before the watchdog starts (the pre-push fast verify takes minutes, none of them public), then open the window with the branch already on origin. A docs-only PR (only `.claude/**`, `docs/**` or `**.md`) gets no CI run in any window, because `ci.yml` `paths-ignore` skips it and a close/reopen fires nothing; its gate is the read PASS plus MERGEABLE/CLEAN, so do not promise it CI. Extended 2026-11-01 (train o): a Verify attempt that started in window 1 and was still running at the private flip hit the 45-minute limit (annotation: exceeded the maximum execution time) with nothing red; the failed-job re-run in window 2 passed in 23m44s on the same sha, while Migration replay and Control, which had finished inside window 1, stayed green. Re-run only the failed job in the next window and report the check-run annotation, not just `cancelled`. Extended 2026-11-01 (train q): flip public with `node tools/ci-runner/check-no-runner.mjs && gh repo edit ...`; the check refuses when GitHub cannot be read (a TLS timeout did once), so retry the check rather than bypass it, and open the train PR only after the repo reads PUBLIC, because a run that starts seconds before the flip dies as 2-second billing reds and needs a re-run.
 
-### L-282 · 2026-10-08 · deploy · a feature PR never adds or changes tenants or rows in the shared e2e seed that runs against production
-
-- **Symptom:** recorded by the 2026-10-08 operating review; the incident detail is in the lead's notes.
-- **Root cause:** the e2e seed runs against production after every deploy, so a tenant a feature PR adds to it is created for real by the next post-deploy E2E.
-- **Lesson:** **The production e2e seed gains a tenant or row only through its own reviewed PR, never inside a feature PR. Test data follows the approved test-tenant policy (CLAUDE.md "Test tenants & real-client data").**
-- **Guard:** standing rule plus the e2e-seed review checklist; no script yet.
