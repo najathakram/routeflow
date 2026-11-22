@@ -68,7 +68,32 @@ export function billQuantitiesFromPO(poLines: readonly PoLineForBill[]): number[
   );
 }
 
-/** Pure. `piecesToBill` is per PO line, in pieces; it defaults to `billQuantitiesFromPO`. Lines of 0 are left out. */
+/** The PO line's stored pack when it has one (a whole number above 1), else null. */
+const packOf = (line: PoLineForBill): number | null => {
+  const pack = Math.trunc(Number(line.packSize ?? 0));
+  return pack > 1 ? pack : null;
+};
+
+const notPrefilled = (line: PoLineForBill, n: number): boolean =>
+  n > 0 && !Number.isInteger(n) && packOf(line) !== null;
+
+/**
+ * SA-1207 A3: a fractional quantity on a boxed line (one with a pack) is never prefilled. It is neither a piece
+ * line at the 4 dp cost nor a lot (a lot writes `packSize` = the pieces, an Int column). A piece line (no pack)
+ * keeps `n x unitCost`. Returns the `poItemId` (the index when the id is null) of each such line, for the
+ * caller to show as "Enter this line by hand". `piecesToBill` defaults to `billQuantitiesFromPO`.
+ */
+export function poLinesNotPrefilled(
+  poLines: readonly PoLineForBill[],
+  piecesToBill: readonly number[] = billQuantitiesFromPO(poLines),
+): string[] {
+  return poLines.flatMap((line, i) => {
+    const n = Number(piecesToBill[i] ?? 0);
+    return notPrefilled(line, n) ? [line.id ?? String(i)] : [];
+  });
+}
+
+/** Pure. `piecesToBill` is per PO line, in pieces; it defaults to `billQuantitiesFromPO`. Lines of 0 are left out, and so are those `poLinesNotPrefilled` lists. */
 export function billLinesFromPO(
   poLines: readonly PoLineForBill[],
   piecesToBill: readonly number[] = billQuantitiesFromPO(poLines),
@@ -76,12 +101,11 @@ export function billLinesFromPO(
   const out: BillLineFromPO[] = [];
   poLines.forEach((line, i) => {
     const n = Number(piecesToBill[i] ?? 0);
-    if (!(n > 0)) return;
+    if (!(n > 0) || notPrefilled(line, n)) return;
     const ordered = Number(line.qtyOrdered);
     const total = Number(line.totalCost);
     const unit = Number(line.unitCost);
-    const packRaw = Math.trunc(Number(line.packSize ?? 0));
-    const pack = packRaw > 1 ? packRaw : null;
+    const pack = packOf(line);
     const base = { poItemId: line.id ?? null, productId: line.productId, sku: line.sku ?? null };
     const piece = (qty: number, unitCost: number): BillLineFromPO => ({
       ...base,
@@ -93,7 +117,8 @@ export function billLinesFromPO(
     const target =
       n === ordered || !(ordered > 0) ? roundMoney(total) : roundMoney((total * n) / ordered);
 
-    // A fractional quantity (a weighed item) cannot be a lot: the pack is a whole number of pieces.
+    // A fractional quantity on a piece line (a weighed item) cannot be a lot: the pack is a whole number of pieces.
+    // A fractional quantity on a boxed line never gets here (poLinesNotPrefilled).
     if (!Number.isInteger(n)) return void out.push(piece(n, unit));
 
     if (pack && n % pack === 0) {

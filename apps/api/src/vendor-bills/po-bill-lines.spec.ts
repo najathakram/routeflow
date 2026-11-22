@@ -1,4 +1,10 @@
-import { billLinesFromPO, buildPOLine, isWholeCents, roundMoney } from "@routeflow/pricing";
+import {
+  billLinesFromPO,
+  buildPOLine,
+  isWholeCents,
+  poLinesNotPrefilled,
+  roundMoney,
+} from "@routeflow/pricing";
 import { Prisma } from "@prisma/client";
 import { billLinesTotal } from "./bill-lines-total";
 import { findPoMatchViolations } from "./po-bill-match";
@@ -229,6 +235,44 @@ describe("SA-1207 P2a: a bill filled from a PO passes the PO check; a line 0.02 
         if (v.length > 0 || off > roundMoney(0.005 * m) + 1e-9)
           bad.push(`bill ${b}: off ${off} m ${m}`);
       }
+      expect(sample(bad)).toEqual(NONE);
+    });
+  });
+
+  // A3: a boxed line (a pack) billed in a fractional quantity is never prefilled and is always listed.
+  describe("fractional boxed lines are listed and never prefilled", () => {
+    // every 5th cell (each pack keeps hundreds of cells): the time budget of A2 condition (c)
+    const sub = cells.filter((_, i) => i % 5 === 0);
+    it("a fractional quantity on a boxed grid cell (every 5th, all packs): no line out, the line is listed", () => {
+      const rand = lcg(SEED + 2);
+      const bad: string[] = [];
+      for (const c of sub) {
+        const po = { ...poLineOf(c), id: `po-${cellName(c)}` };
+        const n = (1 + rand(99_999)) / 1000;
+        const frac = Number.isInteger(n) ? n + 0.001 : n;
+        const lines = billLinesFromPO([po], [frac]);
+        const listed = poLinesNotPrefilled([po], [frac]);
+        if (lines.length > 0 || listed.length !== 1 || listed[0] !== po.id)
+          bad.push(`${cellName(c)} n ${frac} lines ${lines.length} listed ${listed.length}`);
+      }
+      expect(sample(bad)).toEqual(NONE);
+    });
+
+    it("no prefilled line ever carries a fractional packSize (it is an Int column)", () => {
+      const rand = lcg(SEED + 3);
+      const bad: string[] = [];
+      for (const c of sub) {
+        const po = poLineOf(c);
+        const n = rand(po.qtyOrdered * 1000 + 1) / 1000;
+        for (const l of billLinesFromPO([po], [n]))
+          if (l.packSize !== null && !Number.isInteger(l.packSize)) bad.push(`${cellName(c)} ${n}`);
+      }
+      expect(sample(bad)).toEqual(NONE);
+    });
+
+    it("a whole bill of whole quantities lists nothing", () => {
+      const bad: string[] = [];
+      for (const c of sub) if (poLinesNotPrefilled([poLineOf(c)]).length > 0) bad.push(cellName(c));
       expect(sample(bad)).toEqual(NONE);
     });
   });

@@ -1,4 +1,9 @@
-import { billLinesFromPO, billQuantitiesFromPO, lotUnitLabel } from "./po-bill-lines";
+import {
+  billLinesFromPO,
+  billQuantitiesFromPO,
+  lotUnitLabel,
+  poLinesNotPrefilled,
+} from "./po-bill-lines";
 import { buildPOLine } from "./po-line";
 
 const poLine = (
@@ -77,6 +82,39 @@ describe("billLinesFromPO (SA-1207 P2a)", () => {
   it("a fractional piece quantity cannot be a lot (the pack is whole): it stays a piece line", () => {
     const [l] = billLinesFromPO([poLine({ qtyOrdered: 2.5, unitCost: 3.3333 })]);
     expect(l).toMatchObject({ qty: 2.5, unitCost: 3.3333, packSize: null, unitLabel: null });
+  });
+
+  // SA-1207 A3: a boxed line (a pack) billed in a fractional quantity is never prefilled: not a piece line at the
+  // 4 dp cost, and not a lot (a lot writes packSize = n, and packSize is an Int).
+  it("a boxed line (pack 12) billed in 1.5 pieces is not prefilled and is listed", () => {
+    const line = { ...poLine({ packSize: 12, caseCost: 6, cases: 2 }), id: "po-item-1" };
+    expect(billLinesFromPO([line], [1.5])).toEqual([]);
+    expect(poLinesNotPrefilled([line], [1.5])).toEqual(["po-item-1"]);
+  });
+
+  it("a boxed line with a fractional qtyOrdered is not prefilled by default either", () => {
+    const line = { ...poLine({ packSize: 12, caseCost: 6, cases: 2 }), qtyOrdered: 24.5 };
+    expect(billLinesFromPO([line])).toEqual([]);
+    expect(poLinesNotPrefilled([line])).toEqual(["0"]);
+  });
+
+  it("a listed line is named by its index when it has no id, and only that line is skipped", () => {
+    const whole = boxes(5);
+    const fractional = poLine({ packSize: 12, caseCost: 6, cases: 2 });
+    expect(poLinesNotPrefilled([whole, fractional], [120, 1.5])).toEqual(["1"]);
+    expect(billLinesFromPO([whole, fractional], [120, 1.5])).toHaveLength(1);
+  });
+
+  it("a whole quantity on a boxed line, and a zero quantity, are not listed", () => {
+    expect(poLinesNotPrefilled([boxes(5), boxes(3)], [122, 0])).toEqual([]);
+  });
+
+  it("a piece line (no pack) billed in 1.5 pieces is still n x unitCost and is not listed", () => {
+    const line = poLine({ qtyOrdered: 4, unitCost: 3.3333 });
+    expect(billLinesFromPO([line], [1.5])).toEqual([
+      expect.objectContaining({ qty: 1.5, unitCost: 3.3333, packSize: null, unitLabel: null }),
+    ]);
+    expect(poLinesNotPrefilled([line], [1.5])).toEqual([]);
   });
 
   it("starts from what was received, else what was ordered (a PO is never billed past what it ordered)", () => {
