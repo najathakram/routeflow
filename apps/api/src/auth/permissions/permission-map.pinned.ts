@@ -842,6 +842,7 @@ export const PERMISSION_MAP: Readonly<Record<string, string>> = {
   "SettingsController.updateEmailSettings": "ADMIN",
   "SettingsController.updateInvoiceSettings": "FINANCE",
   "SettingsController.updateMarginConfig": "ADMIN",
+  "SettingsController.updateNavLayout": "ADMIN",
   "SettingsController.updatePricingTierLabels": "ADMIN",
   "SettingsController.updateRemittanceConfig": "ADMIN",
   "SettingsController.updateRouteSettings": "DISPATCH",

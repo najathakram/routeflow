@@ -119,6 +119,7 @@ import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { registryRoot } from "./lib/registry-root.mjs";
 import { isFastMode } from "./lib/verify-scope.mjs";
+import forceRun from "./lib/campaign-force-run.cjs";
 import { normalizeEvidence } from "./campaign/normalize-evidence.mjs";
 import {
   REG_TOKEN_RE,
@@ -699,6 +700,12 @@ function main() {
     const override = process.env.CAMPAIGN_CHECK_FORCE_RUN;
     if (override && process.env.JEST_WORKER_ID) {
       console.warn("WARNING: CAMPAIGN_CHECK_FORCE_RUN honoured inside a Jest worker");
+      if (override === "TIMEOUT") {
+        return forceRun.classifyForcedRun(
+          { error: { code: "ETIMEDOUT", message: "stub timeout" } },
+          forceRun.forceTimeoutMin(process.env),
+        );
+      }
       return override === "PASS"
         ? { ok: true }
         : { ok: false, reason: `stub result ${JSON.stringify(override)}` };
@@ -710,19 +717,17 @@ function main() {
     if (!bin)
       return { ok: false, reason: "no turbo binary at node_modules/.bin — can't force a run" };
     console.log(`campaign-check: forcing a real run — ${bin} run test --filter=${pkg} --force`);
+    const minutes = forceRun.forceTimeoutMin(process.env);
     try {
       const res = spawnSync(bin, ["run", "test", `--filter=${pkg}`, "--force"], {
         cwd: gitRoot,
         stdio: "inherit",
         shell: process.platform === "win32",
-        timeout: 15 * 60 * 1000, // apps/api's full suite alone measures ~7 min on this box
+        // Default 45 min (api alone is ~7 min idle, far more under heavy-slot load); see
+        // RF_CAMPAIGN_FORCE_TIMEOUT_MIN. A timeout still refuses but is not a test failure.
+        timeout: minutes * 60 * 1000,
       });
-      if (res.error) return { ok: false, reason: res.error.message };
-      if (res.signal) return { ok: false, reason: `killed by signal ${res.signal} (timed out?)` };
-      return {
-        ok: res.status === 0,
-        reason: res.status === 0 ? null : `turbo exited ${res.status}`,
-      };
+      return forceRun.classifyForcedRun(res, minutes);
     } catch (e) {
       return { ok: false, reason: e.message };
     }
@@ -826,10 +831,7 @@ function main() {
           } else {
             discardFailedRun(wsInfo);
             console.error(
-              `campaign-check: forcing a real run for ${dryRun.pkg} did not produce it` +
-                (forced.reason ? ` (${forced.reason})` : "") +
-                ` — this is a genuine failure, not a caching artifact. Run it yourself for the ` +
-                `full output: cd ${wsInfo.dir} && npx jest --maxWorkers=2`,
+              forceRun.failureMessage(forced, dryRun.pkg, wsInfo.dir, "did not produce it"),
             );
             anyHitRefusal = true;
           }
@@ -931,12 +933,7 @@ function main() {
           );
         } else {
           discardFailedRun(wsInfo);
-          console.error(
-            `campaign-check: forcing a real run for ${dryRun.pkg} did not succeed` +
-              (forced.reason ? ` (${forced.reason})` : "") +
-              ` — this is a genuine failure, not a caching artifact. Run it yourself for the ` +
-              `full output: cd ${wsInfo.dir} && npx jest --maxWorkers=2`,
-          );
+          console.error(forceRun.failureMessage(forced, dryRun.pkg, wsInfo.dir, "did not succeed"));
           anyHitRefusal = true;
         }
       } else if (dryRun.status === "MISS") {

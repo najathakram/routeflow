@@ -32,7 +32,7 @@ import {
   type MarkerView,
 } from "./catchup-markers";
 import { planRefusalException, refusalCodesOf } from "./catchup-refusal";
-import { buildCatchupSessionParams } from "./catchup-session-params";
+import { buildCatchupSessionParams, catchupRecurringCents } from "./catchup-session-params";
 import { PlatformPricingService } from "./platform-pricing.service";
 import {
   assertCheckoutSurface,
@@ -68,6 +68,8 @@ export interface CatchupReport {
   planKey: string | null;
   priceSource: "override" | "catalog" | null;
   monthlyCents: number | null;
+  /** What the session bills every month: the plan plus its add-ons, from the session's own line builder (null when no price). */
+  recurringCents: number | null;
   /** The subscription row's stored base-price snapshot, dollars (null when none) - the dry-run flags an override without one. */
   basePriceSnapshot: number | null;
   /** The latest billing-start override marker (valid or not), for the dry-run. */
@@ -111,6 +113,7 @@ export function catchupReportJson(r: CatchupReport) {
     planKey: r.planKey,
     priceSource: r.priceSource,
     monthlyCents: r.monthlyCents,
+    recurringCents: r.recurringCents,
     basePriceSnapshot: r.basePriceSnapshot,
     billingStartOverride: r.billingStartOverride,
     markers: r.markers,
@@ -300,6 +303,10 @@ export class CatchupCheckoutService {
       planKey: resolvedPlanKey,
       priceSource: source,
       monthlyCents: monthly == null ? null : toCents(monthly),
+      recurringCents:
+        monthly == null
+          ? null
+          : catchupRecurringCents({ planPriceData, addonLines: lines.lineItems }),
       basePriceSnapshot: sub?.basePriceSnapshot == null ? null : Number(sub.basePriceSnapshot),
       billingStartOverride: override
         ? {

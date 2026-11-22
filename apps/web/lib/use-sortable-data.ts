@@ -140,6 +140,10 @@ export function useSortableData<T>(
   };
 }
 
+/** One shared collator (same options the old per-call `localeCompare` used): building one per
+ *  comparison made a 2.5k-row sort ~24x slower. */
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
+
 /**
  * Default comparator. Handles numbers, Dates, strings (locale-aware,
  * case-insensitive), null/undefined (sink to the end), and falls back to
@@ -165,8 +169,5 @@ function compareValues(a: unknown, b: unknown): number {
     return an - bn;
   }
 
-  return String(a).localeCompare(String(b), undefined, {
-    sensitivity: "base",
-    numeric: true,
-  });
+  return NAME_COLLATOR.compare(String(a), String(b));
 }

@@ -1,4 +1,6 @@
 import { BadgePercent, Handshake, MapPin, ShieldCheck, Store, Truck } from "lucide-react";
+import type { NavLayout } from "@routeflow/types";
+import { applyNavLayout } from "./nav-layout";
 import { driverNavItemVisible } from "@/lib/portal-routing";
 import { matchPlanGatedRoute, modeGatedVisible, planFlagVisible } from "@/lib/plan-gated-nav";
 import {
@@ -29,6 +31,8 @@ export type OperatorNavContext = {
   insightsAccess: boolean;
   plan: { flags: readonly string[] | undefined; resolved: boolean; failed: boolean };
   modes?: Readonly<Record<string, string>>;
+  /** The business's saved sidebar layout (GET /settings); undefined while loading or when the read failed. */
+  navLayout?: NavLayout;
 };
 
 function getNavForRole(
@@ -153,7 +157,18 @@ function withInsights(entries: NavEntry[], insightsAccess: boolean): NavEntry[] 
   );
 }
 
+/**
+ * The whole sidebar: the base menu for this viewer, then the tenant's layout pass at this ONE exit (SA-1209), so both
+ * return paths of `buildBaseNav` and the injected entries go through it. Only staff get a layout; undefined (loading or
+ * failed) leaves the base menu unchanged.
+ */
 export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
+  const base = buildBaseNav(ctx);
+  const isStaff = ctx.role !== "CUSTOMER" && ctx.role !== "DRIVER";
+  return isStaff ? applyNavLayout(base, ctx.navLayout) : base;
+}
+
+function buildBaseNav(ctx: OperatorNavContext): NavEntry[] {
   const { role, counterEnabled, addonsLoading, hasSalesAgents, regulatedLoading } = ctx;
   const isStaff = role !== "CUSTOMER" && role !== "DRIVER";
   const nav = getNavForRole(

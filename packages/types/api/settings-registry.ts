@@ -100,6 +100,8 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
   cfg("settings.logoUrl", "/settings?tab=profile"),
   // Counter sale quick keys (SA-747): pins, hides, window and cap as one JSON value; edited from the counter screen.
   cfg("settings.quickKeys", "/orders/counter-sale"),
+  // Per-tenant sidebar layout (SA-1209): pinned, order, hidden as one JSON value; written only by PATCH /settings/nav-layout.
+  cfg("settings.navLayout", "/settings", { adminOnly: true }),
   cfg("settings.receiptFooter", "/settings?tab=profile"),
   ...[
     "fromName",
