@@ -9,7 +9,9 @@
  *                     `rf brief --refresh --quiet` so the clone is fresh for next time.
  *   UserPromptSubmit  for the lead lane or any session that has a marker: prints ONE line,
  *                     "[ops monitor] Since you last looked: ...", when other people changed
- *                     something since the marker; then advances the marker. At most once every
+ *                     something since the marker, then "N new comments for you:" with the text
+ *                     of each new comment that mentions, answers or sits on this session's
+ *                     work (the team board's only channel); then advances the marker. At most once every
  *                     2 minutes it also starts the detached refresh, so a long session keeps
  *                     seeing other machines' events.
  *
@@ -94,6 +96,9 @@ export function briefFor(payload, env, now, deps) {
   const namesError = Array.isArray(loaded) ? null : (loaded.error ?? null);
   const lane = lanes.laneForCwd(cwd, env, { config, home });
   const markerFile = join(home, "seen", `${turn.sanitizeSessionId(payload.session_id)}.json`);
+  // Who reads the comments: the lane, and the name events are written under (as rf writes them).
+  const actor = env.RF_ACTOR || lane || `${deps.machine}:${basename(cwd)}`;
+  const me = { lane, actor };
   const events = readAllEvents(dir);
   const newest = brief.lastEventId(events);
 
@@ -118,6 +123,8 @@ export function briefFor(payload, env, now, deps) {
       short: !lane,
       maxLines: lane ? 25 : 8,
       utcOffsetMin: -new Date(now).getTimezoneOffset(),
+      me,
+      inboxSeen: deps.inbox?.readInboxSeen?.(home, me) ?? null,
     });
     writeJson(markerFile, { lastEventId: newest, ts: now });
     return { text, refresh: true };
@@ -131,12 +138,12 @@ export function briefFor(payload, env, now, deps) {
       writeJson(markerFile, { lastEventId: newest, ts: now });
       return { text: "", refresh };
     }
-    const actor = `${deps.machine}:${basename(cwd)}`;
     const own = (e) => (lane ? e.lane === lane : e.actor === actor);
-    const { before, sorted } = brief.splitAtMarker(events, marker, own);
+    const { before, after, sorted } = brief.splitAtMarker(events, marker, own);
     let text = "";
     if (before.length !== sorted.length) {
-      const line = brief.renderSince(fold(before), fold(sorted), {
+      const nowState = fold(sorted);
+      const line = brief.renderSince(fold(before), nowState, {
         lane,
         config,
         clientNames, // masked in the since-line too
@@ -144,6 +151,19 @@ export function briefFor(payload, env, now, deps) {
         utcOffsetMin: -new Date(now).getTimezoneOffset(),
       });
       if (line) text = `[ops monitor] ${line}`;
+      const fresh = new Set(after.map((e) => e.id));
+      const mine = (deps.inbox?.commentsFor(nowState, me) ?? []).filter((x) =>
+        fresh.has(x.comment.id),
+      );
+      if (mine.length) {
+        const n = mine.length;
+        const lines = mine
+          .slice(-3)
+          .map((x) => deps.inbox.renderComment(x.comment, nowState, { now, clientNames }));
+        const more = n > 3 ? [`  (${n - 3} more: rf inbox)`] : [];
+        const head = `[ops monitor] ${n} new comment${n === 1 ? "" : "s"} for you:`;
+        text = [text, head, ...lines, ...more].filter(Boolean).join("\n");
+      }
     }
     if (newest !== marker.lastEventId) writeJson(markerFile, { lastEventId: newest, ts: now });
     return { text, refresh };
@@ -173,6 +193,7 @@ async function main() {
     lanes: await import(lib("lanes-local.mjs")),
     brief: await import(lib("brief.mjs")),
     turn: await import(lib("turn-actions.mjs")),
+    inbox: await import(lib("inbox.mjs")),
     machine: "",
   };
   deps.machine = config.machineId(config.loadConfig(config.specsDir()), process.env);

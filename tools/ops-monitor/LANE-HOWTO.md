@@ -22,6 +22,9 @@ monitor brief, and the lead gets a "since you last looked" line on each prompt.
                   them on a drafted item confirms the draft.
 - Rulings / owner answers / notes: rf event ruling --ref SA-816 --summary "…" [<id>] ·
   rf event owner-decision --question "…" --answer "…" [<id>] · rf event note --text "…" [<id>]
+- Talk:           rf comment <id> "<text>" [--to <lane|member>,...] [--reply-to <eventId>]
+                  rf inbox (comments for you; the brief and each prompt show new ones). The board
+                  is the ONLY channel: sessions on other computers or accounts cannot message you.
 - Bugs: only lead/coordinator file them: rf bug file "<title>" --location … --severity … (wraps bugs.mjs)
 - Done:           rf status <id> shipping after the merge, live after the deploy (claims release)
 - Brief any time: rf brief            ·   your cards: rf ls --lane <you>   ·   counts: rf audit
