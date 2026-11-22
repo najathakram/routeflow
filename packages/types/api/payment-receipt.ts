@@ -79,3 +79,16 @@ export interface ReceiptGroupView {
   applications: ReceiptApplication[];
   unapplied: ReceiptUnapplied;
 }
+
+/**
+ * M1-03 (SA-1211 BF-6): the tag a staff payments-LIST row carries when it is one row of an office check. The server reads it
+ * from the one receipt reader, so the list prints `total` and never adds rows up. Null on every other row.
+ */
+export interface PaymentListReceipt {
+  key: string;
+  number: string | null;
+  /** The check's confirmed total (header.total). */
+  total: number;
+  /** Every invoice the confirmed rows of this check were applied to, in receipt order. */
+  invoices: { id: string; invoiceNumber: string }[];
+}

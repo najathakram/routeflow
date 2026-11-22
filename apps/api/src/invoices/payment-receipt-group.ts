@@ -11,6 +11,7 @@ import {
   sumConfirmed,
 } from "@routeflow/pricing";
 import type {
+  PaymentListReceipt,
   ReceiptApplication,
   ReceiptGroupView,
   ReceiptHeader,
@@ -246,4 +247,53 @@ export async function readReceiptGroup(
     }
   }
   return view;
+}
+
+/** The list-row fields a receipt tag is decided from (the list query already selects them). */
+interface ListReceiptRow {
+  id: string;
+  method: string;
+  status: string;
+  paymentGroupId: string | null;
+  invoice: { customerId: string };
+}
+
+/**
+ * M1-03: tag the CONFIRMED rows of each office check on one list page with that check's receipt figures. One receipt read
+ * per (group, customer), so a group planted on two customers never merges. Rows with no group, credit uses, unconfirmed rows
+ * and every other kind get no tag: they list as they always did.
+ */
+export async function readListReceipts(
+  prisma: PrismaService,
+  rows: ListReceiptRow[],
+): Promise<Map<string, PaymentListReceipt>> {
+  const tagKey = (r: ListReceiptRow) => `${r.paymentGroupId}\u0000${r.invoice.customerId}`;
+  const eligible = rows.filter(
+    (r) => r.paymentGroupId && r.status === "PAID" && !isCreditUse(r.method),
+  );
+  const anchors = new Map<string, string>();
+  for (const r of eligible) if (!anchors.has(tagKey(r))) anchors.set(tagKey(r), r.id);
+  const tags = new Map<string, PaymentListReceipt>();
+  await Promise.all(
+    [...anchors].map(async ([k, anchorId]) => {
+      const view = await readReceiptGroup(prisma, anchorId);
+      if (view.kind !== "OFFICE_GROUP" || !view.header?.confirmed) return;
+      const seen = new Set<string>();
+      const invoices = view.applications
+        .filter((a) => a.status === "PAID" && !seen.has(a.invoiceId) && seen.add(a.invoiceId))
+        .map((a) => ({ id: a.invoiceId, invoiceNumber: a.invoiceNumber }));
+      tags.set(k, {
+        key: view.header.key,
+        number: view.header.number,
+        total: view.header.total,
+        invoices,
+      });
+    }),
+  );
+  const byRow = new Map<string, PaymentListReceipt>();
+  for (const r of eligible) {
+    const tag = tags.get(tagKey(r));
+    if (tag) byRow.set(r.id, tag);
+  }
+  return byRow;
 }

@@ -4,7 +4,12 @@ import { NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { clampLimit } from "../common/pagination";
 import { RECEIVED_METHOD_FILTER } from "./payment-predicates";
-import { RECEIPT_INVOICE_SELECT, readReceiptGroup, type ReceiptRow } from "./payment-receipt-group";
+import {
+  RECEIPT_INVOICE_SELECT,
+  readListReceipts,
+  readReceiptGroup,
+  type ReceiptRow,
+} from "./payment-receipt-group";
 import { buildPaymentsCsv } from "./payments-csv";
 import { tenantCalendarDayEnd, tenantCalendarDayStart } from "./paid-window-bounds";
 
@@ -127,8 +132,11 @@ export async function listAllPayments(
   });
   const advanceBalance = advances.reduce((s, a) => s + Number(a.balance), 0);
 
+  // M1-03: an office check's rows carry that check's receipt figures (one read per check), so the list never adds rows up.
+  const receipts = await readListReceipts(deps.prisma, data);
+
   return {
-    data,
+    data: data.map((p) => ({ ...p, receiptGroup: receipts.get(p.id) ?? null })),
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     summary: { totalReceived, count: paidPayments.length, advanceBalance },
   };

@@ -81,6 +81,7 @@ interface Allocation {
 
 function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
+  const router = useRouter();
   const { user } = useAuth();
   const record = useRecordPaymentStandalone();
   const [customerId, setCustomerId] = React.useState("");
@@ -230,15 +231,25 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
     try {
       const res = await record.mutateAsync({ ...dto, submitKey: paymentKey });
       forgetPaymentProof(keyScope);
-      toast({
-        title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
-        variant: "success",
-      });
       // Best-effort: the payment already succeeded — an image-upload failure
       // must never look like the payment itself failed. The server anchors the
       // image on the group id, so uploading against the first allocation row
       // makes it visible from every row in the group.
       const createdPaymentId = res.payments[0]?.id;
+      toast({
+        title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
+        variant: "success",
+        // M1-03: "what did it pay for?" is one click: the receipt of the payment just written.
+        ...(createdPaymentId
+          ? {
+              duration: 8000,
+              action: {
+                label: "View receipt",
+                onClick: () => router.push(`/finance/payments/${createdPaymentId}`),
+              },
+            }
+          : {}),
+      });
       if (file && createdPaymentId) {
         try {
           await uploadPaymentImage.mutateAsync({ paymentId: createdPaymentId, file });
@@ -481,7 +492,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                 ) : (
                   excess > 0.001 && (
                     <div className="flex justify-between font-medium text-amber-600">
-                      <span>⚠ Unallocated (→ advance):</span>
+                      <span>⚠ Kept as credit:</span>
                       <span>{fmt(excess)}</span>
                     </div>
                   )
@@ -566,6 +577,16 @@ export default function FinancePaymentsPage() {
   const exportPayments = useExportPayments();
 
   const payments = data?.data ?? [];
+  // M1-03: one row per check. The server tags every confirmed row of an office check with that check's total and invoices,
+  // so the first row stands for it and the screen never adds rows up.
+  const seenChecks = new Set<string>();
+  const rows = payments.filter((p) => {
+    if (!p.receiptGroup) return true;
+    const k = `${p.receiptGroup.key}:${p.invoice.customerId}`;
+    if (seenChecks.has(k)) return false;
+    seenChecks.add(k);
+    return true;
+  });
   const meta = data?.meta;
   useClampPage(setPage, page, meta?.totalPages);
   const summary = data?.summary;
@@ -953,13 +974,13 @@ export default function FinancePaymentsPage() {
           wrapper's own states at every width. */}
       {!isLoading && payments.length > 0 && (
         <RecordCardList>
-          {payments.map((p) => (
+          {rows.map((p) => (
             <RecordCard
               key={p.id}
               href={`/finance/payments/${p.id}`}
-              title={p.paymentNumber ?? p.reference ?? "—"}
+              title={p.receiptGroup?.number ?? p.paymentNumber ?? p.reference ?? "—"}
               dimmed={p.status === "VOID"}
-              amount={fmt(p.amount)}
+              amount={fmt(p.receiptGroup ? p.receiptGroup.total : p.amount)}
               subtitle={p.invoice.customer?.businessName ?? "—"}
               badges={
                 <>
@@ -988,14 +1009,17 @@ export default function FinancePaymentsPage() {
               }
               actions={
                 <>
-                  <Link
-                    href={`/invoices/${p.invoice.id}`}
-                    aria-label={`View invoice ${p.invoice.invoiceNumber}`}
-                    className="grid min-h-[44px] min-w-[44px] place-items-center rounded px-1 text-sm font-medium text-brand-600 hover:underline"
-                  >
-                    {p.invoice.invoiceNumber}
-                  </Link>
-                  {p.status !== "VOID" && (
+                  {(p.receiptGroup?.invoices ?? [p.invoice]).map((inv) => (
+                    <Link
+                      key={inv.id}
+                      href={`/invoices/${inv.id}`}
+                      aria-label={`View invoice ${inv.invoiceNumber}`}
+                      className="grid min-h-[44px] min-w-[44px] place-items-center rounded px-1 text-sm font-medium text-brand-600 hover:underline"
+                    >
+                      {inv.invoiceNumber}
+                    </Link>
+                  ))}
+                  {p.status !== "VOID" && !p.receiptGroup && (
                     <button
                       type="button"
                       aria-label={`Void payment ${p.paymentNumber ?? p.id}`}
@@ -1084,7 +1108,7 @@ export default function FinancePaymentsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
-                {payments.map((p) => (
+                {rows.map((p) => (
                   <tr
                     key={p.id}
                     onClick={() => router.push(`/finance/payments/${p.id}`)}
@@ -1095,16 +1119,21 @@ export default function FinancePaymentsPage() {
                       {p.settledAt ? fmtDate(p.settledAt) : "—"}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-navy">
-                      {p.paymentNumber ?? "—"}
+                      {p.receiptGroup?.number ?? p.paymentNumber ?? "—"}
                     </td>
                     <td className="px-4 py-3">
-                      <Link
-                        href={`/invoices/${p.invoice.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="font-medium text-brand-600 hover:underline"
-                      >
-                        {p.invoice.invoiceNumber}
-                      </Link>
+                      <div className="flex flex-col">
+                        {(p.receiptGroup?.invoices ?? [p.invoice]).map((inv) => (
+                          <Link
+                            key={inv.id}
+                            href={`/invoices/${inv.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-medium text-brand-600 hover:underline"
+                          >
+                            {inv.invoiceNumber}
+                          </Link>
+                        ))}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-navy">
                       {p.invoice.customer?.businessName ?? "—"}
@@ -1130,14 +1159,14 @@ export default function FinancePaymentsPage() {
                       <Badge status={(p.status ?? "PAID") as PaymentStatus} />
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-success">
-                      {fmt(p.amount)}
+                      {fmt(p.receiptGroup ? p.receiptGroup.total : p.amount)}
                     </td>
                     <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="relative group inline-block">
                         <button className="rounded-lg border border-surface-border px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised">
                           ⋮
                         </button>
-                        <div className="absolute right-0 top-7 z-10 hidden group-focus-within:block bg-white border border-surface-border rounded-lg shadow-dropdown min-w-[140px] py-1">
+                        <div className="absolute right-0 top-7 z-10 hidden group-focus-within:block bg-white border border-surface-border rounded-lg shadow-dropdown min-w-[140px] py-1 text-left">
                           <button
                             onClick={() => router.push(`/finance/payments/${p.id}`)}
                             className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-raised"
@@ -1150,7 +1179,7 @@ export default function FinancePaymentsPage() {
                           >
                             View invoice
                           </Link>
-                          {p.status !== "VOID" && (
+                          {p.status !== "VOID" && !p.receiptGroup && (
                             <button
                               onClick={() =>
                                 setVoidConfirm({ invoiceId: p.invoice.id, paymentId: p.id })

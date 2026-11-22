@@ -5,7 +5,9 @@ import type {
   InvoiceStatus,
   LineComponentView,
   OverrideStampView,
+  PaymentListReceipt,
   PerBaseUnit,
+  ReceiptGroupView,
   RestrictionAck,
   ToCollectState,
 } from "@routeflow/types";
@@ -398,6 +400,10 @@ export interface AllPayment {
     customerId: string;
     customer?: { id: string; businessName: string };
   };
+  /** M1-03: LIST rows only. The check this row is one row of (server figures), null for any other payment. */
+  receiptGroup?: PaymentListReceipt | null;
+  /** M1-03: the ONE-payment read only. What this payment covered, built by the server. */
+  receipt?: ReceiptGroupView;
 }
 
 export function useInvoicePayments(params?: PaymentListParams) {
