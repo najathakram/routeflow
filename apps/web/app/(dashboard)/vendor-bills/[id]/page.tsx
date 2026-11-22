@@ -56,7 +56,7 @@ import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { PackSizeUnknownModal } from "@/components/PackSizeUnknownModal";
 import { useProduct } from "@/lib/api/products";
-import { roundMoney } from "@routeflow/pricing";
+import { billLineLocked, billLineUnit, roundMoney } from "@routeflow/pricing";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
 import {
@@ -384,8 +384,7 @@ function lineRemaining(bill: VendorBill, item: VendorBillItem): number {
  */
 function lineReceivedBaseUnits(bill: VendorBill, item: VendorBillItem): number {
   const receivedInBillDenom = Number(item.qty) - lineRemaining(bill, item);
-  const pack = item.packSize ?? 0;
-  return pack > 1 ? receivedInBillDenom * pack : receivedInBillDenom;
+  return receivedInBillDenom * billLineUnit(item).factor;
 }
 
 function ReceiveBillModal({
@@ -462,7 +461,7 @@ function ReceiveBillModal({
           <ul className="max-h-64 space-y-2 overflow-y-auto">
             {parsed.map(({ item, remaining, invalid }) => {
               const received = Number(item.qty) - remaining;
-              const casePacked = (item.packSize ?? 0) > 1;
+              const unit = billLineUnit(item);
               return (
                 <li key={item.id} className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
@@ -471,7 +470,7 @@ function ReceiveBillModal({
                     </p>
                     <p className="text-xs text-navy/60">
                       {received > 0 && `${received} of ${item.qty} already received · `}
-                      {casePacked && `case of ${item.packSize} pcs · `}
+                      {unit.boxed && `${unit.label ?? `case of ${unit.factor} pcs`} · `}
                       {remaining} outstanding
                     </p>
                   </div>
@@ -560,6 +559,11 @@ interface EditLineItemRow {
   /** Units per box/case — when set (>1), unitCost is the CASE cost and the
    *  receive converts to pieces + per-piece cost. */
   packSize: string;
+  /** The stored line this row edits; echoed on save so the server pairs rows by id (SA-1207 S2b). */
+  id?: string;
+  /** The line's own unit, if it states one; a lot or split child edits its price only. */
+  unitLabel?: string | null;
+  locked?: boolean;
   /** Scan-captured fields carried through the edit so saving doesn't drop them. */
   sku?: string | null;
   lineTotal?: number | null;
@@ -605,13 +609,17 @@ function linePrefillFor(p: PickableCostProduct, row: EditLineItemRow): Partial<E
   if (upb > 1) {
     patch.packSize = String(upb);
     if (perPiece > 0) patch.unitCost = (perPiece * upb).toFixed(4);
-  } else if (perPiece > 0 && !(parseInt(row.packSize, 10) > 1)) {
+  } else if (perPiece > 0 && !rowUnit(row).boxed) {
     // No catalog case size: only prefill when the row itself is priced per
     // piece — never overwrite a case cost with a per-piece one.
     patch.unitCost = perPiece.toFixed(4);
   }
   return patch;
 }
+
+/** The unit an edit row is in, read the one way (`billLineUnit`). */
+const rowUnit = (row: EditLineItemRow) =>
+  billLineUnit({ packSize: parseInt(row.packSize, 10), unitLabel: row.unitLabel });
 
 function EditLineItems({
   items,
@@ -677,6 +685,7 @@ function EditLineItems({
               min="0.001"
               step="0.001"
               value={row.qty}
+              disabled={row.locked}
               onChange={(e) => update(i, { qty: e.target.value })}
               className="h-9 w-full rounded border border-surface-border bg-white px-2 text-sm text-right text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
@@ -688,6 +697,7 @@ function EditLineItems({
               min="0"
               step="1"
               value={row.packSize}
+              disabled={row.locked}
               onChange={(e) => update(i, { packSize: e.target.value })}
               placeholder="—"
               title="Units per case. Leave blank when the line is priced per unit."
@@ -696,7 +706,11 @@ function EditLineItems({
           </div>
           <div>
             <label className="mb-0.5 block text-[10px] text-navy/70">
-              {parseInt(row.packSize, 10) > 1 ? "Case Cost ($)" : "Unit Cost ($)"}
+              {rowUnit(row).stated
+                ? "Price ($)"
+                : rowUnit(row).boxed
+                  ? "Case Cost ($)"
+                  : "Unit Cost ($)"}
             </label>
             <input
               type="number"
@@ -743,15 +757,14 @@ function EditLineItems({
             parseFloat(items[createFromRow].unitCost) > 0
               ? roundMoney(
                   (parseFloat(items[createFromRow].unitCost) /
-                    Math.max(1, parseInt(items[createFromRow].packSize, 10) || 1)) *
+                    rowUnit(items[createFromRow]).factor) *
                     1.3,
                 )
               : undefined
           }
           initialCost={
             parseFloat(items[createFromRow].unitCost) > 0
-              ? parseFloat(items[createFromRow].unitCost) /
-                Math.max(1, parseInt(items[createFromRow].packSize, 10) || 1)
+              ? parseFloat(items[createFromRow].unitCost) / rowUnit(items[createFromRow]).factor
               : undefined
           }
           onCreated={(product) => {
@@ -837,11 +850,14 @@ export default function VendorBillDetailPage() {
     setEditNotes(bill.notes ?? "");
     setEditItems(
       (bill.items ?? []).map((item) => ({
+        id: item.id,
+        unitLabel: item.unitLabel ?? null,
+        locked: billLineLocked(item),
         productId: item.productId ?? "",
         description: item.description,
         qty: String(item.qty),
         unitCost: String(item.unitCost),
-        packSize: item.packSize != null && item.packSize > 1 ? String(item.packSize) : "",
+        packSize: billLineUnit(item).boxed ? String(billLineUnit(item).factor) : "",
         sku: item.sku ?? null,
         lineTotal: item.lineTotal != null ? Number(item.lineTotal) : null,
       })),
@@ -1030,8 +1046,10 @@ export default function VendorBillDetailPage() {
     const items: CreateVendorBillItem[] = editItems
       .filter((row) => row.description.trim() && parseFloat(row.qty) > 0)
       .map((row) => {
-        const pack = parseInt(row.packSize, 10);
+        const pack = rowUnit(row).factor;
         return {
+          // The server pairs rows by id and carries a lot's label and family from the stored row.
+          ...(row.id ? { id: row.id } : {}),
           productId: row.productId || undefined,
           description: row.description.trim(),
           qty: parseFloat(row.qty),
@@ -1473,9 +1491,9 @@ export default function VendorBillDetailPage() {
                             </td>
                             <td className="px-4 py-3 text-right text-navy/70">
                               {item.qty}
-                              {(item.packSize ?? 0) > 1 && (
+                              {billLineUnit(item).boxed && (
                                 <span className="block text-[11px] text-navy/50">
-                                  × {item.packSize} pcs
+                                  × {billLineUnit(item).factor} pcs
                                 </span>
                               )}
                               {item.qtyReceived != null &&
@@ -1487,8 +1505,10 @@ export default function VendorBillDetailPage() {
                             </td>
                             <td className="px-4 py-3 text-right text-navy/70">
                               <span className="money">{fmt(Number(item.unitCost))}</span>
-                              {(item.packSize ?? 0) > 1 && (
-                                <span className="block text-[11px] text-navy/50">per case</span>
+                              {billLineUnit(item).boxed && (
+                                <span className="block text-[11px] text-navy/50">
+                                  {billLineUnit(item).stated ? "per lot" : "per case"}
+                                </span>
                               )}
                             </td>
                             <td className="px-6 py-3 text-right text-navy">

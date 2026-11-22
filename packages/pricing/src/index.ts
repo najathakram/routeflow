@@ -14,6 +14,7 @@ export * from "./unit-levels";
 export * from "./held-level";
 export * from "./build-line";
 export * from "./po-line";
+export * from "./bill-line-unit";
 export * from "./legacy-line-pieces";
 export * from "./regulated-unit-basis";
 export * from "./stock-pieces";

@@ -47,7 +47,14 @@ import { documentStockDate, type DocumentStockDate } from "../inventory/stock-wr
 import { qtyUsedSinceReceipt } from "../inventory/po-use-since-receipt";
 import { assertBillWithinPo, type BillLinePieces } from "./po-bill-match";
 import { assertPackSizeKnownOrLog } from "./pack-size-gate";
-import { roundMoney } from "@routeflow/pricing";
+import { billLineUnit, roundMoney } from "@routeflow/pricing";
+import {
+  billItemData,
+  billItemPack,
+  NO_IDENTITY,
+  type StoredBillItemIdentity,
+} from "./bill-item-data";
+import { carryStoredIdentities, resolveCreateIdentities } from "./bill-line-identity";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { calendarFieldStamp } from "../common/calendar-date";
 import Anthropic from "@anthropic-ai/sdk";
@@ -241,12 +248,14 @@ export class VendorBillsService {
     qty: Prisma.Decimal | number | string;
     unitCost: Prisma.Decimal | number | string;
     packSize?: number | null;
+    unitLabel?: string | null;
   }): { qty: Prisma.Decimal; unitCost: Prisma.Decimal } {
     const rawQty = new Prisma.Decimal(item.qty as Prisma.Decimal.Value);
     const rawCost = costDecimal(item.unitCost);
-    const pack = item.packSize ?? 0;
-    if (pack > 1) {
-      return { qty: rawQty.mul(pack), unitCost: costDecimal(rawCost.div(pack)) };
+    // The one reader of the line's unit: a case and a lot both convert at their own pack.
+    const { factor } = billLineUnit(item);
+    if (factor > 1) {
+      return { qty: rawQty.mul(factor), unitCost: costDecimal(rawCost.div(factor)) };
     }
     return { qty: rawQty, unitCost: rawCost };
   }
@@ -261,9 +270,7 @@ export class VendorBillsService {
     sku: string | null;
     packSize: number | null;
   } {
-    const packSize = Number.isFinite(Number(item.packSize))
-      ? Math.trunc(Number(item.packSize))
-      : null;
+    const packSize = billItemPack(item);
     const { qty, unitCost } = this.lineInventoryDelta({
       qty: new Prisma.Decimal(item.qty || 1),
       unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
@@ -496,6 +503,8 @@ export class VendorBillsService {
     const supplierId = dto.supplierId && dto.supplierId.trim() ? dto.supplierId.trim() : null;
     await assertRefsInTenant(this.prisma, { supplierIds: [supplierId] });
     await this.assertLineProductsInCatalog(dto.items);
+    // M3: the server proves each split group and mints its id; the client sends only an ordinal.
+    const identities = await resolveCreateIdentities(this.prisma, dto.items);
 
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
     let preTaxOwed = dto.totalOwed ?? 0;
@@ -557,6 +566,7 @@ export class VendorBillsService {
           description: item.description || item.name || "",
           productId: item.productId,
           packSize: item.packSize,
+          unitLabel: identities[lineIndex].unitLabel,
           qty: Number(item.qty ?? 1),
           unitCost: Number(item.unitCost ?? item.unitPrice ?? 0),
           product: productsById.get(item.productId),
@@ -628,9 +638,10 @@ export class VendorBillsService {
           const po = await this.inventory.createDraftPurchaseOrderInTx(tx, {
             supplierId: supplierId!,
             notes: dto.notes ?? null,
-            lines: (dto.items as any[]).map((i) => {
+            lines: (dto.items as any[]).map((i, n) => {
               const l = this.billLineToPieces(i);
               return {
+                ...identities[n],
                 productId: l.productId!,
                 qtyOrdered: new Prisma.Decimal(l.qty),
                 unitCost: new Prisma.Decimal(l.unitCost),
@@ -680,22 +691,9 @@ export class VendorBillsService {
               dto.items && dto.items.length > 0
                 ? {
                     createMany: {
-                      data: dto.items.map((item: any) => ({
-                        // Stamped explicitly: a nested write does not get the tenant extension's stamp.
-                        tenantId: this.prisma.getTenantId(),
-                        productId: item.productId || null,
-                        description: item.description || item.name || "",
-                        qty: new Prisma.Decimal(item.qty || 1),
-                        unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
-                        // Read off the invoice and previously discarded here. `sku`
-                        // is what matches this line to a product on the next scan
-                        // from the same supplier.
-                        sku: item.sku || null,
-                        packSize: Number.isFinite(Number(item.packSize))
-                          ? Math.trunc(Number(item.packSize))
-                          : null,
-                        lineTotal: this.moneyOrNull(item.lineTotal),
-                      })),
+                      data: dto.items.map((item: any, n: number) =>
+                        billItemData(item, this.prisma.getTenantId(), identities[n]),
+                      ),
                     },
                   }
                 : undefined,
@@ -1093,7 +1091,19 @@ export class VendorBillsService {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
-        items: { select: { id: true, qtyReceived: true, qty: true, unitCost: true } },
+        items: {
+          select: {
+            id: true,
+            qtyReceived: true,
+            qty: true,
+            unitCost: true,
+            productId: true,
+            packSize: true,
+            unitLabel: true,
+            familyProductId: true,
+            familyGroupId: true,
+          },
+        },
       },
     });
     if (!bill) throw new NotFoundException("Bill not found");
@@ -1117,6 +1127,10 @@ export class VendorBillsService {
     // R5-5: a changed supplier must be this tenant's before anything is written (it also moves credit draws).
     if (dto.supplierId) await assertRefsInTenant(this.prisma, { supplierIds: [dto.supplierId] });
     if (Array.isArray(dto.items)) await this.assertLineProductsInCatalog(dto.items);
+    // S2b spec 6: rows pair with the stored lines by id; label and family come from the STORED row.
+    const identities: StoredBillItemIdentity[] = Array.isArray(dto.items)
+      ? carryStoredIdentities(bill.items ?? [], dto.items)
+      : [];
 
     // Recalculate total if items are provided. Mirror create(): fold the
     // bill's tax back in and round — the old recompute dropped taxAmount on
@@ -1238,16 +1252,9 @@ export class VendorBillsService {
                     // Carry the scan-captured fields through the recreate —
                     // an edit used to silently drop sku/packSize/lineTotal,
                     // losing the case-size the receive conversion depends on.
-                    data: dto.items.map((item: any) => ({
-                      tenantId: this.prisma.getTenantId(),
-                      productId: item.productId || null,
-                      description: item.description || item.name || "",
-                      qty: new Prisma.Decimal(item.qty || 1),
-                      unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
-                      sku: item.sku || null,
-                      packSize: this.billLineToPieces(item).packSize,
-                      lineTotal: item.lineTotal != null ? new Prisma.Decimal(item.lineTotal) : null,
-                    })),
+                    data: dto.items.map((item: any, n: number) =>
+                      billItemData(item, this.prisma.getTenantId(), identities[n] ?? NO_IDENTITY),
+                    ),
                   },
                 },
               }
@@ -1346,6 +1353,13 @@ export class VendorBillsService {
           );
         }
         const receiveQty = new Prisma.Decimal(String(req.qty));
+        // S2b spec 8: a lot is one unit of a stated size; a fraction of it is no number of pieces.
+        if (billLineUnit(item).kind === "lot" && !receiveQty.isInteger()) {
+          throw new BadRequestException({
+            code: API_ERROR_CODES.RECEIVE_PARTIAL_UNIT,
+            message: `"${item.description}" is one unit of ${billLineUnit(item).factor} pieces and can't be received in part.`,
+          });
+        }
         const remaining = remainingOf(item);
         if (receiveQty.gt(remaining)) {
           // Structured fields so a client builds its own sentence (product + quantities) without
@@ -1392,6 +1406,7 @@ export class VendorBillsService {
             description: item.description,
             productId: item.productId!,
             packSize: item.packSize,
+            unitLabel: item.unitLabel,
             qty: Number(item.qty),
             unitCost: Number(item.unitCost),
             product: item.product,
