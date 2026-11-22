@@ -56,8 +56,8 @@ import {
 } from "./bill-item-data";
 import {
   assertWholeLotReceive,
-  carryStoredIdentities,
   resolveCreateIdentities,
+  resolveEditIdentities,
 } from "./bill-line-identity";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { calendarFieldStamp } from "../common/calendar-date";
@@ -1138,7 +1138,7 @@ export class VendorBillsService {
     if (Array.isArray(dto.items)) await this.assertLineProductsInCatalog(dto.items);
     // S2b spec 6: rows pair with the stored lines by id; label and family come from the STORED row.
     const identities: StoredBillItemIdentity[] = Array.isArray(dto.items)
-      ? carryStoredIdentities(bill.items ?? [], dto.items)
+      ? await resolveEditIdentities(this.prisma, bill.items ?? [], dto.items)
       : [];
 
     // Recalculate total if items are provided. Mirror create(): fold the

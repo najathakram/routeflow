@@ -1,15 +1,7 @@
 /**
- * SA-1207 S2b: the ONE reader of a bill (or PO) line's own unit.
- *
- * A bill line's `qty` and `unitCost` are in the line's own unit; `packSize` says how many pieces one such
- * unit holds. Before a line could state its own unit, "packSize above 1" meant "a case of that many". A lot
- * (qty 1, `packSize` = the pieces billed) also writes `packSize`, so the same number now needs the line's
- * `unitLabel` to be read right. Every `packSize` reader goes through here (the census spec pins it).
- *
- *  - `case`: no unit stated, `packSize` above 1 (every line written before this).
- *  - `lot`: a stated unit with `packSize` above 1; `factor` pieces make one `qty`. Never the catalog box.
- *  - `piece`: a stated unit with no pack: the line is in pieces on purpose (never B743 "unknown").
- *  - `unstated`: no unit and no pack above 1; today's loose-piece default (null, 0 and 1 alike).
+ * SA-1207 S2b: the ONE reader of a bill (or PO) line's own unit (the census spec pins every `packSize` reader).
+ * `case`: no label, pack above 1. `lot`: a label and pack above 1 (`factor` pieces per qty, never the catalog box).
+ * `piece`: a label, no pack (stated, never B743 "unknown"). `unstated`: no label, pack null, 0 or 1.
  */
 export type BillLineUnitKind = "case" | "piece" | "lot" | "unstated";
 

@@ -7,13 +7,7 @@ import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import type { PrismaService } from "../prisma/prisma.service";
 import { billItemPack, NO_IDENTITY, type StoredBillItemIdentity } from "./bill-item-data";
 
-/**
- * SA-1207 S2b spec 6-7: who writes the three reserved line columns (`unitLabel`, `familyProductId`,
- * `familyGroupId`), and from where.
- *  - CREATE: the client names its own unit label, the family and a per-bill group ordinal; the server mints
- *    the group id and proves each group (one family, every product an active variant of it, all in-tenant).
- *  - EDIT: rows are paired by `id` and the three columns come from the STORED row, never the client.
- */
+/** SA-1207 S2b spec 6-7: CREATE mints the group id and proves each group; EDIT carries identity from the STORED row. */
 
 export async function resolveCreateIdentities(
   prisma: PrismaService,
@@ -102,8 +96,25 @@ export function assertWholeLotReceive(
   }
 }
 
+const unitFactor = (x: { packSize?: unknown }) =>
+  billLineUnit({ packSize: billItemPack(x) }).factor;
+
 const locked = (message: string) =>
   new ConflictException({ code: API_ERROR_CODES.SPLIT_LINE_LOCKED, message });
+
+/** An edit's identities: stored rows carry theirs; a NEW row gets the create rule's, never none (SA-1224 MED-1). */
+export async function resolveEditIdentities(
+  prisma: PrismaService,
+  stored: StoredLine[],
+  incoming: any[],
+): Promise<StoredBillItemIdentity[]> {
+  const carried = carryStoredIdentities(stored, incoming);
+  const fresh = await resolveCreateIdentities(
+    prisma,
+    incoming.filter((i) => !i.id),
+  );
+  return carried.map((c, n) => (incoming[n].id ? c : fresh.shift()!));
+}
 
 /** Pair an edit's rows with the stored lines by id; one identity per incoming row, from the stored row. */
 export function carryStoredIdentities(
@@ -129,16 +140,13 @@ export function carryStoredIdentities(
     echoed.add(s.id);
     if (billLineLocked(s)) {
       const same =
-        (billItemPack(i) ?? 0) === (s.packSize ?? 0) &&
+        unitFactor(i) === unitFactor(s) &&
         (i.productId || null) === s.productId &&
         new Prisma.Decimal(i.qty || 1).eq(new Prisma.Decimal(s.qty as Prisma.Decimal.Value));
       if (!same) throw locked("A split line can change its price only.");
     }
-    // M3: an unlocked line whose pack changed is unlabeled, as create does; never the old label over a new pack.
-    const repacked = (billItemPack(i) ?? 0) !== (s.packSize ?? 0);
-    const label = repacked && !billLineLocked(s) ? null : s.unitLabel;
     return {
-      unitLabel: label,
+      unitLabel: s.unitLabel,
       familyProductId: s.familyProductId,
       familyGroupId: s.familyGroupId,
     };

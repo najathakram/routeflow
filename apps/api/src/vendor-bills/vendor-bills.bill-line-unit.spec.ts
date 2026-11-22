@@ -221,7 +221,16 @@ describe("S2b spec 8: receive", () => {
   });
 });
 
+/** The inline bill-item map this service must never grow back (SA-1224 MED-4). */
+const INLINE_ITEM_MAP = /tenantId: this\.prisma\.getTenantId\(\),\s*productId: item\.productId/;
+
 describe("S2b spec 5, 7: write shape and the minted group", () => {
+  it("MED-4: the pin fires on a planted inline item map", () => {
+    const planted =
+      "data: items.map((item) => ({\n tenantId: this.prisma.getTenantId(),\n productId: item.productId || null,";
+    expect(planted).toMatch(INLINE_ITEM_MAP);
+  });
+
   const fam = (over: any = {}) => ({ id: "fam-1", parentProductId: null, isActive: true, ...over });
   const variant = (id: string, over: any = {}) => ({
     id,
@@ -304,11 +313,11 @@ describe("S2b spec 5, 7: write shape and the minted group", () => {
       "utf8",
     );
     expect((src.match(/billItemData\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    expect(src).not.toMatch(/tenantId: this.prisma.getTenantId(),s*productId: item.productId/);
+    expect(src).not.toMatch(INLINE_ITEM_MAP);
   });
 });
 
-describe("SA-1223 M1-M3: duplicate ids, whole lots, relabel on a pack change", () => {
+describe("SA-1223 M1-M2: duplicate ids, whole lots", () => {
   const echo = (i: any, over: any = {}) => ({
     id: i.id,
     productId: i.productId,
@@ -394,17 +403,42 @@ describe("SA-1223 M1-M3: duplicate ids, whole lots, relabel on a pack change", (
     expect(res).toBeNull();
     expect(prisma.stockLot.create.mock.calls[0][0].data.qty.toString()).toBe("6");
   });
+});
 
-  it("M3: a stated 1 Piece line edited to pack 6 is not stored as a lot of 6 under its old label", async () => {
-    const piece = { ...PLAIN, id: "it-pc", unitLabel: "1 Piece", packSize: null };
-    const { res, prisma } = await edit([piece], [echo(piece, { packSize: 6 })]);
+describe("SA-1224 MED-1 and MED-2", () => {
+  const echo = (i: any, over: any = {}) => ({
+    id: i.id,
+    productId: i.productId,
+    description: i.description,
+    qty: Number(i.qty),
+    unitCost: Number(i.unitCost),
+    packSize: i.packSize ?? undefined,
+    ...over,
+  });
+  async function edit(stored: any[], items: any[]) {
+    const { service, prisma } = await make();
+    prisma.vendorBill.findUnique.mockResolvedValue(draft(stored));
+    prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", status: "DRAFT", totalOwed: 1 });
+    const res = await outcome(service.update("bill-1", { items }));
+    return { res, prisma };
+  }
+
+  it("MED-1: a new line beside echoed ids gets the create rule's label for its pack", async () => {
+    const { res, prisma } = await edit(
+      [LOT, CHILD2],
+      [
+        echo(LOT),
+        echo(CHILD2),
+        { description: "Lot of 122", qty: 1, unitCost: 5, packSize: 122, unitLabel: "122 Pieces" },
+      ],
+    );
     expect(res).toBeNull();
-    expect(updateRows(prisma)[0]).toMatchObject({ packSize: 6, unitLabel: null });
+    expect(updateRows(prisma)[2]).toMatchObject({ packSize: 122, unitLabel: "122 Pieces" });
   });
 
-  it("M3 control: the same pack keeps the stored label", async () => {
-    const piece = { ...PLAIN, id: "it-pc", unitLabel: "1 Piece", packSize: null };
-    const { prisma } = await edit([piece], [echo(piece)]);
-    expect(updateRows(prisma)[0]).toMatchObject({ unitLabel: "1 Piece" });
+  it("MED-2: a price-only edit of a pack-1 locked child saves (the web sends no pack at 1)", async () => {
+    const one = { ...LOT, packSize: 1, unitLabel: "1 Piece" };
+    const { res } = await edit([one], [echo(one, { packSize: undefined, unitCost: 9 })]);
+    expect(res).toBeNull();
   });
 });
