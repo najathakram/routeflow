@@ -14,6 +14,8 @@ import {
   partPayCopy,
   partPaySplit,
   tenderAmount,
+  tenderIntent,
+  tenderTextProblem,
 } from "./counter-part-pay";
 import { resolveCounterDefaultTender } from "./counter-default-tender";
 
@@ -350,5 +352,52 @@ describe("tenderAmount: only plain money reads as a tender", () => {
     ["20.50", 20.5],
   ])("%j reads as %d", (text, want) => {
     expect(tenderAmount(text)).toBe(want);
+  });
+});
+
+describe("SA-1219: tenderAmount reads one leading dollar sign", () => {
+  it("$50, ' $50 ' and $50.25 read as money; everything else that is not plain money stays 0", () => {
+    expect(tenderAmount("$50")).toBe(50);
+    expect(tenderAmount(" $50 ")).toBe(50);
+    expect(tenderAmount("$50.25")).toBe(50.25);
+    expect(tenderAmount("$$50")).toBe(0);
+    expect(tenderAmount("$")).toBe(0);
+    expect(tenderAmount("50,00")).toBe(0);
+    expect(tenderAmount("abc")).toBe(0);
+    expect(tenderAmount("28.004011")).toBe(0);
+  });
+});
+
+describe("SA-1219: tenderIntent, the one reading of a cash tender for both surfaces", () => {
+  const base = { method: "CASH" as const, isWalkIn: false, total: 56 };
+  it.each([
+    ["a named customer tenders the total", { tendered: 56 }, "PAY_FULL"],
+    ["a named customer tenders more", { tendered: 60 }, "PAY_FULL"],
+    ["a named customer tenders less", { tendered: 50 }, "PAY_PART"],
+    ["a named customer tenders a cent", { tendered: 0.01 }, "PAY_PART"],
+    ["a named customer tenders nothing", { tendered: 0 }, "ON_ACCOUNT"],
+    ["a walk-in tenders the total", { isWalkIn: true, tendered: 56 }, "PAY_FULL"],
+    ["a walk-in tenders less", { isWalkIn: true, tendered: 50 }, "WALK_IN_SHORT"],
+    ["a walk-in tenders nothing", { isWalkIn: true, tendered: 0 }, "WALK_IN_SHORT"],
+    ["a tender that rounds to the total is the total", { tendered: 55.996 }, "PAY_FULL"],
+    ["On account is on account", { method: "ON_ACCOUNT" as const, tendered: 0 }, "ON_ACCOUNT"],
+    [
+      "a check is not judged by the cash rule",
+      { method: "CHECK" as const, tendered: 0 },
+      "PAY_FULL",
+    ],
+  ])("%s", (_name, over, want) => {
+    expect(tenderIntent({ ...base, ...over })).toBe(want);
+  });
+});
+
+describe("SA-1219: tenderTextProblem", () => {
+  it("names the way out for text it cannot read, and says nothing for empty or readable text", () => {
+    expect(tenderTextProblem("abc")).toBe("Enter the amount in numbers, like 50.00.");
+    expect(tenderTextProblem("28.004011")).toBe("Enter the amount in numbers, like 50.00.");
+    expect(tenderTextProblem("")).toBeNull();
+    expect(tenderTextProblem("  ")).toBeNull();
+    expect(tenderTextProblem("$50")).toBeNull();
+    expect(tenderTextProblem("0")).toBeNull();
   });
 });

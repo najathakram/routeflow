@@ -382,7 +382,7 @@ describe("SA-1067 A-3: a tender that does not read as money is refused, never po
     expect(hint()).toBeNull();
   });
 
-  it("A3-1/A3-2: an identified customer on Cash, 10.00 then 4011 and 10. then 4011: no post (a short cash tender is a part payment, a garbled one is not)", async () => {
+  it("A3-1/A3-2: an identified customer on Cash, 10.00 then 4011 and 10. then 4011: no post (a short cash tender is a part payment, a garbled one says to enter numbers)", async () => {
     const user = userEvent.setup();
     renderTill(<CounterSaleScreen />);
     pickPlain();
@@ -392,7 +392,7 @@ describe("SA-1067 A-3: a tender that does not read as money is refused, never po
       await user.type(tenderField(), `${text}{Enter}`);
       expect(posted()).toBe(0);
     }
-    expect(await screen.findByText(SHORT)).toBeInTheDocument();
+    expect(await screen.findByText("Enter the amount in numbers, like 50.00.")).toBeInTheDocument();
   });
 
   it("A3-3: an identified customer on Card, Amount paying now 10. then 4011, Enter: no post, the amount refusal", async () => {

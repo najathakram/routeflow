@@ -490,3 +490,44 @@ describe("a walk-in still pays the full total", () => {
     expect(sentPayment()).toEqual({ method: "CARD" });
   });
 });
+
+describe("SA-1219: what a named customer types in Amount tendered", () => {
+  const named = async (text: string) => {
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: text } });
+  };
+
+  it("R4: cash 5 against 12.50 pays 5 and the split line says the rest goes on account", async () => {
+    await named("5");
+    expect(split()).toHaveTextContent(SPLIT);
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(sentPayment()).toEqual({ method: "CASH", amount: 5 });
+  });
+
+  it("R4b: cash '$5' reads as 5", async () => {
+    await named("$5");
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(sentPayment()).toEqual({ method: "CASH", amount: 5 });
+  });
+
+  it("R4c: cash 'abc' says to enter numbers and sends nothing", async () => {
+    await named("abc");
+    complete();
+    expect(await screen.findByText("Enter the amount in numbers, like 50.00.")).toBeInTheDocument();
+    expect(screen.queryByText(/Enter at least/)).toBeNull();
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "0"])("R4d: cash %j puts the sale on account (ON_ACCOUNT sent)", async (text) => {
+    await named(text);
+    expect(screen.getByText("Nothing paid now · $12.50 goes on account")).toBeInTheDocument();
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(sentPayment()).toEqual({ method: "ON_ACCOUNT" });
+    expect(screen.queryByText(/Enter at least/)).toBeNull();
+  });
+});

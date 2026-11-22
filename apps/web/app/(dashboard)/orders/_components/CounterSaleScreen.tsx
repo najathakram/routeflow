@@ -180,7 +180,11 @@ import {
   creditMayApply,
   isPartPayExceedsTotal,
   PART_PAY_FULL_COPY,
+  TENDER_NOT_NUMBERS_COPY,
+  onAccountCopy,
   tenderAmount,
+  tenderIntent,
+  tenderTextProblem,
 } from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 import { isFamilyProduct } from "@/lib/product-search-groups";
@@ -359,7 +363,8 @@ export function CounterSaleScreen() {
     setError((e) => (isFinalSaleMessage(e) ? e : ""));
   }, [lines]);
   // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
-  const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
+  const clearUnderpaidError = () =>
+    setError((e) => (isTenderShortCopy(e) || e === TENDER_NOT_NUMBERS_COPY ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   const zoneRead = useTenantTimeZoneQuery();
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
@@ -671,6 +676,16 @@ export function CounterSaleScreen() {
     total: payTotal,
     tendered: tenderedNum,
   }); // S4: "Pay $X now · $Y goes on account" while an identified customer's tender is short
+  // SA-1219: nothing tendered in cash by a named customer is On account (the shared intent), said under the total
+  const putOnAccount =
+    tenderIntent({
+      method: resolveTender(method, checkNotReceived).method,
+      isWalkIn: walkInBuyer,
+      total: payTotal,
+      tendered: tenderedNum,
+    }) === "ON_ACCOUNT" &&
+    resolveTender(method, checkNotReceived).method === "CASH" &&
+    tenderTextProblem(tendered) === null;
 
   const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: customerSearch.trim() || undefined,
@@ -1353,7 +1368,16 @@ export function CounterSaleScreen() {
     // W-863: the return is quoted BEFORE Complete (a blocked one says why); the key pair is minted here, once per attempt.
     const inlineReturn = customer ? ret.prepare(customer.id) : undefined;
     if (inlineReturn === null) return null;
-    const tender = resolveTender(method, checkNotReceived);
+    const resolved = resolveTender(method, checkNotReceived);
+    // SA-1219: text in Amount tendered that is not money says so, instead of "Enter at least $X"
+    const unreadable =
+      resolved.method === "CASH" && !walkInBuyer ? tenderTextProblem(tendered) : null;
+    if (unreadable) {
+      setError(unreadable);
+      setTenderFix((n) => n + 1);
+      return null;
+    }
+    const tender: typeof resolved = putOnAccount ? { method: "ON_ACCOUNT" } : resolved;
     const partPayProblem = partPayAmountProblem({
       method: tender.method,
       isWalkIn: walkInBuyer,
@@ -2483,6 +2507,11 @@ export function CounterSaleScreen() {
               </p>
             ) : null}
 
+            {putOnAccount ? (
+              <p className="text-sm font-medium text-navy" data-testid="counter-on-account">
+                {onAccountCopy(payTotal)}
+              </p>
+            ) : null}
             {partSplit ? (
               <CounterPartPaySplit
                 split={partSplit}

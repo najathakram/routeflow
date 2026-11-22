@@ -350,6 +350,17 @@ describe("PickupCompleteService.complete", () => {
       expect(res).toMatchObject({ paid: 20, balanceDue: 17.25, paymentRecorded: true });
       expect(res.change).toBeUndefined();
     });
+    it("SA-1219 R5: a named customer's CASH 50 against 56 owed records exactly 50 and leaves exactly 6.00", async () => {
+      invoices = [inv("inv-1", 56)];
+      const res = await run(cash(50));
+      expect(recordPayment).toHaveBeenCalledWith(
+        "inv-1",
+        expect.objectContaining({ amount: 50, method: "CASH" }),
+        { ...TENDER_GROUP, tillLockHeld: true },
+      );
+      expect(res).toMatchObject({ paid: 50, balanceDue: 6, paymentRecorded: true });
+      expect(res.change).toBeUndefined();
+    });
     it("a card is mapped to CREDIT_CARD, a check carries its number", async () => {
       await run({ payment: { method: "CARD", reference: "auth9" } });
       expect(recordPayment).toHaveBeenCalledWith(

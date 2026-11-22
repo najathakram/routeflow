@@ -205,9 +205,9 @@ describe("PickupCompleteDialog — default tender (SA-933 / W-822a)", () => {
 });
 
 describe("PickupCompleteDialog — tender", () => {
-  it("cash: a short tender is refused with the till's copy and nothing is posted", async () => {
+  it("cash: a walk-in's short tender is refused with the till's copy and nothing is posted", async () => {
     balance(25);
-    mount();
+    mount({ isWalkIn: true });
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10" } });
     confirm();
@@ -603,7 +603,7 @@ describe("PickupCompleteDialog — tender reads as money (SA-1067 A-3)", () => {
   // The rounding stays in counterPaymentAmount (counter-part-pay.test.ts); a typed half cent is not a tender, so it is refused here.
   it("a typed half cent (10.005) is refused with the short line and nothing is posted", async () => {
     balance(5);
-    mount({ total: 5 });
+    mount({ total: 5, isWalkIn: true });
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.005" } });
     confirm();
@@ -613,7 +613,7 @@ describe("PickupCompleteDialog — tender reads as money (SA-1067 A-3)", () => {
 
   it("A3-5: due $5.00, Cash, 10.4011 (a code typed after 10.40) and confirm: no post, the short line shows", async () => {
     balance(5);
-    mount({ total: 5 });
+    mount({ total: 5, isWalkIn: true });
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.4011" } });
     confirm();
@@ -623,7 +623,7 @@ describe("PickupCompleteDialog — tender reads as money (SA-1067 A-3)", () => {
 
   it("plain money (10.50) still posts its own cents", async () => {
     balance(5);
-    mount({ total: 5 });
+    mount({ total: 5, isWalkIn: true });
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "10.50" } });
     confirm();
@@ -1316,7 +1316,7 @@ describe("PickupCompleteDialog: W-778 complete-at-counter refusals (apple-ux 202
   // item 5 + B-2: the short-cash line is live
   it("a short cash amount shows 'Enter at least' as it is typed, and clears when enough", async () => {
     balance(25);
-    mount({ completeMode: true });
+    mount({ completeMode: true, isWalkIn: true });
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     const amount = screen.getByLabelText("Amount tendered");
     fireEvent.change(amount, { target: { value: "3" } });
@@ -1327,7 +1327,7 @@ describe("PickupCompleteDialog: W-778 complete-at-counter refusals (apple-ux 202
 
   it("B-2: a stale 'Enter at least' error from an empty Complete goes when an amount is chosen", async () => {
     balance(25);
-    mount({ completeMode: true });
+    mount({ completeMode: true, isWalkIn: true });
     fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
     // row 312(b): the cash amount starts at the amount due, so an empty Complete means the clerk cleared it first
     fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "" } });
@@ -1375,5 +1375,79 @@ describe("PickupCompleteDialog: the invoice email outcome (W-1286)", () => {
     expect(outcome).toHaveTextContent(/^Completed at counter\./);
     expect(outcome).not.toHaveTextContent(/email/i);
     expect(within(outcome).queryByRole("link", { name: "Add an email" })).toBeNull();
+  });
+});
+
+describe("PickupCompleteDialog — SA-1219: a named customer pays any amount, the rest goes on account", () => {
+  const stubReads = (due: number) =>
+    get.mockImplementation((url: string) =>
+      /\/statement$/.test(url)
+        ? Promise.resolve({
+            data: {
+              outstandingAmount: 0,
+              overdueAmount: 0,
+              availableCredit: 0,
+              autoApplyCredit: 0,
+            },
+          })
+        : Promise.resolve({ data: { id: "i1", status: "SENT", total: due, balanceDue: due } }),
+    );
+  const openCash = async (
+    props: Partial<React.ComponentProps<typeof PickupCompleteDialog>> = {},
+  ) => {
+    stubReads(56);
+    mount({ total: 56, customerId: "c1", isWalkIn: false, ...props });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    return screen.getByLabelText("Amount tendered");
+  };
+
+  it("R1: cash 50 against 56 shows the split line and sends exactly CASH 50", async () => {
+    const field = await openCash();
+    fireEvent.change(field, { target: { value: "50" } });
+    expect(await screen.findByText("Pay $50.00 now · $6.00 goes on account")).toBeVisible();
+    expect(screen.queryByText(/Enter at least/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^picked up$/i }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 50 } });
+  });
+
+  it.each(["", "0", "  "])(
+    "R2: cash %j reads 'Put on account' and sends ON_ACCOUNT, never a refusal",
+    async (text) => {
+      const field = await openCash();
+      fireEvent.change(field, { target: { value: text } });
+      expect(await screen.findByText("Nothing paid now · $56.00 goes on account")).toBeVisible();
+      expect(screen.queryByText(/Enter at least/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Put on account" }));
+      await waitFor(() => expect(post).toHaveBeenCalled());
+      expect(post.mock.calls[0][1]).toEqual({ payment: { method: "ON_ACCOUNT" } });
+    },
+  );
+
+  it("R2b: cash '$50' reads as 50", async () => {
+    const field = await openCash();
+    fireEvent.change(field, { target: { value: "$50" } });
+    fireEvent.click(screen.getByRole("button", { name: /^picked up$/i }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 50 } });
+  });
+
+  it("R2c: text it cannot read says to enter numbers and posts nothing", async () => {
+    const field = await openCash();
+    fireEvent.change(field, { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: /^picked up$/i }));
+    expect(await screen.findByText("Enter the amount in numbers, like 50.00.")).toBeVisible();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("R3: a walk-in is still refused a short cash tender, empty or 50, and nothing is posted", async () => {
+    const field = await openCash({ isWalkIn: true, customerId: null });
+    for (const text of ["50", ""]) {
+      fireEvent.change(field, { target: { value: text } });
+      fireEvent.click(screen.getByRole("button", { name: /^picked up$/i }));
+      expect(await screen.findByText("Enter at least $56.00.")).toBeVisible();
+    }
+    expect(screen.queryByText(/goes on account/)).toBeNull();
+    expect(post).not.toHaveBeenCalled();
   });
 });

@@ -20,11 +20,42 @@ interface PartPayInput {
  */
 export const PLAIN_MONEY = /^(\d+\.?\d{0,2}|\.\d{1,2})$/;
 
-/** The one reader of a typed tender: the number when the text is plain money, else 0 (nothing tendered). */
+/** SA-1219: one leading "$" is read past (a clerk types "$50"); nothing else is. */
+const withoutDollar = (text: string): string => text.trim().replace(/^\$/, "");
+
+/** The one reader of a typed tender: the number when the text is plain money (one leading "$" allowed), else 0 (nothing tendered). */
 export function tenderAmount(text: string): number {
-  const raw = text.trim();
+  const raw = withoutDollar(text);
   return PLAIN_MONEY.test(raw) ? Number(raw) : 0;
 }
+
+/** SA-1219: the line for a tender field holding text that is not money (never "Enter at least $X", which is wrong for "abc"). */
+export const TENDER_NOT_NUMBERS_COPY = "Enter the amount in numbers, like 50.00.";
+
+/** The refusal for non-empty text that does not read as money; null for empty text or text `tenderAmount` reads. */
+export function tenderTextProblem(text: string): string | null {
+  if (text.trim() === "") return null;
+  return PLAIN_MONEY.test(withoutDollar(text)) ? null : TENDER_NOT_NUMBERS_COPY;
+}
+
+/**
+ * SA-1219: what a cash tender means, read once for the counter sale and the pickup hand-over. A tender at or above the total
+ * pays in full; below it an identified customer pays part (PAY_PART) or nothing (ON_ACCOUNT); a walk-in has no account, so
+ * short is WALK_IN_SHORT (refused). Check and card are not judged by the cash rule (PAY_FULL; their part-pay is its own field).
+ */
+export type TenderIntent = "PAY_FULL" | "PAY_PART" | "ON_ACCOUNT" | "WALK_IN_SHORT";
+export function tenderIntent(input: PartPayInput): TenderIntent {
+  if (input.method === "ON_ACCOUNT") return "ON_ACCOUNT";
+  if (input.method !== "CASH") return "PAY_FULL";
+  const paid = roundMoney(input.tendered);
+  if (paid >= roundMoney(input.total)) return "PAY_FULL";
+  if (input.isWalkIn) return "WALK_IN_SHORT";
+  return paid > 0 ? "PAY_PART" : "ON_ACCOUNT";
+}
+
+/** The line under the total when nothing is paid now: "Nothing paid now · $56.00 goes on account". */
+export const onAccountCopy = (total: number): string =>
+  `Nothing paid now · ${formatReceiptMoney(total)} goes on account`;
 
 /** True when `tendered` is a real part payment of `total`: more than a cent's worth of nothing, and less than all of it. */
 function isPart(total: number, tendered: number): boolean {

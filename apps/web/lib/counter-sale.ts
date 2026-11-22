@@ -302,15 +302,12 @@ export function validatePayment(input: {
   tendered?: number;
   reference?: string;
   isWalkIn: boolean;
-  /** a surface that has not opened part payment (the store-pickup hand-over dialog): a short cash tender stays refused */
-  fullTenderOnly?: boolean;
 }): PaymentProblem | null {
   if (input.method === "ON_ACCOUNT" && input.isWalkIn) return "WALK_IN_ON_ACCOUNT";
   if (input.method === "CASH" && !(Number(input.tendered ?? 0) >= input.total)) {
     // SA-933 S4: an identified customer can pay part now (the rest goes on account); a walk-in pays the full total, and
-    // nothing tendered is not a payment at all.
-    if (input.isWalkIn || input.fullTenderOnly || !(roundMoney(Number(input.tendered ?? 0)) > 0))
-      return "TENDER_SHORT";
+    // nothing tendered is not a payment at all (SA-1219: both surfaces turn it into On account through `tenderIntent` first).
+    if (input.isWalkIn || !(roundMoney(Number(input.tendered ?? 0)) > 0)) return "TENDER_SHORT";
   }
   if (input.method === "CASH" && Number(input.tendered) > COUNTER_MAX_TENDER)
     return "TENDER_TOO_LARGE";
