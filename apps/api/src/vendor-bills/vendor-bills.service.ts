@@ -271,9 +271,11 @@ export class VendorBillsService {
     packSize: number | null;
   } {
     const packSize = billItemPack(item);
+    const ownQty = new Prisma.Decimal(item.qty || 1);
+    const ownUnitCost = new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0);
     const { qty, unitCost } = this.lineInventoryDelta({
-      qty: new Prisma.Decimal(item.qty || 1),
-      unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
+      qty: ownQty,
+      unitCost: ownUnitCost,
       packSize,
     });
     return {
@@ -281,6 +283,9 @@ export class VendorBillsService {
       description: item.description || item.name || "",
       qty,
       unitCost,
+      // SA-1207 check X: the PO gate judges the line's money in the unit it was billed in.
+      ownQty,
+      ownUnitCost,
       sku: item.sku || null,
       packSize: packSize != null && packSize > 0 ? packSize : null,
     };
