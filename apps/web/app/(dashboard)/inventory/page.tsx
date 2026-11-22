@@ -117,6 +117,14 @@ function daysRemainingBadge(days: number | null) {
  * convention — the chevron only appears on header hover or when the column is
  * the active sort.
  */
+// Module-level so `useSortableData`'s memo hits across renders (an inline object missed every time).
+const STOCK_COMPARATORS: Partial<Record<string, (a: StockItem, b: StockItem) => number>> = {
+  currentStock: (a, b) => Number(a.currentStock) - Number(b.currentStock),
+  unitsPerBox: (a, b) => (a.unitsPerBox ?? -1) - (b.unitsPerBox ?? -1),
+  averageCost: (a, b) => Number(a.averageCost ?? 0) - Number(b.averageCost ?? 0),
+  totalValue: (a, b) => Number(a.totalValue ?? 0) - Number(b.totalValue ?? 0),
+};
+
 function StockTable({
   stockItems,
   stockSearch,
@@ -177,12 +185,7 @@ function StockTable({
   const { sorted, sortKey, sortDir, requestSort, setSort } = useSortableData(filtered, {
     defaultKey: "name",
     defaultDir: "asc",
-    comparators: {
-      currentStock: (a, b) => Number(a.currentStock) - Number(b.currentStock),
-      unitsPerBox: (a, b) => (a.unitsPerBox ?? -1) - (b.unitsPerBox ?? -1),
-      averageCost: (a, b) => Number(a.averageCost ?? 0) - Number(b.averageCost ?? 0),
-      totalValue: (a, b) => Number(a.totalValue ?? 0) - Number(b.totalValue ?? 0),
-    },
+    comparators: STOCK_COMPARATORS,
   });
 
   // 3) Scroll-to + brief highlight support for a picked search suggestion.
