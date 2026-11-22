@@ -10,6 +10,7 @@
 - (e) Wait only through ONE run_in_background command and end the turn. Never foreground-poll.
 - (f) Tier 1 reviewers run `node scripts/review-test-edits.mjs --base <merge-base> --head <sha>` and justify every flagged line in the verdict. Anchor: #4404, rewritten fixtures of a named eligibility test hid a HIGH.
 - (g) When a new model replaces an old one, the PR that ships it hides or retires the old controls, or names the dated PR that will. Anchor: owner 11-22, "Variant of" beside "Family".
+- (h) Merge-window coordinator template: run `SMOKE_BASE_URL=https://routeflowapi-production.up.railway.app npm run post-deploy-check`, and assert that the printed `commit` equals the merge sha. Without it the script checks http://localhost:3000 (anchor: #4405 window, 2026-11-22).
 
 **Decision relay:** "Owner, question box HH:MMZ: '<verbatim>'. Supersedes <earlier>. Build list:
 (1)… (2)…; NOT tonight: …; reviewers: …; declaration after …"
