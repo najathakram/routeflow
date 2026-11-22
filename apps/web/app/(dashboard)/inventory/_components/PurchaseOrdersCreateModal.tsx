@@ -5,6 +5,9 @@ import { Plus, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { formatMoney } from "@/lib/format";
 import { useCreatePurchaseOrder } from "@/lib/api/inventory";
+import { useProducts } from "@/lib/api/products";
+import { PurchaseOrderScanBar } from "./PurchaseOrderScanBar";
+import { addEntryUnit, catalogMetaById, poSelectOptions } from "./po-scan-lines";
 import {
   emptyPOLine,
   resolvePOLine,
@@ -17,6 +20,9 @@ import { unitWords } from "@routeflow/pricing";
 
 // U-3a: a PO line carries no per-product label yet, so this prints the default words.
 const UW = unitWords();
+
+/** A line field's form name ("boxes-0"): names the control for autofill and tests. */
+const fieldName = (key: string, i: number) => `${key}-${i}`;
 
 export function CreatePOModal({
   suppliers,
@@ -36,9 +42,40 @@ export function CreatePOModal({
   const [notes, setNotes] = React.useState("");
   const [lines, setLines] = React.useState<POLineItem[]>([emptyPOLine()]);
 
-  const productById = React.useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  // A product picked by the bar that the page's list lacks still needs its pack and a select option.
+  const [picked, setPicked] = React.useState<typeof products>([]);
+  const allProducts = React.useMemo(
+    () => [...products, ...picked.filter((p) => !products.some((q) => q.id === p.id))],
+    [products, picked],
+  );
+  // Parent and kind per product (the stock list carries neither): one catalog read, for the full-name sort.
+  const { data: catalog } = useProducts({ includeVariants: true, isActive: true, limit: 0 });
+  const options = React.useMemo(
+    () => poSelectOptions(allProducts, catalogMetaById(catalog?.data ?? [])),
+    [allProducts, catalog],
+  );
+  const productById = React.useMemo(
+    () => new Map(allProducts.map((p) => [p.id, p])),
+    [allProducts],
+  );
   const unitsPerBoxFor = (productId: string) =>
     Number(productById.get(productId)?.unitsPerBox ?? 0);
+
+  const linesRef = React.useRef(lines);
+  linesRef.current = lines;
+  const onScanAdd = (product: any) => {
+    const upb = Number(productById.get(product.id)?.unitsPerBox ?? product.unitsPerBox ?? 0);
+    const next = addEntryUnit(linesRef.current, product, upb);
+    if (next.lines === linesRef.current) return { created: false, refused: true };
+    linesRef.current = next.lines;
+    if (!productById.has(product.id))
+      setPicked((l) => [
+        ...l,
+        { id: product.id, name: product.name, sku: product.sku, unitsPerBox: product.unitsPerBox },
+      ]);
+    setLines(next.lines);
+    return { created: next.created };
+  };
 
   const addLine = () => setLines((l) => [...l, emptyPOLine()]);
   const removeLine = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
@@ -134,6 +171,11 @@ export function CreatePOModal({
 
           {/* Line items */}
           <div>
+            <PurchaseOrderScanBar
+              onAdd={onScanAdd}
+              hasLine={(id) => lines.some((l) => l.productId === id)}
+              addedIds={new Set(lines.map((l) => l.productId).filter(Boolean))}
+            />
             <div className="mb-2 flex items-center justify-between">
               <label className="text-sm font-semibold text-navy">Line items</label>
               <button
@@ -146,11 +188,11 @@ export function CreatePOModal({
             </div>
 
             <div className="rounded-lg border border-surface-border overflow-x-auto">
-              <table className="min-w-[560px] w-full text-sm">
+              <table className="min-w-[640px] w-full text-sm">
                 <thead className="bg-surface-raised text-xs text-navy/70">
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">Product</th>
-                    <th className="px-3 py-2 text-left font-medium w-24">Qty</th>
+                    <th className="px-3 py-2 text-left font-medium w-40">Qty</th>
                     <th className="px-3 py-2 text-left font-medium w-28">
                       Cost per {UW.pack.lower} / {UW.base.lower}
                     </th>
@@ -168,15 +210,16 @@ export function CreatePOModal({
                       <tr key={i}>
                         <td className="px-3 py-2">
                           <select
+                            name={`product-${i}`}
+                            aria-label="Product"
                             value={line.productId}
                             onChange={(e) => updateLine(i, "productId", e.target.value)}
                             className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                           >
                             <option value="">Select…</option>
-                            {products.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                                {p.sku ? ` (${p.sku})` : ""}
+                            {options.map((o) => (
+                              <option key={o.id} value={o.id}>
+                                {o.label}
                               </option>
                             ))}
                           </select>
@@ -190,9 +233,11 @@ export function CreatePOModal({
                                 step={1}
                                 placeholder="0"
                                 title={UW.pack.other}
+                                name={fieldName("boxes", i)}
+                                aria-label={UW.pack.other}
                                 value={line.boxes}
                                 onChange={(e) => updateLine(i, "boxes", e.target.value)}
-                                className="w-full min-w-0 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                                className="w-full min-w-[3.5rem] rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                               />
                               <span className="text-navy/30">+</span>
                               <input
@@ -202,9 +247,11 @@ export function CreatePOModal({
                                 step={1}
                                 placeholder="0"
                                 title={`Extra ${UW.base.lowerOther}`}
+                                name={fieldName("pieces", i)}
+                                aria-label={`Extra ${UW.base.lowerOther}`}
                                 value={line.pieces}
                                 onChange={(e) => updateLine(i, "pieces", e.target.value)}
-                                className="w-full min-w-0 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                                className="w-full min-w-[3.5rem] rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                               />
                             </div>
                           ) : (
@@ -213,6 +260,8 @@ export function CreatePOModal({
                               min={0.001}
                               step={0.001}
                               placeholder="0"
+                              name={`qty-${i}`}
+                              aria-label="Quantity"
                               value={line.qty}
                               onChange={(e) => updateLine(i, "qty", e.target.value)}
                               className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -233,6 +282,7 @@ export function CreatePOModal({
                             placeholder="0.00"
                             title={`Cost per ${isBoxed ? UW.pack.lower : UW.base.lower}`}
                             aria-label={`Cost per ${isBoxed ? UW.pack.lower : UW.base.lower}`}
+                            name={`cost-${i}`}
                             value={line.unitCost}
                             onChange={(e) => updateLine(i, "unitCost", e.target.value)}
                             className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
