@@ -79,6 +79,11 @@ function newItem(id, fields, ts) {
     solution: fields.solution ?? null,
     ownerAsk: fields.ownerAsk ?? null,
     summaryDraft: fields.summaryDraft ?? false,
+    // Tester intake (a draft bug): repro steps, the screen, a link to a screenshot or recording.
+    steps: fields.steps ?? null,
+    screen: fields.screen ?? null,
+    evidence: fields.evidence ?? null,
+    reportedBy: null, // the actor of the item.new (a member id, a lane, or machine:folder)
     answeredAt: null,
     children: [],
     claimedBy: null,
@@ -257,6 +262,7 @@ export function fold(events, { bugs = new Map() } = {}) {
           anomaly("duplicate-item", ev.id, ev.item, `item.new for existing item ${ev.item}`, ts);
         } else {
           it = newItem(ev.item, d, ts);
+          it.reportedBy = ev.actor ?? null;
           if (isRegisterFields(d)) recordRegisterFields(it, d);
           state.items.set(ev.item, it);
           touched = true;

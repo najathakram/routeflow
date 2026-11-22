@@ -21,6 +21,7 @@ const STATUS_WORDS = {
   shipping: "Shipping",
   planned: "Planned",
   idea: "Idea",
+  draft: "Waiting for triage",
   parked: "Parked",
   dropped: "Dropped",
 };

@@ -52,6 +52,14 @@ import {
 import { registerHook } from "../lib/views.mjs";
 import { BRIEF_DISABLED_NOTE, loadClientNames, maskText } from "../lib/mask.mjs";
 import {
+  PROMOTED_TAG,
+  REJECTED_TAG,
+  TRIAGE_STATUS,
+  draftsOf,
+  filedBugId,
+  promotionSymptom,
+} from "../lib/triage.mjs";
+import {
   appendEvents,
   ensureClone,
   exec,
@@ -123,6 +131,7 @@ const USAGE = `usage: rf <command> [args]
   item new --title T --type X [--priority P] [--status S] [--lane L] [--train R1] [--area A]
            [--parent ID] [--eta E] [--gate G] [--id ID] [--blocked-by ID,ID]  (rf item edit: - clears it)
            [--role builder|tester|reviewer]   (who picks it up; unset = builder)
+           [--steps S] [--screen /route] [--evidence https://...]   (a tester's bug: always --status draft)
            [--problem "what is wrong"] [--impact "who it hurts, what it costs"] [--solution "how we fix it"]
            [--owner-ask "what we need from the owner"] [--harm live|latent|none|null]   (P0/P1 bug/feature/incident: --problem + --impact required)
   item edit <id> [--title ..] [--priority ..] ...   item show <id> [--json]
@@ -130,6 +139,9 @@ const USAGE = `usage: rf <command> [args]
   sync [--dry] [--no-push]                         turn changed register / owner-queue rows into events
   audit [--json] [--snapshot FILE]                 the accuracy counts (items, alarms, problems, queue, PRs, bugs)
   bug file <args...>                               files a bug via scripts/campaign/bugs.mjs (lead, coordinator only)
+  triage [--json]                                  tester drafts waiting for the lead
+  triage promote <id> --location L --severity S    files the draft in the bug registry, tells the reporter (lead, coordinator only)
+  triage reject <id> --reason R                    closes the draft with the reason, tells the reporter (lead, coordinator only)
   status-sync [--no-push]                                          lane status files -> heartbeat events
   auto-status [--apply] [--no-push]   linked PRs merged/live/open -> item statuses, one pass (dry run by default)
   brief [--lane L] [--since <eventId|iso>] [--refresh] [--json]   what the monitor says, in plain words
@@ -148,6 +160,9 @@ const NULLABLE = [
   "impact",
   "solution",
   "ownerAsk",
+  "steps",
+  "screen",
+  "evidence",
 ];
 const CLEAR_WORDS = new Set(["none", "null", "-", ""]);
 
@@ -282,6 +297,9 @@ function itemFields(flags, c) {
   }
   // Business view (owner 2026-10-19): the plain-language story of the item.
   for (const k of ["problem", "impact", "solution"]) if (flags[k] !== undefined) f[k] = flags[k];
+  // Tester intake: repro steps, the screen or route, and a link to a hosted screenshot.
+  for (const k of ["steps", "screen", "evidence"])
+    if (flags[k] !== undefined) f[k] = String(flags[k]);
   if (flags["owner-ask"] !== undefined) f.ownerAsk = flags["owner-ask"];
   // Live harm: live | latent | none; "null" or "-" clears it ("none" is itself a harm value).
   if (flags.harm !== undefined)
@@ -588,6 +606,18 @@ async function cmdItem(positional, flags, env) {
     const c = await prepare(ctxFor(env), flags, { sync: flags["blocked-by"] !== undefined });
     const fields = itemFields(flags, c);
     if (!fields.title || !fields.type) throw new UsageError("rf item new needs --title and --type");
+    // A tester files bugs as drafts; the lead or coordinator triages them (rf triage).
+    if (currentMember(c.config, c.env)?.role === "tester") {
+      if (fields.type !== "bug")
+        throw new UsageError(
+          "a tester files bugs: rf item new --type bug (other work comes from the lead)",
+        );
+      if (fields.status !== undefined && fields.status !== TRIAGE_STATUS)
+        throw new UsageError(
+          `a tester files a draft (--status ${TRIAGE_STATUS}); the lead or coordinator promotes it (rf triage)`,
+        );
+      fields.status = TRIAGE_STATUS;
+    }
     assertKnownBlockers(c, fields);
     if (needsBusinessStory({ priority: "P2", ...fields }) && (!fields.problem || !fields.impact)) {
       throw new UsageError(
@@ -1182,6 +1212,41 @@ async function cmdBrief(flags, env) {
 
 const BUG_MINTER_LANES = new Set(["lead", "coordinator"]);
 
+/** The minter lane this process runs as (lead or coordinator), else { refused: words }. */
+function minterCheck(config, env, what) {
+  const raw = String(env.RF_LANE ?? "")
+    .trim()
+    .toLowerCase();
+  const lane = raw ? laneId(undefined, config, env) : defaultLane(config, env);
+  if (BUG_MINTER_LANES.has(lane) || BUG_MINTER_LANES.has(raw)) return { lane: lane ?? raw };
+  return {
+    refused:
+      `refused: ${what} is limited to the lanes lead and coordinator (one minter: a single lane ` +
+      "mints bug numbers so two lanes can never file the same one). " +
+      `Your lane is ${lane ?? (raw || "not set (RF_LANE)")}. Ask the lead to file it.\n`,
+  };
+}
+
+/** Runs scripts/campaign/bugs.mjs with args; { code, stdout, stderr } (stdout captured). */
+function runBugsScript(repo, args, env) {
+  const script = join(repo, "scripts", "campaign", "bugs.mjs");
+  if (!existsSync(script))
+    return Promise.resolve({ code: 1, stdout: "", stderr: `${script} not found` });
+  return new Promise((done) => {
+    const child = spawn(process.execPath, [script, ...args], {
+      cwd: repo,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", (e) => done({ code: 1, stdout, stderr: stderr + e.message }));
+    child.on("close", (code) => done({ code: code ?? 1, stdout, stderr }));
+  });
+}
+
 /**
  * `rf bug file …`: a thin wrapper over `node scripts/campaign/bugs.mjs file …` in the routeflow
  * checkout, args passed through unchanged. Only the lanes lead and coordinator may run it (one
@@ -1191,16 +1256,9 @@ async function cmdBug(rest, env) {
   if (rest[0] !== "file")
     throw new UsageError("rf bug file <args passed to scripts/campaign/bugs.mjs>");
   const config = loadConfig(specsDir(env));
-  const raw = String(env.RF_LANE ?? "")
-    .trim()
-    .toLowerCase();
-  const lane = raw ? laneId(undefined, config, env) : defaultLane(config, env);
-  if (!BUG_MINTER_LANES.has(lane) && !BUG_MINTER_LANES.has(raw)) {
-    process.stderr.write(
-      "refused: rf bug file is limited to the lanes lead and coordinator (one minter: a single lane " +
-        "mints bug numbers so two lanes can never file the same one). " +
-        `Your lane is ${lane ?? (raw || "not set (RF_LANE)")}. Ask the lead to file it.\n`,
-    );
+  const minter = minterCheck(config, env, "rf bug file");
+  if (minter.refused) {
+    process.stderr.write(minter.refused);
     return 1;
   }
   const repo = env.RF_REPO_ROOT || REPO_ROOT;
@@ -1217,6 +1275,187 @@ async function cmdBug(rest, env) {
     });
     child.on("close", (code) => done(code ?? 1));
   });
+}
+
+/** A mention for the reporter, when their actor id is a lane or a member (else no --to). */
+function reporterMention(it, config) {
+  const who = it.reportedBy;
+  if (!who) return [];
+  if (findMember(config, who)) return [findMember(config, who).id];
+  return (config.lanes ?? []).some((l) => l.id === who) ? [who] : [];
+}
+
+/**
+ * `rf triage`: tester drafts waiting for the lead. `rf triage promote <id> --location L --severity S`
+ * files it in the bug registry (scripts/campaign/bugs.mjs, minter lanes only) and closes the draft;
+ * `rf triage reject <id> --reason R` closes it with the reason. The reporter gets a comment either way.
+ */
+async function cmdTriage(positional, flags, env) {
+  const sub = positional[0];
+  if (sub === undefined) {
+    const c = await prepare(ctxFor(env), flags, { sync: true });
+    const state = stateOf(c);
+    const drafts = draftsOf(state);
+    const { names: clientNames, error } = loadClientNames({ env, home: c.home });
+    if (error) {
+      process.stdout.write(`${BRIEF_DISABLED_NOTE}\n`);
+      return 0;
+    }
+    const mask = (t) => maskText(t, clientNames);
+    if (flags.json) {
+      const rows = drafts.map((it) => ({
+        id: it.id,
+        title: mask(it.title),
+        reportedBy: it.reportedBy,
+        reportedByName: memberName(c.config, it.reportedBy),
+        createdAt: new Date(it.createdAt).toISOString(),
+        screen: it.screen,
+        evidence: it.evidence,
+        steps: it.steps === null ? null : mask(it.steps),
+      }));
+      process.stdout.write(JSON.stringify({ drafts: rows }, null, 2) + "\n");
+      return 0;
+    }
+    if (!drafts.length) {
+      process.stdout.write("no drafts waiting for triage\n");
+      return 0;
+    }
+    const now = Date.now();
+    const lines = drafts.map((it) => {
+      const who = memberName(c.config, it.reportedBy) ?? it.reportedBy ?? "unknown";
+      const age = Math.max(0, Math.round((now - it.createdAt) / 60000));
+      const ago =
+        age < 60
+          ? `${age} min ago`
+          : age < 2880
+            ? `${Math.round(age / 60)} h ago`
+            : `${Math.round(age / 1440)} days ago`;
+      return `- ${it.id.padEnd(7)} ${mask(it.title)}  (${who}, ${ago}${it.screen ? `, ${it.screen}` : ""})`;
+    });
+    const n = drafts.length;
+    process.stdout.write(
+      `${n} draft${n === 1 ? "" : "s"} waiting for triage (rf triage promote <id> --location L --severity S | reject <id> --reason R):\n${lines.join("\n")}\n`,
+    );
+    return 0;
+  }
+  if (sub !== "promote" && sub !== "reject")
+    throw new UsageError(
+      "rf triage [promote <id> --location L --severity S | reject <id> --reason R]",
+    );
+  const id = positional[1];
+  if (!id) throw new UsageError(`rf triage ${sub} <id>`);
+  if (sub === "promote") {
+    if (typeof flags.location !== "string" || !flags.location.trim())
+      throw new UsageError("rf triage promote needs --location (where the bug lives, for routing)");
+    if (typeof flags.severity !== "string" || !flags.severity.trim())
+      throw new UsageError("rf triage promote needs --severity critical|high|medium|low");
+  } else if (typeof flags.reason !== "string" || !flags.reason.trim()) {
+    throw new UsageError("rf triage reject needs --reason (the reporter reads it)");
+  }
+  const c = await prepare(ctxFor(env), flags, { sync: true });
+  const minter = minterCheck(c.config, c.env, `rf triage ${sub}`);
+  if (minter.refused) {
+    process.stderr.write(minter.refused);
+    return 1;
+  }
+  const state = stateOf(c);
+  const it = state.items.get(id);
+  if (!it) throw new UsageError(`unknown item ${id}`);
+  if (it.status !== TRIAGE_STATUS)
+    throw new UsageError(`${id} is not a draft (status ${it.status}); only drafts are triaged`);
+  const to = reporterMention(it, c.config);
+  const lane = minter.lane;
+  if (sub === "reject") {
+    const reason = flags.reason.trim().slice(0, 400);
+    return writeCmd(
+      c,
+      flags,
+      [
+        makeEvent(
+          c,
+          "item.edit",
+          id,
+          { fields: { tags: [...new Set([...it.tags, REJECTED_TAG])] } },
+          lane,
+        ),
+        makeEvent(
+          c,
+          "status",
+          id,
+          { status: "dropped", note: `triage: not filed: ${reason}` },
+          lane,
+        ),
+        makeEvent(
+          c,
+          "comment",
+          id,
+          { text: `Not filed: ${reason}`, ...(to.length ? { to } : {}) },
+          lane,
+        ),
+      ],
+      () => `rejected ${id}${to.length ? ` (told ${to.join(", ")})` : ""}`,
+    );
+  }
+  // Promote: the registry lives in the product repo (public during deploy windows), so the title
+  // and symptom are masked first, and a broken names list refuses rather than leaks.
+  const { names: clientNames, error } = loadClientNames({ env, home: c.home });
+  if (error) {
+    process.stderr.write(`refused: ${BRIEF_DISABLED_NOTE}\n`);
+    return 1;
+  }
+  const severity = flags.severity.trim();
+  const repo = c.env.RF_REPO_ROOT || REPO_ROOT;
+  const ran = await runBugsScript(
+    repo,
+    [
+      "file",
+      maskText(it.title, clientNames),
+      "--location",
+      flags.location.trim(),
+      "--severity",
+      severity,
+      "--symptom",
+      promotionSymptom(it, clientNames),
+    ],
+    c.env,
+  );
+  const bug = ran.code === 0 ? filedBugId(ran.stdout) : null;
+  if (!bug) {
+    process.stderr.write(
+      `error: bugs.mjs file did not file a bug (exit ${ran.code})\n${ran.stderr}${ran.stdout}`,
+    );
+    return 1;
+  }
+  return writeCmd(
+    c,
+    flags,
+    [
+      makeEvent(
+        c,
+        "item.edit",
+        id,
+        {
+          fields: {
+            related: [...new Set([...it.related, bug])],
+            tags: [...new Set([...it.tags, PROMOTED_TAG])],
+          },
+        },
+        lane,
+      ),
+      makeEvent(c, "status", id, { status: "dropped", note: `triage: promoted to ${bug}` }, lane),
+      makeEvent(
+        c,
+        "comment",
+        id,
+        {
+          text: `Filed as ${bug} (${severity}). Thanks; it is tracked there now.`,
+          ...(to.length ? { to } : {}),
+        },
+        lane,
+      ),
+    ],
+    () => `promoted ${id} to ${bug}${to.length ? ` (told ${to.join(", ")})` : ""}`,
+  );
 }
 
 async function cmdDoctor(flags, env) {
@@ -1306,6 +1545,9 @@ export async function main(argv, env = process.env) {
         break;
       case "inbox":
         code = await cmdInbox(flags, env);
+        break;
+      case "triage":
+        code = await cmdTriage(positional, flags, env);
         break;
       case "next":
         code = await cmdNext(flags, env);

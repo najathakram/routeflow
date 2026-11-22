@@ -5,6 +5,8 @@
 export const SCHEMA_VERSION = 1;
 
 export const STATUSES = [
+  // A tester's bug report before the lead or coordinator triages it (rf triage): never handed out.
+  "draft",
   "idea",
   "planned",
   "spec",
@@ -41,6 +43,8 @@ export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PR_ACTIONS = ["create", "ready", "merge", "close", "edit"];
 /** Team member roles (specs ops/config.json `members[].role`, item `role`, `rf next --role`). */
 export const ROLES = ["builder", "tester", "reviewer"];
+/** Longest tester repro steps on a draft bug (rf item new --steps). */
+export const STEPS_MAX = 2000;
 /** Longest comment body (a comment is a message on the item, not a spec: link a file for more). */
 export const COMMENT_TEXT_MAX = 2000;
 
@@ -102,6 +106,12 @@ const ITEM_FIELDS = {
   solution: (v) => v === null || (typeof v === "string" && v.length <= 800), // how we solve it
   ownerAsk: (v) => v === null || (typeof v === "string" && v.length <= 600), // what we need from the owner
   summaryDraft: (v) => typeof v === "boolean", // true = drafted from the register, not yet confirmed
+  // Tester intake (rf item new --type bug --status draft): how to see it, where, and a link to proof.
+  steps: (v) => v === null || (typeof v === "string" && v.length <= STEPS_MAX),
+  screen: (v) => v === null || (typeof v === "string" && v.length <= 200),
+  // A link to a hosted screenshot or recording; never a local path (no binaries in git).
+  evidence: (v) =>
+    v === null || (typeof v === "string" && v.length <= 500 && /^https?:\/\/\S+$/.test(v)),
 };
 
 /** Types and priorities whose NEW items must carry problem + impact (owner 2026-10-19). */

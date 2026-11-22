@@ -132,6 +132,10 @@ a {
   outline-offset: 2px;
   border-radius: 4px;
 }
+/* A tester's repro steps keep their line breaks. */
+.steps {
+  white-space: pre-line;
+}
 .muted {
   color: var(--muted);
 }
