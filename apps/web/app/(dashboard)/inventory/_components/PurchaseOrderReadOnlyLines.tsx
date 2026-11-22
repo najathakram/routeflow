@@ -9,6 +9,10 @@ import { unitWords } from "@routeflow/pricing";
 // U-3a: a PO line carries no per-product label yet, so this prints the default words.
 const UW = unitWords();
 
+/** The stock reader's figure (pieces) or null when the product carries none, never a made-up 0. */
+export const onHandOf = (v: number | string | null | undefined): number | null =>
+  v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v);
+
 /** The read-only lines table of a purchase order (supplier units, stored-exact subtotals). Shared by
  *  the list's expanded row and the PO detail page so the two can never disagree. */
 export function PurchaseOrderReadOnlyLines({
@@ -16,7 +20,15 @@ export function PurchaseOrderReadOnlyLines({
   catalogById,
 }: {
   items: POItem[];
-  catalogById: Map<string, { id: string; name?: string; unitsPerBox?: number | null }>;
+  catalogById: Map<
+    string,
+    {
+      id: string;
+      name?: string;
+      unitsPerBox?: number | null;
+      currentStock?: number | string | null;
+    }
+  >;
 }) {
   return (
     <div className="rounded-lg border border-surface-border overflow-x-auto bg-white">
@@ -27,6 +39,7 @@ export function PurchaseOrderReadOnlyLines({
             <th className="px-3 py-2 text-right font-medium">Qty</th>
             <th className="px-3 py-2 text-right font-medium">Cost</th>
             <th className="px-3 py-2 text-right font-medium">Received</th>
+            <th className="px-3 py-2 text-right font-medium">On hand</th>
             <th className="px-3 py-2 text-right font-medium">Subtotal</th>
           </tr>
         </thead>
@@ -36,13 +49,15 @@ export function PurchaseOrderReadOnlyLines({
             const isBoxed = upb > 1;
             const ordered = Number(item.qtyOrdered ?? 0);
             const received = Number(item.qtyReceived ?? 0);
+            const onHand = onHandOf(catalogById.get(item.productId)?.currentStock);
             // MONEY: the stored exact total through the shared resolver — never `qtyOrdered x unitCost`,
             // which re-multiplies a boxed line's rounded per-piece cost (#1199: $11,000.40 for $11,000.00).
             const subtotal = resolveStoredPOLineAmounts(item, upb).totalCost;
             return (
               <tr key={item.id}>
                 <td className="px-3 py-2 font-medium text-navy">
-                  {item.product?.name ?? catalogById.get(item.productId)?.name ?? "—"}
+                  {/* The catalog name is the composed "<Family> - <Variant>" one; the include only has the variant part. */}
+                  {catalogById.get(item.productId)?.name ?? item.product?.name ?? "—"}
                 </td>
                 <td className="px-3 py-2 text-right text-navy/70">
                   {isBoxed ? unitsLabel(ordered, upb) : ordered}
@@ -61,6 +76,9 @@ export function PurchaseOrderReadOnlyLines({
                   ) : (
                     <span className="text-navy/30">—</span>
                   )}
+                </td>
+                <td data-testid="po-line-on-hand" className="px-3 py-2 text-right text-navy/70">
+                  {onHand == null ? "—" : isBoxed ? unitsLabel(onHand, upb) : onHand}
                 </td>
                 <td className="px-3 py-2 text-right text-navy/70">{formatMoney(subtotal)}</td>
               </tr>

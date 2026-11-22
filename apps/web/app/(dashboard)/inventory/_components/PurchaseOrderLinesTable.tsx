@@ -5,6 +5,7 @@ import { Plus, X } from "lucide-react";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import { linePack, resolvePOLine, resolvePOLineAmounts } from "./purchase-orders-shared";
+import { onHandOf } from "./PurchaseOrderReadOnlyLines";
 import { emptyEditLine, type EditLine } from "./purchase-orders-edit";
 import { unitWords } from "@routeflow/pricing";
 
@@ -16,6 +17,8 @@ export type CatalogProduct = {
   name: string;
   sku?: string;
   unitsPerBox?: number | null;
+  /** The stock reader's on-hand figure, in pieces (absent when the read carries none). */
+  currentStock?: number | string | null;
 };
 
 const inputCls =
@@ -113,6 +116,7 @@ export function PurchaseOrderLinesTable({
             const isBoxed = upb > 1;
             const locked = received && !!line.id && line.received > 0;
             const { qty } = resolvePOLine(line, upb);
+            const onHand = onHandOf(productById.get(line.productId)?.currentStock);
             const subtotal = resolvePOLineAmounts(line, upb).totalCost;
             return (
               <div
@@ -139,6 +143,11 @@ export function PurchaseOrderLinesTable({
                       </option>
                     ))}
                   </select>
+                  {line.productId && (
+                    <p data-testid="po-line-on-hand" className="mt-0.5 text-[10px] text-navy/50">
+                      On hand: {onHand == null ? "—" : isBoxed ? unitsLabel(onHand, upb) : onHand}
+                    </p>
+                  )}
                   {locked && (
                     <p className="mt-0.5 text-[10px] text-navy/50">
                       Received: {isBoxed ? unitsLabel(line.received, upb) : line.received}
