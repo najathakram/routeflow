@@ -4,7 +4,12 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { useDrafts, useDeleteDraft, type SaleDraft } from "../lib/api/drafts";
-import { draftSummary, parkedAgo, type OrderDraftPayload } from "../lib/drafts-payload";
+import {
+  draftSummary,
+  openableDrafts,
+  parkedAgo,
+  type OrderDraftPayload,
+} from "../lib/drafts-payload";
 import { confirm } from "../lib/confirm";
 
 /**
@@ -32,7 +37,7 @@ export function DraftStrip() {
   // mount, not on every list refetch while the delete is in flight.
   const sweptRef = useRef<Set<string>>(new Set());
 
-  const list = drafts ?? [];
+  const list = openableDrafts(drafts ?? []);
   const visible = list.filter((d) => !isSubmitted(d));
 
   useEffect(() => {

@@ -24,6 +24,8 @@ import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
  *  - a key must be a legal Idempotency-Key header value (1-128 printable ASCII, no spaces).
  */
 export const DRAFT_SUBMIT_KEY_FIELD = "_submitKey";
+/** The builder kinds a draft can hold (`SaleDraft.kind` is a String column; SA-1222 added PURCHASE_ORDER, no migration). */
+const DRAFT_KINDS = ["ORDER", "INVOICE", "PURCHASE_ORDER"] as const;
 const SUBMIT_KEY_RULE = /^[\x21-\x7e]{1,128}$/;
 
 /**
@@ -36,10 +38,16 @@ const SUBMIT_KEY_RULE = /^[\x21-\x7e]{1,128}$/;
 export class DraftsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** The current user's drafts, newest first (cap 50 — matches the dock). */
-  list(user: JwtPayload) {
+  /**
+   * The current user's drafts, newest first (cap 50 — matches the dock). `kind` (SA-1222) is an optional filter; with none the
+   * result is every kind, as before. An unknown kind is a 400.
+   */
+  async list(user: JwtPayload, kind?: string) {
+    if (kind !== undefined && !(DRAFT_KINDS as readonly string[]).includes(kind)) {
+      throw new BadRequestException("Unknown draft kind.");
+    }
     return this.prisma.forTenant().saleDraft.findMany({
-      where: { userId: user.sub },
+      where: { userId: user.sub, ...(kind ? { kind } : {}) },
       orderBy: { updatedAt: "desc" },
       take: 50,
     });
@@ -48,6 +56,7 @@ export class DraftsService {
   async create(user: JwtPayload, dto: SaveDraftDto) {
     // 681 site 11: SaleDraft.customerId has no FK, so the column is proven here (the payload JSON is not).
     await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] });
+    await this.assertPoPayloadRefs(dto.kind, dto.payload);
     await this.assertKeyNotOnOtherDraft(user, null, dto.payload);
     return this.prisma.forTenant().saleDraft.create({
       data: {
@@ -73,6 +82,8 @@ export class DraftsService {
   async update(user: JwtPayload, id: string, dto: SaveDraftDto) {
     const draft = await this.assertOwned(user, id);
     await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] }); // 681 site 11
+    if (dto.payload !== undefined)
+      await this.assertPoPayloadRefs(dto.kind ?? draft.kind, dto.payload);
     const data: Prisma.SaleDraftUpdateInput = {};
     if (dto.kind !== undefined) data.kind = dto.kind;
     if (dto.customerId !== undefined) data.customerId = dto.customerId;
@@ -120,6 +131,25 @@ export class DraftsService {
     const draft = await this.prisma.forTenant().saleDraft.findUnique({ where: { id } });
     if (!draft || draft.userId !== user.sub) throw new NotFoundException("Draft not found");
     return draft;
+  }
+
+  /**
+   * SA-1222: a PURCHASE_ORDER payload names a supplier and product ids inside its JSON; a foreign id fails at save, not at submit.
+   * Other kinds are unchanged (their payload is client state and is not read).
+   */
+  private async assertPoPayloadRefs(
+    kind: string | undefined,
+    payload: Record<string, unknown> | undefined,
+  ) {
+    if (kind !== "PURCHASE_ORDER" || !payload) return;
+    const lines = Array.isArray(payload.lines)
+      ? (payload.lines as Array<{ productId?: unknown }>)
+      : [];
+    const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+    await assertRefsInTenant(this.prisma, {
+      supplierIds: [str(payload.supplierId)],
+      productIds: lines.map((l) => str(l?.productId)),
+    });
   }
 
   /** A payload that omits `_submitKey` keeps the one already stored (it is never erased by a write that does not know it). */

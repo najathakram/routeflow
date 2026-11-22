@@ -516,7 +516,8 @@ export default function OrdersPage() {
   // clearance (the spacer after the pager) only when a draft is actually parked, so the last card can clear the dock — same
   // react-query cache key as the dock's own fetch, so this costs no extra request.
   const { data: drafts } = useDrafts();
-  const hasDrafts = (drafts?.length ?? 0) > 0;
+  // SA-1222: a PURCHASE_ORDER draft is not an order draft
+  const hasDrafts = Array.isArray(drafts) && drafts.some((d) => d.kind !== "PURCHASE_ORDER");
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => {

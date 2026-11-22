@@ -114,7 +114,21 @@ export function draftSummary(draft: SaleDraft): {
   title: string;
   itemCount: number;
   total: number;
+  /** false for a PURCHASE_ORDER draft: no dock ever shows or re-derives a PO total (its lines hold typed costs, not prices). */
+  hasTotal: boolean;
 } {
+  if (draft.kind === "PURCHASE_ORDER") {
+    const lines = (draft.payload as { lines?: unknown } | undefined)?.lines;
+    const itemCount = Array.isArray(lines) ? lines.length : 0;
+    const supplier = draft.title?.trim();
+    const head = supplier ? `PO draft · ${supplier}` : "PO draft";
+    return {
+      title: `${head} · ${itemCount} item${itemCount === 1 ? "" : "s"}`,
+      itemCount,
+      total: 0,
+      hasTotal: false,
+    };
+  }
   const items = payloadLineItems(draft.payload);
   const total = items.reduce(
     (sum, li) =>
@@ -131,5 +145,5 @@ export function draftSummary(draft: SaleDraft): {
   const kindLabel = draft.kind === "INVOICE" ? "Invoice" : "Order";
   const who = draft.customerName?.trim();
   const title = draft.title?.trim() || (who ? `${kindLabel}, ${who}` : `${kindLabel} draft`);
-  return { title, itemCount: items.length, total };
+  return { title, itemCount: items.length, total, hasTotal: true };
 }

@@ -277,6 +277,11 @@ export const API_ERROR_CODES = {
   INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
+  /**
+   * 409 from POST /inventory/purchase-orders (SA-1222): the body's `draftId` names a Create PO builder draft that is already gone (turned into a PO by
+   * another tab, or deleted). Raised before any PO row is written. The client shows "This draft was already turned into a PO or deleted. Check your POs."
+   */
+  PO_DRAFT_GONE: "PO_DRAFT_GONE",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
   /** B297 PR5: a money-bearing edit to a line whose regulated SALE rows sit in a LOCKED filing period. */
   FILED_PERIOD_LOCKED: "FILED_PERIOD_LOCKED",

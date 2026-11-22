@@ -141,7 +141,8 @@ export function ParkedSales({ canEditPrices, ...deps }: ParkedSalesProps) {
     });
   };
   const drafts = (Array.isArray(draftRows) ? draftRows : []).filter(
-    (d) => !draftWaiting.hidden.has(d.id),
+    // SA-1222: a PURCHASE_ORDER draft belongs to the Create PO surface, never to the order window
+    (d) => d.kind !== "PURCHASE_ORDER" && !draftWaiting.hidden.has(d.id),
   );
   const router = useRouter();
   const { data: settings } = useQuery<{ taxRate?: number | null }>({

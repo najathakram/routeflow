@@ -21,7 +21,7 @@ export interface CostHistoryEntry {
 
 export interface SaleDraft {
   id: string;
-  kind: "ORDER" | "INVOICE";
+  kind: "ORDER" | "INVOICE" | "PURCHASE_ORDER";
   customerId?: string | null;
   customerName?: string | null;
   title?: string | null;

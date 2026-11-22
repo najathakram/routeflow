@@ -52,6 +52,8 @@ export function findResumable(
   const resumable: ResumeCandidate[] = [];
   const obsolete: LocalDraftRecord[] = [];
   for (const record of records) {
+    // SA-1222: this scan is the ORDER builder's; a PO (or any other kind) copy belongs to its own builder and is never read here.
+    if ((record.kind ?? "ORDER") !== "ORDER") continue;
     if (submitted(record.payload)) {
       obsolete.push(record);
       continue;
