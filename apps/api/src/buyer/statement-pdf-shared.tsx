@@ -1,5 +1,6 @@
 import React from "react";
 import { Text, View, StyleSheet, Image } from "@react-pdf/renderer";
+import { asOfText } from "@routeflow/pricing";
 
 /**
  * P5-15: tenant branding shape for the monthly statement PDF header/footer.
@@ -21,18 +22,9 @@ export interface StatementTenantInfo {
   primaryColor: string | null;
   logoKey: string | null;
   logoDataUri?: string;
+  /** SA-1209 D3: the tenant's zone the "Generated" stamp prints in (absent = UTC, named); never the server's zone. */
+  timeZone?: string;
 }
-
-const fmtDateTime = (val: Date | string | null | undefined): string => {
-  if (!val) return "—";
-  return new Date(val).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-};
 
 export const DEFAULT_NAVY = "#1B3A5C";
 export const DEFAULT_BRAND = "#3B6FCA";
@@ -235,7 +227,9 @@ export function StatementFooter({
           : "RouteFlow"}
       </Text>
       <Text style={styles.footerMuted}>Powered by RouteFlow</Text>
-      <Text style={styles.footerText}>Generated {fmtDateTime(generatedAt)}</Text>
+      <Text style={styles.footerText}>
+        Generated {asOfText(generatedAt, tenant?.timeZone ?? "UTC")}
+      </Text>
     </View>
   );
 }

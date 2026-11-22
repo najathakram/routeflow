@@ -2,6 +2,7 @@ import React from "react";
 import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { PrismaService } from "../prisma/prisma.service";
+import { FALLBACK_ZONE, tenantTimeZone } from "../common/tenant-time-zone";
 import { StorageService } from "../storage/storage.service";
 import { StatementService } from "./statement.service";
 import { StatementPdfTemplate, StatementTenantInfo } from "./statement-pdf-template";
@@ -127,7 +128,8 @@ export class StatementPdfService {
       },
     });
     if (!cfg) return null;
-    const tenant: StatementTenantInfo = { ...cfg };
+    const timeZone = (await tenantTimeZone(this.prisma)) ?? FALLBACK_ZONE;
+    const tenant: StatementTenantInfo = { ...cfg, timeZone };
     if (cfg.logoKey) {
       try {
         const buf = await this.storage.download(cfg.logoKey);
