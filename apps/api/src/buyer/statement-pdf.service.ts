@@ -128,7 +128,7 @@ export class StatementPdfService {
       },
     });
     if (!cfg) return null;
-    const timeZone = (await tenantTimeZone(this.prisma)) ?? FALLBACK_ZONE;
+    const timeZone = (await tenantTimeZone(this.prisma, { tenantId })) ?? FALLBACK_ZONE;
     const tenant: StatementTenantInfo = { ...cfg, timeZone };
     if (cfg.logoKey) {
       try {

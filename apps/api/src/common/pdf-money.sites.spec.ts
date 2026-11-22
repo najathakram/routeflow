@@ -7,7 +7,10 @@ import * as path from "path";
  * Style: no-bare-cron.spec.ts.
  */
 const SRC = path.resolve(__dirname, "..");
-const HAND_ROLLED_MONEY = /\$\$\{[^`]*?\.toFixed\(\s*2\s*\)/;
+// Two hand-rolled forms: a template literal `$${x.toFixed(2)}`, and a string ending in the dollar sign joined to the
+// number ("$" + x.toFixed(2), '$' + ..., ["$", x.toFixed(2)].join), within one statement.
+const HAND_ROLLED_MONEY =
+  /\$\$\{[^`]*?\.toFixed\(\s*2\s*\)|\$["'`]\s*[+,][^;\n]*?\.toFixed\(\s*2\s*\)/;
 
 function pdfFiles(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -34,6 +37,21 @@ describe("api document renderers format money through fmtPdfMoney only (BF-7)", 
       true,
     );
     expect(HAND_ROLLED_MONEY.test("const fmt = (n: number) => fmtPdfMoney(n);")).toBe(false);
+  });
+
+  it("self-test (L1): the pin also goes red on a concatenated amount, whatever the quotes or spacing", () => {
+    for (const planted of [
+      `const fmt = (n: number) => "$" + n.toFixed(2);`,
+      `const fmt = (n: number) => '$' + roundMoney(n).toFixed(2);`,
+      "const fmt = (n: number) => '$'+Math.abs(n).toFixed( 2 );",
+      `const t = "Total: $" + (a + b).toFixed(2);`,
+      `const t = ["$", n.toFixed(2)].join("");`,
+    ]) {
+      expect([planted, HAND_ROLLED_MONEY.test(planted)]).toEqual([planted, true]);
+    }
+    // not money: a bare quantity, and the helper itself
+    expect(HAND_ROLLED_MONEY.test(`const q = "Qty " + n.toFixed(2);`)).toBe(false);
+    expect(HAND_ROLLED_MONEY.test(`const fmt = (n: number) => fmtPdfMoney(n);`)).toBe(false);
   });
 
   it("scanned the real PDF files (guards a path typo turning the scan vacuous)", () => {

@@ -39,6 +39,23 @@ const GENERATED_AT = new Date("2026-11-21T22:46:00.000Z");
 const footerText = (tenant: Record<string, unknown> | null) =>
   textsOf(StatementFooter({ tenant, generatedAt: GENERATED_AT, styles: {} })).join("");
 
+/**
+ * A service for "tenant-1" whose config table holds that tenant's row only (Chicago). A read answers only for the tenant it
+ * asks for, so a read aimed at any other tenant finds no row (and the zone falls back to UTC).
+ */
+function serviceWithConfig() {
+  const findUnique = jest.fn(async (args: any) =>
+    args.where.tenantId === "tenant-1"
+      ? { businessName: "Acme", logoKey: null, timezone: "America/Chicago" }
+      : null,
+  );
+  const prisma = { getTenantId: () => "tenant-1", tenantConfig: { findUnique } };
+  return {
+    service: new StatementPdfService(prisma as never, {} as never, {} as never),
+    findUnique,
+  };
+}
+
 describe("the statement PDF's Generated stamp (SA-1209 D3)", () => {
   it("22:46Z for a tenant in America/Chicago prints 4:46 PM CST", () => {
     expect(footerText({ businessName: "Acme", timeZone: "America/Chicago" })).toContain(
@@ -51,17 +68,17 @@ describe("the statement PDF's Generated stamp (SA-1209 D3)", () => {
   });
 
   it("loadTenant hands the tenant's zone to both templates", async () => {
-    const prisma = {
-      getTenantId: () => "tenant-1",
-      tenantConfig: {
-        findUnique: jest.fn(async () => ({
-          businessName: "Acme",
-          logoKey: null,
-          timezone: "America/Chicago",
-        })),
-      },
-    };
-    const service = new StatementPdfService(prisma as never, {} as never, {} as never);
+    const { service } = serviceWithConfig();
     expect((await service.loadTenant())?.timeZone).toBe("America/Chicago");
+  });
+
+  it("M3: every config read, the zone read included, is scoped to the caller's own tenant", async () => {
+    const { service, findUnique } = serviceWithConfig();
+    await service.loadTenant();
+    const zoneReads = findUnique.mock.calls.filter(([args]: any[]) => args.select?.timezone);
+    expect(zoneReads).toHaveLength(1);
+    expect(zoneReads[0][0].where).toEqual({ tenantId: "tenant-1" });
+    for (const [args] of findUnique.mock.calls)
+      expect((args as any).where.tenantId).toBe("tenant-1");
   });
 });

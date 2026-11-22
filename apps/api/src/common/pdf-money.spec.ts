@@ -10,8 +10,13 @@ describe("fmtPdfMoney", () => {
     expect(fmtPdfMoney(1234567.891)).toBe("$1,234,567.89");
   });
 
-  it("rounds half cents the money way, not the float way: 1.005 -> $1.01", () => {
-    expect(fmtPdfMoney(1.005)).toBe("$1.01");
+  it("rounds the money way, not the Intl way: float noise under a half cent still rounds up (L2)", () => {
+    // roundMoney reads 100.499999 cents as 100.5 (it settles to 4 places first) and rounds up to 1.01; Intl alone
+    // reads the same double as 1.00. 1.005 would not tell them apart (Intl rounds it half-up too).
+    const intl = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+    expect((1.00499999).toLocaleString("en-US", intl)).toBe("1.00");
+    expect(fmtPdfMoney(1.00499999)).toBe("$1.01");
+    expect(fmtPdfMoney(-1.00499999)).toBe("-$1.01");
   });
 
   it("prints a negative with the sign before the dollar sign: -1234.5 -> -$1,234.50", () => {
