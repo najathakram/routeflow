@@ -8,6 +8,9 @@ import { CustomerRecordPaymentModal } from "./CustomerRecordPaymentModal";
  * and the amount at its balance. The other rows stay editable (a cheque that covers two invoices still works); with no
  * prop the dialog is exactly as before (empty amount, oldest first).
  */
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useAuth: () => ({ user: { id: "u1", role: "OPERATOR" } }),

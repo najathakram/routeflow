@@ -11,14 +11,118 @@ import {
   useVoidPayment,
   useGetPaymentImageUrl,
 } from "@/lib/api/invoices";
-import { Badge, Button, Card, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Card, cn, useToast } from "@routeflow/ui/web";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { paidInAdvance } from "@/lib/invoice-pending-mirror";
+import type {
+  ReceiptApplication,
+  ReceiptGroupView,
+  ReceiptHeader,
+  ReceiptTender,
+} from "@routeflow/types";
 
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
+
+/** "(Check #1001)" beside the figure: the instrument the server named, never a label that calls it the check's amount. */
+function receiptTenderHint(h: ReceiptHeader): string | null {
+  const method = h.method ? paymentMethodLabel(h.method) : null;
+  if (h.reference) return `(${method ? `${method} ` : ""}#${h.reference})`;
+  return method ? `(${method})` : null;
+}
+
+/** A tender's state from the statuses of its own rows: bare when all PAID, never read as confirmed money otherwise. */
+function tenderState(t: ReceiptTender, apps: ReceiptApplication[]): string | null {
+  if (t.voided) return "Voided";
+  const st = apps.filter((a) => t.paymentIds.includes(a.paymentId)).map((a) => a.status);
+  if (st.length === 0 || st.every((x) => x === "PAID")) return null;
+  return st.some((x) => x === "PAID") ? "Includes pending" : "Pending";
+}
+
+/** The invoices one check covered and what it was paid with: the server's figures, printed as given. */
+function ReceiptGroupBody({ view }: { view: ReceiptGroupView }) {
+  const h = view.header!;
+  return (
+    <div className="mt-6 space-y-5">
+      {view.kind === "PICKUP_TENDERS" && h.orderNumber && (
+        <p className="text-sm font-medium text-navy">Pickup payments for order {h.orderNumber}</p>
+      )}
+      {h.partlyVoided && (
+        <p className="text-[12.5px] font-medium text-warning">Check partly voided</p>
+      )}
+      <div>
+        <p className="eyebrow-label mb-1">Invoices</p>
+        <ul aria-label="Invoices on this receipt" className="divide-y divide-surface-border">
+          {view.applications.map((a) => (
+            <li
+              key={a.paymentId}
+              className="flex items-center justify-between gap-3 py-2 text-[13px]"
+            >
+              <Link
+                href={`/invoices/${a.invoiceId}`}
+                className="font-medium text-brand-600 hover:underline"
+              >
+                {a.invoiceNumber}
+              </Link>
+              <span className="flex items-center gap-2">
+                {a.status === "VOID" && <span className="text-xs text-navy/70">Voided</span>}
+                {a.status !== "VOID" && a.status !== "PAID" && (
+                  <span className="text-xs text-warning">Pending</span>
+                )}
+                <span
+                  className={cn(
+                    "money",
+                    a.status === "VOID" ? "text-navy/40 line-through" : "text-navy",
+                  )}
+                >
+                  {fmt(a.amount)}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div>
+        <p className="eyebrow-label mb-1">Paid with</p>
+        <ul aria-label="Tenders on this receipt" className="divide-y divide-surface-border">
+          {view.tenders.map((t) => {
+            const state = tenderState(t, view.applications);
+            return (
+              <li
+                key={t.paymentIds.join("-")}
+                className="flex items-center justify-between gap-3 py-2 text-[13px]"
+              >
+                <span className="text-navy">
+                  {paymentMethodLabel(t.method)}
+                  {t.reference ? ` #${t.reference}` : ""}
+                </span>
+                <span className="flex items-center gap-2">
+                  {state && (
+                    <span
+                      className={cn(
+                        "text-xs",
+                        state === "Voided" ? "text-navy/70" : "text-warning",
+                      )}
+                    >
+                      {state}
+                    </span>
+                  )}
+                  <span
+                    className={cn("money", t.voided ? "text-navy/40 line-through" : "text-navy")}
+                  >
+                    {fmt(t.amount)}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
 
 export default function PaymentDetailPage() {
   const { setTitle } = usePageTitle();
@@ -94,7 +198,12 @@ export default function PaymentDetailPage() {
 
   const status = payment.status ?? "PAID";
   const date = fmtDate(payment.paidAt ?? payment.createdAt);
-  const hasBankCharges = payment.bankCharges != null && payment.bankCharges > 0;
+  // M1-03: an office check or a pickup hand-over reads as ONE receipt, built by the server. Every figure below is printed as
+  // given: nothing here adds or subtracts money. A one-row payment (or an older server) keeps today's receipt.
+  const rc = payment.receipt;
+  const group =
+    rc?.header && (rc.kind === "OFFICE_GROUP" || rc.kind === "PICKUP_TENDERS") ? rc : null;
+  const hasBankCharges = !group && payment.bankCharges != null && payment.bankCharges > 0;
 
   return (
     <div className="space-y-5 p-6">
@@ -112,9 +221,11 @@ export default function PaymentDetailPage() {
         <div>
           <div className="flex items-center gap-3">
             <h2 className="font-mono text-2xl font-bold text-navy">
-              {payment.paymentNumber ?? "Payment"}
+              {group?.header?.number ?? payment.paymentNumber ?? "Payment"}
             </h2>
-            <Badge status={status as "PAID" | "DRAFT" | "VOID"} />
+            <Badge
+              status={(group?.header?.confirmed ? "PAID" : status) as "PAID" | "DRAFT" | "VOID"}
+            />
           </div>
           <p className="mt-1 text-sm text-navy/70">
             Payment received · {payment.invoice.customer?.businessName ?? "—"} · {date}
@@ -123,17 +234,6 @@ export default function PaymentDetailPage() {
 
         {/* Actions */}
         <div className="flex flex-wrap items-center gap-2">
-          {status !== "VOID" && (
-            <Button
-              size="sm"
-              variant="danger"
-              leftIcon={<Ban className="h-4 w-4" />}
-              onClick={handleVoid}
-              loading={voidPayment.isPending}
-            >
-              Void payment
-            </Button>
-          )}
           <Button
             size="sm"
             variant="secondary"
@@ -191,16 +291,19 @@ export default function PaymentDetailPage() {
                 <span className="mono text-right font-medium text-navy">{payment.reference}</span>
               </div>
             )}
-            <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
-              <span className="text-navy/70">Applied to</span>
-              <Link
-                href={`/invoices/${payment.invoice.id}`}
-                className="text-right font-medium text-brand-600 hover:underline"
-              >
-                {payment.invoice.invoiceNumber}
-              </Link>
-            </div>
+            {!group && (
+              <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
+                <span className="text-navy/70">Applied to</span>
+                <Link
+                  href={`/invoices/${payment.invoice.id}`}
+                  className="text-right font-medium text-brand-600 hover:underline"
+                >
+                  {payment.invoice.invoiceNumber}
+                </Link>
+              </div>
+            )}
           </div>
+          {group && <ReceiptGroupBody view={group} />}
 
           {/* Notes */}
           {payment.notes && (
@@ -213,72 +316,111 @@ export default function PaymentDetailPage() {
           {/* Totals */}
           <div className="mt-6 flex justify-end">
             <div className="w-full max-w-[300px]">
-              <div className="flex justify-between py-1.5 text-[13.5px] text-navy/70">
-                <span>Amount received</span>
-                <span className="money text-navy">{fmt(payment.amount)}</span>
-              </div>
+              {group?.header ? (
+                <div className="flex justify-between gap-3 py-1.5 text-base font-semibold text-navy">
+                  <span>
+                    Received on this receipt
+                    {receiptTenderHint(group.header) && (
+                      <span className="ml-1 text-[12.5px] font-normal text-navy/70">
+                        {receiptTenderHint(group.header)}
+                      </span>
+                    )}
+                  </span>
+                  {group.header.confirmed ? (
+                    <span className="money">{fmt(group.header.total)}</span>
+                  ) : (
+                    <span className="text-warning">Not confirmed</span>
+                  )}
+                </div>
+              ) : (
+                <div className="flex justify-between py-1.5 text-[13.5px] text-navy/70">
+                  <span>Amount received</span>
+                  <span className="money text-navy">{fmt(payment.amount)}</span>
+                </div>
+              )}
               {hasBankCharges && (
                 <div className="flex justify-between py-1.5 text-[13.5px] text-navy/70">
                   <span>Bank charges</span>
                   <span className="money text-danger">− {fmt(payment.bankCharges!)}</span>
                 </div>
               )}
-              <div className="mt-1.5 flex justify-between border-t border-navy pt-3 text-base font-semibold text-navy">
-                <span>Total applied</span>
-                <span className="money">{fmt(payment.amount)}</span>
-              </div>
+              {!group && (
+                <div className="mt-1.5 flex justify-between border-t border-navy pt-3 text-base font-semibold text-navy">
+                  <span>Total applied</span>
+                  <span className="money">{fmt(payment.amount)}</span>
+                </div>
+              )}
+              {group?.unapplied.amount != null && group.unapplied.advancePaymentId && (
+                <div
+                  data-testid="kept-as-credit"
+                  className="mt-1.5 flex items-center justify-between gap-3 border-t border-surface-border pt-3 text-[13.5px] text-navy/70"
+                >
+                  <span>
+                    Kept as credit{" "}
+                    <Link
+                      href={`/customers/${group.header?.customerId}?tab=billing`}
+                      className="text-brand-600 hover:underline"
+                    >
+                      See credit
+                    </Link>
+                  </span>
+                  <span className="money text-navy">{fmt(group.unapplied.amount)}</span>
+                </div>
+              )}
             </div>
           </div>
         </Card>
 
         {/* ── Sidebar ── */}
         <div className="space-y-4">
-          <Card title="Applied invoice">
-            <dl className="space-y-3 text-sm">
-              <div className="flex items-center justify-between">
-                <dt className="text-navy/70">Invoice</dt>
-                <dd>
-                  <Link
-                    href={`/invoices/${payment.invoice.id}`}
-                    className="mono text-brand-600 hover:underline"
-                  >
-                    {payment.invoice.invoiceNumber}
-                  </Link>
-                </dd>
-              </div>
-              <div className="flex items-center justify-between">
-                <dt className="text-navy/70">Applied</dt>
-                <dd className="money text-success">{fmt(payment.amount)}</dd>
-              </div>
-              {invoice && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <dt className="text-navy/70">Invoice total</dt>
-                    <dd className="money text-navy">{fmt(invoice.total)}</dd>
-                  </div>
-                  {invoice.balanceDue != null && (
+          {!group && (
+            <Card title="Applied invoice">
+              <dl className="space-y-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <dt className="text-navy/70">Invoice</dt>
+                  <dd>
+                    <Link
+                      href={`/invoices/${payment.invoice.id}`}
+                      className="mono text-brand-600 hover:underline"
+                    >
+                      {payment.invoice.invoiceNumber}
+                    </Link>
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between">
+                  <dt className="text-navy/70">Applied</dt>
+                  <dd className="money text-success">{fmt(payment.amount)}</dd>
+                </div>
+                {invoice && (
+                  <>
                     <div className="flex items-center justify-between">
-                      <dt className="text-navy/70">Remaining balance</dt>
-                      <dd className="money text-navy">{fmt(invoice.balanceDue)}</dd>
+                      <dt className="text-navy/70">Invoice total</dt>
+                      <dd className="money text-navy">{fmt(invoice.total)}</dd>
                     </div>
-                  )}
-                  <div className="flex items-center justify-between">
-                    <dt className="text-navy/70">Invoice status</dt>
-                    <dd>
-                      <Badge status={invoice.status} />
-                      {paidInAdvance(invoice) !== "none" && (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-surface-raised px-2 text-[11px] font-medium text-navy/70">
-                          {paidInAdvance(invoice) === "full"
-                            ? "Paid in advance"
-                            : "Part paid in advance"}
-                        </span>
-                      )}
-                    </dd>
-                  </div>
-                </>
-              )}
-            </dl>
-          </Card>
+                    {invoice.balanceDue != null && (
+                      <div className="flex items-center justify-between">
+                        <dt className="text-navy/70">Remaining balance</dt>
+                        <dd className="money text-navy">{fmt(invoice.balanceDue)}</dd>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <dt className="text-navy/70">Invoice status</dt>
+                      <dd>
+                        <Badge status={invoice.status} />
+                        {paidInAdvance(invoice) !== "none" && (
+                          <span className="ml-2 inline-flex items-center rounded-full bg-surface-raised px-2 text-[11px] font-medium text-navy/70">
+                            {paidInAdvance(invoice) === "full"
+                              ? "Paid in advance"
+                              : "Part paid in advance"}
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  </>
+                )}
+              </dl>
+            </Card>
+          )}
 
           {payment.imageKey && (
             <Card title="Receipt image">
@@ -300,8 +442,9 @@ export default function PaymentDetailPage() {
             <Card className="border border-danger-bg">
               <h3 className="mb-2 text-base font-semibold text-danger">Void</h3>
               <p className="text-[12.5px] leading-relaxed text-navy/70">
-                Voiding reverses the application, returns the invoice to its prior balance, and
-                keeps this receipt for the audit trail.
+                {group && group.applications.length > 1
+                  ? `Voids only the ${fmt(payment.amount)} on ${payment.invoice.invoiceNumber}; the rest of this receipt stays. It returns that invoice to its prior balance and keeps the row for the audit trail.`
+                  : "Voiding reverses the application, returns the invoice to its prior balance, and keeps this receipt for the audit trail."}
               </p>
               <Button
                 variant="danger"
@@ -311,7 +454,7 @@ export default function PaymentDetailPage() {
                 onClick={handleVoid}
                 loading={voidPayment.isPending}
               >
-                Void payment…
+                Void payment
               </Button>
             </Card>
           )}
