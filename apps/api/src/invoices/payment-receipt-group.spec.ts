@@ -59,13 +59,21 @@ async function reader(payments: Row[], advances: Row[] = []) {
       ),
     },
     advancePayment: {
-      findMany: jest.fn(async ({ where }: any) =>
-        advances.filter(
+      findMany: jest.fn(async ({ where, orderBy }: any) => {
+        const rows = advances.filter(
           (a) =>
             a.customerId === where.customerId &&
             where.sourcePaymentId.in.includes(a.sourcePaymentId),
-        ),
-      ),
+        );
+        // honours orderBy [{ createdAt: "asc" }, { id: "asc" }] only when the reader asks for it
+        return orderBy
+          ? [...rows].sort(
+              (x, y) =>
+                new Date(x.createdAt ?? 0).getTime() - new Date(y.createdAt ?? 0).getTime() ||
+                (x.id < y.id ? -1 : x.id > y.id ? 1 : 0),
+            )
+          : rows;
+      }),
     },
   };
   const moduleRef = await Test.createTestingModule({
@@ -388,5 +396,112 @@ describe("findPaymentById goes through the reader", () => {
   it("a missing payment is still a 404", async () => {
     const { prisma } = await reader([]);
     await expect(findPaymentById(prisma, "nope")).rejects.toThrow("Payment not found");
+  });
+});
+
+describe("readReceiptGroup: read B of #4406 (H1, L1 to L4)", () => {
+  const pickupOrder = { counterSale: false, orderNumber: "ORD-ACME-1" };
+  const gid = pickupTenderGroupId("order-1");
+  const pickupCheck = (amount: number, over: Row = {}) =>
+    pay({
+      paymentGroupId: gid,
+      orderId: "order-1",
+      order: pickupOrder,
+      method: "CHECK",
+      reference: "1042",
+      amount,
+      ...over,
+    });
+
+  it("H1. a pickup check deposited after the hand-over still reads $4,000 across both invoices, from either row", async () => {
+    const a = pickupCheck(3000, { checkStatus: "DEPOSITED" });
+    const b = pickupCheck(1000, { checkStatus: "DEPOSITED" });
+    const { prisma } = await reader([a, b]);
+    for (const anchor of [a, b]) {
+      const view = await readReceiptGroup(prisma, anchor.id);
+      expect(view.kind).toBe("PICKUP_TENDERS");
+      expect(view.header?.total).toBe(4000);
+      expect(view.applications).toHaveLength(2);
+    }
+  });
+
+  it("H1. a deposited check beside a still-recorded sibling reads $4,000 too", async () => {
+    const a = pickupCheck(3000, { checkStatus: "DEPOSITED" });
+    const b = pickupCheck(1000, { checkStatus: "RECORDED" });
+    const { prisma } = await reader([a, b]);
+    expect((await readReceiptGroup(prisma, a.id)).header?.total).toBe(4000);
+    expect((await readReceiptGroup(prisma, b.id)).header?.total).toBe(4000);
+  });
+
+  it("H1. a credit row that carries the pickup id is still never a tender", async () => {
+    const a = pickupCheck(3000, { checkStatus: "DEPOSITED" });
+    const credit = pickupCheck(40, { method: "ADVANCE" });
+    const { prisma } = await reader([a, credit]);
+    const view = await readReceiptGroup(prisma, a.id);
+    expect(view.header?.total).toBe(3000);
+    expect(view.applications.map((x) => x.paymentId)).toEqual([a.id]);
+  });
+
+  it('L1. an empty-string group is no group: two rows keyed "" are two one-row receipts, never merged', async () => {
+    const a = pay({ paymentGroupId: "", amount: 10 });
+    const b = pay({ paymentGroupId: "", amount: 20 });
+    const { prisma, db } = await reader([a, b]);
+    expect(receiptKeyOf({ id: a.id, method: "CASH", paymentGroupId: "" })).toEqual({
+      kind: "SINGLE",
+      key: a.id,
+    });
+    const view = await readReceiptGroup(prisma, a.id);
+    expect(view.kind).toBe("SINGLE");
+    expect(view.header?.total).toBe(10);
+    expect(db.invoicePayment.findMany).not.toHaveBeenCalled();
+  });
+
+  it("L2. the one-payment read is at most 3 queries (the anchor is read once and handed to the reader)", async () => {
+    const a = office("g-l2", { amount: 3000 });
+    const b = office("g-l2", { amount: 1000 });
+    const { prisma, db } = await reader(
+      [a, b],
+      [{ id: "adv-1", customerId: "cust-1", sourcePaymentId: a.id, amount: 5, balance: 5 }],
+    );
+    const out: any = await findPaymentById(prisma, a.id);
+    expect(out.receipt.header.total).toBe(4000);
+    const queries =
+      db.invoicePayment.findUnique.mock.calls.length +
+      db.invoicePayment.findMany.mock.calls.length +
+      db.advancePayment.findMany.mock.calls.length;
+    expect(queries).toBeLessThanOrEqual(3);
+  });
+
+  it("L3. the row clicked is always on its own view, even when the sibling read does not return it", async () => {
+    const a = office("g-l3", { amount: 3000 });
+    const b = office("g-l3", { amount: 1000 });
+    const { prisma, db } = await reader([a, b]);
+    (db.invoicePayment.findMany as jest.Mock).mockResolvedValueOnce([b]); // the anchor's own row is missing from the read
+    const view = await readReceiptGroup(prisma, a.id);
+    expect(view.applications.map((x) => x.paymentId).sort()).toEqual([a.id, b.id].sort());
+    expect(view.header?.total).toBe(4000);
+  });
+
+  it("L4. with two advances linked to the check, the link is the earliest one, whatever order the database returns", async () => {
+    const a = office("g-l4", { amount: 3000 });
+    const later = {
+      id: "adv-b",
+      customerId: "cust-1",
+      sourcePaymentId: a.id,
+      amount: 200,
+      balance: 200,
+      createdAt: new Date("2026-11-02T00:00:00Z"),
+    };
+    const first = {
+      ...later,
+      id: "adv-z",
+      amount: 100,
+      balance: 0,
+      createdAt: new Date("2026-11-01T00:00:00Z"),
+    };
+    const { prisma } = await reader([a], [later, first]); // listed newest first: an unordered read picks the wrong one
+    const view = await readReceiptGroup(prisma, a.id);
+    expect(view.unapplied.advancePaymentId).toBe("adv-z");
+    expect(view.unapplied.amount).toBe(300);
   });
 });

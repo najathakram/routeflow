@@ -44,7 +44,7 @@ const isSplitLegGroup = (_orderId: string | null | undefined, _groupId: string):
 export function receiptKeyOf(p: ReceiptKeyRow): { kind: ReceiptKind; key: string } {
   const group = p.paymentGroupId ?? null;
   if (isCreditUse(p.method)) return { kind: "CREDIT_USE", key: p.id };
-  if (group == null) return { kind: "SINGLE", key: p.id }; // never merged on a null group
+  if (group == null || group === "") return { kind: "SINGLE", key: p.id }; // never merged on a null or empty group (L1 of #4406)
   const orderId = p.invoice?.orderId ?? null;
   if (isSplitLegGroup(orderId, group)) return { kind: "SPLIT_LEG", key: p.id };
   if (orderId && group === pickupTenderGroupId(orderId))
@@ -58,7 +58,7 @@ const numberTail = (n: string | null | undefined): number | null => {
   return m ? Number(m[1]) : null;
 };
 
-const INVOICE_SELECT = {
+export const RECEIPT_INVOICE_SELECT = {
   select: {
     id: true,
     invoiceNumber: true,
@@ -68,7 +68,7 @@ const INVOICE_SELECT = {
   },
 } as const;
 
-type ReceiptRow = {
+export type ReceiptRow = {
   id: string;
   amount: unknown;
   method: string;
@@ -183,12 +183,16 @@ const NOT_RECORDED: ReceiptUnapplied = { amount: null, advancePaymentId: null };
 export async function readReceiptGroup(
   prisma: PrismaService,
   paymentId: string,
+  /** The payment row when the caller already read it with `RECEIPT_INVOICE_SELECT` (L2 of #4406: no second read). */
+  known?: ReceiptRow,
 ): Promise<ReceiptGroupView> {
   const db = prisma.forTenant();
-  const anchor = (await db.invoicePayment.findUnique({
-    where: { id: paymentId },
-    include: { invoice: INVOICE_SELECT },
-  })) as ReceiptRow | null;
+  const anchor =
+    known ??
+    ((await db.invoicePayment.findUnique({
+      where: { id: paymentId },
+      include: { invoice: RECEIPT_INVOICE_SELECT },
+    })) as ReceiptRow | null);
   if (!anchor) throw new NotFoundException("Payment not found");
 
   const { kind, key } = receiptKeyOf(anchor);
@@ -209,13 +213,20 @@ export async function readReceiptGroup(
   const customerId = anchor.invoice.customerId;
   const siblings = (await db.invoicePayment.findMany({
     where: { paymentGroupId: key, invoice: { customerId } },
-    include: { invoice: INVOICE_SELECT },
+    include: { invoice: RECEIPT_INVOICE_SELECT },
   })) as ReceiptRow[];
   const members = siblings.filter((r) => {
     if (r.invoice.customerId !== customerId || isCreditUse(r.method)) return false;
     if (kind !== "PICKUP_TENDERS") return true;
+    // H1 of #4406: the receipt asks WHO handed this over, not where a check is now. A check deposited after the
+    // hand-over is still the customer's tender, so the bank's `checkStatus` is not read here.
     return (
-      r.status === "VOID" || isCounterTenderRow(r.invoice.orderId ?? "", r, r.invoice.order ?? {})
+      r.status === "VOID" ||
+      isCounterTenderRow(
+        r.invoice.orderId ?? "",
+        { ...r, checkStatus: null },
+        r.invoice.order ?? {},
+      )
     );
   });
   if (!members.some((r) => r.id === anchor.id)) members.push(anchor); // the row clicked is always on its own view
@@ -225,6 +236,7 @@ export async function readReceiptGroup(
     const advances = await db.advancePayment.findMany({
       where: { customerId, sourcePaymentId: { in: members.map((r) => r.id) } },
       select: { id: true, amount: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }], // the link is the earliest advance, not whichever the database returns first (L4 of #4406)
     });
     if (advances.length > 0) {
       view.unapplied = {
