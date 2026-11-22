@@ -30,6 +30,7 @@ import {
 } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { statementOutstandingAmount, statementOverdueAmount } from "./customer-statement";
+import { advanceRemaining, creditNoteRemaining, sumAvailableCredit } from "./available-credit";
 
 /**
  * SA-1078 (W-1096) PR-1: the customer account statement read. One function over Prisma-by-parameter (like the
@@ -158,8 +159,8 @@ export async function buildAccountStatement(
   // The wallet rule of the older statements: open, non-expired notes with something left, plus advances with a balance.
   const credits: AccountStatementCredit[] = [];
   for (const c of creditNotes) {
-    const remaining = roundMoney(Number(c.amount) - Number(c.amountUsed));
-    if (remaining <= 0.001 || (c.expiresAt && c.expiresAt <= now)) continue;
+    const remaining = creditNoteRemaining(c, now);
+    if (remaining === 0) continue;
     credits.push({
       kind: "CREDIT_NOTE",
       id: c.id,
@@ -171,17 +172,20 @@ export async function buildAccountStatement(
     });
   }
   for (const a of advances) {
+    const remaining = advanceRemaining(a);
+    if (remaining === 0) continue;
     credits.push({
       kind: "ADVANCE",
       id: a.id,
       number: a.reference ?? null,
       date: tenantTodayDay(zone, a.receivedAt),
       reason: null,
-      remaining: roundMoney(Number(a.balance)),
+      remaining,
       expiresAt: null,
     });
   }
-  const creditAvailable = roundMoney(credits.reduce((sum, c) => sum + c.remaining, 0));
+  // SA-1208 D7: the total is the helper's, over the same rows the list shows, so the rows always add up to it.
+  const creditAvailable = sumAvailableCredit({ notes: creditNotes, advances, now }).total;
 
   const dated = payments
     .map((p) => ({ p, at: new Date(collectedDateOf(p) as Date) }))

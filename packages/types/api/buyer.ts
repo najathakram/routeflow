@@ -108,8 +108,9 @@ export interface BuyerStatementTransaction {
 export interface BuyerStatement {
   outstandingAmount: number;
   overdueAmount: number;
-  /** Wallet balance: Σ roundMoney(amount − amountUsed) over open, non-expired,
-   *  non-VOID credit notes. Never nets AdvancePayment in. */
+  /** Available credit (SA-1208 D7): the unused remainder of open, non-expired, non-VOID credit notes
+   *  PLUS advance payment balances, one figure on every statement surface. Shown on its own row,
+   *  never netted against the open balance. */
   availableCredit: number;
   advanceBalance: number;
   pendingOrdersAmount: number;
