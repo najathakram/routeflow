@@ -182,16 +182,53 @@ describe("readInvoiceAccountBalance: the statement's basis, added never subtract
     expect(r.openBalance).toBe(80);
   });
 
-  it("T19: a render at 23:30 in the tenant's zone carries that zone's date (red on the UTC day)", async () => {
-    // 23:30 in Chicago on Nov 20 is 05:30Z on Nov 21.
-    const late = new Date("2026-11-21T05:30:00.000Z");
+  it("T19: a read at 23:30 in the tenant's zone carries that zone's day and time (red on the UTC day, or a date only)", async () => {
+    // 23:30 in Chicago on Nov 21 is 05:30Z on Nov 22.
+    const late = new Date("2026-11-22T05:30:00.000Z");
     const { prisma } = fakePrisma([open("inv-b", 30)]);
     const r = shown(await readInvoiceAccountBalance(prisma, model(), ON, late));
-    expect(r.asOf).toBe("2026-11-20");
+    expect(r.asOf).toBe("2026-11-21");
+    expect(r.asOfAt).toBe("2026-11-22T05:30:00.000Z");
+    expect(r.zone).toBe("America/Chicago");
     const full = accountBlockRows(r, { hideBalanceDue: false });
     const one = accountBlockRows(r, { hideBalanceDue: true });
-    expect(full[0].label).toBe("Your account on Nov 20, 2026");
-    expect(one[0].label).toBe("Open balance on Nov 20, 2026");
+    expect(full[0].label).toBe("Customer account balance as of Nov 21, 2026, 11:30 PM CST");
+    expect(one[0].label).toBe("Open balance on Nov 21, 2026, 11:30 PM CST");
+  });
+
+  it("D3-1: a read at 22:46Z in Chicago prints 4:46 PM CST (red on the date only)", async () => {
+    const at = new Date("2026-11-21T22:46:00.000Z");
+    const { prisma } = fakePrisma([open("inv-b", 30)]);
+    const r = shown(await readInvoiceAccountBalance(prisma, model(), ON, at));
+    expect(accountBlockRows(r, { hideBalanceDue: false })[0].label).toBe(
+      "Customer account balance as of Nov 21, 2026, 4:46 PM CST",
+    );
+  });
+
+  it("D3-3: a summer read prints CDT (red on CST all year)", async () => {
+    const at = new Date("2026-07-01T15:00:00.000Z");
+    const { prisma } = fakePrisma([open("inv-b", 30)]);
+    const r = shown(await readInvoiceAccountBalance(prisma, model(), ON, at));
+    expect(accountBlockRows(r, { hideBalanceDue: false })[0].label).toBe(
+      "Customer account balance as of Jul 1, 2026, 10:00 AM CDT",
+    );
+  });
+
+  it("D3-4: Asia/Kolkata prints the Intl short name, never a blank zone", async () => {
+    const at = new Date("2026-11-21T22:46:00.000Z");
+    const { prisma } = fakePrisma([open("inv-b", 30)], "Asia/Kolkata");
+    const r = shown(await readInvoiceAccountBalance(prisma, model(), ON, at));
+    expect(accountBlockRows(r, { hideBalanceDue: false })[0].label).toBe(
+      "Customer account balance as of Nov 22, 2026, 4:16 AM GMT+5:30",
+    );
+  });
+
+  it("D3-9: the block's rows carry no credit row and the open balance is not netted (red on 80 -> 50)", async () => {
+    const { prisma } = fakePrisma([open("inv-b", 30)]);
+    const r = shown(await readInvoiceAccountBalance(prisma, model(), ON, NOW));
+    const rows = accountBlockRows(r, { hideBalanceDue: false });
+    expect(rows.find((x) => x.kind === "openBalance")?.amount).toBe(80);
+    expect(rows.map((x) => x.kind)).toEqual(["heading", "others", "thisInvoice", "openBalance"]);
   });
 
   it("T20: float dust: others 0.10 + 0.20, this 0.30 -> open balance 0.60 exactly", async () => {
@@ -267,12 +304,18 @@ describe("accountBlockRows: the one decision of what prints (C5)", () => {
     others: 30,
     thisInvoice: 50,
     openBalance: 80,
-    asOf: "2026-11-20",
+    asOf: "2026-11-21",
+    asOfAt: "2026-11-21T22:46:00.000Z",
+    zone: "America/Chicago",
   };
 
   it("the full block: heading, others, this invoice, open balance", () => {
     expect(accountBlockRows(result, { hideBalanceDue: false })).toEqual([
-      { kind: "heading", label: "Your account on Nov 20, 2026", amount: null },
+      {
+        kind: "heading",
+        label: "Customer account balance as of Nov 21, 2026, 4:46 PM CST",
+        amount: null,
+      },
       { kind: "others", label: "Other unpaid invoices", amount: 30 },
       { kind: "thisInvoice", label: "This invoice", amount: 50 },
       { kind: "openBalance", label: "Open balance", amount: 80 },
@@ -282,7 +325,7 @@ describe("accountBlockRows: the one decision of what prints (C5)", () => {
   it("T11: Balance Due hidden -> exactly one row, never this invoice's or the others' figure (red on a re-printed row)", () => {
     const rows = accountBlockRows(result, { hideBalanceDue: true });
     expect(rows).toEqual([
-      { kind: "openBalanceOn", label: "Open balance on Nov 20, 2026", amount: 80 },
+      { kind: "openBalanceOn", label: "Open balance on Nov 21, 2026, 4:46 PM CST", amount: 80 },
     ]);
     expect(rows.some((r) => r.kind === "thisInvoice" || r.kind === "others")).toBe(false);
   });

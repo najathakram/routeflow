@@ -2726,12 +2726,18 @@ describe("EmailService.sendInvoice - the account block (SA-1197)", () => {
     items: [{ description: "Sample Cola 12pk", qty: 1, unitPrice: 50, subtotal: 50 }],
   };
   const FULL = [
-    { kind: "heading", label: "Your account on Nov 20, 2026", amount: null },
+    {
+      kind: "heading",
+      label: "Customer account balance as of Nov 21, 2026, 4:46 PM CST",
+      amount: null,
+    },
     { kind: "others", label: "Other unpaid invoices", amount: 30 },
     { kind: "thisInvoice", label: "This invoice", amount: 50 },
     { kind: "openBalance", label: "Open balance", amount: 80 },
   ];
-  const ONE = [{ kind: "openBalanceOn", label: "Open balance on Nov 20, 2026", amount: 80 }];
+  const ONE = [
+    { kind: "openBalanceOn", label: "Open balance on Nov 21, 2026, 4:46 PM CST", amount: 80 },
+  ];
   const send = async (over: Record<string, unknown>) => {
     const svc = makeService();
     const sendSpy = jest
@@ -2759,13 +2765,16 @@ describe("EmailService.sendInvoice - the account block (SA-1197)", () => {
     expect(html).toContain(">$30.00</td>");
     expect(html).toContain(">$80.00</td>");
     expect(text).toContain(
-      "Balance Due: $50.00\nYour account on Nov 20, 2026\nOther unpaid invoices: $30.00\nThis invoice: $50.00\nOpen balance: $80.00",
+      "Balance Due: $50.00\nCustomer account balance as of Nov 21, 2026, 4:46 PM CST\nOther unpaid invoices: $30.00\nThis invoice: $50.00\nOpen balance: $80.00",
     );
   });
 
   it("T22 tone: the block is neutral, never the danger red or the success green", async () => {
     const { html } = await send({ accountRows: FULL });
-    const start = html.lastIndexOf("<tr>", html.indexOf(">Your account on Nov 20, 2026</td>"));
+    const start = html.lastIndexOf(
+      "<tr>",
+      html.indexOf(">Customer account balance as of Nov 21, 2026, 4:46 PM CST</td>"),
+    );
     const end = html.indexOf("</tr>", html.indexOf(">Open balance</td>")) + 5;
     const blockRows = html.slice(start, end);
     expect(blockRows).toContain("Other unpaid invoices");
@@ -2775,9 +2784,9 @@ describe("EmailService.sendInvoice - the account block (SA-1197)", () => {
   it("T11: Balance Due hidden -> the one 'Open balance on' line, and no Balance Due", async () => {
     const { html, text } = await send({ hideBalanceDue: true, accountRows: ONE });
     expect(html).not.toContain("Balance Due");
-    expect(html).toContain(">Open balance on Nov 20, 2026</td>");
+    expect(html).toContain(">Open balance on Nov 21, 2026, 4:46 PM CST</td>");
     expect(html).not.toContain("This invoice");
-    expect(text).toContain("Open balance on Nov 20, 2026: $80.00");
+    expect(text).toContain("Open balance on Nov 21, 2026, 4:46 PM CST: $80.00");
     expect(text).not.toContain("This invoice");
   });
 

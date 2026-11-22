@@ -5,16 +5,16 @@
  * The server builds every row (`accountBlockRows` in apps/api/src/customers/invoice-account-balance.ts): a screen or a
  * document prints `label` and `amount` as given and never adds, compares or picks a form (L-119). Every word the
  * customer reads lives in INVOICE_ACCOUNT_LABELS below; the api keeps a set-equal mirror (it may not load a runtime value
- * from this package, no-runtime-types-import.spec.ts), pinned by invoice-account-balance.labels.spec.ts. `{date}` is the
- * render day in the tenant's zone. No label carries "Total", "Amount due" or a second "Balance due" (owner 10-24).
+ * from this package, no-runtime-types-import.spec.ts), pinned by invoice-account-balance.labels.spec.ts.
+ * `{asOf}` is the instant the balance was read, as date, time and zone in the tenant's zone. No label carries "Total", "Amount due" or a second "Balance due" (owner 10-24).
  */
 export const INVOICE_ACCOUNT_LABELS = {
-  heading: "Your account on {date}",
+  heading: "Customer account balance as of {asOf}",
   others: "Other unpaid invoices",
   thisInvoice: "This invoice",
   openBalance: "Open balance",
   /** The single line when the tenant hides Balance Due (SA-1197 Q6 (c)). */
-  openBalanceOn: "Open balance on {date}",
+  openBalanceOn: "Open balance on {asOf}",
 } as const;
 
 export type InvoiceAccountRowKind = keyof typeof INVOICE_ACCOUNT_LABELS;

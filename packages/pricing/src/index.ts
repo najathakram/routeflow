@@ -44,6 +44,7 @@ export * from "./sale-totals";
 export * from "./charge-lines";
 export * from "./receipt-figures";
 export * from "./unit-words";
+export * from "./as-of-text";
 export * from "./counter-park";
 export * from "./order-date";
 export * from "./recompute-category-tax";

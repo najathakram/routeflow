@@ -22,6 +22,7 @@ import { invoiceDisplayCategoryTax, invoiceDisplayLines, roundMoney } from "@rou
 import { splitConfirmed } from "./payment-predicates";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { bcidFor } from "../common/barcode-bcid";
+import { FALLBACK_ZONE, tenantTimeZone } from "../common/tenant-time-zone";
 import { toLineComponentViews } from "../orders/component-view";
 import { readFamilyPriceMode } from "../products/family-price";
 import { pdfItemDisplay, pdfSubLine } from "./invoice-pdf-item";
@@ -122,6 +123,7 @@ export class InvoicePdfService {
       logoDataUri?: string;
     };
     let tenantInfo: TenantInfo | null = null;
+    let tenantZone = FALLBACK_ZONE; // SA-1209 D3: the "Generated" stamp prints in the tenant's zone, UTC when none
     if (invTenantId) {
       const cfg = await this.prisma.tenantConfig.findUnique({
         where: { tenantId: invTenantId },
@@ -140,6 +142,7 @@ export class InvoicePdfService {
           logoKey: true,
         },
       });
+      tenantZone = (await tenantTimeZone(this.prisma, { tenantId: invTenantId })) ?? FALLBACK_ZONE;
       if (cfg) {
         tenantInfo = { ...cfg };
         if (cfg.logoKey) {
@@ -263,6 +266,7 @@ export class InvoicePdfService {
       tenant: tenantInfo,
       variant,
       generatedAt: new Date(),
+      tenantZone,
       depositAmount,
       totalPaid,
       creditApplied,

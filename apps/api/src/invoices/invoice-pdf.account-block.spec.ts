@@ -59,6 +59,7 @@ async function render(opts: {
   others?: { total: number }[];
   handed?: InvoiceAccountBalance;
   customer?: Record<string, unknown>;
+  zone?: string;
 }) {
   mockCapturedInvoice = null;
   const prisma = createMockPrisma();
@@ -76,7 +77,9 @@ async function render(opts: {
       id: `other-${i}`,
     })) as any,
   );
-  prisma.tenantConfig.findUnique.mockResolvedValue(null as any);
+  prisma.tenantConfig.findUnique.mockResolvedValue(
+    (opts.zone ? { timezone: opts.zone } : null) as any,
+  );
   const systemConfig = {
     get: jest.fn(async () => null),
     getAll: jest.fn(async () => opts.config ?? {}),
@@ -138,11 +141,34 @@ describe("InvoicePdfService: the account block (SA-1197)", () => {
       others: 12,
       thisInvoice: 50,
       openBalance: 62,
-      asOf: "2026-11-20",
+      asOf: "2026-11-21",
+      asOfAt: "2026-11-21T22:46:00.000Z",
+      zone: "America/Chicago",
     };
     const { props, findMany } = await render({ config: ON, others: [{ total: 30 }], handed });
     expect(findMany).not.toHaveBeenCalled();
     expect(props.accountRows.find((r: any) => r.kind === "openBalance").amount).toBe(62);
+  });
+
+  it("D3-7: a handed read keeps its own time when the PDF is built a day later (a cached PDF's time)", async () => {
+    const handed: InvoiceAccountBalance = {
+      show: true,
+      others: 30,
+      thisInvoice: 50,
+      openBalance: 80,
+      asOf: "2026-11-21",
+      asOfAt: "2026-11-21T22:46:00.000Z",
+      zone: "America/Chicago",
+    };
+    const { props } = await render({ config: ON, handed });
+    expect(props.accountRows[0].label).toBe(
+      "Customer account balance as of Nov 21, 2026, 4:46 PM CST",
+    );
+  });
+
+  it("D3-8: the template gets the tenant's zone for the Generated stamp; no zone falls back to UTC", async () => {
+    expect((await render({ zone: "America/Chicago" })).props.tenantZone).toBe("America/Chicago");
+    expect((await render({})).props.tenantZone).toBe("UTC");
   });
 
   it("T3b: a handed { show: false } is honoured, never re-read", async () => {

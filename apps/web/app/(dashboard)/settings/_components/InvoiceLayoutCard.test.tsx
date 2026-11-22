@@ -200,8 +200,17 @@ describe("InvoiceLayoutCard: Show open balance on invoices (SA-1197)", () => {
     renderWithProviders(
       <Harness stored={{ ...ON, hideBalanceDue: true, showAccountBalance: true } as typeof ON} />,
     );
-    expect(within(preview()).getByText(/^Open balance on /)).toBeInTheDocument();
+    expect(
+      within(preview()).getByText("Open balance on Nov 21, 2026, 4:46 PM CST"),
+    ).toBeInTheDocument();
     expect(within(preview()).queryByText("Other unpaid invoices")).toBeNull();
     expect(within(preview()).queryByText("This invoice")).toBeNull();
+  });
+
+  it("D3-12 preview: the heading carries a sample time and zone (America/Chicago until /settings names one)", () => {
+    renderWithProviders(<Harness stored={{ ...ON, showAccountBalance: true } as typeof ON} />);
+    expect(
+      within(preview()).getByText("Customer account balance as of Nov 21, 2026, 4:46 PM CST"),
+    ).toBeInTheDocument();
   });
 });

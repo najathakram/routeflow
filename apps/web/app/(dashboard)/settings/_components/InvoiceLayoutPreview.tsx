@@ -1,5 +1,7 @@
 import * as React from "react";
+import { asOfText } from "@routeflow/pricing";
 import { INVOICE_ACCOUNT_LABELS } from "@routeflow/types";
+import { useTenantTimeZone } from "@/lib/tenant-timezone";
 
 // A fixed sample of the invoice PDF, so a flip of the layout switches shows at once. The totals mirror the PDF's order and
 // words (guarded by apps/api/src/invoices/invoice-pdf-template.labels.spec.ts).
@@ -25,10 +27,13 @@ const TOTALS = [
 // SA-1197: a fixed sample of the account block (the real one is the server's figures, never added on a screen).
 const SAMPLE_OTHERS = "$30.00";
 const SAMPLE_OPEN = "$55.00";
-const sampleDay = () =>
-  new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+// SA-1209 D3: a fixed sample instant, printed by the same formatter as the real block, in the business's zone
+// (America/Chicago until /settings has answered or when no zone is set).
+const SAMPLE_INSTANT = "2026-11-21T22:46:00.000Z";
+const SAMPLE_ZONE = "America/Chicago";
 
 export function InvoiceLayoutPreview({ layout }: { layout: InvoiceLayoutFlags }) {
+  const sampleAsOf = asOfText(SAMPLE_INSTANT, useTenantTimeZone() ?? SAMPLE_ZONE);
   const showOriginal = !layout.hideOriginalPrice;
   const showBarcode = !layout.hideBarcodes;
   const showPerPiece = !layout.hidePerPiece;
@@ -94,14 +99,14 @@ export function InvoiceLayoutPreview({ layout }: { layout: InvoiceLayoutFlags })
           <div data-testid="preview-account" className="space-y-0.5 text-xs text-navy/70">
             {layout.hideBalanceDue ? null : (
               <p className="font-semibold">
-                {INVOICE_ACCOUNT_LABELS.heading.replace("{date}", sampleDay())}
+                {INVOICE_ACCOUNT_LABELS.heading.replace("{asOf}", sampleAsOf)}
               </p>
             )}
             <dl className="space-y-0.5">
               {(layout.hideBalanceDue
                 ? [
                     [
-                      INVOICE_ACCOUNT_LABELS.openBalanceOn.replace("{date}", sampleDay()),
+                      INVOICE_ACCOUNT_LABELS.openBalanceOn.replace("{asOf}", sampleAsOf),
                       SAMPLE_OPEN,
                     ],
                   ]

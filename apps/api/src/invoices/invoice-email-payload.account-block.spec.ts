@@ -1,5 +1,5 @@
 import { buildInvoiceEmailPayload, buildReminderEmailPayload } from "./invoice-email-payload";
-import type { InvoiceAccountBalance } from "../customers/invoice-account-balance";
+import { accountBlockRows, type InvoiceAccountBalance } from "../customers/invoice-account-balance";
 
 /**
  * SA-1197 (C4, C5, C13): the invoice email payload carries the rows of the ONE account result the send read (the same
@@ -27,7 +27,9 @@ const SHOWN: InvoiceAccountBalance = {
   others: 30,
   thisInvoice: 50,
   openBalance: 80,
-  asOf: "2026-11-20",
+  asOf: "2026-11-21",
+  asOfAt: "2026-11-21T22:46:00.000Z",
+  zone: "America/Chicago",
 };
 
 describe("buildInvoiceEmailPayload: the account rows (SA-1197)", () => {
@@ -51,8 +53,16 @@ describe("buildInvoiceEmailPayload: the account rows (SA-1197)", () => {
   it("T11: hideBalanceDue -> the single 'Open balance on' row", () => {
     const p = buildInvoiceEmailPayload(INV, { ...CTX, hideBalanceDue: true, account: SHOWN });
     expect(p.accountRows).toEqual([
-      { kind: "openBalanceOn", label: "Open balance on Nov 20, 2026", amount: 80 },
+      { kind: "openBalanceOn", label: "Open balance on Nov 21, 2026, 4:46 PM CST", amount: 80 },
     ]);
+  });
+
+  it("D3-6: one send, one read: the email prints the heading time the PDF prints from the same object", () => {
+    const p = buildInvoiceEmailPayload(INV, { ...CTX, account: SHOWN });
+    expect(p.accountRows?.[0].label).toBe(
+      "Customer account balance as of Nov 21, 2026, 4:46 PM CST",
+    );
+    expect(p.accountRows).toEqual(accountBlockRows(SHOWN, { hideBalanceDue: false }));
   });
 
   it("T21 guard: the reminder payload carries no account rows", () => {
