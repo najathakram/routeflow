@@ -1,6 +1,6 @@
 # Refresh 2026-11-22: purchase orders, vendor bills, counter sale, order drafts, payment receipts, billing catch-up
 
-> Path:line pointers are checked against `origin/master` a07da9102d (2026-11-22). Lines are the
+> Path:line pointers are checked against `origin/master` a07da9102d (2026-11-22); the Billing catch-up section was re-checked at `origin/master` a8d7219d93. Lines are the
 > declaration line of each symbol (for a route, its HTTP decorator line). Trust the code over this part;
 > re-grep the symbol before you edit.
 > Older prose for these areas stays in `api/feature-modules-4/vendor-bills.md`, `api/feature-modules-4/inventory.md`,
@@ -44,7 +44,7 @@
 
 - **`apps/api/src/vendor-bills/vendor-bills.controller.ts`** (219 L) — `@Controller("vendor-bills")` L39.
   - `POST /` L46; `GET /` L50; `POST scan-invoice` `scanInvoice` L74; `POST check-duplicate` L122; `GET scans` L127; `GET scans/:id` L135.
-  - `POST product-mappings` `saveProductMapping` L141; `GET product-mappings` L150; `POST payments/record` L157; `GET suppliers/:supplierId/statement` L162.
+  - `POST product-mappings` (`saveProductMapping`) L140; `GET product-mappings` (`getProductMappings`) L149; `POST payments/record` L157; `GET suppliers/:supplierId/statement` L162.
   - per id: `GET :id` L168; `PATCH :id` L172; `POST :id/receive` L176; `POST :id/revert-to-draft` L184; `POST :id/void` L191; `POST :id/payments` L195; `POST :id/payments/:paymentId/move-to-credit` L203; `DELETE :id` L211; bulk `DELETE /` L215.
   - callers: web `lib/api/vendor-bills.ts` hooks (`useVendorBills` L166, `useCreateVendorBill` L242, `useReceiveVendorBill` L407, `useRevertVendorBillToDraft` L437, `useVoidVendorBill` L451, `useRecordVendorBillPayment` L476, `useDeleteVendorBill` L510, `useBulkDeleteVendorBills` L518). Scan upload: `lib/api/invoice-scan.ts` L57.
 - **`apps/api/src/vendor-bills/vendor-bills.service.ts`** (3,662 L) — `VendorBillsService` L216. Methods:
@@ -134,12 +134,12 @@ Money-in writers under `apps/api/src/invoices/payment-*.ts`.
 
 October catch-up checkout for manual tenants, `apps/api/src/billing/catchup-*.ts`. The claim freezes RouteFlow-side invoicing while a Stripe catch-up session is open (SA-733r3 N2), so a customer cannot be charged twice.
 
-- **`catchup-claim.ts`** (155 L) — `CATCHUP_STATES` L17, `CatchupState` L18, `CATCHUP_ORPHAN_AFTER_MS` L24, `claimRefusal` L74, `activationClaimRefusal` L98, `isCatchupSubscription` L145, `isCatchupSession` L152.
-- **`catchup-claim.service.ts`** (1,283 L) — `CatchupClaimService` L108; `ReleaseOutcome` L74. callers: `platform-admin/rf-invoices.service.ts`.
-- **`catchup-checkout.service.ts`** (510 L) — `CatchupCheckoutService` L161; `CatchupReport` L55, `CatchupCensus` L90, `catchupReportJson` L99. callers: `platform-admin/catchup-admin.controller.ts`.
-- **`catchup-plan.ts`** (586 L) — `planCatchup` L485, `catchupShape` L398, `trialEndFor` L392, `chargeNowCents` L410, `CatchupPlan` L415, `paidCoverage` L65, `paidThroughOf` L99, `activationClusters` L237, `stubLines` L304. `CATCHUP_GO_LIVE` L27.
-- **`catchup-markers.ts`** (173 L) — `readCatchupMarkers` L135, `validateBillingStart` L85, `voidedMarkerIds` L115; `CATCHUP_MARKERS_VERSION` L25.
-- **`catchup-refusal.ts`** (66 L) — `CATCHUP_REFUSAL` L12, `refusalCodeOf` L46, `planRefusalException` L58.
-- **`catchup-session-params.ts`** (236 L) — `assertCheckoutAcceptable` L45, `catchupTermsSignature` L198, `assertSignedSession` L213, `buildCatchupSessionParams` L220.
-- **`catchup-session-terms.ts`** (119 L) — `SIGNING_SINCE` L10, `expectedSessionTerms` L54, `checkSessionTerms` L86.
+- **`catchup-claim.ts`** (154 L) — `CATCHUP_STATES` L17, `CatchupState` L18, `CATCHUP_ORPHAN_AFTER_MS` L24, `claimRefusal` L74, `activationClaimRefusal` L98, `isCatchupSubscription` L145, `isCatchupSession` L152.
+- **`catchup-claim.service.ts`** (1,282 L) — `CatchupClaimService` L108; `ReleaseOutcome` L74. callers: `platform-admin/rf-invoices.service.ts`.
+- **`catchup-checkout.service.ts`** (516 L) — `CatchupCheckoutService` L164; `CatchupReport` L55, `CatchupCensus` L92, `catchupReportJson` L101. callers: `platform-admin/catchup-admin.controller.ts`.
+- **`catchup-plan.ts`** (585 L) — `planCatchup` L485, `catchupShape` L398, `trialEndFor` L392, `chargeNowCents` L410, `CatchupPlan` L415, `paidCoverage` L65, `paidThroughOf` L99, `activationClusters` L237, `stubLines` L304. `CATCHUP_GO_LIVE` L27.
+- **`catchup-markers.ts`** (172 L) — `readCatchupMarkers` L135, `validateBillingStart` L85, `voidedMarkerIds` L115; `CATCHUP_MARKERS_VERSION` L25.
+- **`catchup-refusal.ts`** (65 L) — `CATCHUP_REFUSAL` L12, `refusalCodeOf` L46, `planRefusalException` L58.
+- **`catchup-session-params.ts`** (252 L) — `assertCheckoutAcceptable` L45, `catchupTermsSignature` L215, `assertSignedSession` L230, `buildCatchupSessionParams` L237.
+- **`catchup-session-terms.ts`** (118 L) — `SIGNING_SINCE` L10, `expectedSessionTerms` L54, `checkSessionTerms` L86.
 - importers of the catch-up family: `billing/billing.service.ts`, `billing/stripe.service.ts`, `billing/payment-due.service.ts`, `billing/dunning-core.ts`, `billing/checkout-anchor.ts`, `platform-admin/platform-admin.service.ts`.
