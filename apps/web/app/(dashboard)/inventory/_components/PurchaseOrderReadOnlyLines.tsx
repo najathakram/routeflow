@@ -3,15 +3,17 @@
 import * as React from "react";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
-import { resolveStoredPOLineAmounts, type POItem, linePack } from "./purchase-orders-shared";
+import {
+  resolveStoredPOLineAmounts,
+  type POItem,
+  linePack,
+  onHandLabel,
+  poLineName,
+} from "./purchase-orders-shared";
 import { unitWords } from "@routeflow/pricing";
 
 // U-3a: a PO line carries no per-product label yet, so this prints the default words.
 const UW = unitWords();
-
-/** The stock reader's figure (pieces) or null when the product carries none, never a made-up 0. */
-export const onHandOf = (v: number | string | null | undefined): number | null =>
-  v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v);
 
 /** The read-only lines table of a purchase order (supplier units, stored-exact subtotals). Shared by
  *  the list's expanded row and the PO detail page so the two can never disagree. */
@@ -49,15 +51,20 @@ export function PurchaseOrderReadOnlyLines({
             const isBoxed = upb > 1;
             const ordered = Number(item.qtyOrdered ?? 0);
             const received = Number(item.qtyReceived ?? 0);
-            const onHand = onHandOf(catalogById.get(item.productId)?.currentStock);
+            // On hand is today's stock, split by the product's CURRENT pack (catalog, else the include), not the line's stored pack.
+            const cat = catalogById.get(item.productId);
+            const livePack = Number(cat?.unitsPerBox ?? item.product?.unitsPerBox ?? 0);
+            const onHandText = onHandLabel(
+              cat?.currentStock ?? item.product?.currentStock,
+              livePack,
+            );
             // MONEY: the stored exact total through the shared resolver — never `qtyOrdered x unitCost`,
             // which re-multiplies a boxed line's rounded per-piece cost (#1199: $11,000.40 for $11,000.00).
             const subtotal = resolveStoredPOLineAmounts(item, upb).totalCost;
             return (
               <tr key={item.id}>
                 <td className="px-3 py-2 font-medium text-navy">
-                  {/* The catalog name is the composed "<Family> - <Variant>" one; the include only has the variant part. */}
-                  {catalogById.get(item.productId)?.name ?? item.product?.name ?? "—"}
+                  {poLineName(item, catalogById.get(item.productId)?.name)}
                 </td>
                 <td className="px-3 py-2 text-right text-navy/70">
                   {isBoxed ? unitsLabel(ordered, upb) : ordered}
@@ -78,7 +85,7 @@ export function PurchaseOrderReadOnlyLines({
                   )}
                 </td>
                 <td data-testid="po-line-on-hand" className="px-3 py-2 text-right text-navy/70">
-                  {onHand == null ? "—" : isBoxed ? unitsLabel(onHand, upb) : onHand}
+                  {onHandText}
                 </td>
                 <td className="px-3 py-2 text-right text-navy/70">{formatMoney(subtotal)}</td>
               </tr>

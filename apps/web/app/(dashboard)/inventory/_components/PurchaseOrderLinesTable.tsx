@@ -4,8 +4,12 @@ import * as React from "react";
 import { Plus, X } from "lucide-react";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
-import { linePack, resolvePOLine, resolvePOLineAmounts } from "./purchase-orders-shared";
-import { onHandOf } from "./PurchaseOrderReadOnlyLines";
+import {
+  linePack,
+  onHandLabel,
+  resolvePOLine,
+  resolvePOLineAmounts,
+} from "./purchase-orders-shared";
 import { emptyEditLine, type EditLine } from "./purchase-orders-edit";
 import { unitWords } from "@routeflow/pricing";
 
@@ -116,7 +120,10 @@ export function PurchaseOrderLinesTable({
             const isBoxed = upb > 1;
             const locked = received && !!line.id && line.received > 0;
             const { qty } = resolvePOLine(line, upb);
-            const onHand = onHandOf(productById.get(line.productId)?.currentStock);
+            const onHandText = onHandLabel(
+              productById.get(line.productId)?.currentStock,
+              unitsPerBoxFor(line.productId),
+            );
             const subtotal = resolvePOLineAmounts(line, upb).totalCost;
             return (
               <div
@@ -145,7 +152,7 @@ export function PurchaseOrderLinesTable({
                   </select>
                   {line.productId && (
                     <p data-testid="po-line-on-hand" className="mt-0.5 text-[10px] text-navy/50">
-                      On hand: {onHand == null ? "—" : isBoxed ? unitsLabel(onHand, upb) : onHand}
+                      On hand: {onHandText}
                     </p>
                   )}
                   {locked && (

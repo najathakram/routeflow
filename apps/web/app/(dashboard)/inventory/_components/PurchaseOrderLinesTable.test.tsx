@@ -5,7 +5,7 @@ import * as React from "react";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { PurchaseOrderLinesTable, type CatalogProduct } from "./PurchaseOrderLinesTable";
 import { emptyEditLine, type EditLine } from "./purchase-orders-edit";
-import { unitWords, unitsLabel } from "@routeflow/pricing";
+import { unitWords } from "@routeflow/pricing";
 
 // U-3a: the cost input is labelled by the default unit words (no per-product label on a PO line yet).
 const UW = unitWords();
@@ -175,7 +175,7 @@ describe("PurchaseOrderLinesTable", () => {
       />,
     );
     // 50 pieces on a 24-pack = 2 boxes + 2 pcs
-    expect(screen.getByTestId("po-line-on-hand").textContent).toContain(unitsLabel(50, 24));
+    expect(screen.getByTestId("po-line-on-hand").textContent).toContain("50 pcs (2 boxes + 2 pcs)");
     // 1,000 cases at $11.00 is $11,000.00 (qty x the rounded per-piece cost gives $11,000.40)
     expect(screen.getAllByText("$11,000.00").length).toBeGreaterThan(0);
   });

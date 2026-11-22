@@ -1536,7 +1536,20 @@ export class InventoryService {
       include: {
         supplier: { select: { id: true, name: true } },
         items: {
-          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                unitsPerBox: true,
+                currentStock: true,
+                parentProductId: true,
+                variantName: true,
+                parent: { select: { name: true } },
+              },
+            },
+          },
         },
       },
     });
