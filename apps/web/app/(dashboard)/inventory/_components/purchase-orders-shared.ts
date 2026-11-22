@@ -256,5 +256,10 @@ export function onHandLabel(raw: number | string | null | undefined, livePack: n
 /** A stored line's display name, composed from its OWN include ("<Family> - <Variant>"), so an archived or
  *  deleted product keeps its family name and nothing flips while the catalog loads. */
 export function poLineName(item: Pick<POItem, "product">, catalogName?: string): string {
-  return item.product ? displayProductName(item.product) : (catalogName ?? "—");
+  const p = item.product;
+  if (!p) return catalogName ?? "—";
+  // An include that carries no family fields at all (an older read shape) cannot compose the name;
+  // the catalog's composed name is then the only source. A real read always has them (null for a standalone).
+  if (p.parentProductId === undefined && catalogName) return catalogName;
+  return displayProductName(p);
 }

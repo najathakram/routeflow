@@ -5,6 +5,7 @@ import * as React from "react";
 import { render, screen, within } from "@testing-library/react";
 import { PurchaseOrderReadOnlyLines } from "./PurchaseOrderReadOnlyLines";
 import type { POItem } from "./purchase-orders-shared";
+import { realDetailItem, oldShapeDetailItem } from "../../purchase-orders/po-detail.fixture";
 
 // P1b: each read-only PO line shows the stock on hand (the stock reader's figure, in pieces) and its
 // amount (the stored exact total, never qty x unitCost).
@@ -17,7 +18,7 @@ const boxedItem: POItem = {
     unit: "case",
     parentProductId: "fam",
     variantName: "Strawberry",
-    parent: { name: "Geek" },
+    parent: { name: "Acme Vape" },
   },
   qtyOrdered: 12000,
   qtyReceived: 0,
@@ -29,7 +30,7 @@ const boxedItem: POItem = {
 describe("PurchaseOrderReadOnlyLines stock + amount (P1b)", () => {
   it("shows on hand beside the line, in boxes + pieces for a boxed product", () => {
     const catalog = new Map([
-      ["p-box", { id: "p-box", name: "Geek - Strawberry", unitsPerBox: 12, currentStock: 30 }],
+      ["p-box", { id: "p-box", name: "Acme Vape - Strawberry", unitsPerBox: 12, currentStock: 30 }],
     ]);
     render(<PurchaseOrderReadOnlyLines items={[boxedItem]} catalogById={catalog} />);
     const row = screen.getAllByRole("row")[1];
@@ -46,12 +47,12 @@ describe("PurchaseOrderReadOnlyLines stock + amount (P1b)", () => {
 
   it("names a variant line from its own include, with the catalog empty (archived product)", () => {
     render(<PurchaseOrderReadOnlyLines items={[boxedItem]} catalogById={new Map()} />);
-    expect(screen.getByText("Geek - Strawberry")).toBeTruthy();
+    expect(screen.getByText("Acme Vape - Strawberry")).toBeTruthy();
   });
 
   it("splits on hand by the CURRENT catalog pack, not the line's stored pack (repack 12 -> 6)", () => {
     const catalog = new Map([
-      ["p-box", { id: "p-box", name: "Geek - Strawberry", unitsPerBox: 6, currentStock: 30 }],
+      ["p-box", { id: "p-box", name: "Acme Vape - Strawberry", unitsPerBox: 6, currentStock: 30 }],
     ]);
     render(<PurchaseOrderReadOnlyLines items={[boxedItem]} catalogById={catalog} />);
     expect(screen.getByTestId("po-line-on-hand").textContent).toBe("30 pcs (5 boxes)");
@@ -62,5 +63,19 @@ describe("PurchaseOrderReadOnlyLines stock + amount (P1b)", () => {
     render(<PurchaseOrderReadOnlyLines items={[boxedItem]} catalogById={catalog} />);
     const row = screen.getAllByRole("row")[1];
     expect(within(row).getByTestId("po-line-on-hand").textContent).toBe("—");
+  });
+
+  it("an older read shape (no family fields) falls back to the catalog's composed name", () => {
+    const catalog = new Map([
+      ["p1", { id: "p1", name: "Acme Vape - Strawberry", unitsPerBox: 12, currentStock: 30 }],
+    ]);
+    render(<PurchaseOrderReadOnlyLines items={[oldShapeDetailItem]} catalogById={catalog} />);
+    expect(screen.getByText("Acme Vape - Strawberry")).toBeTruthy();
+  });
+
+  it("the real read shape names the line with no catalog at all", () => {
+    render(<PurchaseOrderReadOnlyLines items={[realDetailItem]} catalogById={new Map()} />);
+    expect(screen.getByText("Acme Vape - Strawberry")).toBeTruthy();
+    expect(screen.getByTestId("po-line-on-hand").textContent).toBe("30 pcs (2 boxes + 6 pcs)");
   });
 });

@@ -29,9 +29,9 @@ describe("poLineName (P1b)", () => {
       unit: "case",
       parentProductId: "f",
       variantName: "Strawberry",
-      parent: { name: "Geek" },
+      parent: { name: "Acme Vape" },
     };
-    expect(poLineName({ product })).toBe("Geek - Strawberry");
+    expect(poLineName({ product })).toBe("Acme Vape - Strawberry");
   });
   it("is a dash when neither the include nor the catalog has a name", () => {
     expect(poLineName({ product: null })).toBe("—");

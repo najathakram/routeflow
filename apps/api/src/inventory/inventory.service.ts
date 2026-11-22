@@ -20,6 +20,7 @@ import {
   assertParentUsable,
   parentInvalid,
   PRODUCT_PARENT_REASONS,
+  tenantSafeParentView,
 } from "../products/product-parent";
 import type { ProductCountResult, PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
@@ -1536,20 +1537,7 @@ export class InventoryService {
       include: {
         supplier: { select: { id: true, name: true } },
         items: {
-          include: {
-            product: {
-              select: {
-                id: true,
-                name: true,
-                unit: true,
-                unitsPerBox: true,
-                currentStock: true,
-                parentProductId: true,
-                variantName: true,
-                parent: { select: { name: true } },
-              },
-            },
-          },
+          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
         },
       },
     });
@@ -1580,7 +1568,21 @@ export class InventoryService {
       include: {
         supplier: true,
         items: {
-          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                unitsPerBox: true,
+                currentStock: true,
+                parentProductId: true,
+                variantName: true,
+                // tenantId is selected only for tenantSafeParentView's comparison, then removed.
+                parent: { select: { tenantId: true, name: true } },
+              },
+            },
+          },
         },
         vendorBill: { select: { id: true, billNumber: true, status: true } },
       },
@@ -1666,7 +1668,17 @@ export class InventoryService {
         });
       }
     }
-    return { ...po, receipts };
+    // A parent row from another tenant is never followed on a read (B1211's read-side twin).
+    const tenantId = this.prisma.getTenantId();
+    const items = po.items.map((i) =>
+      i.product
+        ? {
+            ...i,
+            product: { ...i.product, parent: tenantSafeParentView(i.product.parent, tenantId) },
+          }
+        : i,
+    );
+    return { ...po, items, receipts };
   }
 
   async sendPurchaseOrder(id: string) {

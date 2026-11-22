@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import PurchaseOrdersPage from "./page";
+import { realDetailItem } from "./po-detail.fixture";
 
 // P1b: the REAL purchase-orders page threads the products read (with currentStock) into the list's
 // expanded row; "30.000" pieces on a 12-pack reads "30 pcs (2 boxes + 6 pcs)", never a dash.
@@ -11,29 +12,12 @@ jest.mock("@routeflow/ui/web", () => {
   return { ...actual, useToast: () => ({ toast: jest.fn() }) };
 });
 
-const item = {
-  id: "i1",
-  productId: "p1",
-  product: {
-    id: "p1",
-    name: "Strawberry",
-    unit: "case",
-    parentProductId: "fam",
-    variantName: "Strawberry",
-    parent: { name: "Geek" },
-  },
-  qtyOrdered: "12000",
-  qtyReceived: "0",
-  unitCost: "0.9167",
-  totalCost: "11000.00",
-  packSize: 12,
-};
 const po = {
   id: "po1",
   poNumber: "PO-1",
   status: "DRAFT",
   supplier: { id: "s1", name: "Acme Supply", isActive: true },
-  items: [item],
+  items: [realDetailItem],
   totalAmount: "11000.00",
   expectedDate: "",
   createdAt: "2026-11-20T00:00:00Z",
@@ -74,6 +58,6 @@ describe("/purchase-orders page on hand (P1b)", () => {
   it("names the line from its own include, family first", () => {
     render(<PurchaseOrdersPage />);
     fireEvent.click(screen.getAllByTitle("View details")[0]);
-    expect(screen.getByText("Geek - Strawberry")).toBeTruthy();
+    expect(screen.getByText("Acme Vape - Strawberry")).toBeTruthy();
   });
 });
