@@ -15,11 +15,14 @@ export function SiteFrame({
   children,
   current,
   width = "wide",
+  hideTrial = false,
 }: {
   children: ReactNode;
   /** The nav link to mark as the current page, if the page is one of them. */
   current?: string;
   width?: "wide" | "narrow";
+  /** Drop the "Start free trial" links (header, phone menu, footer), for the store (buyer) doors. */
+  hideTrial?: boolean;
 }) {
   return (
     <div className="rf-frame">
@@ -32,7 +35,7 @@ export function SiteFrame({
       <a className="skip" href="#main-content">
         Skip to main content
       </a>
-      <SiteFrameHeader current={current} />
+      <SiteFrameHeader current={current} hideTrial={hideTrial} />
       <main id="main-content" className={`rf-frame-main rf-frame-main--${width}`}>
         {children}
       </main>
@@ -65,11 +68,13 @@ export function SiteFrame({
             <div>
               <h2>Account</h2>
               <ul>
-                <li>
-                  <Link href="/signup" data-where="footer">
-                    Start free trial
-                  </Link>
-                </li>
+                {hideTrial ? null : (
+                  <li>
+                    <Link href="/signup" data-where="footer">
+                      Start free trial
+                    </Link>
+                  </li>
+                )}
                 <li>
                   <Link href="/login">Sign in</Link>
                 </li>

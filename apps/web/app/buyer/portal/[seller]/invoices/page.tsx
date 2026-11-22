@@ -9,7 +9,7 @@ import type { BuyerInvoiceListItem } from "@routeflow/types";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { invoiceStatusVariant } from "@/lib/buyer-invoice-status";
-import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -156,7 +156,7 @@ export default function BuyerInvoicesPage() {
                     </Badge>
                   </div>
                   <p className="mt-1 text-xs text-navy/70">
-                    {fmtDate(invoice.createdAt)}
+                    {fmtCalendarDate(invoice.issueDate)}
                     {invoice.paidAtSale ? "" : ` · Due ${fmtCalendarDate(invoice.dueDate)}`}
                   </p>
                   <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-surface-border pt-3">
@@ -220,7 +220,7 @@ export default function BuyerInvoicesPage() {
                         {invoice.invoiceNumber ?? invoice.id.slice(0, 8).toUpperCase()}
                       </td>
                       <td className="px-4 py-3 text-sm text-navy/70">
-                        {fmtDate(invoice.createdAt)}
+                        {fmtCalendarDate(invoice.issueDate)}
                       </td>
                       <td className="px-4 py-3 text-sm text-navy/70">
                         {invoice.paidAtSale ? "\u2014" : fmtCalendarDate(invoice.dueDate)}
