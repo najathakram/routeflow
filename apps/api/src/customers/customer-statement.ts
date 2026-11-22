@@ -18,7 +18,12 @@ import {
 import { overdueCutoff, tenantTodayDay } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { toCollectSummary } from "../invoices/to-collect";
-import { creditNoteRemaining, loadAvailableCredit } from "./available-credit";
+import {
+  creditNoteRemaining,
+  isAdvanceAvailable,
+  loadAdvanceSourceStatuses,
+  loadAvailableCredit,
+} from "./available-credit";
 
 /** SA-1214: the buyer's credit list is capped at this many rows (newest first); a longer list says so. */
 export const BUYER_CREDIT_ITEMS_CAP = 50;
@@ -267,6 +272,7 @@ export async function buildOperatorStatement(
     method: true,
     reference: true,
     receivedAt: true,
+    sourcePaymentId: true,
   } as const;
   // REG-B110: the LEDGER caps below are for the transactions DISPLAY only —
   // the money figures (outstanding/overdue/availableCredit/advanceBalance)
@@ -371,6 +377,11 @@ export async function buildOperatorStatement(
   const ledgerInvoices = ledgerInvoicesRaw.slice(0, LEDGER_INVOICE_CAP);
   const ledgerCreditNotes = ledgerCreditNotesRaw.slice(0, LEDGER_CREDIT_NOTE_CAP);
   const ledgerAdvancePayments = ledgerAdvancePaymentsRaw.slice(0, LEDGER_ADVANCE_CAP);
+  // SA-1225 MED-1: the ledger row reads the same predicate as the tile, so an unconfirmed advance never shows AVAILABLE.
+  const ledgerAdvanceSources = await loadAdvanceSourceStatuses(
+    prisma.forTenant(),
+    ledgerAdvancePayments,
+  );
 
   // CONFIRMED (PAID) basis — a DRAFT (unconfirmed) payment must never count
   // as paid (F03/sumConfirmed); VOID (e.g. a bounced check, P5-12) already
@@ -459,7 +470,11 @@ export async function buildOperatorStatement(
       date: a.receivedAt.toISOString(),
       amount: roundMoney(Number(a.amount)),
       runningBalance: roundMoney(Number(a.balance)),
-      status: Number(a.balance) > 0 ? "AVAILABLE" : "USED",
+      status: !isAdvanceAvailable(a, ledgerAdvanceSources.get(a.sourcePaymentId ?? ""))
+        ? "NOT_CONFIRMED"
+        : Number(a.balance) > 0
+          ? "AVAILABLE"
+          : "USED",
     })),
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 

@@ -167,6 +167,18 @@ export async function loadAvailableCredit(
   return sumAvailableCredit({ notes, advances, sourceStatuses, now });
 }
 
+function groupByCustomer<T extends { customerId: string }>(
+  rows: ReadonlyArray<T>,
+): Map<string, T[]> {
+  const by = new Map<string, T[]>();
+  for (const r of rows) {
+    const list = by.get(r.customerId);
+    if (list) list.push(r);
+    else by.set(r.customerId, [r]);
+  }
+  return by;
+}
+
 /**
  * The same figures for a PAGE of customers (the staff list, the CSV): three bounded tenant-scoped `in` reads (notes,
  * advances, advance sources), never a query per customer. Every id gets an entry, zeros when it holds no credit.
@@ -189,14 +201,17 @@ export async function loadAvailableCreditByCustomer(
     }),
   ]);
   const sourceStatuses = await loadAdvanceSourceStatuses(db, advances);
+  // SA-1225 MED-2: group once, then one pass per customer (never a filter over all rows per customer).
+  const notesBy = groupByCustomer(notes);
+  const advancesBy = groupByCustomer(advances);
   for (const id of customerIds) {
     const {
       notes: n,
       advances: a,
       total,
     } = sumAvailableCredit({
-      notes: notes.filter((r) => r.customerId === id),
-      advances: advances.filter((r) => r.customerId === id),
+      notes: notesBy.get(id) ?? [],
+      advances: advancesBy.get(id) ?? [],
       sourceStatuses,
       now,
     });

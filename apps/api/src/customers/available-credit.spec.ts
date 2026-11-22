@@ -546,3 +546,79 @@ describe("SA-1214 A1: the account statement keeps credit on its own row", () => 
     expect(staff.credits[0].label).toBeUndefined();
   });
 });
+
+describe("SA-1221 M1 / SA-1225: same-tenant gone source, ledger status, batch grouping, buyer ledger text", () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ now: NOW, doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+  });
+  afterEach(() => jest.useRealTimers());
+
+  it("an advance whose source row was deleted (same tenant) is hidden: $0.00 on the tile and the list", async () => {
+    const rows = { ...advWithSource("PAID"), sources: [] as SourceRow[] };
+    const op = await buildOperatorStatement(arrange(rows) as any, CUSTOMER);
+    const view = toBuyerStatement(op) as any;
+    expect([view.availableCredit, view.creditItems.length, op.advanceBalance]).toEqual([0, 0, 0]);
+  });
+
+  it("MED-1: a $200 advance from a DRAFT source reads NOT_CONFIRMED on the ledger row, beside a $0 tile", async () => {
+    const op = await buildOperatorStatement(arrange(advWithSource("DRAFT")) as any, CUSTOMER);
+    expect(op.advanceBalance).toBe(0);
+    expect(op.transactions.find((t) => t.type === "ADVANCE_PAYMENT")?.status).toBe("NOT_CONFIRMED");
+  });
+
+  it("MED-1: a PAID source reads AVAILABLE, no source reads AVAILABLE, an empty advance reads USED", async () => {
+    const paid = await buildOperatorStatement(arrange(advWithSource("PAID")) as any, CUSTOMER);
+    expect(paid.transactions.find((t) => t.type === "ADVANCE_PAYMENT")?.status).toBe("AVAILABLE");
+    const none = await buildOperatorStatement(
+      arrange({ notes: [], advances: [advance({ balance: 50 })] }) as any,
+      CUSTOMER,
+    );
+    expect(none.transactions[0].status).toBe("AVAILABLE");
+    const used = await buildOperatorStatement(
+      arrange({ notes: [], advances: [advance({ balance: 0, amount: 50 })] }) as any,
+      CUSTOMER,
+    );
+    expect(used.transactions[0].status).toBe("USED");
+  });
+
+  it("MED-2: the batch helper never filters all rows per customer, and 20,000 customers finish under 1 s", async () => {
+    jest.useRealTimers(); // the wall clock is the point here
+    const N = 20000;
+    const ids = Array.from({ length: N }, (_, i) => `cust-p${i}`);
+    const filterSpies: jest.Mock[] = [];
+    const rowsOf = <T>(list: T[]) => {
+      const arr: any = list;
+      const spy = jest.fn(arr.filter.bind(arr));
+      arr.filter = spy;
+      filterSpies.push(spy);
+      return arr as T[];
+    };
+    const db: any = {
+      creditNote: {
+        findMany: async () =>
+          rowsOf(
+            ids.map((customerId) => ({
+              customerId,
+              amount: 10,
+              amountUsed: 0,
+              status: "ISSUED",
+              expiresAt: null,
+            })),
+          ),
+      },
+      advancePayment: {
+        findMany: async () => rowsOf(ids.map((customerId) => ({ customerId, balance: 5 }))),
+      },
+      invoicePayment: { findMany: async () => [] },
+    };
+    const t0 = Date.now();
+    const out = await loadAvailableCreditByCustomer(db, ids, NOW);
+    const ms = Date.now() - t0;
+    expect(out.size).toBe(N);
+    expect(out.get("cust-p19999")).toEqual({ notes: 10, advances: 5, total: 15 });
+    expect(filterSpies.reduce((n, s) => n + s.mock.calls.length, 0)).toBe(0);
+    expect(ms).toBeLessThan(1000);
+    // eslint-disable-next-line no-console
+    console.log(`MED-2 20,000-customer batch: ${ms} ms`);
+  });
+});
