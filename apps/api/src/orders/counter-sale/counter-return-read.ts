@@ -1,3 +1,4 @@
+import type { CounterReturnItem } from "@routeflow/types";
 import type { ReceiptPaymentInput, ReceiptReturnData } from "../../documents/receipt-model";
 import type { PrismaService } from "../../prisma/prisma.service";
 import {
@@ -57,4 +58,40 @@ export async function readReturnData(
       creditNote: p.creditNoteId ? { invoiceId: invoiceOfNote.get(p.creditNoteId) ?? null } : null,
     })),
   };
+}
+
+/** A return that was refused or cancelled took nothing back: its lines are not "returned items". */
+const DEAD_RETURN_STATUSES: readonly string[] = ["REJECTED", "CANCELLED"];
+
+/**
+ * SA-1211 A1.1 (VF-6): the items a counter sale's returns took back, from the STORED return lines (name, quantity, reason code;
+ * served as given, never re-derived), for the receipt's "returned items" list. The returns are the ones `readReturnData` named
+ * (the order's own and the carried ones), each read once; none live, or no lines found: undefined (never an empty list), so a
+ * plain sale gains no query and an older reader sees no field.
+ */
+export async function readReturnItems(
+  tenantId: string,
+  db: ReturnType<PrismaService["forTenant"]>,
+  returns: ReadonlyArray<{ id?: string; status?: string | null }>,
+): Promise<CounterReturnItem[] | undefined> {
+  const ids = [
+    ...new Set(
+      returns
+        .filter((r) => !DEAD_RETURN_STATUSES.includes(r.status ?? ""))
+        .flatMap((r) => (r.id ? [r.id] : [])),
+    ),
+  ];
+  if (ids.length === 0) return undefined;
+  const rows: Array<{ qty: unknown; reason: string | null; product: { name: string } | null }> =
+    await db.returnItem.findMany({
+      where: { tenantId, returnId: { in: ids } },
+      select: { qty: true, reason: true, product: { select: { name: true } } },
+      orderBy: { id: "asc" },
+    });
+  if (rows.length === 0) return undefined;
+  return rows.map((r) => ({
+    name: r.product?.name ?? "Item",
+    qty: Number(r.qty),
+    reason: r.reason?.trim() ? r.reason : null,
+  }));
 }

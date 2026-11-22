@@ -105,4 +105,9 @@ export interface ReceiptModel {
   creditKept?: number | null;
   creditUsed?: number | null;
   returnPending?: boolean;
+  /**
+   * SA-1211 A1.1: the returned items the receipt lists, from the server's stored return lines as given (`reason` is the stored
+   * code, null when none; the print view words it). Absent when the sale has no live return or the server sent none.
+   */
+  returnItems?: Array<{ name: string; qty: number; reason: string | null }>;
 }

@@ -205,6 +205,7 @@ export * from "./api/auto-locks";
 export * from "./api/counter-day-close";
 export * from "./api/counter-drawer-event";
 export * from "./api/counter-sale";
+export * from "./api/credit-words"; // SA-1211 A1.4: the one word for credit
 export * from "./api/receipt";
 export * from "./api/counter-quick-keys";
 export * from "./api/import";

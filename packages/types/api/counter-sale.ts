@@ -117,6 +117,19 @@ export interface CounterTenderSplitFields {
    * carrier order holding another sale's INLINE return has all zeros. Omitted by an older server: master's wording, no return line.
    */
   returnLines?: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
+  /**
+   * SA-1211 A1.1 (VF-6): the items the sale's returns took back, from the STORED return lines (never re-derived), so the
+   * receipt lists each with its reason. `reason` is the stored code (a `ReturnReason`), null when none was recorded. Omitted
+   * when the sale has no live return (a refused or cancelled return is not listed) or by an older server.
+   */
+  returnItems?: CounterReturnItem[];
+}
+
+/** One returned item as the server stored it: the product's name, the quantity returned (pieces) and the reason code. */
+export interface CounterReturnItem {
+  name: string;
+  qty: number;
+  reason: string | null;
 }
 
 export interface CounterSaleResponse extends CounterTenderSplitFields {

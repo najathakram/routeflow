@@ -114,7 +114,7 @@ describe("CounterReturnAction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Return items" }));
     React.act(() => recorded?.({}, undefined));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Return recorded. Store credit given for the customer.",
+      "Return recorded. Credit given for the customer.",
     );
     expect(screen.getByRole("status").textContent).not.toMatch(/hand|cash|back to the customer/i);
   });
