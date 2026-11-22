@@ -441,4 +441,31 @@ describe("SA-1224 MED-1 and MED-2", () => {
     const { res } = await edit([one], [echo(one, { packSize: undefined, unitCost: 9 })]);
     expect(res).toBeNull();
   });
+
+  describe("SA-1227: one whole-lot check on every edit row", () => {
+    const piece = { ...PLAIN, id: "it-pc", unitLabel: "1 Piece", packSize: null };
+    const NOT_WHOLE = { status: 400, code: "LOT_QTY_NOT_WHOLE" };
+
+    it("a stated 1 Piece row re-packed to 6 at qty 0.5 is 400 and writes nothing", async () => {
+      const { res, prisma } = await edit([piece], [echo(piece, { packSize: 6, qty: 0.5 })]);
+      expect(res).toEqual(NOT_WHOLE);
+      expect(prisma.vendorBill.update).not.toHaveBeenCalled();
+    });
+
+    it("a new no-id row with pack 6, label and qty 0.5 is 400", async () => {
+      const { res } = await edit(
+        [piece],
+        [
+          echo(piece),
+          { description: "x", qty: 0.5, unitCost: 3, packSize: 6, unitLabel: "6 Pieces" },
+        ],
+      );
+      expect(res).toEqual(NOT_WHOLE);
+    });
+
+    it("green: qty 2 saves; a price-only 1 Piece edit saves", async () => {
+      expect((await edit([piece], [echo(piece, { packSize: 6, qty: 2 })])).res).toBeNull();
+      expect((await edit([piece], [echo(piece, { unitCost: 9 })])).res).toBeNull();
+    });
+  });
 });

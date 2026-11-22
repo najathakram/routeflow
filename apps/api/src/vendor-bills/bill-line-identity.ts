@@ -7,8 +7,6 @@ import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import type { PrismaService } from "../prisma/prisma.service";
 import { billItemPack, NO_IDENTITY, type StoredBillItemIdentity } from "./bill-item-data";
 
-/** SA-1207 S2b spec 6-7: CREATE mints the group id and proves each group; EDIT carries identity from the STORED row. */
-
 export async function resolveCreateIdentities(
   prisma: PrismaService,
   items: any[] | undefined | null,
@@ -54,15 +52,7 @@ export async function resolveCreateIdentities(
       minted.set(ordinal, randomUUID());
     }
   }
-  for (const i of list) {
-    const lot = isLotLine({ packSize: i.packSize, unitLabel: i.unitLabel?.trim() });
-    if (lot && !Number.isInteger(Number(i.qty || 1))) {
-      throw wholeLot(
-        API_ERROR_CODES.LOT_QTY_NOT_WHOLE,
-        "A pack line needs a whole number of packs.",
-      );
-    }
-  }
+  list.forEach((i) => assertWholeLotQty({ ...i, unitLabel: i.unitLabel?.trim() }));
   return list.map((i) => ({
     unitLabel: i.unitLabel?.trim() ? i.unitLabel.trim() : null,
     familyProductId: i.familyGroup != null ? i.familyProductId : null,
@@ -77,13 +67,22 @@ interface StoredLine extends StoredBillItemIdentity {
   packSize: number | null;
 }
 
-/** SA-1223 M2: a lot is counted in whole units. One rule for create, edit and every receive plan. */
 const isLotLine = (item: { packSize?: unknown; unitLabel?: string | null }) =>
   billLineUnit({ packSize: billItemPack(item), unitLabel: item.unitLabel }).kind === "lot";
 
 const wholeLot = (code: string, message: string) => new BadRequestException({ code, message });
 
-/** Every planned receive pair (per-line and full-receive plans alike) passes through here. */
+/** A lot is counted in whole units: the ONE check for create and every edit row (the RESULTING row). */
+export function assertWholeLotQty(item: {
+  packSize?: unknown;
+  unitLabel?: string | null;
+  qty?: unknown;
+}) {
+  if (isLotLine(item) && !Number.isInteger(Number(item.qty || 1))) {
+    throw wholeLot(API_ERROR_CODES.LOT_QTY_NOT_WHOLE, "A pack line needs a whole number of packs.");
+  }
+}
+
 export function assertWholeLotReceive(
   item: { description: string; packSize: number | null; unitLabel: string | null },
   receiveQty: Prisma.Decimal,
@@ -102,7 +101,6 @@ const unitFactor = (x: { packSize?: unknown }) =>
 const locked = (message: string) =>
   new ConflictException({ code: API_ERROR_CODES.SPLIT_LINE_LOCKED, message });
 
-/** An edit's identities: stored rows carry theirs; a NEW row gets the create rule's, never none (SA-1224 MED-1). */
 export async function resolveEditIdentities(
   prisma: PrismaService,
   stored: StoredLine[],
@@ -113,10 +111,11 @@ export async function resolveEditIdentities(
     prisma,
     incoming.filter((i) => !i.id),
   );
-  return carried.map((c, n) => (incoming[n].id ? c : fresh.shift()!));
+  const out = carried.map((c, n) => (incoming[n].id ? c : fresh.shift()!));
+  out.forEach((o, n) => assertWholeLotQty({ ...incoming[n], unitLabel: o.unitLabel }));
+  return out;
 }
 
-/** Pair an edit's rows with the stored lines by id; one identity per incoming row, from the stored row. */
 export function carryStoredIdentities(
   stored: StoredLine[],
   incoming: any[],
