@@ -1,13 +1,18 @@
 # Team member onboarding
 
-For a person joining RouteFlow on their own computer and their own Claude account. You work
-through the repo and the team board. You cannot message the lead's Claude sessions, and they
-cannot message you: everything goes through items and comments on the board.
+For a person joining RouteFlow on their own computer. Everyone signs in to the **same GitHub
+account**, but each computer runs its **own Claude account**. Claude sessions on different
+accounts cannot message each other, so the team board is the channel: comments, assignments
+and the inbox, all stored in the routeflow-specs repo.
+
+Because the GitHub account is shared, a commit's author or the `gh` user says nothing about who
+did something. **Who you are comes from `rf whoami --member`**, and every board event carries
+it. Set it before anything else.
 
 **Contents**
 
 1. Access
-2. Your first hour
+2. A new computer, step by step
 3. The local stack, test tenants only
 4. The team board: who you are, what to pick up, how to talk
 5. Confidentiality
@@ -20,16 +25,19 @@ cannot message you: everything goes through items and comments on the board.
 
 ## 1. Access
 
-| You get                                                                   | You do not get                       |
-| ------------------------------------------------------------------------- | ------------------------------------ |
-| GitHub collaborator on `najathakram/routeflow` (write: branches and PRs)  | Railway (no project, no variables)   |
-| GitHub collaborator on `najathakram/routeflow-specs` (the board data)     | The production database, in any form |
-| The hosted board's URL and password, when it exists (read-only)           | Merge rights on `master`             |
-| Your own entry in the members list (`ops/config.json` in routeflow-specs) | Any live client tenant               |
+| You use                                                                                     | You never touch                               |
+| ------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| The shared GitHub account: clone `routeflow` and `routeflow-specs`, push branches, open PRs | Railway (projects, variables, deploys)        |
+| The board CLI (`rf`), which writes events to `routeflow-specs`                              | The production database, in any form          |
+| Your own entry in the members list (`ops/config.json` in routeflow-specs)                   | Merging to `master`, or the repo's visibility |
+| The hosted board's URL and password, when it exists (read-only)                             | Any live client tenant                        |
 
-The lead adds you. Before your first session, send the lead (outside Claude) your GitHub user
-name, the name you want on the board, and your role: **builder**, **tester** or **reviewer**.
-The lead adds a line like this to `ops/config.json` in routeflow-specs:
+The shared account could technically merge or change settings. The right-hand column is a rule,
+not a permission: only the lead's coordinator merges and switches visibility (section 6).
+
+The lead adds you to the members list before your first session. Tell the lead (outside Claude)
+the name you want on the board and your role: **builder**, **tester** or **reviewer**. The lead
+adds a line like this to `ops/config.json` in routeflow-specs:
 
 ```json
 {
@@ -45,24 +53,62 @@ The lead adds a line like this to `ops/config.json` in routeflow-specs:
 - `lanes`: the lane (or lanes) whose work you pick up. The first one is your default.
 - `role`: what `rf next` hands you.
 
-## 2. Your first hour
+## 2. A new computer, step by step
 
-```bash
-git clone https://github.com/najathakram/routeflow.git
-```
+1. Sign in to the shared GitHub account, then clone and install:
 
-```bash
-cd routeflow && npm ci
-```
+   ```bash
+   gh auth login
+   ```
 
-Read, in this order:
+   ```bash
+   git clone https://github.com/najathakram/routeflow.git
+   ```
 
-1. `CLAUDE.md` (the project rules; your Claude session reads it too).
-2. `CLAUDE_SESSION_PREAMBLE.md` (production safety; read it before any database or backend work).
-3. `tools/ops-monitor/LANE-HOWTO.md` (the board commands).
-4. `.claude/lessons/LESSONS.md` (the lessons register; cite an id such as `L-016` when one applies).
+   ```bash
+   cd routeflow && npm ci
+   ```
 
-Then set up the board (section 4) and the local stack (section 3).
+2. Check that the board works. The first run clones routeflow-specs into `~/.routeflow/ops/`:
+
+   ```bash
+   node tools/ops-monitor/bin/rf.mjs doctor
+   ```
+
+   The `members` row must list you. If it does not, ask the lead to add you (section 1).
+
+3. Say who you are, once per computer:
+
+   ```bash
+   node tools/ops-monitor/bin/rf.mjs whoami --member alex
+   ```
+
+4. Start the local stack on test tenants only (section 3):
+
+   ```bash
+   npm run local:up
+   ```
+
+   ```bash
+   npm run local:seed
+   ```
+
+   ```bash
+   npm run local:validate
+   ```
+
+5. Read, in this order:
+   1. `CLAUDE.md`: the project rules. Your Claude session reads it too.
+   2. `CLAUDE_SESSION_PREAMBLE.md`: production safety. Read it before any database or backend work.
+   3. `tools/ops-monitor/LANE-HOWTO.md`: the board commands.
+   4. `.claude/lessons/LESSONS.md`: the lessons register. Cite an id such as `L-016` when one applies.
+
+6. In each Claude session, when it has nothing to do, start the wait (section 4) as one
+   background command:
+
+   ```bash
+   node tools/ops-monitor/bin/rf.mjs inbox --wait
+   ```
 
 ## 3. The local stack, test tenants only
 
@@ -96,46 +142,58 @@ Rules:
 ## 4. The team board
 
 The board is the ops monitor: a CLI over the routeflow-specs repo. Every action is an event in
-`events/<machine>/<day>.jsonl` there. Run it from the repo root:
+`events/<machine>/<day>.jsonl` there. Run it from the repo root as
+`node tools/ops-monitor/bin/rf.mjs <command>` (written `rf` below).
+
+**Who you are.** `rf whoami --member <id>`, once per computer.
+
+- Your events carry your id.
+- Claims show your name on the board.
+- `rf next` gives you your role's work in your first lane.
+
+`rf whoami` with no flags shows what is set, and `--member -` clears it. `RF_MEMBER=<id>`
+overrides it for one shell.
+
+**What to pick up.** `rf next --claim` takes the top item for you and claims it.
+
+- Items assigned to you come first, whatever their lane or role.
+- `rf next --role tester` asks for a different role's work.
+- Link every branch you push to its item with `rf event link <id> --branch <name>`. The
+  session-end hook checks it.
+
+**Handing work to someone.** `rf assign <id> --to <member> [--note "..."]` hands an item to one
+member.
+
+- It tops their `rf next`, and nobody else is handed it.
+- It lands in their inbox.
+- `--to -` clears it.
+- To give work to a lane, use `rf item edit <id> --lane <lane>`.
+
+**How to talk.** Comment on the item, and never anywhere else:
 
 ```bash
-node tools/ops-monitor/bin/rf.mjs doctor
-```
-
-**Who you are.** Once per computer:
-
-```bash
-node tools/ops-monitor/bin/rf.mjs whoami --member alex
-```
-
-From then on, your events carry your id, your claims show your name on the board, and `rf next`
-gives you your role's work in your first lane. `rf whoami` with no flags shows what is set.
-`--member -` clears it.
-
-**What to pick up.**
-
-```bash
-node tools/ops-monitor/bin/rf.mjs next --claim
-```
-
-This takes the top item for your lane and role and claims it. `rf next --role tester` asks for a
-different role's work. Link every branch you push to its item
-(`rf event link <id> --branch <name>`); the session-end hook checks it.
-
-**How to talk to the lead.** Comment on the item. Never anywhere else.
-
-```bash
-node tools/ops-monitor/bin/rf.mjs comment W-1309 "Blocked: the seed has no boxed product" --to lead
+node tools/ops-monitor/bin/rf.mjs comment W-1309 --to lead --text "Blocked: the seed has no boxed product"
 ```
 
 - `--to` takes a lane id or a member id, comma-separated.
 - `--reply-to <comment id>` answers one comment in a thread.
-- `rf inbox` shows the comments for you: mentions, replies to you, and comments on items you claimed.
-- Your Claude session prints "N new comments for you" at start and after each prompt.
-- `rf item show <id>` shows the item with its whole thread.
+- `rf item show <id>` shows the item with its whole thread and who it is assigned to.
 
-Questions, blockers, review requests and hand-overs all go this way, so the next person can
-read them.
+**Hearing back.** You cannot be messaged directly, so you check, or you wait:
+
+- `rf inbox` shows what is unread for you, then marks it read. That is comments that mention you,
+  reply to you, or sit on an item you claimed, plus items assigned to you.
+- Your Claude session prints "N new comments and M assignments for you" when it starts and after
+  every prompt. `rf brief` shows the same.
+- `rf inbox --wait` is for an idle session, run as **one background command**.
+  - It pulls the specs repo every 45 seconds.
+  - It exits 0 as soon as something for you is unread, and prints it.
+  - It exits 3 after `--timeout` (default 1800 seconds). Start it again.
+  - The exit is what wakes your Claude session. That is how sessions on different Claude
+    accounts hear each other.
+
+Questions, blockers, review requests, hand-overs and verdicts all go this way, so the next person
+can read them.
 
 ## 5. Confidentiality
 
@@ -155,6 +213,8 @@ These come from `CLAUDE.md` and have no exceptions:
 
 - You open PRs against `master`, marked ready for review, and link them to the item
   (`rf event link <id> --pr <n>`).
+- The shared GitHub account shows the same author on every PR, so the link is what records who
+  opened it, under your member id. Name your member id in the PR body too ("Member: alex").
 - **Only the lead's coordinator opens a merge window and merges.** A merge means the repo goes
   public for a while and Railway deploys, so it is the owner's and the lead's job alone.
 - Never push to `master`, force-push a shared branch, use `--no-verify`, or switch the repo's
