@@ -4,6 +4,7 @@ import {
   billPlanFromPO,
   type BillLineFromPO,
 } from "@routeflow/pricing";
+import type { CreateVendorBillItem } from "@/lib/api/vendor-bills";
 import type { POItem } from "@/app/(dashboard)/inventory/_components/purchase-orders-shared";
 
 /**
@@ -60,7 +61,8 @@ function toRow(item: POItem, line: BillLineFromPO): PoPrefillRow {
 /** Rows + the lines to enter by hand: every PO line lands in exactly one of rows, byHand or zeroCount. */
 export function prefillBillFromPO(po: PoForPrefill): PoBillPrefill {
   const items = po.items ?? [];
-  const plan = billPlanFromPO(items);
+  // A line with no stored total cannot be filled from: it is listed for hand entry (NaN is "not a number").
+  const plan = billPlanFromPO(items.map((i) => ({ ...i, totalCost: i.totalCost ?? Number.NaN })));
   return {
     poId: po.id,
     poNumber: po.poNumber,
@@ -71,12 +73,16 @@ export function prefillBillFromPO(po: PoForPrefill): PoBillPrefill {
   };
 }
 
-/** A form row as the create-bill payload line (before this, the form sent only qty, cost and product). */
-export function billItemFromRow(row: PoPrefillRow | Omit<PoPrefillRow, never>) {
+/** A form row as the create-bill payload line: the line states its own unit (pack, lot label) with qty and cost. */
+export function billItemFromRow(
+  row: Omit<PoPrefillRow, "unit"> & { unit?: string },
+): CreateVendorBillItem {
   return {
     description: row.description.trim(),
     qty: parseFloat(row.qty),
     unitCost: parseFloat(row.unitCost),
     productId: row.productId || undefined,
+    ...(row.packSize ? { packSize: row.packSize } : {}),
+    ...(row.unitLabel ? { unitLabel: row.unitLabel } : {}),
   };
 }

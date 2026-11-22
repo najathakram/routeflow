@@ -33,8 +33,7 @@ jest.mock("@/lib/api/vendor-bills", () => ({
 }));
 jest.mock("@/lib/api/inventory", () => ({
   ...jest.requireActual("@/lib/api/inventory"),
-  useSuppliers: () => ({ data: { data: [] } }),
-  useInventorySuppliers: () => ({ data: [{ id: "s1", name: "Acme Supply" }] }),
+  useSuppliers: () => ({ data: [{ id: "s1", name: "Acme Supply" }] }),
   usePurchaseOrders: () => ({ data: { data: [{ id: "po1", poNumber: "PO-7" }] } }),
   usePurchaseOrder: (id: string | null) => ({ data: id ? mockPo : undefined }),
 }));
@@ -72,8 +71,10 @@ describe("New supplier bill from a purchase order (P2b)", () => {
     renderWithProviders(<ExpensesPage />);
     const dialog = await screen.findByRole("dialog", { name: /New supplier bill/ });
     expect(within(dialog).getByText("From PO PO-7")).toBeInTheDocument();
-    expect(within(dialog).getByLabelText(/Qty \(Box\)/)).toHaveValue(5);
-    expect(within(dialog).getByDisplayValue("5")).toBeInTheDocument();
+    expect(within(dialog).getByText("Qty (Box)")).toBeInTheDocument();
+    const [qty, cost] = within(dialog).getAllByRole("spinbutton");
+    expect(qty).toHaveValue(5);
+    expect(cost).toHaveValue(5);
   });
 
   it("lists a line it could not fill and never claims the bill equals the PO", async () => {

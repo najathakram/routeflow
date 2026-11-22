@@ -54,7 +54,13 @@ import {
   type CreateVendorBillItem,
   type DuplicateVendorBillInfo,
 } from "@/lib/api/vendor-bills";
-import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/api/inventory";
+import {
+  useSuppliers as useInventorySuppliers,
+  usePurchaseOrder,
+  usePurchaseOrders,
+} from "@/lib/api/inventory";
+import { billItemFromRow, prefillBillFromPO } from "@/lib/po-prefill";
+import type { PurchaseOrder } from "../inventory/_components/purchase-orders-shared";
 import { getPoBillRefusal, type PoBillRefusal } from "@/lib/po-bill-refusal";
 import { ProductCombobox, type ProductOption } from "./_components/ProductCombobox";
 import { poTotal, type PORow } from "./po-ledger-total";
@@ -244,6 +250,9 @@ interface LineItemRow {
   unit: string;
   qty: string;
   unitCost: string;
+  /** From a purchase order: the line states its own unit (SA-1207 P2b). Cleared when the product changes. */
+  packSize?: number;
+  unitLabel?: string;
 }
 
 const emptyLineItem = (): LineItemRow => ({
@@ -330,7 +339,16 @@ function DuplicateBillBanner({
 
 // ─── Create Bill Modal ────────────────────────────────────────────────────────
 
-function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+function CreateBillModal({
+  isOpen,
+  onClose,
+  fromPo = null,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  /** SA-1207 P2b: fill the bill from this purchase order (a "From PO" chip, quantities editable). */
+  fromPo?: PurchaseOrder | null;
+}) {
   const { toast } = useToast();
   const createBill = useCreateVendorBill();
   const { data: prefs } = usePreferences();
@@ -449,9 +467,27 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     }
   }, [isOpen]);
 
+  // A purchase order the bill was opened from stays linked while its own supplier is selected.
   React.useEffect(() => {
-    setPurchaseOrderId("");
+    setPurchaseOrderId(fromPo && supplierId === fromPo.supplier?.id ? fromPo.id : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplierId]);
+
+  // SA-1207 P2b: fill from the PO once per open, in the PO own units. Lines it could not fill are
+  // listed for hand entry (never guessed), and nothing here claims the bill equals the PO.
+  const [byHand, setByHand] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    if (!isOpen || !fromPo) return;
+    const fill = prefillBillFromPO(fromPo);
+    setSupplierId(fill.supplierId);
+    setPurchaseOrderId(fill.poId);
+    setLineItems(fill.rows.length > 0 ? fill.rows : [emptyLineItem()]);
+    setByHand(fill.byHand);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, fromPo?.id]);
+  React.useEffect(() => {
+    if (isOpen && !fromPo) setByHand([]);
+  }, [isOpen, fromPo]);
 
   // The refusal describes the lines as sent — once the operator edits them or re-points the PO it is stale.
   React.useEffect(() => {
@@ -490,7 +526,18 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   }
 
   function updateLineItem(i: number, updates: Partial<LineItemRow>) {
-    setLineItems((prev) => prev.map((row, idx) => (idx === i ? { ...row, ...updates } : row)));
+    setLineItems((prev) =>
+      prev.map((row, idx) => {
+        if (idx !== i) return row;
+        // A different product is a different unit: the PO line pack and label go with the old one.
+        const swapped = updates.productId !== undefined && updates.productId !== row.productId;
+        return {
+          ...row,
+          ...(swapped ? { packSize: undefined, unitLabel: undefined } : {}),
+          ...updates,
+        };
+      }),
+    );
   }
   function addLineItem() {
     setLineItems((prev) => [...prev, emptyLineItem()]);
@@ -528,12 +575,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   }
 
   function postBill(allowDuplicate: boolean) {
-    const items: CreateVendorBillItem[] = lineItems.map((row) => ({
-      description: row.description.trim(),
-      qty: parseFloat(row.qty),
-      unitCost: parseFloat(row.unitCost),
-      productId: row.productId || undefined,
-    }));
+    const items: CreateVendorBillItem[] = lineItems.map(billItemFromRow);
     createBill.mutate(
       {
         supplierId,
@@ -611,7 +653,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         onEscapeKeyDown={(e) => {
           if (productPopupEscRef.current?.()) e.preventDefault();
         }}
-        title="New Inventory Purchase"
+        title="New supplier bill"
         description="Record a supplier bill for inventory received."
         footer={
           <>
@@ -625,6 +667,30 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         }
       >
         <form id="create-bill-form" onSubmit={handleSubmit} noValidate className="space-y-4">
+          {fromPo && purchaseOrderId === fromPo.id && (
+            <div className="space-y-1 text-sm text-navy/80">
+              <span className="inline-flex rounded-full border border-brand-300 bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-600">
+                From PO {fromPo.poNumber}
+              </span>
+              <p className="text-xs text-navy/70">
+                Quantities are what arrived, or what was ordered. Check them against the supplier
+                invoice.
+              </p>
+              {byHand.length > 0 && (
+                <div
+                  role="status"
+                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                >
+                  Enter this line by hand:
+                  <ul className="list-disc pl-5">
+                    {byHand.map((name, k) => (
+                      <li key={k}>{name}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
           {duplicate && (
             <DuplicateBillBanner
               duplicate={duplicate}
@@ -891,6 +957,19 @@ function InventoryPurchasesTab() {
   const [sortCol, setSortCol] = React.useState("billDate");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
+  // SA-1207 P2b: /vendor-bills?fromPo=<id> opens the bill form filled from that purchase order.
+  const fromPoId = useSearchParams().get("fromPo");
+  const { data: fromPoData } = usePurchaseOrder(fromPoId);
+  const fromPo = (fromPoId ? fromPoData : null) as PurchaseOrder | null;
+  React.useEffect(() => {
+    if (!fromPo || fromPo.id !== fromPoId) return;
+    // A PO with a live bill opens that bill instead (one bill per PO).
+    if (fromPo.vendorBill && fromPo.vendorBill.status !== "VOID") {
+      router.replace(`/vendor-bills/${fromPo.vendorBill.id}`);
+      return;
+    }
+    setIsCreateOpen(true);
+  }, [fromPo, fromPoId, router]);
   const [scanOpen, setScanOpen] = React.useState(false);
   // Selected bills as id → remaining balance captured at selection time. A Map rather
   // than a Set because the selection survives paging: the mark-paid preview has to cover
@@ -1684,7 +1763,14 @@ function InventoryPurchasesTab() {
           reachable. h-72 covers the bar: select-all row, count, and wrapped controls. */}
       {selectedBills.size > 0 && <SelectionBarSpacer className="h-72" />}
 
-      <CreateBillModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} />
+      <CreateBillModal
+        isOpen={isCreateOpen}
+        fromPo={fromPo}
+        onClose={() => {
+          setIsCreateOpen(false);
+          if (fromPoId) router.replace("/vendor-bills?tab=inventory");
+        }}
+      />
       <ScanInvoiceModal
         open={scanOpen}
         onClose={() => setScanOpen(false)}
@@ -1717,8 +1803,9 @@ function PurchaseOrdersTab() {
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-        Purchase orders track what&apos;s on order with suppliers. Receiving a PO updates stock; the
-        resulting supplier bill appears under <strong>Supplier bills</strong>.
+        Purchase orders track what&apos;s on order with suppliers. Receiving a PO updates stock. It
+        does not create the supplier bill: open the PO and choose{" "}
+        <strong>Create supplier bill</strong>.
       </div>
 
       {/* Chip-style status filters */}
