@@ -1437,7 +1437,7 @@ model SaleDraft {
   id           String   @id @default(uuid())
   tenantId     String
   userId       String // owner — drafts are per-user
-  kind         String   @default("ORDER") // ORDER | INVOICE
+  kind         String   @default("ORDER") // ORDER | INVOICE | PURCHASE_ORDER (SA-1222; a String column, no migration)
   customerId   String?
   customerName String? // denormalized label for the draft dock (no join needed)
   title        String?

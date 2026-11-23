@@ -5,6 +5,8 @@ import {
   setStockLockTimeout,
 } from "../common/product-locks";
 import { productNameViolation } from "../common/text-cell-guards";
+import { IdempotencyService } from "../common/idempotency.service";
+import { createPurchaseOrderGuarded } from "./po-create-guard";
 import {
   BadRequestException,
   ConflictException,
@@ -156,6 +158,8 @@ export class InventoryService {
     @Optional() private readonly audit?: AuditService,
     // #2717 M2 (SA-574 Q2): the `mixed_packs` mode read; absent = "off" (today's behavior).
     @Optional() private readonly featureConfig?: FeatureConfigService,
+    // SA-1222: the PO create replays an Idempotency-Key (global CommonModule); absent in a unit test = no key guard.
+    @Optional() private readonly idempotency?: IdempotencyService,
   ) {}
 
   /**
@@ -1520,7 +1524,7 @@ export class InventoryService {
     });
   }
 
-  async createPurchaseOrder(dto: any, userId: string) {
+  async createPurchaseOrder(dto: any, userId: string, idempotencyKey?: string) {
     if (!dto.supplierId) throw new BadRequestException("supplierId is required");
     if (!dto.items || dto.items.length === 0)
       throw new BadRequestException("At least one item is required");
@@ -1552,29 +1556,51 @@ export class InventoryService {
         ...(line.packSize !== null ? { packSize: line.packSize } : {}),
       };
     });
-    return this.prisma.forTenant().purchaseOrder.create({
-      data: {
-        poNumber: await this.nextPoNumber(),
-        supplierId: dto.supplierId,
-        status: "DRAFT",
-        expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
-        notes: dto.notes,
-        totalAmount,
-        // B571: explicit tenantId on the nested lines - the tenant proxy only stamps the
-        // top-level create, and a tenant-less PurchaseOrderItem is invisible to the
-        // tenant-scoped item update receivePurchaseOrder performs.
-        items: {
-          create: itemsData.map((i: Record<string, unknown>) => ({
-            ...i,
-            tenantId: this.prisma.getTenantId(),
-          })),
-        },
+    // SA-1222: one transaction (number + PO + lines) with a P2002 retry, an Idempotency-Key replay and the builder-draft consume.
+    const include = {
+      supplier: { select: { id: true, name: true } },
+      items: {
+        include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
       },
-      include: {
-        supplier: { select: { id: true, name: true } },
-        items: {
-          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
-        },
+    };
+    const tenantId = this.prisma.getTenantId();
+    return createPurchaseOrderGuarded({
+      prisma: this.prisma,
+      idempotency: this.idempotency,
+      tenantId,
+      userId,
+      key: idempotencyKey,
+      draftId: dto.draftId,
+      body: {
+        supplierId: dto.supplierId,
+        expectedDate: dto.expectedDate,
+        notes: dto.notes,
+        items: dto.items,
+      },
+      write: async (tx) =>
+        tx.purchaseOrder.create({
+          data: {
+            poNumber: await this.nextPoNumber(tx),
+            supplierId: dto.supplierId,
+            status: "DRAFT",
+            expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
+            notes: dto.notes,
+            totalAmount,
+            // B571: explicit tenantId on the nested lines - the tenant proxy only stamps the
+            // top-level create, and a tenant-less PurchaseOrderItem is invisible to the
+            // tenant-scoped item update receivePurchaseOrder performs.
+            items: {
+              create: itemsData.map((i: Record<string, unknown>) => ({ ...i, tenantId })),
+            },
+          },
+          include,
+        }),
+      load: async (id) => {
+        const po = await this.prisma
+          .forTenant()
+          .purchaseOrder.findUnique({ where: { id }, include });
+        if (!po) throw new NotFoundException("Purchase order not found");
+        return po;
       },
     });
   }

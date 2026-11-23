@@ -1,4 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -21,8 +31,8 @@ export class DraftsController {
   constructor(private readonly svc: DraftsService) {}
 
   @Get()
-  list(@CurrentUser() user: JwtPayload) {
-    return this.svc.list(user);
+  list(@CurrentUser() user: JwtPayload, @Query("kind") kind?: string) {
+    return this.svc.list(user, kind);
   }
 
   @Post()
