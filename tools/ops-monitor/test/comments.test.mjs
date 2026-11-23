@@ -391,7 +391,7 @@ test(
     assert.match(r.stdout, /1 new comment for you/);
     assert.match(r.stdout, /\[W-1\] lead, .*: macmini, can you take this\?/);
     r = await rf(["inbox"], { RF_LANE: "macmini" });
-    assert.match(r.stdout, /no new comments for you/);
+    assert.match(r.stdout, /no new messages for you/);
     r = await rf(["inbox", "--all"], { RF_LANE: "macmini" });
     assert.match(r.stdout, /can you take this/);
 

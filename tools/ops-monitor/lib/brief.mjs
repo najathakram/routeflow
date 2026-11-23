@@ -8,7 +8,7 @@ import { DONE_STATUSES } from "./schema.mjs";
 import { parseEta } from "./ids.mjs";
 import { deepMasker, maskText } from "./mask.mjs";
 import { laneNow, pickNext } from "./next.mjs";
-import { commentsFor, isUnread, renderComment } from "./inbox.mjs";
+import { commentsFor, inboxHeadline, isUnread, renderComment } from "./inbox.mjs";
 
 // Same owner-facing words as snapshot.mjs STATUS_WORDS (not imported: the hooks must load fast).
 const STATUS_WORDS = {
@@ -249,10 +249,11 @@ function maskInputs(inputs, names) {
 
 /** Unread comments for `me` (newest 5 shown), as the brief's first section. */
 function inboxLines(state, me, seen, now, clientNames) {
-  if (!me) return { total: 0, lines: [] };
+  if (!me) return { total: 0, lines: [], headline: "" };
   const unread = commentsFor(state, me).filter((x) => isUnread(x.comment, seen));
   return {
     total: unread.length,
+    headline: inboxHeadline(unread),
     lines: unread
       .slice(-5)
       .map((x) => renderComment(x.comment, state, { now, clientNames, replyHint: false })),
@@ -290,7 +291,7 @@ export function renderBrief(
     sections.push({ key, title, total: part.total, lines: part.lines });
   };
   const inbox = inboxLines(state, me, inboxSeen, now, clientNames);
-  add("inbox", `${plural(inbox.total, "new comment", "new comments")} for you (rf inbox)`, inbox);
+  add("inbox", `${inbox.headline} for you (rf inbox)`, inbox);
   add("hurting", "Hurting now", hurtingNow(state, snapshot));
   add("owner", "Waiting on the owner", waitingOnOwner(state, snapshot));
   if (!short) {
