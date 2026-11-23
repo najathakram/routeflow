@@ -53,6 +53,8 @@ export interface POItem {
   /** The supplier's own SKU / pieces-per-supplier-unit — null on lines that never carried them. */
   sku?: string | null;
   packSize?: number | null;
+  /** The line's own unit name ("tray"): a line that states one is labelled and keeps its product. */
+  unitLabel?: string | null;
 }
 
 export interface PurchaseOrder {

@@ -11,7 +11,7 @@ import {
   resolvePOLineAmounts,
 } from "./purchase-orders-shared";
 import { emptyEditLine, type EditLine } from "./purchase-orders-edit";
-import { unitWords } from "@routeflow/pricing";
+import { billLineUnit, unitWords } from "@routeflow/pricing";
 
 // U-3a: a PO line carries no per-product label yet, so this prints the default words.
 const UW = unitWords();
@@ -119,6 +119,8 @@ export function PurchaseOrderLinesTable({
             const upb = linePack(line, unitsPerBoxFor(line.productId)); // B699: stored pack wins
             const isBoxed = upb > 1;
             const locked = received && !!line.id && line.received > 0;
+            // A stored line that states its own unit keeps its product (the API answers 409 otherwise).
+            const keepsProduct = !!line.id && billLineUnit({ unitLabel: line.unitLabel }).stated;
             const { qty } = resolvePOLine(line, upb);
             const onHandText = onHandLabel(
               productById.get(line.productId)?.currentStock,
@@ -135,7 +137,7 @@ export function PurchaseOrderLinesTable({
                   <select
                     aria-label="Product"
                     value={line.productId}
-                    disabled={locked}
+                    disabled={locked || keepsProduct}
                     onChange={(e) => updateLine(i, { productId: e.target.value, packSize: null })}
                     className={inputCls}
                   >
@@ -153,6 +155,11 @@ export function PurchaseOrderLinesTable({
                   {line.productId && (
                     <p data-testid="po-line-on-hand" className="mt-0.5 text-[10px] text-navy/50">
                       On hand: {onHandText}
+                    </p>
+                  )}
+                  {keepsProduct && (
+                    <p className="mt-0.5 text-[10px] text-navy/50">
+                      To change the product, remove this line and add a new one.
                     </p>
                   )}
                   {locked && (

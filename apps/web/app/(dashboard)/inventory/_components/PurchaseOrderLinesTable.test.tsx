@@ -179,4 +179,36 @@ describe("PurchaseOrderLinesTable", () => {
     // 1,000 cases at $11.00 is $11,000.00 (qty x the rounded per-piece cost gives $11,000.40)
     expect(screen.getAllByText("$11,000.00").length).toBeGreaterThan(0);
   });
+
+  describe("W-1325: a stored labelled line keeps its product", () => {
+    const HINT = "To change the product, remove this line and add a new one.";
+    const productSelect = () => screen.getByLabelText("Product") as HTMLSelectElement;
+
+    it("disables the product picker and says why on a stored line with its own unit label", () => {
+      render(
+        <Harness
+          seen={{ lines: [] }}
+          initial={[
+            line({ id: "l1", productId: "p-each", qty: "5", unitCost: "2", unitLabel: "tray" }),
+          ]}
+        />,
+      );
+      expect(productSelect()).toBeDisabled();
+      expect(screen.getByText(HINT)).toBeInTheDocument();
+    });
+
+    it("keeps the picker open on a stored line with no label, and on a new line", () => {
+      render(
+        <Harness
+          seen={{ lines: [] }}
+          initial={[
+            line({ id: "l1", productId: "p-each", qty: "5", unitCost: "2" }),
+            line({ productId: "p-each", qty: "1", unitCost: "2", unitLabel: "tray" }),
+          ]}
+        />,
+      );
+      for (const s of screen.getAllByLabelText("Product")) expect(s).not.toBeDisabled();
+      expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    });
+  });
 });
