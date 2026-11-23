@@ -108,3 +108,17 @@ describe("bill-line-pack: knownPackHint — informational only, NEVER applied to
     expect(knownPackHint(null)).toBe(0);
   });
 });
+
+describe("bill-line-pack: a stated unit is known (SA-1207 S2b spec 4)", () => {
+  it("a stated piece is loose for a boxed product, never B743-unknown", () => {
+    expect(classifyBillLinePack(null, { unitsPerBox: 10 }, "1 Piece")).toBe("loose");
+  });
+
+  it("a lot is a case at its own pack, whatever the product's own ladder says", () => {
+    expect(classifyBillLinePack(7, { unitsPerBox: 10 }, "7 Pieces")).toBe("case");
+  });
+
+  it("no label keeps today's answers", () => {
+    expect(classifyBillLinePack(null, { unitsPerBox: 10 }, null)).toBe("unknown");
+  });
+});

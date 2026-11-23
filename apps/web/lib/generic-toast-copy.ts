@@ -243,6 +243,11 @@ const CODE_COPY: Record<string, string> = {
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   // B292: an edit that would clear every line is refused; the bill is voided or deleted instead.
   [API_ERROR_CODES.BILL_NEEDS_A_LINE]: "A bill needs at least one line. Void or delete it instead.",
+  // SA-1207 S2b: a lot or split line changes its price only; a lot is received whole.
+  [API_ERROR_CODES.SPLIT_LINE_LOCKED]:
+    "A split line can change its price only. Edit this bill on the web.",
+  [API_ERROR_CODES.RECEIVE_PARTIAL_UNIT]: "A lot is received whole, not in part.",
+  [API_ERROR_CODES.LOT_QTY_NOT_WHOLE]: "A pack line needs a whole number of packs.",
   // Row 648: vendor bill refusals the page used to explain by rendering the server message.
   [API_ERROR_CODES.BILL_NOT_EDITABLE]:
     "Only draft bills can be edited. Revert the bill to draft first.",

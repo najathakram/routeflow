@@ -4,7 +4,7 @@ import type {
   ScanResult,
   ScannedItem,
 } from "./api/vendor-bills";
-import { roundMoney } from "@routeflow/pricing";
+import { billLineUnit, roundMoney } from "@routeflow/pricing";
 import { toBillLine, type PieceSnapshot, type ScanLineUnit } from "./scan-line-units";
 
 /**
@@ -362,8 +362,11 @@ export function pieceSnapshotFromLine(line: {
 
 /** The unit a scanned line is CURRENTLY denominated in — derived from
  *  `packSize`, never stored separately (A3: "unit DERIVED from packSize>1"). */
-export function unitFromLine(line: { packSize?: number | null }): ScanLineUnit {
-  return line.packSize != null && line.packSize > 1 ? "boxes" : "pieces";
+export function unitFromLine(line: {
+  packSize?: number | null;
+  unitLabel?: string | null;
+}): ScanLineUnit {
+  return billLineUnit(line).boxed ? "boxes" : "pieces";
 }
 
 /**

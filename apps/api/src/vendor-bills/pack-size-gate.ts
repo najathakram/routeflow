@@ -51,6 +51,8 @@ export interface PackSizeGateLine {
   description: string;
   productId: string;
   packSize: number | null | undefined;
+  /** A line that states its own unit is known (SA-1207 S2b). */
+  unitLabel?: string | null;
   qty: number;
   unitCost: number;
   product: (PackLadderProduct & { name?: string | null }) | null | undefined;
@@ -61,7 +63,7 @@ export function findPackSizeUnknownLines(
   lines: ReadonlyArray<PackSizeGateLine>,
 ): PackSizeUnknownLine[] {
   return lines
-    .filter((l) => classifyBillLinePack(l.packSize, l.product) === "unknown")
+    .filter((l) => classifyBillLinePack(l.packSize, l.product, l.unitLabel) === "unknown")
     .map((l) => ({
       id: l.id,
       lineIndex: l.lineIndex,
