@@ -16,16 +16,21 @@ import {
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
 
-/** What the customer pays and what they keep: a return worth more than the sale leaves store credit, never a negative due. */
+/**
+ * What the customer pays and what they keep: a return worth more than the sale leaves credit, never a negative due.
+ * SA-1211 A1.1: `returned` is the return's own figure (the quote, as the till shows "Return −$x"), so the screen never
+ * subtracts: Total, Return and Amount due are all read from here.
+ */
 export function netOfReturn(
   saleTotal: number,
   credit: number,
-): { payTotal: number; storeCredit: number } {
+): { payTotal: number; storeCredit: number; returned: number } {
   const sale = roundMoney(saleTotal);
   const back = roundMoney(Math.max(0, credit));
   return {
     payTotal: roundMoney(Math.max(0, sale - back)),
     storeCredit: roundMoney(Math.max(0, back - sale)),
+    returned: back,
   };
 }
 

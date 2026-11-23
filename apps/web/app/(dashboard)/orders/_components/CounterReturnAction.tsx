@@ -6,6 +6,7 @@
 import * as React from "react";
 import { RotateCcw } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
+import { CREDIT_WORDS } from "@routeflow/types";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import { useOrder } from "@/lib/api/orders";
@@ -34,7 +35,7 @@ function storeCreditLine(amount: number | undefined, customer: string | null | u
   const who = customer?.trim() || "the customer";
   return amount !== undefined
     ? `Return recorded. ${storeCreditAddedLine(money(amount)).replace(/\.$/, "")} for ${who}.`
-    : `Return recorded. Store credit given for ${who}.`;
+    : `Return recorded. ${CREDIT_WORDS.returnGiven} for ${who}.`;
 }
 
 /** SA-929: the words come from what the server recorded (RecordedInfo is read off its answer). */

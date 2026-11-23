@@ -9,7 +9,7 @@ import {
   useUpdatePurchaseOrder,
   type UpdatePurchaseOrderInput,
 } from "@/lib/api/inventory";
-import type { PurchaseOrder, Supplier } from "./purchase-orders-shared";
+import { poLineName, type PurchaseOrder, type Supplier } from "./purchase-orders-shared";
 import {
   buildUpdateItems,
   explainEditError,
@@ -100,8 +100,7 @@ function EditModalBody({
   /** A line's product may be missing from the catalog list (archived) — keep it selectable. */
   const nameFor = (line: EditLine) =>
     productById.get(line.productId)?.name ??
-    po.items.find((i) => i.id === line.id)?.product?.name ??
-    "—";
+    poLineName({ product: po.items.find((i) => i.id === line.id)?.product });
 
   const send = (payload: UpdatePurchaseOrderInput) => {
     setError(null);

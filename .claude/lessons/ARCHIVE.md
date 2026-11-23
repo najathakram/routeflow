@@ -4881,3 +4881,12 @@ citations, closed-out with its own post-init assertion guard).
   the same PR; then boot the real container.**
 - **Guard:** the compose boot gate (`local:up`) proves the real DI graph; no automated
   construction-site scan yet.
+
+## Archived 2026-11-23 — zero outside citations, no repo guard; headroom for L-402 (bookkeeping for window 39)
+
+### L-327 · 2026-10-20 · testing · a more specific refusal added ahead of an existing guard is grepped against every spec that pins the old generic code
+
+- **Symptom:** a new coded refusal (a bill with cash payments, BILL_HAS_PAYMENTS) was added ahead of the generic state guard; race and concurrency specs that pinned the old generic code then failed on the combined tree.
+- **Root cause:** those specs asserted the old error code as a stand-in for "the second writer lost"; the new guard fires first on the same input, so the invariant still held but the expected code was stale.
+- **Lesson:** **When a new guard or error code is inserted ahead of an existing one, grep the specs for the old code and update each; keep the invariant the spec proves (one writer wins, nothing written) and change only the expected code, never loosen the assertion to accept any error.**
+- **Guard:** none automatic; the train gate runs the full suite (cf. [[L-264]]).

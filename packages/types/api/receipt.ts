@@ -5,6 +5,8 @@
 // can never print different lines for the same sale. The model is TYPE-ONLY here (L-261: the API never value-imports it);
 // only `RECEIPT_CHANNEL_VALUES` is a value, and the API keeps a local literal copy pinned by a parity spec (L-072).
 
+import type { CounterReturnItem } from "./counter-sale";
+
 /** The ways a receipt can be delivered. One row per channel; SMS / WhatsApp are a later row, not a rework. */
 export const RECEIPT_CHANNEL_VALUES = ["email"] as const;
 export type ReceiptChannel = (typeof RECEIPT_CHANNEL_VALUES)[number];
@@ -105,4 +107,9 @@ export interface ReceiptModel {
   creditKept?: number | null;
   creditUsed?: number | null;
   returnPending?: boolean;
+  /**
+   * SA-1211 A1.1: the returned items the receipt lists, from the server's stored return lines as given (`reason` is the stored
+   * code, null when none; the print view words it). Absent when the sale has no live return or the server sent none.
+   */
+  returnItems?: CounterReturnItem[];
 }

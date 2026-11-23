@@ -44,7 +44,12 @@ function PODetailRow({
 }: {
   poId: string;
   /** Same catalog list threaded through from the page — see ReceivePOModal (PurchaseOrdersReceiveModal.tsx). */
-  products: { id: string; name?: string; unitsPerBox?: number | null }[];
+  products: {
+    id: string;
+    name?: string;
+    unitsPerBox?: number | null;
+    currentStock?: number | string | null;
+  }[];
   onReceive: (po: PurchaseOrder) => void;
 }) {
   const { data: po, isLoading } = usePurchaseOrder(poId);
@@ -131,7 +136,13 @@ export function PurchaseOrdersTab({
   highlightId,
 }: {
   suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
+  products: {
+    id: string;
+    name: string;
+    sku?: string;
+    unitsPerBox?: number | null;
+    currentStock?: number | string | null;
+  }[];
   /** Extra header action(s), rendered before "New purchase order". */
   headerExtra?: React.ReactNode;
   /** A PO to mark as just drafted: filters clear and the list returns to page 1 so it is on screen. */

@@ -5,7 +5,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { cashierNameOf, roundMoney } from "@routeflow/pricing";
+import { cashierNameOf, counterMethodParts, roundMoney } from "@routeflow/pricing";
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
@@ -30,7 +30,7 @@ import {
 } from "@/lib/counter-receipt";
 import { CounterDatedTag } from "./CounterDatedTag";
 import { CounterDayClose } from "./CounterDayClose";
-import { HandOverRows, METHOD_LABEL, handOverFigure } from "./HandOverRows";
+import { HandOverRows, handOverFigure } from "./HandOverRows";
 import { receiptEmailPrefill } from "@/lib/email-receipt";
 import { CounterReceiptView } from "./CounterReceiptView";
 import { CounterReturnAction } from "./CounterReturnAction";
@@ -454,7 +454,9 @@ function SaleRow({
     }
   }, [focusReprint, onFocused]);
   const who = row.isWalkIn ? "Walk-in" : (row.customerName ?? "Customer");
-  const methods = row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ");
+  const methods = counterMethodParts(row.methods)
+    .map((m) => m.label)
+    .join(" + ");
   const itemNames = itemNamesLine(row.items, row.itemCount);
   const returnLabel = row.voided ? null : RETURN_LABEL[row.returned.state];
   const router = useRouter();
@@ -678,7 +680,9 @@ export function CounterTodaysSales() {
           orderId={voidRow.orderId}
           orderNumber={voidRow.orderNumber}
           total={voidRow.total}
-          methodsText={voidRow.methods.map((m) => METHOD_LABEL[m.method]).join(" + ")}
+          methodsText={counterMethodParts(voidRow.methods)
+            .map((m) => m.label)
+            .join(" + ")}
           items={voidRow.items}
           itemCount={voidRow.itemCount}
           onClose={() => setVoidRow(null)}

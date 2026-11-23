@@ -260,7 +260,7 @@ describe("reprint after a return (SA-838a): the paper", () => {
     ).toEqual(["Payment method Cash $6.25", "Paid $6.25", "Returned −$6.25"]);
   });
 
-  it("(b) prints Payment method Advance $5.00 + Cash $7.50, Paid $12.50, Refunded $2.50 (returned items)", () => {
+  it("(b) prints Payment method Credit $5.00 + Cash $7.50, Paid $12.50, Refunded $2.50 (returned items)", () => {
     expect(
       paper({
         methods: [
@@ -275,13 +275,13 @@ describe("reprint after a return (SA-838a): the paper", () => {
         returnLines: { ...none, refunded: 2.5 },
       }),
     ).toEqual([
-      "Payment method Advance $5.00 + Cash $7.50",
+      "Payment method Credit $5.00 + Cash $7.50",
       "Paid $12.50",
       "Refunded $2.50 (returned items)",
     ]);
   });
 
-  it("(c) prints Payment method Advance $12.50, Paid $12.50, Credit kept $3.00 (returned items)", () => {
+  it("(c) prints Payment method Credit $12.50, Paid $12.50, Credit kept $3.00 (returned items)", () => {
     expect(
       paper({
         methods: [{ method: "ADVANCE", amount: 12.5 }],
@@ -290,7 +290,7 @@ describe("reprint after a return (SA-838a): the paper", () => {
         returnLines: { ...none, kept: 3 },
       }),
     ).toEqual([
-      "Payment method Advance $12.50",
+      "Payment method Credit $12.50",
       "Paid $12.50",
       "Credit kept $3.00 (returned items)",
     ]);
@@ -332,7 +332,7 @@ describe("reprint after a return (SA-838a): the paper", () => {
         ],
         returnLines: none,
       }),
-    ).toEqual(["Payment method Cash $7.50 + Store credit $5.00", "Paid $12.50"]);
+    ).toEqual(["Payment method Cash $7.50 + Credit $5.00", "Paid $12.50"]);
   });
 
   it("(d) another order's store credit prints as the tender Store credit", () => {
@@ -343,7 +343,7 @@ describe("reprint after a return (SA-838a): the paper", () => {
         tenderMethods: [{ method: "STORE_CREDIT", amount: 12.5 }],
         returnLines: none,
       }),
-    ).toEqual(["Payment method Store credit $12.50", "Paid $12.50"]);
+    ).toEqual(["Payment method Credit $12.50", "Paid $12.50"]);
   });
 
   it("the carrier order B of sale A's INLINE return prints NO return line, and Paid adds up", () => {
@@ -360,7 +360,7 @@ describe("reprint after a return (SA-838a): the paper", () => {
         ],
         returnLines: none,
       }),
-    ).toEqual(["Payment method Cash $7.00 + Store credit $5.50", "Paid $12.50"]);
+    ).toEqual(["Payment method Cash $7.00 + Credit $5.50", "Paid $12.50"]);
   });
 
   it("sale A, whose own INLINE return was carried on B and applied, prints its own Returned line", () => {
@@ -437,7 +437,7 @@ describe("reprint after a return (SA-838a): the paper", () => {
         balanceDue: 6.25,
         methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
       }),
-    ).toEqual(["Payment method Store credit", "Paid $6.25", "Balance due $6.25"]);
+    ).toEqual(["Payment method Credit", "Paid $6.25", "Balance due $6.25"]);
     document.body.innerHTML = "";
     expect(
       paper({

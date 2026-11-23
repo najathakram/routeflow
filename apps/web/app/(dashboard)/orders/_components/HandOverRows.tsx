@@ -6,12 +6,10 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@routeflow/ui/web";
-import { COUNTER_METHOD_LABEL } from "@routeflow/pricing";
+import { counterMethodParts } from "@routeflow/pricing";
 import type { TodaysHandOverRow } from "@routeflow/types";
 import { formatReceiptMoney as money } from "@/lib/counter-receipt";
 import { guardCounterLeave } from "@/lib/counter-cart-signal";
-
-export const METHOD_LABEL = COUNTER_METHOD_LABEL;
 
 /** `Pickup hand-overs · N · $X`: N and $X are the server's `summary.handOvers`, so a day with none still reads $0.00. */
 export const handOverHeading = (h: { count: number; total: number }) =>
@@ -23,9 +21,10 @@ export const handOverFigure = (h: { count: number; total: number }) =>
 
 /** One method reads its name (the amount is the row's); a split names each part's amount. */
 function methodsText(methods: TodaysHandOverRow["methods"]): string {
-  if (methods.length === 0) return "";
-  if (methods.length === 1) return METHOD_LABEL[methods[0]!.method];
-  return methods.map((m) => `${METHOD_LABEL[m.method]} ${money(m.amount)}`).join(" + ");
+  const parts = counterMethodParts(methods); // A1.7: Advance and Store credit are one "Credit" part
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0]!.label;
+  return parts.map((m) => `${m.label} ${money(m.amount)}`).join(" + ");
 }
 
 function HandOverRow({
