@@ -535,6 +535,8 @@ describe("readReceiptGroup: SA-1220 one key decides membership (R1-R9)", () => {
     R5: () => [A(), pk(1000), other()],
     R6: () => [A(), pk(1000), other({ status: "VOID" })],
     R7: () => [A(), pk(999, { method: "ACH" })],
+    // SA-1235 B3-2: a PENDING sibling with the PAID line's method and reference that sorts first by number
+    R10: () => [A(), pk(1000, { status: "PENDING", paymentNumber: "PAY-ACME-0098" })],
   };
   const norm = (v: any) => ({
     kind: v.kind,
@@ -609,6 +611,74 @@ describe("readReceiptGroup: SA-1220 one key decides membership (R1-R9)", () => {
         const paid = v.tenders.filter((t: any) => t.status === "PAID");
         expect([name, paid.reduce((s, t) => s + t.amount, 0)]).toEqual([name, v.header?.total]);
       }
+    }
+  });
+});
+
+describe("readReceiptGroup: SA-1235 pins on the six LOWs of #4406", () => {
+  const order = { counterSale: false, orderNumber: "ORD-ACME-1" };
+  const gid = pickupTenderGroupId("order-1");
+  const pk = (amount: number, over: Row = {}) =>
+    pay({ paymentGroupId: gid, orderId: "order-1", order, method: "CHECK", amount, ...over });
+
+  it("A3-1. the in-memory customer check holds even when the query ignores the customer filter", async () => {
+    const mine1 = office("g-a31", { amount: 3000, customerId: "cust-1" });
+    const mine2 = office("g-a31", { amount: 1000, customerId: "cust-1" });
+    const theirs = office("g-a31", { amount: 777, customerId: "cust-2" });
+    const { prisma, db } = await reader([mine1, mine2, theirs]);
+    // a database that returns every row of the group, whatever customer the where names
+    (db.invoicePayment.findMany as jest.Mock).mockImplementation(async ({ where }: any) =>
+      [mine1, mine2, theirs].filter((p) => p.paymentGroupId === where.paymentGroupId),
+    );
+    const view = await readReceiptGroup(prisma, mine1.id);
+    expect(view.header?.total).toBe(4000);
+    expect(view.applications.map((x) => x.paymentId).sort()).toEqual([mine1.id, mine2.id].sort());
+  });
+
+  it("B3-1. the header method, reference, date and number come from the PAID row, never a DRAFT beside it", async () => {
+    const paid = pk(3000, {
+      reference: "1042",
+      paymentNumber: "PAY-ACME-0099",
+      paidAt: new Date("2026-11-01T12:00:00Z"),
+    });
+    const draft = pk(1000, {
+      status: "DRAFT",
+      method: "ACH",
+      reference: "ACH-9",
+      paymentNumber: "PAY-ACME-0098", // sorts first, so a live-row header would pick it
+      paidAt: new Date("2026-11-05T12:00:00Z"),
+    });
+    const { prisma } = await reader([paid, draft]);
+    for (const anchor of [paid, draft]) {
+      const view = await readReceiptGroup(prisma, anchor.id);
+      expect(view.header).toMatchObject({
+        method: "CHECK",
+        reference: "1042",
+        receivedAt: "2026-11-01T12:00:00.000Z",
+        number: "PAY-ACME-0099",
+        total: 3000,
+      });
+    }
+  });
+
+  it("B3-2. a PENDING sibling keeps its own line and never heads or adds to the PAID receipt", async () => {
+    const rows = [
+      pk(3000, { reference: "1042", paymentNumber: "PAY-ACME-0099" }),
+      pk(1000, { status: "PENDING", reference: "1042", paymentNumber: "PAY-ACME-0098" }),
+    ];
+    const { prisma } = await reader(rows);
+    for (const r of rows) {
+      const view = await readReceiptGroup(prisma, r.id);
+      expect(view.header).toMatchObject({
+        number: "PAY-ACME-0099",
+        method: "CHECK",
+        total: 3000,
+        confirmed: true,
+      });
+      expect(view.tenders.map((t) => [t.method, t.amount, t.status])).toEqual([
+        ["CHECK", 1000, "PENDING"],
+        ["CHECK", 3000, "PAID"],
+      ]);
     }
   });
 });
