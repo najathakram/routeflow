@@ -25,15 +25,28 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import type { NavGroupId } from "@routeflow/types";
 import { activeNavGroup, activeNavLeaf } from "./nav-index";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
 export type NavLeaf = { kind: "leaf"; label: string; href: string; icon: LucideIcon };
-export type NavGroup = { kind: "group"; label: string; icon: LucideIcon; children: NavLeaf[] };
+export type NavGroup = {
+  kind: "group";
+  /** Stable id the stored layout names (never the label, which can be renamed or translated). */
+  id: NavGroupId | "pinned";
+  label: string;
+  icon: LucideIcon;
+  children: NavLeaf[];
+};
 /** Placeholder row held at a gated entry's position while its addon/entitlement
  *  query is still resolving, so the rail never grows once the answer lands. */
-export type NavSkeleton = { kind: "skeleton"; key: string };
+export type NavSkeleton = {
+  kind: "skeleton";
+  key: string;
+  /** The group id or leaf href this row stands in for, so `order` keeps its place while it loads. */
+  holds?: string;
+};
 export type NavEntry = NavLeaf | NavGroup | NavSkeleton;
 
 /** Full operator nav — all sections visible */
@@ -41,6 +54,7 @@ export const OPERATOR_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
     kind: "group",
+    id: "orders",
     label: "Orders",
     icon: ShoppingCart,
     children: [
@@ -51,6 +65,7 @@ export const OPERATOR_NAV: NavEntry[] = [
   },
   {
     kind: "group",
+    id: "dispatch",
     label: "Dispatch",
     icon: Truck,
     children: [
@@ -66,6 +81,7 @@ export const OPERATOR_NAV: NavEntry[] = [
   { kind: "leaf", label: "Customers", href: "/customers", icon: Users },
   {
     kind: "group",
+    id: "warehouse",
     label: "Warehouse",
     icon: Package,
     children: [
@@ -87,6 +103,7 @@ export const OPERATOR_NAV: NavEntry[] = [
   },
   {
     kind: "group",
+    id: "finance",
     label: "Finance",
     icon: Wallet,
     children: [
@@ -113,6 +130,7 @@ export const OPERATOR_NAV: NavEntry[] = [
   // never offers it by accident.
   {
     kind: "group",
+    id: "reports",
     label: "Reports & analytics",
     icon: BarChart3,
     children: [
@@ -136,6 +154,7 @@ export const CUSTOMER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
     kind: "group",
+    id: "orders",
     label: "Orders",
     icon: ShoppingCart,
     children: [

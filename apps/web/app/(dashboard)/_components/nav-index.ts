@@ -14,7 +14,7 @@ export function navLeaves(nav: readonly NavEntry[]): NavLeaf[] {
   const all = nav.flatMap((e): NavLeaf[] =>
     e.kind === "leaf" ? [e] : e.kind === "group" ? e.children : [],
   );
-  // A pinned page is listed twice in the menu (SA-1209: Pinned and its own group); it is one page everywhere else.
+  // A pinned page is listed once (SA-1228); the de-duplication stays as a guard so it is one page everywhere.
   const seen = new Set<string>();
   return all.filter((l) => !seen.has(l.href) && !!seen.add(l.href));
 }

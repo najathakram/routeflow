@@ -74,7 +74,11 @@ import { useNoShellScroll } from "@/lib/use-no-shell-scroll";
 import { useInsightsAccess } from "@/components/insights/use-insights-access";
 import { RouteGuard } from "./_components/gates/RouteGuard";
 import { activeNavLeaf, navShortcuts, navShortcutTargets } from "./_components/nav-index";
-import { buildOperatorNav } from "./_components/build-operator-nav";
+import {
+  buildOperatorNav,
+  buildOperatorNavIndex,
+  type OperatorNavContext,
+} from "./_components/build-operator-nav";
 import { PINNED_GROUP_LABEL } from "./_components/nav-layout";
 import { useNavLayout } from "@/lib/api/nav-layout";
 import { useOpenNavGroups, type NavGroupMode } from "./_components/use-open-nav-groups";
@@ -934,27 +938,26 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const insightsAccess = useInsightsAccess();
   // SA-1209: the business's sidebar layout, from the shared GET /settings read; undefined while loading or failed.
   const { data: navLayout } = useNavLayout({ enabled: isStaff });
-  const navStructure = React.useMemo(
-    () =>
-      buildOperatorNav({
-        role: user?.role,
-        canActAsDriver: (user as any)?.canActAsDriver,
-        routesAccess,
-        deliveryAccess,
-        addonsLoading,
-        hasSalesAgents,
-        counterEnabled,
-        regulatedLoading,
-        regulatedSections,
-        insightsAccess,
-        plan: {
-          flags: subscriptionStatus?.flags,
-          resolved: subscriptionResolved,
-          failed: subscriptionFailed,
-        },
-        modes: tenantModes,
-        navLayout,
-      }),
+  const navCtx = React.useMemo<OperatorNavContext>(
+    () => ({
+      role: user?.role,
+      canActAsDriver: (user as any)?.canActAsDriver,
+      routesAccess,
+      deliveryAccess,
+      addonsLoading,
+      hasSalesAgents,
+      counterEnabled,
+      regulatedLoading,
+      regulatedSections,
+      insightsAccess,
+      plan: {
+        flags: subscriptionStatus?.flags,
+        resolved: subscriptionResolved,
+        failed: subscriptionFailed,
+      },
+      modes: tenantModes,
+      navLayout,
+    }),
     [
       user,
       hasSalesAgents,
@@ -972,6 +975,9 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       navLayout,
     ],
   );
+  const navStructure = React.useMemo(() => buildOperatorNav(navCtx), [navCtx]);
+  // The palette, the g keys and the quick actions read the menu before the business's layout: hiding only tidies the sidebar.
+  const navIndex = React.useMemo(() => buildOperatorNavIndex(navCtx), [navCtx]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference
@@ -1038,7 +1044,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // ── Keyboard shortcuts ──
   const [shortcutHelpOpen, setShortcutHelpOpen] = React.useState(false);
   // The keys and the help both come from the menu this person has (nav-index): no key for a page the menu hides.
-  const shortcutTargets = React.useMemo(() => navShortcutTargets(navStructure), [navStructure]);
+  const shortcutTargets = React.useMemo(() => navShortcutTargets(navIndex), [navIndex]);
   React.useEffect(() => {
     // "g" + letter navigation and "?" help; the rules (typing, modifiers, the cart's leave guard) live in lib/nav-shortcuts.
     const handler = createNavShortcutHandler({
@@ -1052,11 +1058,11 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   const SHORTCUTS = React.useMemo(
     () => [
-      ...navShortcuts(navStructure).map((s) => ({ keys: s.keys as string[], label: s.label })),
+      ...navShortcuts(navIndex).map((s) => ({ keys: s.keys as string[], label: s.label })),
       { keys: ["⌘", "K"], label: "Open command palette" },
       { keys: ["?"], label: "Show keyboard shortcuts" },
     ],
-    [navStructure],
+    [navIndex],
   );
 
   return (
@@ -1240,11 +1246,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         readAt={subscriptionReadAt}
         isAdmin={user?.role === "TENANT_ADMIN"}
       >
-        <CommandPalette
-          open={paletteOpen}
-          onClose={() => setPaletteOpen(false)}
-          nav={navStructure}
-        />
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} nav={navIndex} />
       </ReadOnlyGateProvider>
 
       {/* Keyboard shortcuts help modal */}
