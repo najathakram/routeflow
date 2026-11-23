@@ -151,6 +151,7 @@ export * from "./invoice-line-code";
 export * from "./piece-synonyms";
 export * from "./api/enums";
 export * from "./api/invoice-account"; // SA-1197: the invoice account block rows + its one label map
+export * from "./api/payment-receipt"; // SA-1208 D1: the read-only receipt view (types only)
 export * from "./api/product-count";
 export * from "./api/billing";
 export * from "./api/billing-status";
@@ -295,3 +296,4 @@ export * from "./api/ready-for-pickup";
 export * from "./api/stock-availability";
 export * from "./stop-completion-key";
 export * from "./api/discount-tax-base";
+export * from "./api/product-name";

@@ -426,7 +426,7 @@ export class ProductsService {
     query: ListProductsDto,
     opts?: { excludeTrackedCategoryIds?: string[]; andWhere?: Record<string, unknown>[] },
   ) {
-    this.requireTenant();
+    const callerTenantId = this.requireTenant();
     const page = Number(query.page ?? 1);
     // limit=0 is the "fetch-all" sentinel used by BuyerCatalogService for
     // price-based sorts (buyer pricing is resolved in-memory so can't use DB ORDER BY).
@@ -439,7 +439,11 @@ export class ProductsService {
     const skip = (page - 1) * limit;
 
     const lowStockIds = needsLowStockIds(query) ? await lowStockProductIds(this.prisma) : undefined;
-    const where: any = buildProductListWhere(query, { ...opts, lowStockIds });
+    const where: any = buildProductListWhere(query, {
+      ...opts,
+      lowStockIds,
+      tenantId: callerTenantId,
+    });
 
     // Always include `parent` so the web can compose "<Parent> - <Variant>"
     // display names for line items. The parent row is small (no nested
@@ -524,9 +528,9 @@ export class ProductsService {
    * no effect here.
    */
   async findIds(query: ListProductsDto): Promise<ProductIdsForFilterResponse> {
-    this.requireTenant();
+    const callerTenantId = this.requireTenant();
     const lowStockIds = needsLowStockIds(query) ? await lowStockProductIds(this.prisma) : undefined;
-    const where: any = buildProductListWhere(query, { lowStockIds });
+    const where: any = buildProductListWhere(query, { lowStockIds, tenantId: callerTenantId });
     const db = this.prisma.forTenant();
     const [rows, total] = await Promise.all([
       db.product.findMany({
