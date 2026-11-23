@@ -17,7 +17,7 @@ import {
   revertedNumbers,
 } from "./reconcile.mjs";
 import { summarizeChecks } from "./collector.mjs";
-import { resolveLaneId } from "./config.mjs";
+import { memberName, membersOf, resolveLaneId } from "./config.mjs";
 
 export { linkItemFor };
 
@@ -41,6 +41,7 @@ export const STATUS_WORDS = {
   shipping: "Shipping",
   planned: "Planned",
   idea: "Idea",
+  draft: "Waiting for triage",
   parked: "Parked",
   dropped: "Dropped",
 };
@@ -51,6 +52,8 @@ export function statusLabelFor(item, { booked = false, answered = false } = {}) 
     if (answered || item.status === "live" || item.status === "verified") return "Answered";
     if (booked) return "Booked";
   }
+  // A tester draft the lead filed in the bug registry: closed here, tracked under its B-id.
+  if (item.status === "dropped" && (item.tags ?? []).includes("promoted")) return "Promoted";
   return STATUS_WORDS[item.status] ?? item.status;
 }
 
@@ -572,6 +575,9 @@ export function buildSnapshot({
       harmEvidence: it.harm ? null : (derivedHarm.get(it.id) ?? null),
       domain: itemDomain(it, bugById),
       claimedBy: it.claimedBy,
+      claimedByName: memberName(cfg, it.claimedMember),
+      reportedByName: memberName(cfg, it.reportedBy),
+      assigneeName: memberName(cfg, it.assignee),
       blocked: it.blocked
         ? {
             ...it.blocked,
@@ -959,8 +965,10 @@ export function buildSnapshot({
     group.get(row).add(id);
   }
   const laneShown = (row) => {
-    if (configured.has(row)) return true;
     const raws = group.get(row);
+    // rf lane retire takes a lane off the list; its events and items keep their history.
+    if ([row, ...raws].every((r) => state.retiredLanes?.has(r))) return false;
+    if (configured.has(row)) return true;
     if (stateItems.some((it) => !isDone(it) && (raws.has(it.claimedBy) || raws.has(it.lane))))
       return true;
     const last = Math.max(
@@ -1139,6 +1147,13 @@ export function buildSnapshot({
     trains,
     shippingNext,
     lanes,
+    // Team members as the board shows them (no machine names).
+    members: membersOf(cfg).map(({ id, name, lanes: memberLanes, role }) => ({
+      id,
+      name,
+      lanes: memberLanes,
+      role,
+    })),
     machines,
     ownerQueue,
     ownerTodos,

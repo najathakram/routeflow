@@ -3,14 +3,19 @@
 // Exit codes: 0 ok, 1 refused (validation) or error, 2 usage, 3 committed but not pushed.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   REPO_ROOT,
   boardDir,
+  MEMBER_FILE,
+  findMember,
   laneId,
   loadConfig,
   machineId,
+  memberName,
+  memberProblems,
+  membersOf,
   normalizeLane,
   opsHome,
   specsDir,
@@ -23,19 +28,28 @@ import {
   TYPES,
   PRIORITIES,
   PR_ACTIONS,
+  ROLES,
   needsBusinessStory,
 } from "../lib/schema.mjs";
 import { newEventId } from "../lib/ids.mjs";
+import {
+  actorFor as identityActor,
+  currentMember,
+  defaultLane,
+  memberMachineWarning,
+  whoIsHere,
+} from "../lib/identity.mjs";
 import { fold } from "../lib/fold.mjs";
 import { freedItems, laneNow, rankCandidates } from "../lib/next.mjs";
 import { linkMatches, readPrTitle } from "../lib/link-check.mjs";
 import { registerModeOf, runSync } from "../lib/sync.mjs";
-import { checkoutRoot, laneForCwd, setLane } from "../lib/lanes-local.mjs";
+import { checkoutRoot, setLane } from "../lib/lanes-local.mjs";
 import { runStatusSync } from "../lib/status-sync.mjs";
 import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/brief.mjs";
 import {
   authorOf,
   commentsFor,
+  inboxHeadline,
   isUnread,
   readInboxSeen,
   scrubCommentText,
@@ -45,6 +59,14 @@ import {
 } from "../lib/inbox.mjs";
 import { registerHook } from "../lib/views.mjs";
 import { BRIEF_DISABLED_NOTE, loadClientNames, maskText } from "../lib/mask.mjs";
+import {
+  PROMOTED_TAG,
+  REJECTED_TAG,
+  TRIAGE_STATUS,
+  draftsOf,
+  filedBugId,
+  promotionSymptom,
+} from "../lib/triage.mjs";
 import {
   appendEvents,
   ensureClone,
@@ -74,6 +96,7 @@ const BOOLEAN_FLAGS = new Set([
   "refresh",
   "all",
   "keep",
+  "wait",
 ]);
 const MULTI_FLAGS = new Set(["pr", "branch", "url"]);
 
@@ -112,10 +135,16 @@ const USAGE = `usage: rf <command> [args]
   claim <id> [--lane L] [--branch B] [--steal]     release <id> [--lane L]
   status <id> <status> [--note T]                  block <id> --by X [--unblocker Y]   unblock <id>
   comment <id> "<text>" [--to lane|member,...] [--reply-to <eventId>]   talk on the item (the only channel)
-  inbox [--all] [--keep] [--json]   comments for you (mentions, replies, your claimed items); marks them read
-  next [--lane L] [--claim] [--json]
+  inbox [--all] [--keep] [--json]   comments and assignments for you (mentions, replies, your claimed items); marks them read
+  inbox --wait [--timeout S] [--interval S]   waits (pulling every 45 s) and exits 0 when something arrives, 3 after --timeout (default 1800 s)
+  assign <id> --to <member>|- [--note N]   hands the item to one member: first in their rf next, in their inbox
+  lane retire <lane> --note T | lane unretire <lane>   (lead) a lane off the board: no lane-silent alarm, not listed; history stays
+  anomaly ls [--all] | anomaly ack <eventId> --note T   (lead) list event anomalies; hide one from the alarms
+  next [--lane L] [--role builder|tester|reviewer] [--claim] [--json]   (a member gets their role's work)
   item new --title T --type X [--priority P] [--status S] [--lane L] [--train R1] [--area A]
            [--parent ID] [--eta E] [--gate G] [--id ID] [--blocked-by ID,ID]  (rf item edit: - clears it)
+           [--role builder|tester|reviewer]   (who picks it up; unset = builder)
+           [--steps S] [--screen /route] [--evidence https://...]   (a tester's bug: always --status draft)
            [--problem "what is wrong"] [--impact "who it hurts, what it costs"] [--solution "how we fix it"]
            [--owner-ask "what we need from the owner"] [--harm live|latent|none|null]   (P0/P1 bug/feature/incident: --problem + --impact required)
   item edit <id> [--title ..] [--priority ..] ...   item show <id> [--json]
@@ -123,10 +152,13 @@ const USAGE = `usage: rf <command> [args]
   sync [--dry] [--no-push]                         turn changed register / owner-queue rows into events
   audit [--json] [--snapshot FILE]                 the accuracy counts (items, alarms, problems, queue, PRs, bugs)
   bug file <args...>                               files a bug via scripts/campaign/bugs.mjs (lead, coordinator only)
+  triage [--json]                                  tester drafts waiting for the lead
+  triage promote <id> --location L --severity S    files the draft in the bug registry, tells the reporter (lead, coordinator only)
+  triage reject <id> --reason R                    closes the draft with the reason, tells the reporter (lead, coordinator only)
   status-sync [--no-push]                                          lane status files -> heartbeat events
   auto-status [--apply] [--no-push]   linked PRs merged/live/open -> item statuses, one pass (dry run by default)
   brief [--lane L] [--since <eventId|iso>] [--refresh] [--json]   what the monitor says, in plain words
-  whoami [--machine M] [--lane L]   backfill [--dry]   views [--dry] [--no-push]   doctor   hash-password
+  whoami [--machine M] [--lane L] [--member <id>|-]   backfill [--dry]   views [--dry] [--no-push]   doctor   hash-password
 global: --json  --no-push  --no-sync  --quiet (no stdout on success)`;
 
 const NULLABLE = [
@@ -141,6 +173,9 @@ const NULLABLE = [
   "impact",
   "solution",
   "ownerAsk",
+  "steps",
+  "screen",
+  "evidence",
 ];
 const CLEAR_WORDS = new Set(["none", "null", "-", ""]);
 
@@ -164,13 +199,6 @@ async function prepare(ctx, flags, { sync }) {
   return { ...ctx, config, machine: machineId(config, ctx.env) };
 }
 
-/** No --lane: RF_LANE, else the lane recorded for this directory (rf whoami --lane), else null. */
-function defaultLane(config, env) {
-  return (
-    laneId(undefined, config, env) ?? laneForCwd(process.cwd(), env, { config, home: opsHome(env) })
-  );
-}
-
 function resolveLane(raw, c, { required = false } = {}) {
   let lane;
   if (raw === undefined) lane = defaultLane(c.config, c.env);
@@ -183,26 +211,40 @@ function resolveLane(raw, c, { required = false } = {}) {
   return lane;
 }
 
-/** The name events are written under: RF_ACTOR, else the lane, else machine:folder. */
+/** The name events are written under: the one rule, in lib/identity.mjs. `c`: { env, machine, config }. */
 function actorFor(c, lane) {
-  return (c.env.RF_ACTOR || lane || `${c.machine}:${basename(process.cwd())}`).slice(0, 80);
+  return identityActor({ env: c.env, machine: c.machine, config: c.config }, lane);
 }
 
-/** Who reads comments here: { lane, actor }. */
+/** Who reads comments here: { lane, actor, member } (lib/identity.mjs). */
 function meFor(c, lane) {
-  return { lane: lane ?? null, actor: actorFor(c, lane) };
+  return whoIsHere({ env: c.env, machine: c.machine, config: c.config, lane: lane ?? null });
+}
+
+/** "macmini (Alex Rivera)" when a member holds the claim, else the lane. */
+function claimWords(it, config) {
+  if (!it.claimedBy) return "-";
+  const name = memberName(config, it.claimedMember);
+  return name ? `${it.claimedBy} (${name})` : it.claimedBy;
 }
 
 /** A --to value -> a lane id or a member id; an unknown name is a usage error (nothing written). */
 function resolveMention(raw, config) {
   const t = String(raw).trim();
-  const member = (config.members ?? []).find((m) => m.id === t.toLowerCase());
+  const member = findMember(config, t);
   if (member) return member.id;
   const lane = normalizeLane(t, config);
   if (lane) return lane;
   throw new UsageError(
     `unknown lane or member "${t}" (lanes and members live in the specs ops/config.json)`,
   );
+}
+
+/** A claim or release carries this computer's member: claims are held per member. */
+function withClaimMember(c, kind, data) {
+  if (kind !== "claim" && kind !== "release") return data;
+  const member = currentMember(c.config, c.env)?.id;
+  return member && data?.member === undefined ? { ...data, member } : data;
 }
 
 function makeEvent(c, kind, item, data, lane) {
@@ -216,7 +258,7 @@ function makeEvent(c, kind, item, data, lane) {
     lane: lane ?? null,
     kind,
     item,
-    data,
+    data: withClaimMember(c, kind, data),
   };
 }
 
@@ -249,6 +291,9 @@ function itemFields(flags, c) {
   }
   // Business view (owner 2026-10-19): the plain-language story of the item.
   for (const k of ["problem", "impact", "solution"]) if (flags[k] !== undefined) f[k] = flags[k];
+  // Tester intake: repro steps, the screen or route, and a link to a hosted screenshot.
+  for (const k of ["steps", "screen", "evidence"])
+    if (flags[k] !== undefined) f[k] = String(flags[k]);
   if (flags["owner-ask"] !== undefined) f.ownerAsk = flags["owner-ask"];
   // Live harm: live | latent | none; "null" or "-" clears it ("none" is itself a harm value).
   if (flags.harm !== undefined)
@@ -257,6 +302,12 @@ function itemFields(flags, c) {
   if (flags.trainLabel !== undefined) f.trainLabel = flags.trainLabel;
   if (flags.lane !== undefined) {
     f.lane = CLEAR_WORDS.has(String(flags.lane)) ? null : resolveLane(flags.lane, c);
+  }
+  if (flags.role !== undefined) {
+    const r = String(flags.role);
+    if (CLEAR_WORDS.has(r)) f.role = null;
+    else if (ROLES.includes(r)) f.role = r;
+    else throw new UsageError(`--role must be one of ${ROLES.join(", ")}`);
   }
   for (const k of ["tags", "members", "related"]) if (flags[k] !== undefined) f[k] = list(flags[k]);
   if (flags["blocked-by"] !== undefined) {
@@ -486,15 +537,21 @@ async function cmdSimple(kind, positional, flags, env) {
   return cmdEvent(rest, flags, env);
 }
 
-function fmtItem(it) {
-  return `${it.id.padEnd(7)} ${it.priority} ${it.status.padEnd(9)} ${it.type.padEnd(8)} ${(it.lane ?? "-").padEnd(10)} ${(it.train ?? "-").padEnd(3)} ${it.title}`;
+function fmtItem(it, config) {
+  const claim = it.claimedBy ? `  @${claimWords(it, config)}` : "";
+  return `${it.id.padEnd(7)} ${it.priority} ${it.status.padEnd(9)} ${it.type.padEnd(8)} ${(it.lane ?? "-").padEnd(10)} ${(it.train ?? "-").padEnd(3)} ${it.title}${claim}`;
 }
 
 async function cmdNext(flags, env) {
+  if (flags.role !== undefined && !ROLES.includes(flags.role))
+    throw new UsageError(`--role must be one of ${ROLES.join(", ")}`);
   const c = await prepare(ctxFor(env), flags, { sync: true });
   const lane = resolveLane(flags.lane, c, { required: true });
+  // A member gets work for their role unless --role says otherwise; a lane session sees every role.
+  const role = flags.role ?? currentMember(c.config, c.env)?.role;
   const state = stateOf(c);
-  const ranked = rankCandidates(state, lane, c.config, { now: Date.now() });
+  const member = currentMember(c.config, c.env)?.id ?? null;
+  const ranked = rankCandidates(state, lane, c.config, { now: Date.now(), role, member });
   const top = ranked[0] ?? null;
   const runnersUp = ranked.slice(1, 5);
   const now = laneNow(state, lane);
@@ -516,7 +573,14 @@ async function cmdNext(flags, env) {
   if (flags.json) {
     process.stdout.write(
       JSON.stringify(
-        { lane, item: top ? slim(top) : null, runnersUp: runnersUp.map(slim), claimed, now },
+        {
+          lane,
+          role: role ?? null,
+          item: top ? slim(top) : null,
+          runnersUp: runnersUp.map(slim),
+          claimed,
+          now,
+        },
         null,
         2,
       ) + "\n",
@@ -525,7 +589,7 @@ async function cmdNext(flags, env) {
   }
   if (!top) {
     process.stdout.write(
-      `nothing to pick for ${lane}${now.length ? ` (in flight: ${now.join(", ")})` : ""}\n`,
+      `nothing to pick for ${lane}${role ? ` (${role} work)` : ""}${now.length ? ` (in flight: ${now.join(", ")})` : ""}\n`,
     );
     return code;
   }
@@ -542,6 +606,18 @@ async function cmdItem(positional, flags, env) {
     const c = await prepare(ctxFor(env), flags, { sync: flags["blocked-by"] !== undefined });
     const fields = itemFields(flags, c);
     if (!fields.title || !fields.type) throw new UsageError("rf item new needs --title and --type");
+    // A tester files bugs as drafts; the lead or coordinator triages them (rf triage).
+    if (currentMember(c.config, c.env)?.role === "tester") {
+      if (fields.type !== "bug")
+        throw new UsageError(
+          "a tester files bugs: rf item new --type bug (other work comes from the lead)",
+        );
+      if (fields.status !== undefined && fields.status !== TRIAGE_STATUS)
+        throw new UsageError(
+          `a tester files a draft (--status ${TRIAGE_STATUS}); the lead or coordinator promotes it (rf triage)`,
+        );
+      fields.status = TRIAGE_STATUS;
+    }
     assertKnownBlockers(c, fields);
     if (needsBusinessStory({ priority: "P2", ...fields }) && (!fields.problem || !fields.impact)) {
       throw new UsageError(
@@ -601,7 +677,8 @@ async function cmdItem(positional, flags, env) {
       `${it.id}  ${it.title}`,
       `type ${it.type}  priority ${it.priority}  status ${it.status}  lane ${it.lane ?? "-"}  train ${it.train ?? "-"}`,
       `area ${it.area ?? "-"}  parent ${it.parent ?? "-"}  eta ${it.eta ?? "-"}  gate ${it.gate ?? "-"}`,
-      `claimed by ${it.claimedBy ?? "-"}${it.claimedAt ? ` since ${iso(it.claimedAt)}` : ""}${it.blocked ? `  BLOCKED by ${it.blocked.by}` : ""}`,
+      `assigned to ${it.assignee ? `${it.assignee}${memberName(c.config, it.assignee) ? ` (${memberName(c.config, it.assignee)})` : ""} by ${it.assignedBy ?? "-"}` : "-"}`,
+      `claimed by ${claimWords(it, c.config)}${it.claimedAt ? ` since ${iso(it.claimedAt)}` : ""}${it.blocked ? `  BLOCKED by ${it.blocked.by}` : ""}`,
       `links  prs ${it.links.prs.join(",") || "-"}  branches ${it.links.branches.join(",") || "-"}`,
       `children ${it.children.join(",") || "-"}  blocked by ${it.blockedBy.join(",") || "-"}  updated ${iso(it.updatedAt)}`,
       "history:",
@@ -628,8 +705,173 @@ async function cmdItem(positional, flags, env) {
   throw new UsageError("rf item <new|edit|show>");
 }
 
-/** Comments for you: the unread ones (then marked read), or the last 20 with --all. */
+/**
+ * `rf assign <id> --to <member> [--note N]`: hands the item to one team member. It tops their
+ * `rf next` (whatever its lane or role), nobody else is handed it, and it lands in their inbox.
+ * `--to -` clears it. Lanes take work through `rf item edit <id> --lane`, not here.
+ */
+async function cmdAssign(positional, flags, env) {
+  const id = positional[0];
+  if (!id) throw new UsageError("rf assign <id> --to <member> [--note N]");
+  if (typeof flags.to !== "string" || !flags.to.trim())
+    throw new UsageError("rf assign needs --to <member id> (or --to - to clear)");
+  const c = await prepare(ctxFor(env), flags, { sync: true });
+  const raw = flags.to.trim();
+  let to = null;
+  if (!CLEAR_WORDS.has(raw)) {
+    const m = findMember(c.config, raw);
+    if (!m) {
+      const lane = (c.config.lanes ?? []).some((l) => l.id === raw.toLowerCase());
+      throw new UsageError(
+        lane
+          ? `"${raw}" is a lane: hand work to a lane with rf item edit ${id} --lane ${raw}`
+          : `unknown member "${raw}" (members live in the specs ops/config.json)`,
+      );
+    }
+    to = m.id;
+  }
+  const note = typeof flags.note === "string" && flags.note.trim() ? flags.note.trim() : undefined;
+  const lane = defaultLane(c.config, c.env);
+  const data = { to, ...(note ? { note } : {}) };
+  const name = to ? memberName(c.config, to) : null;
+  return writeCmd(c, flags, [makeEvent(c, "assign", id, data, lane)], () =>
+    to ? `assigned ${id} to ${to}${name ? ` (${name})` : ""}` : `unassigned ${id}`,
+  );
+}
+
+/**
+ * A note the lead typed (rf lane retire, rf anomaly ack): required, and scrubbed like a comment
+ * before it is written. A broken mask list refuses rather than store unmasked text.
+ */
+function leadNote(flags, env, c, usage) {
+  if (typeof flags.note !== "string" || !flags.note.trim())
+    throw new UsageError(`${usage} (--note says why, for the history)`);
+  const { names, error } = loadClientNames({ env, home: c.home });
+  if (error) throw new UsageError(`${BRIEF_DISABLED_NOTE}; fix it before writing a note`);
+  return scrubCommentText(flags.note.trim(), names).slice(0, 500);
+}
+
+/**
+ * rf lane retire <lane> --note T | rf lane unretire <lane> [--note T]: the lead takes a lane off
+ * the board (out of the lane-silent alarm and the lanes list; its history stays) or brings it back.
+ * The store refuses a retire while the lane still holds a claim. A lane the config no longer lists
+ * is accepted when the events know it.
+ */
+async function cmdLane(positional, flags, env) {
+  const [sub, raw] = positional;
+  const usage = "rf lane retire <lane> --note T | rf lane unretire <lane> [--note T]";
+  if ((sub !== "retire" && sub !== "unretire") || !raw) throw new UsageError(usage);
+  if (sub === "retire" && (typeof flags.note !== "string" || !flags.note.trim()))
+    throw new UsageError(`rf lane retire ${raw} needs --note T (why, for the history)`);
+  const c = await prepare(ctxFor(env), flags, { sync: true });
+  const state = stateOf(c);
+  const low = String(raw).trim().toLowerCase();
+  const lane =
+    normalizeLane(raw, c.config) ??
+    (state.lanes.has(low) || state.retiredLanes.has(low) ? low : null);
+  if (!lane) throw new UsageError(`unknown lane "${raw}" (rf doctor lists the lanes)`);
+  const data = { lane };
+  if (sub === "retire" || flags.note !== undefined) data.note = leadNote(flags, env, c, usage);
+  const kind = sub === "retire" ? "lane.retire" : "lane.unretire";
+  const writer = defaultLane(c.config, c.env);
+  return writeCmd(c, flags, [makeEvent(c, kind, null, data, writer)], () =>
+    sub === "retire" ? `retired lane ${lane}` : `lane ${lane} is back`,
+  );
+}
+
+/**
+ * rf anomaly ls [--all] lists the event anomalies (unacknowledged ones; --all adds the rest).
+ * rf anomaly ack <eventId> --note T hides that one anomaly from the alarms; a new anomaly of the
+ * same kind still alarms. Claim conflicts are not listed: they clear when the loser releases.
+ */
+async function cmdAnomaly(positional, flags, env) {
+  const [sub, eventId] = positional;
+  const usage = "rf anomaly ls [--all] [--json] | rf anomaly ack <eventId> --note T";
+  if (sub === "ack") {
+    if (!eventId) throw new UsageError(usage);
+    if (typeof flags.note !== "string" || !flags.note.trim())
+      throw new UsageError(`rf anomaly ack ${eventId} needs --note T (why, for the history)`);
+    const c = await prepare(ctxFor(env), flags, { sync: true });
+    const data = { eventId, note: leadNote(flags, env, c, usage) };
+    const writer = defaultLane(c.config, c.env);
+    return writeCmd(
+      c,
+      flags,
+      [makeEvent(c, "anomaly.ack", null, data, writer)],
+      () => `acknowledged anomaly ${eventId}`,
+    );
+  }
+  if (sub !== "ls" && sub !== undefined) throw new UsageError(usage);
+  const c = await prepare(ctxFor(env), flags, { sync: false });
+  const { names: clientNames, error: namesError } = loadClientNames({ env, home: c.home });
+  const showText = (t) =>
+    namesError ? "[hidden: client-names.json unreadable]" : maskText(t ?? "", clientNames);
+  const rows = stateOf(c)
+    .anomalies.filter((a) => a.kind !== "claim-conflict" && (flags.all || !a.acked))
+    .map((a) => ({
+      ...a,
+      detail: showText(a.detail),
+      acked: a.acked ? { ...a.acked, note: showText(a.acked.note) } : null,
+    }));
+  const when = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 16) + "Z" : "-");
+  const text = rows.length
+    ? rows
+        .map(
+          (a) =>
+            `${a.eventId ?? "-"}  ${a.kind}  ${a.item ?? "-"}  ${when(a.ts)}  ${a.detail}` +
+            (a.acked ? `  (acknowledged by ${a.acked.by}: ${a.acked.note})` : ""),
+        )
+        .join("\n")
+    : flags.all
+      ? "no anomalies"
+      : "no unacknowledged anomalies (rf anomaly ls --all shows the rest)";
+  print(flags, { ok: true, anomalies: rows }, text);
+  return 0;
+}
+
+/** Seconds from a flag: a positive number, else the default. */
+function secondsFlag(flags, name, dflt) {
+  if (flags[name] === undefined) return dflt;
+  const n = Number(flags[name]);
+  if (!Number.isFinite(n) || n <= 0) throw new UsageError(`--${name} must be a number of seconds`);
+  return n;
+}
+
+export const INBOX_WAIT_TIMEOUT_EXIT = 3;
+
+/**
+ * Comments and assignments for you: the unread ones (then marked read), or the last 20 with --all.
+ * --wait [--timeout S] [--interval S]: pull the specs repo every --interval seconds (default 45)
+ * and EXIT as soon as something unread is there (exit 0), or after --timeout (default 1800; exit
+ * 3). An idle agent runs it as one background command: the exit is what wakes it.
+ */
 async function cmdInbox(flags, env) {
+  if (flags.wait) {
+    if (flags.all) throw new UsageError("--wait and --all do not mix");
+    const timeoutMs = secondsFlag(flags, "timeout", 1800) * 1000;
+    const pollMs =
+      Number(env.RF_INBOX_POLL_MS) > 0
+        ? Number(env.RF_INBOX_POLL_MS) // tests only
+        : secondsFlag(flags, "interval", 45) * 1000;
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      const code = await inboxOnce(flags, env, { quietWhenEmpty: true });
+      if (code !== null) return code;
+      const left = until - Date.now();
+      if (left <= 0) break;
+      await new Promise((ok) => setTimeout(ok, Math.min(pollMs, left)));
+    }
+    const mins = Math.round(timeoutMs / 60000);
+    process.stdout.write(
+      `no new messages for you in ${mins >= 1 ? `${mins} min` : `${Math.round(timeoutMs / 1000)} s`}; run rf inbox --wait again\n`,
+    );
+    return INBOX_WAIT_TIMEOUT_EXIT;
+  }
+  return (await inboxOnce(flags, env, { quietWhenEmpty: false })) ?? 0;
+}
+
+/** One inbox read. Returns the exit code, or null when empty and quietWhenEmpty (keep waiting). */
+async function inboxOnce(flags, env, { quietWhenEmpty }) {
   const c = await prepare(ctxFor(env), flags, { sync: true });
   const lane = resolveLane(flags.lane, c);
   const me = meFor(c, lane);
@@ -643,6 +885,7 @@ async function cmdInbox(flags, env) {
   const all = commentsFor(state, me);
   const seen = readInboxSeen(c.home, me);
   const shown = flags.all ? all.slice(-20) : all.filter((x) => isUnread(x.comment, seen));
+  if (shown.length === 0 && quietWhenEmpty) return null;
   const now = Date.now();
   const n = shown.length;
   const s = n === 1 ? "" : "s";
@@ -655,12 +898,12 @@ async function cmdInbox(flags, env) {
     process.stdout.write(JSON.stringify({ me, comments }, null, 2) + "\n");
   } else if (n === 0) {
     process.stdout.write(
-      `no new comments for you (${me.actor}); rf inbox --all shows the last 20\n`,
+      `no new messages for you (${me.actor}); rf inbox --all shows the last 20\n`,
     );
   } else {
     const head = flags.all
       ? `last ${n} comment${s} for you (${me.actor}):`
-      : `${n} new comment${s} for you (${me.actor}):`;
+      : `${inboxHeadline(shown)} for you (${me.actor}):`;
     const lines = shown.map((x) => renderComment(x.comment, state, { now, clientNames }));
     process.stdout.write(`${head}\n${lines.join("\n")}\n`);
   }
@@ -694,7 +937,10 @@ async function cmdLs(flags, env) {
       a.priority.localeCompare(b.priority) || num(a.id) - num(b.id) || a.id.localeCompare(b.id),
   );
   if (flags.json) process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
-  else process.stdout.write(rows.length ? rows.map(fmtItem).join("\n") + "\n" : "no items\n");
+  else
+    process.stdout.write(
+      rows.length ? rows.map((it) => fmtItem(it, c.config)).join("\n") + "\n" : "no items\n",
+    );
   return 0;
 }
 
@@ -707,6 +953,21 @@ async function cmdWhoami(flags, env) {
     writeFileSync(join(ctx.home, "machine"), String(flags.machine).trim() + "\n");
   }
   const config = loadConfig(ctx.dir);
+  if (flags.member !== undefined) {
+    const raw = typeof flags.member === "string" ? flags.member.trim() : "";
+    const file = join(ctx.home, MEMBER_FILE);
+    if (CLEAR_WORDS.has(raw)) {
+      if (existsSync(file)) writeFileSync(file, "");
+    } else {
+      const m = findMember(config, raw);
+      if (!m)
+        throw new UsageError(
+          `unknown member "${raw}" (members live in the specs ops/config.json; ask the lead to add you)`,
+        );
+      mkdirSync(ctx.home, { recursive: true });
+      writeFileSync(file, `${m.id}\n`);
+    }
+  }
   if (flags.lane !== undefined) {
     const lane = typeof flags.lane === "string" ? normalizeLane(flags.lane, config) : null;
     if (!lane) throw new UsageError(`unknown lane "${flags.lane}"`);
@@ -723,18 +984,23 @@ async function cmdWhoami(flags, env) {
   }
   const machine = machineId(config, env);
   const lane = defaultLane(config, env);
+  const member = currentMember(config, env);
   const info = {
     machine,
+    member: member ? { id: member.id, name: member.name, role: member.role } : null,
     lane,
-    actor: actorFor({ env, machine }, lane),
+    actor: actorFor({ env, machine, config }, lane),
     specsDir: ctx.dir,
     clone: existsSync(join(ctx.dir, ".git")) ? "present" : "missing",
   };
   print(
     flags,
     info,
-    `machine ${info.machine}\nlane ${info.lane ?? "-"}\nname ${info.actor} (events and comments are written under it)\nspecs ${info.specsDir}\nclone ${info.clone}`,
+    `machine ${info.machine}\nmember ${member ? `${member.id} (${member.name}, ${member.role})` : "-"}\nlane ${info.lane ?? "-"}\nname ${info.actor} (events and comments are written under it)\nspecs ${info.specsDir}\nclone ${info.clone}`,
   );
+  // The member is a label, not a login (one shared GitHub account): say so when it looks wrong.
+  const warning = memberMachineWarning(config, env, machine);
+  if (warning) process.stderr.write(`${warning}\n`);
   return 0;
 }
 
@@ -1083,7 +1349,7 @@ async function cmdBrief(flags, env) {
 `);
     return 0;
   }
-  const me = meFor({ env, machine: machineId(config, env) }, lane);
+  const me = meFor({ env, machine: machineId(config, env), config }, lane);
   const text = renderBrief(state, {
     lane,
     now,
@@ -1129,6 +1395,41 @@ async function cmdBrief(flags, env) {
 
 const BUG_MINTER_LANES = new Set(["lead", "coordinator"]);
 
+/** The minter lane this process runs as (lead or coordinator), else { refused: words }. */
+function minterCheck(config, env, what) {
+  const raw = String(env.RF_LANE ?? "")
+    .trim()
+    .toLowerCase();
+  const lane = raw ? laneId(undefined, config, env) : defaultLane(config, env);
+  if (BUG_MINTER_LANES.has(lane) || BUG_MINTER_LANES.has(raw)) return { lane: lane ?? raw };
+  return {
+    refused:
+      `refused: ${what} is limited to the lanes lead and coordinator (one minter: a single lane ` +
+      "mints bug numbers so two lanes can never file the same one). " +
+      `Your lane is ${lane ?? (raw || "not set (RF_LANE)")}. Ask the lead to file it.\n`,
+  };
+}
+
+/** Runs scripts/campaign/bugs.mjs with args; { code, stdout, stderr } (stdout captured). */
+function runBugsScript(repo, args, env) {
+  const script = join(repo, "scripts", "campaign", "bugs.mjs");
+  if (!existsSync(script))
+    return Promise.resolve({ code: 1, stdout: "", stderr: `${script} not found` });
+  return new Promise((done) => {
+    const child = spawn(process.execPath, [script, ...args], {
+      cwd: repo,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", (e) => done({ code: 1, stdout, stderr: stderr + e.message }));
+    child.on("close", (code) => done({ code: code ?? 1, stdout, stderr }));
+  });
+}
+
 /**
  * `rf bug file …`: a thin wrapper over `node scripts/campaign/bugs.mjs file …` in the routeflow
  * checkout, args passed through unchanged. Only the lanes lead and coordinator may run it (one
@@ -1138,16 +1439,9 @@ async function cmdBug(rest, env) {
   if (rest[0] !== "file")
     throw new UsageError("rf bug file <args passed to scripts/campaign/bugs.mjs>");
   const config = loadConfig(specsDir(env));
-  const raw = String(env.RF_LANE ?? "")
-    .trim()
-    .toLowerCase();
-  const lane = raw ? laneId(undefined, config, env) : defaultLane(config, env);
-  if (!BUG_MINTER_LANES.has(lane) && !BUG_MINTER_LANES.has(raw)) {
-    process.stderr.write(
-      "refused: rf bug file is limited to the lanes lead and coordinator (one minter: a single lane " +
-        "mints bug numbers so two lanes can never file the same one). " +
-        `Your lane is ${lane ?? (raw || "not set (RF_LANE)")}. Ask the lead to file it.\n`,
-    );
+  const minter = minterCheck(config, env, "rf bug file");
+  if (minter.refused) {
+    process.stderr.write(minter.refused);
     return 1;
   }
   const repo = env.RF_REPO_ROOT || REPO_ROOT;
@@ -1164,6 +1458,187 @@ async function cmdBug(rest, env) {
     });
     child.on("close", (code) => done(code ?? 1));
   });
+}
+
+/** A mention for the reporter, when their actor id is a lane or a member (else no --to). */
+function reporterMention(it, config) {
+  const who = it.reportedBy;
+  if (!who) return [];
+  if (findMember(config, who)) return [findMember(config, who).id];
+  return (config.lanes ?? []).some((l) => l.id === who) ? [who] : [];
+}
+
+/**
+ * `rf triage`: tester drafts waiting for the lead. `rf triage promote <id> --location L --severity S`
+ * files it in the bug registry (scripts/campaign/bugs.mjs, minter lanes only) and closes the draft;
+ * `rf triage reject <id> --reason R` closes it with the reason. The reporter gets a comment either way.
+ */
+async function cmdTriage(positional, flags, env) {
+  const sub = positional[0];
+  if (sub === undefined) {
+    const c = await prepare(ctxFor(env), flags, { sync: true });
+    const state = stateOf(c);
+    const drafts = draftsOf(state);
+    const { names: clientNames, error } = loadClientNames({ env, home: c.home });
+    if (error) {
+      process.stdout.write(`${BRIEF_DISABLED_NOTE}\n`);
+      return 0;
+    }
+    const mask = (t) => maskText(t, clientNames);
+    if (flags.json) {
+      const rows = drafts.map((it) => ({
+        id: it.id,
+        title: mask(it.title),
+        reportedBy: it.reportedBy,
+        reportedByName: memberName(c.config, it.reportedBy),
+        createdAt: new Date(it.createdAt).toISOString(),
+        screen: it.screen,
+        evidence: it.evidence,
+        steps: it.steps === null ? null : mask(it.steps),
+      }));
+      process.stdout.write(JSON.stringify({ drafts: rows }, null, 2) + "\n");
+      return 0;
+    }
+    if (!drafts.length) {
+      process.stdout.write("no drafts waiting for triage\n");
+      return 0;
+    }
+    const now = Date.now();
+    const lines = drafts.map((it) => {
+      const who = memberName(c.config, it.reportedBy) ?? it.reportedBy ?? "unknown";
+      const age = Math.max(0, Math.round((now - it.createdAt) / 60000));
+      const ago =
+        age < 60
+          ? `${age} min ago`
+          : age < 2880
+            ? `${Math.round(age / 60)} h ago`
+            : `${Math.round(age / 1440)} days ago`;
+      return `- ${it.id.padEnd(7)} ${mask(it.title)}  (${who}, ${ago}${it.screen ? `, ${it.screen}` : ""})`;
+    });
+    const n = drafts.length;
+    process.stdout.write(
+      `${n} draft${n === 1 ? "" : "s"} waiting for triage (rf triage promote <id> --location L --severity S | reject <id> --reason R):\n${lines.join("\n")}\n`,
+    );
+    return 0;
+  }
+  if (sub !== "promote" && sub !== "reject")
+    throw new UsageError(
+      "rf triage [promote <id> --location L --severity S | reject <id> --reason R]",
+    );
+  const id = positional[1];
+  if (!id) throw new UsageError(`rf triage ${sub} <id>`);
+  if (sub === "promote") {
+    if (typeof flags.location !== "string" || !flags.location.trim())
+      throw new UsageError("rf triage promote needs --location (where the bug lives, for routing)");
+    if (typeof flags.severity !== "string" || !flags.severity.trim())
+      throw new UsageError("rf triage promote needs --severity critical|high|medium|low");
+  } else if (typeof flags.reason !== "string" || !flags.reason.trim()) {
+    throw new UsageError("rf triage reject needs --reason (the reporter reads it)");
+  }
+  const c = await prepare(ctxFor(env), flags, { sync: true });
+  const minter = minterCheck(c.config, c.env, `rf triage ${sub}`);
+  if (minter.refused) {
+    process.stderr.write(minter.refused);
+    return 1;
+  }
+  const state = stateOf(c);
+  const it = state.items.get(id);
+  if (!it) throw new UsageError(`unknown item ${id}`);
+  if (it.status !== TRIAGE_STATUS)
+    throw new UsageError(`${id} is not a draft (status ${it.status}); only drafts are triaged`);
+  const to = reporterMention(it, c.config);
+  const lane = minter.lane;
+  if (sub === "reject") {
+    const reason = flags.reason.trim().slice(0, 400);
+    return writeCmd(
+      c,
+      flags,
+      [
+        makeEvent(
+          c,
+          "item.edit",
+          id,
+          { fields: { tags: [...new Set([...it.tags, REJECTED_TAG])] } },
+          lane,
+        ),
+        makeEvent(
+          c,
+          "status",
+          id,
+          { status: "dropped", note: `triage: not filed: ${reason}` },
+          lane,
+        ),
+        makeEvent(
+          c,
+          "comment",
+          id,
+          { text: `Not filed: ${reason}`, ...(to.length ? { to } : {}) },
+          lane,
+        ),
+      ],
+      () => `rejected ${id}${to.length ? ` (told ${to.join(", ")})` : ""}`,
+    );
+  }
+  // Promote: the registry lives in the product repo (public during deploy windows), so the title
+  // and symptom are masked first, and a broken names list refuses rather than leaks.
+  const { names: clientNames, error } = loadClientNames({ env, home: c.home });
+  if (error) {
+    process.stderr.write(`refused: ${BRIEF_DISABLED_NOTE}\n`);
+    return 1;
+  }
+  const severity = flags.severity.trim();
+  const repo = c.env.RF_REPO_ROOT || REPO_ROOT;
+  const ran = await runBugsScript(
+    repo,
+    [
+      "file",
+      maskText(it.title, clientNames),
+      "--location",
+      flags.location.trim(),
+      "--severity",
+      severity,
+      "--symptom",
+      promotionSymptom(it, clientNames),
+    ],
+    c.env,
+  );
+  const bug = ran.code === 0 ? filedBugId(ran.stdout) : null;
+  if (!bug) {
+    process.stderr.write(
+      `error: bugs.mjs file did not file a bug (exit ${ran.code})\n${ran.stderr}${ran.stdout}`,
+    );
+    return 1;
+  }
+  return writeCmd(
+    c,
+    flags,
+    [
+      makeEvent(
+        c,
+        "item.edit",
+        id,
+        {
+          fields: {
+            related: [...new Set([...it.related, bug])],
+            tags: [...new Set([...it.tags, PROMOTED_TAG])],
+          },
+        },
+        lane,
+      ),
+      makeEvent(c, "status", id, { status: "dropped", note: `triage: promoted to ${bug}` }, lane),
+      makeEvent(
+        c,
+        "comment",
+        id,
+        {
+          text: `Filed as ${bug} (${severity}). Thanks; it is tracked there now.`,
+          ...(to.length ? { to } : {}),
+        },
+        lane,
+      ),
+    ],
+    () => `promoted ${id} to ${bug}${to.length ? ` (told ${to.join(", ")})` : ""}`,
+  );
 }
 
 async function cmdDoctor(flags, env) {
@@ -1190,6 +1665,17 @@ async function cmdDoctor(flags, env) {
   );
   const config = loadConfig(ctx.dir);
   row(true, "config", `${config.lanes.length} lanes, machine ${machineId(config, env)}`);
+  const members = membersOf(config);
+  const byRole = ROLES.map((r) => `${members.filter((m) => m.role === r).length} ${r}`).join(", ");
+  const problems = memberProblems(config);
+  row(
+    problems.length === 0,
+    "members",
+    `${members.length} members (${byRole})${problems.length ? `; ignored: ${problems.join("; ")}` : ""}`,
+  );
+  const machineWarning = memberMachineWarning(config, env, machineId(config, env));
+  const me = currentMember(config, env)?.id ?? "none set";
+  row(!machineWarning, "member", machineWarning ?? `${me} (a label, not a login)`);
   try {
     const bugs = await loadBugIds(env.RF_REPO_ROOT || REPO_ROOT);
     row(
@@ -1245,6 +1731,18 @@ export async function main(argv, env = process.env) {
         break;
       case "inbox":
         code = await cmdInbox(flags, env);
+        break;
+      case "assign":
+        code = await cmdAssign(positional, flags, env);
+        break;
+      case "lane":
+        code = await cmdLane(positional, flags, env);
+        break;
+      case "anomaly":
+        code = await cmdAnomaly(positional, flags, env);
+        break;
+      case "triage":
+        code = await cmdTriage(positional, flags, env);
         break;
       case "next":
         code = await cmdNext(flags, env);
