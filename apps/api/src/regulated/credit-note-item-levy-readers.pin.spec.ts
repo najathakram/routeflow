@@ -57,13 +57,12 @@ const ROOTS = [
   "packages",
   "scripts",
 ];
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
 const SKIP_DIRS = new Set([
-  "node_modules",
-  "dist",
-  ".next",
-  ".expo",
-  ".turbo",
-  "coverage",
+  ...GENERATED_DIRS,
   "build",
   "migrations",
   "__tests__",

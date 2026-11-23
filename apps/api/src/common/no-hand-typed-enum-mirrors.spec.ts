@@ -45,11 +45,12 @@ const SKIP_FILES = new Set([
   "packages/types/api/onboarding.ts",
   "packages/types/api/features.ts",
 ]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
 const SKIP_DIRS = new Set([
-  "node_modules",
-  ".next",
-  ".expo",
-  "dist",
+  ...GENERATED_DIRS,
   "e2e",
   "__tests__",
   "__mocks__",

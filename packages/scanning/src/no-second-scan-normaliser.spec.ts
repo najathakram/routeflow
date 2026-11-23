@@ -12,7 +12,11 @@ import * as path from "path";
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const SCANNING_ROOT = path.join(REPO_ROOT, "packages", "scanning");
 const ROOTS = ["apps", "packages", "scripts"].map((d) => path.join(REPO_ROOT, d));
-const SKIP_DIRS = new Set(["node_modules", "dist", ".next", ".expo", "coverage", ".turbo"]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS]);
 
 function collect(dir: string, out: string[] = []): string[] {
   if (!fs.existsSync(dir)) return out;
