@@ -181,6 +181,18 @@ describe("S5: no other way to Complete", () => {
   });
 });
 
+describe("S5: the gate holds on the empty-tender path too (SA-1232 A1)", () => {
+  it("no choice made and an empty tender: both buttons stay off and Enter sends nothing", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scanCola();
+    expect(completeShow()).toBeDisabled();
+    expect(completeNext()).toBeDisabled();
+    fireEvent.keyDown(screen.getByLabelText("Amount tendered"), { key: "Enter" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Choose who's buying");
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+});
+
 describe("S5: the choice enables Complete", () => {
   it("a customer pick enables Complete and removes the reason", async () => {
     renderWithProviders(<CounterSaleScreen />);

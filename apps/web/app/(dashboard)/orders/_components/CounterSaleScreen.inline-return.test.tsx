@@ -303,3 +303,15 @@ describe("SA-1232: an empty tender with a netted inline return goes on account f
     expect(dto.inlineReturn).toBeDefined();
   });
 });
+
+describe("SA-1232 A1: the on-account path keeps the quote block", () => {
+  it("a return whose quote is still pending, empty tender, named customer: Put on account is blocked and sends nothing", async () => {
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("BIG");
+    pickAcme();
+    fireEvent.click(screen.getByRole("button", { name: "Enter return line" }));
+    fireEvent.click(screen.getByRole("button", { name: "Put on account & show receipt" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(RETURN_SAVE_BLOCKED["needs-quote"]);
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+});
