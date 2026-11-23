@@ -7,6 +7,9 @@ import { CustomerRecordPaymentModal } from "./CustomerRecordPaymentModal";
  * SA-1211 A1.7(e): a payment above what the open invoices need leaves an excess that stays on the account. The line reads
  * "Kept as credit" (CREDIT_WORDS.kept), never "Unallocated (→ advance)". Only the words moved: the amount is `totals.excess`.
  */
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
   useAuth: () => ({ user: { id: "u1", role: "OPERATOR" } }),
