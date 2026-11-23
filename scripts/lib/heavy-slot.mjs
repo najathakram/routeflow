@@ -25,7 +25,8 @@
 // FIFO and may still take a free slot (the atomic `wx` lock picks one winner), so nobody is stranded; it just does not
 // defer to a high ticket that queued behind it. Priority is therefore guaranteed only against new-code waiters.
 //
-// A `max-cpu` file in the dir (integer percent 1..100) overrides every waiter's cpu cap, re-read on each check (like `slots`).
+// A `max-cpu` file in the dir (integer percent 1..95; 96-100 are invalid and ignored, never clamped) overrides every waiter's cpu cap, re-read on each
+// check (like `slots`); a bad file logs one warning per reason, a valid one that changes the cap one line per value.
 //
 // Knobs (env): RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default
 // 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 90; the HOLDER enforces it too, W-759: at the cap it ends its own job's
@@ -139,7 +140,7 @@ export function readSlotsFile(dir) {
 }
 
 /**
- * The machine-wide cpu cap file `<dir>/max-cpu` (owner 2026-11-22): a plain integer percent 1..100 that overrides every
+ * The machine-wide cpu cap file `<dir>/max-cpu` (owner 2026-11-22): a plain integer percent 1..95 (96-100 are ignored, not clamped: owner cap 95) that overrides every
  * waiter's own RF_HEAVY_SLOT_MAX_CPU_PCT, re-read on each check like `slots`, so the cap moves without restarting
  * waiters. { state: "absent" } | { state: "ok", value } | { state: "invalid", reason } (invalid = ignored).
  */
@@ -157,9 +158,9 @@ export function inspectMaxCpuFile(dir) {
       reason: `not a plain decimal integer: ${JSON.stringify(raw.slice(0, 20))}`,
     };
   const n = Number(raw);
-  return n >= 1 && n <= 100
+  return n >= 1 && n <= 95
     ? { state: "ok", value: n }
-    : { state: "invalid", reason: `${n} is outside 1..100` };
+    : { state: "invalid", reason: `${n} is outside 1..95` };
 }
 
 function parseMinutesMs(raw, fallbackMin) {
@@ -893,6 +894,7 @@ async function acquire(cfg, state) {
 
   let lastLog = -Infinity;
   let warnedSlots = null;
+  const warnedCpu = new Set(); // one max-cpu line per distinct reason / overriding value
   try {
     for (;;) {
       if (state.aborted)
@@ -940,6 +942,16 @@ async function acquire(cfg, state) {
       let busy = null;
       const cf = inspectMaxCpuFile(cfg.dir); // the machine-wide file wins over this waiter's own cap
       const maxCpuPct = cf.state === "ok" ? cf.value : cfg.maxCpuPct;
+      const cpuNote =
+        cf.state === "invalid"
+          ? `ignoring ${cfg.dir}/max-cpu (${cf.reason}); using this waiter's own cpu cap ${cfg.maxCpuPct}%`
+          : cf.state === "ok" && cf.value !== cfg.maxCpuPct
+            ? `using machine-wide max-cpu ${cf.value}% from ${cfg.dir}/max-cpu (own cap ${cfg.maxCpuPct}%)`
+            : null;
+      if (cpuNote && !warnedCpu.has(cpuNote)) {
+        warnedCpu.add(cpuNote);
+        cfg.log(`heavy-slot: ${cpuNote}`);
+      }
       if (g.grant && (maxCpuPct < 100 || cfg.maxMemPct < 100)) {
         try {
           busy = loadOverReason(await sampleWithin(cfg.sampleLoad, cfg.sampleTimeoutMs), {

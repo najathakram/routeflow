@@ -1979,12 +1979,22 @@ check(
   };
   check(
     "R1 inspectMaxCpuFile: valid, invalid and absent",
-    [read("95"), read(" 100\n"), read("0"), read("101"), read("9.5"), read("hot"), read(null)],
+    [
+      read("95"),
+      read(" 100\n"),
+      read("96"),
+      read("0"),
+      read("101"),
+      read("9.5"),
+      read("hot"),
+      read(null),
+    ],
     [
       { state: "ok", value: 95 },
-      { state: "ok", value: 100 },
-      { state: "invalid", reason: "0 is outside 1..100" },
-      { state: "invalid", reason: "101 is outside 1..100" },
+      { state: "invalid", reason: "100 is outside 1..95" },
+      { state: "invalid", reason: "96 is outside 1..95" },
+      { state: "invalid", reason: "0 is outside 1..95" },
+      { state: "invalid", reason: "101 is outside 1..95" },
       { state: "invalid", reason: 'not a plain decimal integer: "9.5"' },
       { state: "invalid", reason: 'not a plain decimal integer: "hot"' },
       { state: "absent" },
@@ -2015,6 +2025,40 @@ check(
     "R2 the file's 95 lets a 90% cpu start; an invalid or absent file keeps the waiter's own 80",
     [await attempt("95"), await attempt("junk"), await attempt(null)],
     [true, false, false],
+  );
+  // R4/R5 (SA-1230): 96-100 never override (no clamp); one warning per bad reason; one line for a valid override.
+  const hot = async (txt, cpuPct, ownCap) => {
+    const d = mkTmp();
+    writeFileSync(path.join(d, "max-cpu"), txt);
+    const lines = [];
+    let ran = false;
+    await withHeavySlot(
+      {
+        label: "hot",
+        branch: "b",
+        dir: d,
+        env: {},
+        ...FAST,
+        maxWaitMs: 400,
+        maxCpuPct: ownCap,
+        log: (m) => lines.push(m),
+        sampleLoad: async () => ({ cpuPct, memPct: 10 }),
+      },
+      async () => void (ran = true),
+    ).catch(() => {});
+    return { ran, n: lines.filter((l) => l.includes("max-cpu")).length };
+  };
+  const h100 = await hot("100", 99.9, 80);
+  const h90 = await hot("90", 95, 70);
+  check(
+    "R4 a file of 100 never overrides: at 99.9% cpu with own cap 80 the waiter waits",
+    h100.ran,
+    false,
+  );
+  check(
+    "R5 a bad file prints exactly one warning line; a valid override prints exactly one line",
+    [h100.n, h90.n],
+    [1, 1],
   );
   const d3 = mkTmp();
   const st = (txt) => {
