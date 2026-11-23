@@ -1,13 +1,15 @@
 /**
  * SA-1208 D1 (M1-02): what ONE payment covered, read-only. One contract for the api and the web: the server builds the
  * whole view (`readReceiptGroup` in apps/api/src/invoices/payment-receipt-group.ts), a screen prints it as given and
- * never re-adds, re-sorts or picks a number (L-119). Types only, so the api may import it (no-runtime-types-import.spec.ts).
+ * never re-adds, re-sorts or picks a number (L-119). Types and one pure label helper, so the api may import it (no-runtime-types-import.spec.ts).
  *
  * The shape is the read shape of a future receipt header (B2), so B2 swaps only the reader's internals. A date or
  * amount that was never recorded reads null, never 0 and never a guess.
  *
  * Staff screens only: `number` and `reference` are staff-typed, so a buyer-facing screen never prints them (SA-1208 D2).
  */
+import type { PaymentStatus } from "./enums";
+
 export type ReceiptKind =
   /** Store credit used (CREDIT_NOTE / ADVANCE): never a receipt, never a tender. */
   | "CREDIT_USE"
@@ -49,15 +51,22 @@ export interface ReceiptTender {
   /** True: every row of this entry is VOID (shown struck through, not in the total). Equals `status === "VOID"`. */
   voided: boolean;
   /** The status every row of this entry shares (rows of different statuses are never merged). Only PAID lines are in `header.total`. */
-  status: string;
+  status: PaymentStatus;
   paymentIds: string[];
 }
 
 /** SA-1220 item 7: the one word for a receipt line that is not confirmed money (PAID reads bare, null). */
-export function receiptStatusText(status: string): string | null {
-  if (status === "PAID") return null;
-  if (status === "VOID") return "Voided";
-  return status === "DRAFT" ? "Draft, not in total" : "Pending, not in total";
+export function receiptStatusText(status: PaymentStatus): string | null {
+  switch (status) {
+    case "PAID":
+      return null;
+    case "VOID":
+      return "Voided";
+    case "DRAFT":
+      return "Draft, not in total";
+    case "PENDING":
+      return "Pending, not in total";
+  }
 }
 
 /** One row's application to an invoice. */
@@ -67,7 +76,7 @@ export interface ReceiptApplication {
   invoiceId: string;
   invoiceNumber: string;
   amount: number;
-  status: string;
+  status: PaymentStatus;
   checkStatus: string | null;
   /** Credit uses only: the credit this row consumed, so a screen can link to it. */
   creditNoteId: string | null;

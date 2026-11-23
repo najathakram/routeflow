@@ -18,6 +18,7 @@ import { paymentMethodLabel } from "@/lib/payment-methods";
 import { paidInAdvance } from "@/lib/invoice-pending-mirror";
 import {
   receiptStatusText,
+  type PaymentStatus,
   type ReceiptGroupView,
   type ReceiptHeader,
   type ReceiptTender,
@@ -35,7 +36,7 @@ function receiptTenderHint(h: ReceiptHeader): string | null {
 }
 
 /** One line (an invoice row or a tender): the server's status word, never read as money received unless PAID (L-119). */
-function ReceiptLine({ status, amount }: { status: string; amount: number }) {
+function ReceiptLine({ status, amount }: { status: PaymentStatus; amount: number }) {
   const text = receiptStatusText(status);
   return (
     <span className="flex items-center gap-2">
@@ -53,6 +54,17 @@ function ReceiptLine({ status, amount }: { status: string; amount: number }) {
         {fmt(amount)}
       </span>
     </span>
+  );
+}
+
+function BankDateRow({ settledAt }: { settledAt: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
+      <span className="text-navy/70" title={BANK_DATE_HELP}>
+        Money received in bank
+      </span>
+      <span className="text-right font-medium text-navy">{fmtDate(settledAt)}</span>
+    </div>
   );
 }
 
@@ -77,7 +89,9 @@ function ReceiptGroupBody({ view }: { view: ReceiptGroupView }) {
         <p className="text-sm font-medium text-navy">Pickup payments for order {h.orderNumber}</p>
       )}
       {h.partlyVoided && (
-        <p className="text-[12.5px] font-medium text-warning">Check partly voided</p>
+        <p className="text-[12.5px] font-medium text-warning">
+          {`${h.method === "CHECK" ? "Check" : "Payment"} partly voided`}
+        </p>
       )}
       <div>
         <p className="eyebrow-label mb-1">Invoices</p>
@@ -192,12 +206,18 @@ export default function PaymentDetailPage() {
   }
 
   const status = payment.status ?? "PAID";
-  const date = fmtDate(payment.paidAt ?? payment.createdAt);
   // M1-03: an office check or a pickup hand-over reads as ONE receipt, built by the server. Every figure below is printed as
   // given: nothing here adds or subtracts money. A one-row payment (or an older server) keeps today's receipt.
   const rc = payment.receipt;
   const group =
     rc?.header && (rc.kind === "OFFICE_GROUP" || rc.kind === "PICKUP_TENDERS") ? rc : null;
+  // SA-1242: on a group receipt the top is the RECEIPT's (the header); a field only the clicked row has sits under
+  // "This payment", and a field that varies between tenders is printed per tender (never one method/reference pair).
+  const date = fmtDate(group ? group.header?.receivedAt : (payment.paidAt ?? payment.createdAt));
+  const rowStatusText = group && status !== "PAID" ? receiptStatusText(status) : null;
+  const rowOnly = group && (payment.settledAt || payment.notes);
+  const method = group ? group.header?.method : payment.method;
+  const reference = group ? group.header?.reference : payment.reference;
   const rcNumber = group?.header?.number ?? payment.paymentNumber;
   const hasBankCharges = !group && payment.bankCharges != null && payment.bankCharges > 0;
 
@@ -226,6 +246,9 @@ export default function PaymentDetailPage() {
           <p className="mt-1 text-sm text-navy/70">
             Payment received · {payment.invoice.customer?.businessName ?? "—"} · {date}
           </p>
+          {rowStatusText && (
+            <p className="mt-0.5 text-[12.5px] text-warning">{`This payment: ${rowStatusText}`}</p>
+          )}
         </div>
 
         {/* Actions */}
@@ -265,28 +288,19 @@ export default function PaymentDetailPage() {
               <span className="text-navy/70">Payment date</span>
               <span className="text-right font-medium text-navy">{date}</span>
             </div>
-            {payment.settledAt && (
+            {!group && payment.settledAt && <BankDateRow settledAt={payment.settledAt} />}
+            {(!group || method) && (
               <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
-                <span className="text-navy/70" title={BANK_DATE_HELP}>
-                  Money received in bank
-                </span>
+                <span className="text-navy/70">Payment method</span>
                 <span className="text-right font-medium text-navy">
-                  {fmtDate(payment.settledAt)}
+                  {paymentMethodLabel(method ?? "")}
                 </span>
               </div>
             )}
-            <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
-              <span className="text-navy/70">Payment method</span>
-              <span className="text-right font-medium text-navy">
-                {paymentMethodLabel(group?.header?.method ?? payment.method)}
-              </span>
-            </div>
-            {(group?.header?.reference ?? payment.reference) && (
+            {reference && (
               <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
                 <span className="text-navy/70">Reference</span>
-                <span className="mono text-right font-medium text-navy">
-                  {group?.header?.reference ?? payment.reference}
-                </span>
+                <span className="mono text-right font-medium text-navy">{reference}</span>
               </div>
             )}
             {!group && (
@@ -303,8 +317,18 @@ export default function PaymentDetailPage() {
           </div>
           {group && <ReceiptGroupBody view={group} />}
 
+          {rowOnly && (
+            <div className="mt-6 border-t border-surface-border pt-4">
+              <p className="eyebrow-label mb-1">This payment</p>
+              {payment.settledAt && <BankDateRow settledAt={payment.settledAt} />}
+              {payment.notes && (
+                <p className="pt-2 text-sm text-navy/70 whitespace-pre-line">{payment.notes}</p>
+              )}
+            </div>
+          )}
+
           {/* Notes */}
-          {payment.notes && (
+          {!group && payment.notes && (
             <div className="mt-6 border-t border-surface-border pt-4">
               <p className="eyebrow-label mb-1">Notes</p>
               <p className="text-sm text-navy/70 whitespace-pre-line">{payment.notes}</p>

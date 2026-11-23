@@ -1,6 +1,11 @@
 import * as React from "react";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
-import { receiptStatusText, type ReceiptGroupView } from "@routeflow/types";
+import {
+  receiptStatusText,
+  type ReceiptApplication,
+  type ReceiptGroupView,
+} from "@routeflow/types";
+import { fmtDate } from "@/lib/formatting";
 import PaymentDetailPage from "./page";
 
 /**
@@ -15,18 +20,19 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn() }),
 }));
 
-const row = (over: Record<string, unknown> = {}) => ({
-  paymentId: "pay-a",
-  paymentNumber: "PAY-0001",
-  invoiceId: "inv-a",
-  invoiceNumber: "INV-ACME-A",
-  amount: 3000,
-  status: "PAID",
-  checkStatus: null,
-  creditNoteId: null,
-  advancePaymentId: null,
-  ...over,
-});
+const row = (over: Record<string, unknown> = {}): ReceiptApplication =>
+  ({
+    paymentId: "pay-a",
+    paymentNumber: "PAY-0001",
+    invoiceId: "inv-a",
+    invoiceNumber: "INV-ACME-A",
+    amount: 3000,
+    status: "PAID",
+    checkStatus: null,
+    creditNoteId: null,
+    advancePaymentId: null,
+    ...over,
+  }) as ReceiptApplication;
 
 function receipt(over: Partial<ReceiptGroupView> = {}): ReceiptGroupView {
   return {
@@ -124,11 +130,9 @@ describe("receipt page: one check, one receipt", () => {
   });
 
   it("opened from the 2nd row, the document card carries the receipt number, method and reference, not the row's", () => {
-    show(payment({ method: "CASH", reference: "row-ref" }));
     renderWithProviders(<PaymentDetailPage />);
     expect(screen.getByText(/^PAY-0001 · /)).toBeInTheDocument(); // the heading number
     expect(screen.queryByText(/PAY-0002/)).not.toBeInTheDocument();
-    expect(screen.queryByText("row-ref")).not.toBeInTheDocument();
     expect(screen.getByText("Check")).toBeInTheDocument();
   });
 
@@ -156,7 +160,7 @@ describe("receipt page: one check, one receipt", () => {
   });
 
   it("keeps one Void button on a plain one-row payment too", () => {
-    show(payment({ paymentGroupId: null, receipt: undefined }));
+    show(payment({ paymentGroupId: null, receipt: receipt({ kind: "SINGLE" }) }));
     renderWithProviders(<PaymentDetailPage />);
     expect(screen.getAllByRole("button", { name: /void/i })).toHaveLength(1);
     expect(screen.getByText("Amount received")).toBeInTheDocument(); // today's one-row receipt, unchanged
@@ -239,6 +243,7 @@ describe("receipt page: nothing unconfirmed reads as money received", () => {
     renderWithProviders(<PaymentDetailPage />);
     const tenders = screen.getByRole("list", { name: "Tenders on this receipt" });
     expect(within(tenders).getByText("Pending, not in total")).toBeInTheDocument();
+    expect(screen.getByText("· 1 pending ($1,000.00) not counted")).toBeInTheDocument();
   });
 
   it("reads 'Not confirmed' instead of a $0.00 total when no row is confirmed", () => {
@@ -316,6 +321,119 @@ describe("receipt page: nothing unconfirmed reads as money received", () => {
     const tenders = screen.getByRole("list", { name: "Tenders on this receipt" });
     const [, voided] = within(tenders).getAllByRole("listitem");
     expect(within(voided).getByText("Voided")).toBeInTheDocument();
+  });
+});
+
+const tender = (over: Record<string, unknown>) => ({
+  method: "CHECK",
+  reference: "1001",
+  amount: 3000,
+  voided: false,
+  status: "PAID",
+  paymentIds: ["pay-a"],
+  ...over,
+});
+const mixed = (over: Partial<ReceiptGroupView> = {}) =>
+  receipt({
+    tenders: [
+      tender({}),
+      tender({ method: "CASH", reference: null, amount: 1000, paymentIds: ["pay-b"] }),
+    ] as ReceiptGroupView["tenders"],
+    header: { ...receipt().header!, method: null, reference: null },
+    ...over,
+  });
+
+describe("receipt page: a clicked row's field is never the receipt's", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    show(payment());
+  });
+
+  it.each([
+    ["CASH", null],
+    ["CHECK", "1001"],
+  ])(
+    "a mixed check + cash receipt opened from the %s row: one line per tender, no single method",
+    (method, reference) => {
+      show(payment({ method, reference, receipt: mixed() }));
+      renderWithProviders(<PaymentDetailPage />);
+      expect(screen.queryByText("Payment method")).not.toBeInTheDocument();
+      expect(screen.queryByText("Reference")).not.toBeInTheDocument();
+      const [check, cash] = within(
+        screen.getByRole("list", { name: "Tenders on this receipt" }),
+      ).getAllByRole("listitem");
+      expect(check).toHaveTextContent("Check #1001$3,000.00");
+      expect(cash).toHaveTextContent("Cash$1,000.00");
+    },
+  );
+
+  it("a one-method group prints the header's method, and no row reference", () => {
+    show(
+      payment({
+        reference: "1002",
+        receipt: receipt({ header: { ...receipt().header!, reference: null } }),
+      }),
+    );
+    renderWithProviders(<PaymentDetailPage />);
+    expect(screen.getByText("Payment method")).toBeInTheDocument();
+    expect(screen.getByText("Check")).toBeInTheDocument();
+    expect(screen.queryByText("Reference")).not.toBeInTheDocument();
+    expect(screen.queryByText("1002")).not.toBeInTheDocument();
+  });
+
+  it("a one-row payment keeps its own method and reference", () => {
+    show(payment({ method: "CASH", reference: "r-9", receipt: receipt({ kind: "SINGLE" }) }));
+    renderWithProviders(<PaymentDetailPage />);
+    expect(screen.getByText("Payment method")).toBeInTheDocument();
+    expect(screen.getByText("Cash")).toBeInTheDocument();
+    expect(screen.getByText("r-9")).toBeInTheDocument();
+    expect(screen.queryByText("This payment")).not.toBeInTheDocument();
+  });
+
+  it("the date is the receipt's; the clicked row's bank date and notes sit under 'This payment'", () => {
+    show(
+      payment({
+        paidAt: "2026-11-22T12:00:00.000Z",
+        settledAt: "2026-11-23T12:00:00.000Z",
+        notes: "row note",
+        receipt: receipt({
+          header: { ...receipt().header!, receivedAt: "2026-11-20T12:00:00.000Z" },
+        }),
+      }),
+    );
+    renderWithProviders(<PaymentDetailPage />);
+    expect(screen.getByText("Payment date").nextSibling).toHaveTextContent(
+      fmtDate("2026-11-20T12:00:00.000Z"),
+    );
+    expect(screen.queryByText(fmtDate("2026-11-22T12:00:00.000Z"))).not.toBeInTheDocument();
+    const block = screen.getByText("This payment").parentElement as HTMLElement;
+    expect(within(block).getByText(fmtDate("2026-11-23T12:00:00.000Z"))).toBeInTheDocument();
+    expect(within(block).getByText("row note")).toBeInTheDocument();
+  });
+
+  it("a VOID row opened inside a confirmed receipt keeps the receipt's badge and says so for itself", () => {
+    show(payment({ status: "VOID" }));
+    renderWithProviders(<PaymentDetailPage />);
+    expect(screen.getByText("This payment: Voided")).toBeInTheDocument();
+  });
+
+  it("a PAID row adds no 'This payment' status line", () => {
+    renderWithProviders(<PaymentDetailPage />);
+    expect(screen.queryByText(/^This payment:/)).not.toBeInTheDocument();
+  });
+
+  it("a pickup receipt with a voided tender reads 'Payment partly voided'", () => {
+    show(
+      payment({
+        receipt: mixed({
+          kind: "PICKUP_TENDERS",
+          header: { ...receipt().header!, method: null, reference: null, partlyVoided: true },
+        }),
+      }),
+    );
+    renderWithProviders(<PaymentDetailPage />);
+    expect(screen.getByText("Payment partly voided")).toBeInTheDocument();
+    expect(screen.queryByText("Check partly voided")).not.toBeInTheDocument();
   });
 });
 
