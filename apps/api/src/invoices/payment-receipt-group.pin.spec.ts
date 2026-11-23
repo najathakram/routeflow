@@ -59,7 +59,7 @@ export const controllerReadsPayments = (text: string): boolean =>
 
 /** Nested `payments: {` selects inside another model's read (an invoice include, a customer select). */
 export const nestedPaymentSelects = (text: string): number =>
-  (codeOnly(text).match(/\bpayments\s*:\s*\{/g) ?? []).length;
+  (codeOnly(text).match(/\bpayments\s*:\s*(\{|true\b)/g) ?? []).length;
 
 /**
  * The deliberate nested reads, each named with a reason (SA-1235 B3-3): counted on purpose, never silently skipped. A new
@@ -242,6 +242,8 @@ ${body}
     expect(nestedPaymentSelects("select: { payments: { where, select: { amount: true } } }")).toBe(
       1,
     );
+    expect(nestedPaymentSelects("include: { payments: true }")).toBe(1); // M1 of #4454: a bare include is a read too
+    expect(nestedPaymentSelects("include: { payments: false }")).toBe(0);
     expect(nestedPaymentSelects("// payments: { a: 1 }")).toBe(0);
     expect(nestedPaymentSelects("constructor(private readonly payments: Svc) {}")).toBe(0);
     for (const n of NESTED_PAYMENT_SELECTS) expect(n.reason.length).toBeGreaterThan(10);

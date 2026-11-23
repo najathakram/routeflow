@@ -661,6 +661,7 @@ describe("readReceiptGroup: SA-1235 pins on the six LOWs of #4406", () => {
     }
   });
 
+  // The ONLY pin for M12 (PENDING heads a receipt like PAID); not a duplicate of R4, so never delete it as one.
   it("B3-2. a PENDING sibling keeps its own line and never heads or adds to the PAID receipt", async () => {
     const rows = [
       pk(3000, { reference: "1042", paymentNumber: "PAY-ACME-0099" }),
