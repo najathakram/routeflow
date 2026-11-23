@@ -159,7 +159,7 @@ export function PurchaseOrderLinesTable({
                   )}
                   {keepsProduct && (
                     <p className="mt-0.5 text-[10px] text-navy/50">
-                      To change the product, remove this line and add a new one.
+                      To change the product on this line, remove the line and add a new one.
                     </p>
                   )}
                   {locked && (

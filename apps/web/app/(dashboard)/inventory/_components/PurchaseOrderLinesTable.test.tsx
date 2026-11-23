@@ -181,7 +181,7 @@ describe("PurchaseOrderLinesTable", () => {
   });
 
   describe("W-1325: a stored labelled line keeps its product", () => {
-    const HINT = "To change the product, remove this line and add a new one.";
+    const HINT = "To change the product on this line, remove the line and add a new one.";
     const productSelect = () => screen.getByLabelText("Product") as HTMLSelectElement;
 
     it("disables the product picker and says why on a stored line with its own unit label", () => {
@@ -207,7 +207,9 @@ describe("PurchaseOrderLinesTable", () => {
           ]}
         />,
       );
-      for (const s of screen.getAllByLabelText("Product")) expect(s).not.toBeDisabled();
+      const pickers = screen.getAllByLabelText("Product");
+      expect(pickers).toHaveLength(2);
+      for (const s of pickers) expect(s).not.toBeDisabled();
       expect(screen.queryByText(HINT)).not.toBeInTheDocument();
     });
   });

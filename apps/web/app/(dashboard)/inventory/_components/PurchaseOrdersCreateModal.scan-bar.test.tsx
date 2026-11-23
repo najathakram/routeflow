@@ -28,6 +28,7 @@ const mockCatalogRows = [
 ];
 let mockCatalogState: "ready" | "loading" | "error" = "ready";
 const mockRefetch = jest.fn();
+let mockCatalogFetching = false;
 const mockUseProducts = jest.fn();
 jest.mock("@/lib/api/products", () => ({
   useProducts: (params: { limit?: number }) => mockUseProducts(params),
@@ -67,12 +68,18 @@ const optionLabels = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockCatalogState = "ready";
+  mockCatalogFetching = false;
   mockUseProducts.mockImplementation((params: { limit?: number }) => {
     if (params?.limit !== 0) return { data: { data: [] }, isFetching: false };
     if (mockCatalogState === "loading")
       return { data: undefined, isLoading: true, isFetching: true };
     if (mockCatalogState === "error")
-      return { data: undefined, isError: true, isFetching: false, refetch: mockRefetch };
+      return {
+        data: undefined,
+        isError: true,
+        isFetching: mockCatalogFetching,
+        refetch: mockRefetch,
+      };
     return { data: { data: mockCatalogRows }, isFetching: false };
   });
 });
@@ -117,6 +124,15 @@ describe("product select", () => {
     expect(bar()).not.toBeDisabled();
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
     expect(optionLabels()).toContain("Widget (W-1)");
+  });
+
+  it("W-1319: while a retry is reading (error and fetching) it says Loading and offers no Try again", () => {
+    mockCatalogState = "error";
+    mockCatalogFetching = true;
+    open();
+    expect(screen.getByText("Loading products…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(bar()).toBeDisabled();
   });
 
   it("W-1319: no Try again while the catalog is loading", () => {
