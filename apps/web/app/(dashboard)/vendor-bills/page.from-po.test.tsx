@@ -1,5 +1,5 @@
 import * as React from "react";
-import { screen, within, renderWithProviders } from "@/test-utils/render";
+import { screen, within, fireEvent, waitFor, renderWithProviders } from "@/test-utils/render";
 import ExpensesPage from "./page";
 
 /**
@@ -21,6 +21,8 @@ jest.mock("@/lib/api-client", () => ({
 jest.mock("@/components/ScanInvoiceModal", () => ({ ScanInvoiceModal: () => null }));
 
 let mockPo: unknown = null;
+let mockPoList: Array<{ id: string; poNumber: string }> = [];
+const mockMutate = jest.fn();
 jest.mock("@/lib/api/vendor-bills", () => ({
   ...jest.requireActual("@/lib/api/vendor-bills"),
   useVendorBills: () => ({
@@ -28,13 +30,13 @@ jest.mock("@/lib/api/vendor-bills", () => ({
     isLoading: false,
     isError: false,
   }),
-  useCreateVendorBill: () => ({ mutate: jest.fn(), isPending: false }),
+  useCreateVendorBill: () => ({ mutate: mockMutate, isPending: false }),
   useBulkDeleteVendorBills: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 jest.mock("@/lib/api/inventory", () => ({
   ...jest.requireActual("@/lib/api/inventory"),
   useSuppliers: () => ({ data: [{ id: "s1", name: "Acme Supply" }] }),
-  usePurchaseOrders: () => ({ data: { data: [{ id: "po1", poNumber: "PO-7" }] } }),
+  usePurchaseOrders: () => ({ data: { data: mockPoList } }),
   usePurchaseOrder: (id: string | null) => ({ data: id ? mockPo : undefined }),
 }));
 
@@ -63,6 +65,8 @@ const poWith = (items: unknown[], over: Record<string, unknown> = {}) => ({
 describe("New supplier bill from a purchase order (P2b)", () => {
   beforeEach(() => {
     mockReplace.mockClear();
+    mockMutate.mockClear();
+    mockPoList = [];
     mockSearch = "tab=inventory&fromPo=po1";
   });
 
@@ -101,6 +105,67 @@ describe("New supplier bill from a purchase order (P2b)", () => {
     });
     renderWithProviders(<ExpensesPage />);
     expect(screen.queryByRole("dialog", { name: /New supplier bill/ })).toBeNull();
+  });
+
+  // SA-1245 M2: while the form is filled from a PO, its supplier and PO link are fixed (Cancel starts over).
+  it("locks the Supplier and the PO # while opened from a PO, and shows the PO it is linked to", async () => {
+    mockPo = poWith([item({})]);
+    renderWithProviders(<ExpensesPage />);
+    const dialog = await screen.findByRole("dialog", { name: /New supplier bill/ });
+    const [supplier, poSelect] = within(dialog).getAllByRole("combobox");
+    expect(supplier).toBeDisabled();
+    expect(poSelect).toBeDisabled();
+    expect(within(dialog).getByText("From PO PO-7")).toBeInTheDocument();
+    expect((poSelect as HTMLSelectElement).selectedOptions[0].textContent).toBe("PO-7");
+  });
+
+  it("saves the bill linked to its PO with the filled lines", async () => {
+    mockPo = poWith([item({})]);
+    renderWithProviders(<ExpensesPage />);
+    const dialog = await screen.findByRole("dialog", { name: /New supplier bill/ });
+    const [, due] = Array.from(dialog.querySelectorAll('input[type="date"]'));
+    fireEvent.change(due, { target: { value: "2026-12-01" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create bill" }));
+    expect(mockMutate).toHaveBeenCalledTimes(1);
+    expect(mockMutate.mock.calls[0][0]).toMatchObject({
+      supplierId: "s1",
+      purchaseOrderId: "po1",
+      items: [expect.objectContaining({ description: "Water", qty: 5, unitCost: 5 })],
+    });
+  });
+
+  it("Cancel drops the deep link, and a new bill is blank, unlinked and editable", async () => {
+    mockPo = poWith([item({})]);
+    mockReplace.mockImplementationOnce(() => {
+      mockSearch = "tab=inventory";
+      mockPo = null;
+    });
+    renderWithProviders(<ExpensesPage />);
+    const dialog = await screen.findByRole("dialog", { name: /New supplier bill/ });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(mockReplace).toHaveBeenCalledWith("/vendor-bills?tab=inventory");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getAllByRole("button", { name: /New bill/ })[0]);
+    const fresh = await screen.findByRole("dialog", { name: /New supplier bill/ });
+    const [supplier, poSelect] = within(fresh).getAllByRole("combobox");
+    expect(supplier).toBeEnabled();
+    expect(supplier).toHaveValue("");
+    expect(poSelect).toHaveValue("");
+    expect(within(fresh).queryByText(/From PO/)).toBeNull();
+  });
+
+  it("a bill not opened from a PO keeps both controls editable and offers the supplier's POs", async () => {
+    mockSearch = "tab=inventory";
+    mockPo = null;
+    mockPoList = [{ id: "po1", poNumber: "PO-7" }];
+    renderWithProviders(<ExpensesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: /New bill/ })[0]);
+    const dialog = await screen.findByRole("dialog", { name: /New supplier bill/ });
+    const [supplier, poSelect] = within(dialog).getAllByRole("combobox");
+    expect(supplier).toBeEnabled();
+    fireEvent.change(supplier, { target: { value: "s1" } });
+    expect(poSelect).toBeEnabled();
+    expect(within(dialog).getByRole("option", { name: "PO-7" })).toBeInTheDocument();
   });
 });
 

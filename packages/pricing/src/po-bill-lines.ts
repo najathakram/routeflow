@@ -154,17 +154,6 @@ export function billPlanFromPO(
   return plan;
 }
 
-/**
- * SA-1207 A3: the `poItemId` (the index when the id is null) of each line to enter by hand. Prefer
- * `billPlanFromPO`: its `byHand` is keyed by index only, and an id and an index share no key space.
- */
-export function poLinesNotPrefilled(
-  poLines: readonly PoLineForBill[],
-  piecesToBill: readonly number[] = billQuantitiesFromPO(poLines),
-): string[] {
-  return billPlanFromPO(poLines, piecesToBill).byHand.map((i) => poLines[i].id ?? String(i));
-}
-
 /** Pure. Lines of 0 are left out, and so are those `billPlanFromPO` lists for hand entry. */
 export function billLinesFromPO(
   poLines: readonly PoLineForBill[],

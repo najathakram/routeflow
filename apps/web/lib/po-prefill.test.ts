@@ -84,6 +84,29 @@ describe("prefillBillFromPO (SA-1207 P2b)", () => {
     expect(out.zeroCount).toBe(2);
     expect(out.rows.length + out.byHand.length + out.zeroCount).toBe(items.length);
   });
+
+  // SA-1245 M1: a row is joined to its own PO line by the plan's lineIndex, never by position.
+  it("a row keeps its own PO line's description and product after a zero line and a by-hand line", () => {
+    const out = prefillBillFromPO(
+      po([
+        item("i0", "Zero", { qtyOrdered: 4, unitCost: 2.5 }, { qtyReceived: 0 }),
+        item("i1", "Hand", { packSize: 12, caseCost: 6, cases: 2 }, { qtyReceived: 1.5 }),
+        item("i2", "Filled", { qtyOrdered: 24, unitCost: 2 }, { qtyReceived: 24 }),
+      ]),
+    );
+    expect(out.rows.map((r) => [r.description, r.productId])).toEqual([["Filled", "p-Filled"]]);
+    expect(out.byHand).toEqual(["Hand"]);
+    expect(out.zeroCount).toBe(1);
+  });
+
+  // SA-1245 LOW-3: a line with no stored total is never a row; it is listed for hand entry.
+  it("a PO line with no total cost is listed by hand and never becomes a row", () => {
+    const out = prefillBillFromPO(
+      po([item("i1", "NoTotal", { qtyOrdered: 4, unitCost: 2.5 }, { totalCost: null })]),
+    );
+    expect(out.rows).toEqual([]);
+    expect(out.byHand).toEqual(["NoTotal"]);
+  });
 });
 
 describe("billItemFromRow", () => {

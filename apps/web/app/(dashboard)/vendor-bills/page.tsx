@@ -738,6 +738,7 @@ function CreateBillModal({
             <SupplierSelect
               value={supplierId}
               onChange={setSupplierId}
+              disabled={!!fromPo}
               suppliers={suppliers}
               placeholder="Select supplier…"
               className={cn("h-10", errors.supplierId ? "border-danger" : undefined)}
@@ -751,11 +752,14 @@ function CreateBillModal({
             <select
               value={purchaseOrderId}
               onChange={(e) => setPurchaseOrderId(e.target.value)}
-              disabled={!supplierId}
+              disabled={!supplierId || !!fromPo}
               className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50"
             >
               <option value="">No linked PO</option>
-              {purchaseOrders.map((po) => (
+              {(fromPo && !purchaseOrders.some((p) => p.id === fromPo.id)
+                ? [fromPo, ...purchaseOrders]
+                : purchaseOrders
+              ).map((po) => (
                 <option key={po.id} value={po.id}>
                   {po.poNumber}
                 </option>

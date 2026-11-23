@@ -3,7 +3,6 @@ import {
   billPlanFromPO,
   billQuantitiesFromPO,
   lotUnitLabel,
-  poLinesNotPrefilled,
 } from "./po-bill-lines";
 import { buildPOLine } from "./po-line";
 
@@ -90,24 +89,24 @@ describe("billLinesFromPO (SA-1207 P2a)", () => {
   it("a boxed line (pack 12) billed in 1.5 pieces is not prefilled and is listed", () => {
     const line = { ...poLine({ packSize: 12, caseCost: 6, cases: 2 }), id: "po-item-1" };
     expect(billLinesFromPO([line], [1.5])).toEqual([]);
-    expect(poLinesNotPrefilled([line], [1.5])).toEqual(["po-item-1"]);
+    expect(billPlanFromPO([line], [1.5]).byHand).toEqual([0]);
   });
 
   it("a boxed line with a fractional qtyOrdered is not prefilled by default either", () => {
     const line = { ...poLine({ packSize: 12, caseCost: 6, cases: 2 }), qtyOrdered: 24.5 };
     expect(billLinesFromPO([line])).toEqual([]);
-    expect(poLinesNotPrefilled([line])).toEqual(["0"]);
+    expect(billPlanFromPO([line]).byHand).toEqual([0]);
   });
 
   it("a listed line is named by its index when it has no id, and only that line is skipped", () => {
     const whole = boxes(5);
     const fractional = poLine({ packSize: 12, caseCost: 6, cases: 2 });
-    expect(poLinesNotPrefilled([whole, fractional], [120, 1.5])).toEqual(["1"]);
+    expect(billPlanFromPO([whole, fractional], [120, 1.5]).byHand).toEqual([1]);
     expect(billLinesFromPO([whole, fractional], [120, 1.5])).toHaveLength(1);
   });
 
   it("a whole quantity on a boxed line, and a zero quantity, are not listed", () => {
-    expect(poLinesNotPrefilled([boxes(5), boxes(3)], [122, 0])).toEqual([]);
+    expect(billPlanFromPO([boxes(5), boxes(3)], [122, 0]).byHand).toEqual([]);
   });
 
   it("a piece line (no pack) billed in 1.5 pieces is still n x unitCost and is not listed", () => {
@@ -115,7 +114,7 @@ describe("billLinesFromPO (SA-1207 P2a)", () => {
     expect(billLinesFromPO([line], [1.5])).toEqual([
       expect.objectContaining({ qty: 1.5, unitCost: 3.3333, packSize: null, unitLabel: null }),
     ]);
-    expect(poLinesNotPrefilled([line], [1.5])).toEqual([]);
+    expect(billPlanFromPO([line], [1.5]).byHand).toEqual([]);
   });
 
   it("starts from what was received, else what was ordered (a PO is never billed past what it ordered)", () => {
@@ -174,7 +173,6 @@ describe("billPlanFromPO (SA-1207 P2b F1, F2)", () => {
     // line 0 carries the id "1"; line 1 has no id (its old key was the string "1").
     const plan = billPlanFromPO([boxed("1"), boxed(null)], [1.5, 1.5]);
     expect(plan.byHand).toEqual([0, 1]);
-    expect(poLinesNotPrefilled([boxed("1"), boxed(null)], [1.5, 1.5])).toEqual(["1", "1"]);
   });
 
   it("lineIndex names the PO line each bill line came from, with two lines of one product", () => {
@@ -198,10 +196,5 @@ describe("billPlanFromPO (SA-1207 P2b F1, F2)", () => {
         expect(plan.lines).toHaveLength(plan.lineIndex.length);
       }
     }
-  });
-
-  it("poLinesNotPrefilled lists the same lines the plan does", () => {
-    const poLines = [piece("a"), piece("b"), boxed("c")];
-    expect(poLinesNotPrefilled(poLines, [Number.NaN, -1, 1.5])).toEqual(["a", "b", "c"]);
   });
 });
