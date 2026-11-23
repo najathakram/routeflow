@@ -248,15 +248,16 @@ function maskInputs(inputs, names) {
 }
 
 /** Unread comments for `me` (newest 5 shown), as the brief's first section. */
-function inboxLines(state, me, seen, now, clientNames) {
+function inboxLines(state, me, seen, now, clientNames, frame) {
   if (!me) return { total: 0, lines: [], headline: "" };
   const unread = commentsFor(state, me).filter((x) => isUnread(x.comment, seen));
+  const line = (c) => renderComment(c, state, { now, clientNames, replyHint: false });
   return {
     total: unread.length,
     headline: inboxHeadline(unread),
     lines: unread
       .slice(-5)
-      .map((x) => renderComment(x.comment, state, { now, clientNames, replyHint: false })),
+      .map((x) => (frame ? frame(line(x.comment), x.comment) : line(x.comment))),
   };
 }
 
@@ -280,6 +281,7 @@ export function renderBrief(
     utcOffsetMin = 0,
     me = null,
     inboxSeen = null,
+    frameComment = null, // (line, comment) => line: the session hook frames comments (SA-1237)
   } = {},
 ) {
   // Mask every input text BEFORE a line is built, clipped or cut: a client name must never
@@ -290,7 +292,7 @@ export function renderBrief(
     if (part.lines.length === 0) return;
     sections.push({ key, title, total: part.total, lines: part.lines });
   };
-  const inbox = inboxLines(state, me, inboxSeen, now, clientNames);
+  const inbox = inboxLines(state, me, inboxSeen, now, clientNames, frameComment);
   add("inbox", `${inbox.headline} for you (rf inbox)`, inbox);
   add("hurting", "Hurting now", hurtingNow(state, snapshot));
   add("owner", "Waiting on the owner", waitingOnOwner(state, snapshot));
