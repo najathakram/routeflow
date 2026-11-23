@@ -17,9 +17,11 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   computeLineSubtotal,
   normalizeBoxesPieces,
+  refundableInvoiceOf,
   refundableLineShare,
   roundMoney,
   type RefundableInvoice,
+  type StoredInvoice,
   type RefundableInvoiceLine,
 } from "@routeflow/pricing";
 
@@ -91,7 +93,8 @@ export interface UnreferencedPriceContext {
    * canonical SELLING-UNIT price (one BOX when unitsPerBox > 1, matching @routeflow/pricing's
    * own convention), never a per-piece price. */
   unitPrice: number;
-  source: Extract<ReturnPriceSource, "CUSTOMER_PRICE" | "TIER" | "BASE">;
+  /** W-1316: SOURCE_INVOICE only when the last paid price capped a sold-before chunk. */
+  source: Extract<ReturnPriceSource, "SOURCE_INVOICE" | "CUSTOMER_PRICE" | "TIER" | "BASE">;
   /** The product's box size, so a boxed product's SELLING-UNIT price is priced against whole
    * boxes (+ prorated loose pieces), never `unitPrice * chunkPieces` directly — that would
    * over-credit a boxed product by a factor of unitsPerBox (CLAUDE.md money discipline). */
@@ -369,6 +372,40 @@ export function priceMatchedChunk(
     unitPrice: chunkPieces > 0 ? roundMoney(share.net / chunkPieces) : null,
     neverSold: false,
   };
+}
+
+/** W-1316: the customer's newest live sale of a product: the line and the invoice it sits on (every line, row order). */
+export interface LastSale {
+  id: string;
+  boxes: number | null;
+  unitsPerBox: number | null;
+  invoice: StoredInvoice;
+}
+
+/**
+ * W-1316: what the customer last paid for ONE selling unit of the product (a box of a boxed product, else a piece), as the
+ * invoice charged it: `refundableLineShare` on a fresh slice of one selling unit of that line (net after the discount share),
+ * never `qty * unitPrice`. `null` when the helper refuses the slice: the caller then applies no cap (a cap only ever lowers).
+ */
+export function lastPaidPerSellingUnit(
+  sale: LastSale,
+  productUnitsPerBox: number | null,
+): number | null {
+  const lineQty = Number(sale.invoice?.items?.find((i) => i.id === sale.id)?.qty);
+  if (!(lineQty > 0)) return null;
+  const axisQty = Math.min(1, lineQty); // the line's own axis: pieces for a box split, else selling units
+  const share = refundableLineShare({
+    invoice: refundableInvoiceOf(sale.invoice),
+    lineId: sale.id,
+    returnedQty: axisQty,
+    prior: { qty: 0, net: 0, tax: 0, categoryTax: 0 },
+  });
+  if (share.refusal) return null;
+  const lineUpb = Number(sale.unitsPerBox ?? productUnitsPerBox ?? 0);
+  const perAxis = share.net / axisQty;
+  const perPiece = sale.boxes != null ? perAxis : lineUpb > 1 ? perAxis / lineUpb : perAxis;
+  const productUpb = Number(productUnitsPerBox ?? 0);
+  return roundMoney(productUpb > 1 ? perPiece * productUpb : perPiece);
 }
 
 /** SA-1091 A-1: records a priced chunk against its invoice's shared `invoiceTaken`, so the next line priced in the same request

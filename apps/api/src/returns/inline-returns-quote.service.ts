@@ -45,6 +45,7 @@ import { DEAD_RETURN_STATUSES } from "./return-statuses";
 import {
   allocateReturnedPieces,
   applyCreditOverride,
+  lastPaidPerSellingUnit,
   noteChunkTaken,
   priceMatchedChunk,
   priceUnreferencedChunk,
@@ -53,6 +54,7 @@ import {
   totalChunks,
   type CandidateInvoiceLine,
   type CreditOverride,
+  type LastSale,
   type PricedChunk,
   type QuoteBreakdown,
   type RemainingSupply,
@@ -451,15 +453,17 @@ export class InlineReturnsQuoteService {
     // Live = ACCRUAL_REVENUE_STATUSES (a written-off sale counts: the goods left and the tax was charged) plus a DRAFT of a delivered
     // order; a line needs qty > 0. Asked only for a product with a no-sale chunk, cached per product (one findFirst on the
     // product index, however many items name it).
-    const neverSoldCache = new Map<string, boolean>();
-    const neverSoldToCustomer = async (productId: string): Promise<boolean> => {
-      const cached = neverSoldCache.get(productId);
+    // W-1316: the same read now keeps the NEWEST live sale (invoice date desc) and its invoice, so an old sale's last paid price
+    // can cap the credit; "never sold" is still exactly "no row". One read per product, cached, as before.
+    const lastSaleCache = new Map<string, LastSale | null>();
+    const lastSaleOf = async (productId: string): Promise<LastSale | null> => {
+      const cached = lastSaleCache.get(productId);
       if (cached !== undefined) return cached;
       // Prisma drops an undefined `where` key: refuse here rather than read every customer's or every product's sales
       if (!dto.customerId || !productId)
-        throw new Error("neverSoldToCustomer needs a customer and a product");
+        throw new Error("lastSaleOf needs a customer and a product");
       const excluded = excludeInvoiceIds;
-      const sale = await db.invoiceItem.findFirst({
+      const sale = (await db.invoiceItem.findFirst({
         where: {
           productId,
           qty: { gt: 0 },
@@ -472,11 +476,34 @@ export class InlineReturnsQuoteService {
             ],
           },
         },
-        select: { id: true },
-      });
-      const never = sale == null;
-      neverSoldCache.set(productId, never);
-      return never;
+        orderBy: [{ invoice: { issueDate: "desc" } }, { id: "desc" }],
+        select: {
+          id: true,
+          boxes: true,
+          unitsPerBox: true,
+          invoice: {
+            select: {
+              taxAmount: true,
+              discount: true,
+              items: {
+                orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                select: {
+                  id: true,
+                  systemKind: true,
+                  description: true,
+                  qty: true,
+                  subtotal: true,
+                  taxRate: true,
+                  categoryTaxAmount: true,
+                },
+              },
+            },
+          },
+        },
+      })) as LastSale | null;
+      const found = sale ?? null;
+      lastSaleCache.set(productId, found);
+      return found;
     };
 
     for (const item of dto.items) {
@@ -596,11 +623,13 @@ export class InlineReturnsQuoteService {
         : false;
       // SA-1060 PR-2: goods this customer was never sold, ever, carry no sales tax and are not added to stock; the pricer reads
       // this flag, not the rate. Only a product with a no-sale chunk asks (at most one whole-history read per product).
-      const neverSold = allocated.some((c) => !c.line)
-        ? await neverSoldToCustomer(item.productId)
-        : false;
+      const lastSale = allocated.some((c) => !c.line) ? await lastSaleOf(item.productId) : null;
+      const neverSold = allocated.some((c) => !c.line) ? lastSale == null : false;
       // The pack an unreferenced chunk is priced (and so overridden) against.
       const unreferencedUpb = product?.unitsPerBox ?? null;
+      // W-1316: a sold-before chunk never credits more than the customer last paid (the lower of today's price and that).
+      const lastPaid = lastSale ? lastPaidPerSellingUnit(lastSale, unreferencedUpb) : null;
+      const capped = lastPaid != null && lastPaid < unreferencedPrice;
       const chunks: PricedChunk[] = allocated.map((chunk) => {
         const priced = chunk.line
           ? priceMatchedChunk(chunk.line, chunk.pieces, customer.isTaxExempt)
@@ -608,8 +637,8 @@ export class InlineReturnsQuoteService {
               item.productId,
               chunk.pieces,
               {
-                unitPrice: unreferencedPrice,
-                source: unreferencedSource,
+                unitPrice: capped ? lastPaid : unreferencedPrice,
+                source: capped ? ("SOURCE_INVOICE" as const) : unreferencedSource,
                 unitsPerBox: unreferencedUpb,
               },
               fallbackTaxRate,
