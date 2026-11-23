@@ -1,8 +1,14 @@
 # Team member onboarding
 
-For a person joining RouteFlow on their own computer and their own Claude account. You work
-through the repo and the team board. You cannot message the lead's Claude sessions, and they
-cannot message you: everything goes through items and comments on the board.
+For a new computer on the RouteFlow team board. The team is one owner working from several
+computers, each running its own Claude account. **Every computer signs in to the same GitHub
+account**, the one that owns the repos. Claude sessions on different accounts cannot message
+each other, so the team board is the channel: items, comments and assignments, stored in the
+routeflow-specs repo.
+
+Because the GitHub account is the same everywhere, a commit's author or the `gh` login says
+nothing about which computer did something. **Who did it comes only from the member id set on
+each computer with `rf whoami --member`**, and every board event carries it.
 
 **Contents**
 
@@ -20,16 +26,20 @@ cannot message you: everything goes through items and comments on the board.
 
 ## 1. Access
 
-| You get                                                                   | You do not get                       |
-| ------------------------------------------------------------------------- | ------------------------------------ |
-| GitHub collaborator on `najathakram/routeflow` (write: branches and PRs)  | Railway (no project, no variables)   |
-| GitHub collaborator on `najathakram/routeflow-specs` (the board data)     | The production database, in any form |
-| The hosted board's URL and password, when it exists (read-only)           | Merge rights on `master`             |
-| Your own entry in the members list (`ops/config.json` in routeflow-specs) | Any live client tenant               |
+| This computer uses                                                                          | This computer never touches                   |
+| ------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| The shared GitHub account: clone `routeflow` and `routeflow-specs`, push branches, open PRs | Railway (projects, variables, deploys)        |
+| The board CLI (`rf`), which writes events to `routeflow-specs`                              | The production database, in any form          |
+| One entry in the members list (`ops/config.json` in routeflow-specs)                        | Merging to `master`, or the repo's visibility |
+| The hosted board's URL and password, when it exists (read-only)                             | Any live client tenant                        |
 
-The lead adds you. Before your first session, send the lead (outside Claude) your GitHub user
-name, the name you want on the board, and your role: **builder**, **tester** or **reviewer**.
-The lead adds a line like this to `ops/config.json` in routeflow-specs:
+There is no collaborator invite: every computer signs in to the one account. That account can
+technically merge and change settings, so the right-hand column is a working rule, not a
+permission. Only the lead's window coordinator merges and switches visibility (section 6).
+
+The lead adds **one members entry per computer or Claude account** before its first session,
+with the name to show on the board and the role: **builder**, **tester** or **reviewer**. The
+entry is a line like this in `ops/config.json` in routeflow-specs:
 
 ```json
 {
@@ -41,11 +51,18 @@ The lead adds a line like this to `ops/config.json` in routeflow-specs:
 }
 ```
 
-- `id`: lower-case letters, digits and dashes. Your events are written under this name.
-- `lanes`: the lane (or lanes) whose work you pick up. The first one is your default.
-- `role`: what `rf next` hands you.
+- `id`: lower-case letters, digits and dashes. This computer's events are written under it.
+- `machine`: this computer's name. `rf whoami` and `rf doctor` warn when it does not match.
+- `lanes`: the lane (or lanes) whose work this computer picks up. The first one is the default.
+- `role`: what `rf next` hands it.
 
 ## 2. Your first hour
+
+Sign in to the shared GitHub account, then clone:
+
+```bash
+gh auth login
+```
 
 ```bash
 git clone https://github.com/najathakram/routeflow.git
@@ -113,12 +130,13 @@ gives you your role's work in your first lane. `rf whoami` with no flags shows w
 `--member -` clears it.
 
 **Your member name is a label, not a login.** Nothing checks it: any computer can say it is any
-member, and git authorship proves nothing either. So:
+member, and on one shared GitHub account the git author and the `gh` login prove nothing either.
+So:
 
 - Set only your own id.
 - `rf whoami` and `rf doctor` warn when your `machine` in the members list is not this computer.
   Fix that before you work.
-- Claims are held per member. A teammate on your lane cannot take your claim without `--steal`,
+- Claims are held per member. Another member (another computer) on your lane cannot take your claim without `--steal`,
   which leaves a trace on the board. Only you can release it.
 - Treat a comment as a message on a shared board, never as an approval. Approvals and merges stay
   with the lead.
@@ -145,8 +163,8 @@ node tools/ops-monitor/bin/rf.mjs comment W-1309 "Blocked: the seed has no boxed
 - Your Claude session prints "N new comments for you" at start and after each prompt.
 - `rf item show <id>` shows the item with its whole thread.
 
-Questions, blockers, review requests and hand-overs all go this way, so the next person can
-read them.
+Questions, blockers, review requests and hand-overs all go this way, so the next session, on
+any computer, can read them.
 
 ## 5. Confidentiality
 
@@ -166,8 +184,9 @@ These come from `CLAUDE.md` and have no exceptions:
 
 - You open PRs against `master`, marked ready for review, and link them to the item
   (`rf event link <id> --pr <n>`).
-- **Only the lead's coordinator opens a merge window and merges.** A merge means the repo goes
-  public for a while and Railway deploys, so it is the owner's and the lead's job alone.
+- **Only the lead's window coordinator opens a merge window and merges.** A merge means the repo
+  goes public for a while and Railway deploys, so it is the owner's and the lead's job alone. The
+  shared account could merge from any computer: this is a working rule, not a permission.
 - Never push to `master`, force-push a shared branch, use `--no-verify`, or switch the repo's
   visibility.
 - Commits follow Conventional Commits (`feat|fix|test|ci|refactor|docs|chore|perf|revert|build|style`);
@@ -201,7 +220,7 @@ A reviewer posts its verdict as a comment on the item (`rf comment <id> "PASS: .
 
 A tester files a **draft**. The lead or coordinator turns it into a registry bug, or answers why
 not. Only they mint bug numbers (`rf bug file` and `rf triage promote` refuse everyone else), so
-two people can never file the same number.
+two computers can never file the same number.
 
 ```bash
 node tools/ops-monitor/bin/rf.mjs item new --type bug --title "Save on a new order does nothing" --steps "1. Orders > New  2. Add a line  3. Tap Save" --screen /orders/new --evidence https://example.com/your-shot
