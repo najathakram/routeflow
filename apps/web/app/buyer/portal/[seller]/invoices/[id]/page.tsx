@@ -28,7 +28,7 @@ import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
-import { checkBadgeFor } from "@/lib/check-badge";
+import { paymentRowBadge } from "@/lib/check-badge";
 import { invoiceStatusVariant } from "@/lib/buyer-invoice-status";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
@@ -492,7 +492,7 @@ export default function BuyerInvoiceDetailPage() {
             </thead>
             <tbody className="divide-y divide-surface-border">
               {invoice.payments.map((p) => {
-                const badge = checkBadgeFor(p);
+                const badge = paymentRowBadge(p);
                 const voided = p.status === "VOID";
                 return (
                   <tr key={p.id} className="hover:bg-surface-raised/50">

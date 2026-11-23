@@ -1,4 +1,4 @@
-import { invoiceItem } from "@/test-utils/buyer-invoice-fixtures";
+import { invoiceItem, invoicePayment } from "@/test-utils/buyer-invoice-fixtures";
 import * as React from "react";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
 import { INVOICE_ACCOUNT_LABELS, type InvoiceAccountRow } from "@routeflow/types";
@@ -111,5 +111,30 @@ describe("buyer invoice page: the account rows (SA-1228 D5)", () => {
   it("R6: an absent key renders no block", () => {
     show(makeInvoice());
     expect(screen.queryByTestId("invoice-account-block")).toBeNull();
+  });
+});
+
+describe("buyer invoice page: payment row status (B1151)", () => {
+  it("R7: a CASH row reads Received, a CREDIT_NOTE row Applied, a VOID row Void, a cleared check Cleared", () => {
+    show(
+      makeInvoice({
+        payments: [
+          invoicePayment({ id: "p1", method: "CASH", status: "PAID", amount: 10 }),
+          invoicePayment({ id: "p2", method: "CREDIT_NOTE", status: "PAID", amount: 20 }),
+          invoicePayment({ id: "p3", method: "CASH", status: "VOID", amount: 30 }),
+          invoicePayment({
+            id: "p4",
+            method: "CHECK",
+            status: "PAID",
+            checkStatus: "CLEARED",
+            amount: 40,
+          }),
+        ],
+      }),
+    );
+    expect(screen.getByText("Received")).toBeInTheDocument();
+    expect(screen.getByText("Applied")).toBeInTheDocument();
+    expect(screen.getByText("Void")).toBeInTheDocument();
+    expect(screen.getByText("Cleared")).toBeInTheDocument();
   });
 });

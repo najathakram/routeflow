@@ -37,3 +37,31 @@ export function checkBadgeFor(p: {
       return null;
   }
 }
+
+/**
+ * B1151 (SA-1228): the status cell of a buyer payment row. A check keeps its lifecycle badge; every other
+ * row reads its own status so no cell is empty. A credit note or advance is an application, never cash (B421).
+ * The five words are the owner's (2026-11-23); renaming one is a one-entry change here.
+ */
+export function paymentRowBadge(p: {
+  method: string;
+  status?: string;
+  checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
+}): ReturnType<typeof checkBadgeFor> {
+  const check = checkBadgeFor(p);
+  if (check) return check;
+  switch (p.status) {
+    case "VOID":
+      return { label: "Void", variant: "danger" };
+    case "DRAFT":
+      return { label: "Not confirmed", variant: "neutral" };
+    case "PENDING":
+      return { label: "Pending", variant: "warning" };
+    case "PAID":
+      return p.method === "CREDIT_NOTE" || p.method === "ADVANCE"
+        ? { label: "Applied", variant: "info" }
+        : { label: "Received", variant: "success" };
+    default:
+      return null;
+  }
+}

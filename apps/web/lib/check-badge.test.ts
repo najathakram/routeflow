@@ -2,7 +2,7 @@
  * Locks the CHECK payment lifecycle badge decision table so it never drifts from the mobile
  * mirror (apps/mobile/lib/check-badge.ts, tested in apps/mobile/__tests__/check-badge.test.ts).
  */
-import { checkBadgeFor } from "./check-badge";
+import { checkBadgeFor, paymentRowBadge } from "./check-badge";
 
 describe("checkBadgeFor", () => {
   it("returns null for non-CHECK payment methods", () => {
@@ -62,5 +62,44 @@ describe("checkBadgeFor", () => {
       label: "Post-dated · pending",
       variant: "warning",
     });
+  });
+});
+
+// B1151: every buyer payment row reads a status, never an empty cell; credits are never cash words.
+describe("paymentRowBadge", () => {
+  it("keeps the check lifecycle badge when there is one", () => {
+    expect(paymentRowBadge({ method: "CHECK", status: "PAID", checkStatus: "CLEARED" })).toEqual({
+      label: "Cleared",
+      variant: "success",
+    });
+  });
+
+  it("maps a non-check row by its status", () => {
+    expect(paymentRowBadge({ method: "CASH", status: "PAID" })).toEqual({
+      label: "Received",
+      variant: "success",
+    });
+    expect(paymentRowBadge({ method: "CASH", status: "VOID" })).toEqual({
+      label: "Void",
+      variant: "danger",
+    });
+    expect(paymentRowBadge({ method: "CASH", status: "DRAFT" })).toEqual({
+      label: "Not confirmed",
+      variant: "neutral",
+    });
+    expect(paymentRowBadge({ method: "ZELLE", status: "PENDING" })).toEqual({
+      label: "Pending",
+      variant: "warning",
+    });
+  });
+
+  it("a credit note or advance application reads Applied, never Received", () => {
+    expect(paymentRowBadge({ method: "CREDIT_NOTE", status: "PAID" })?.label).toBe("Applied");
+    expect(paymentRowBadge({ method: "ADVANCE", status: "PAID" })?.label).toBe("Applied");
+  });
+
+  it("a voided check with no lifecycle status reads Void; an unknown status reads nothing", () => {
+    expect(paymentRowBadge({ method: "CHECK", status: "VOID" })?.label).toBe("Void");
+    expect(paymentRowBadge({ method: "CASH", status: "WEIRD" })).toBeNull();
   });
 });
