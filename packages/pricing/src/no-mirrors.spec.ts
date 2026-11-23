@@ -50,7 +50,11 @@ const SCAN_ROOTS = [
   "scripts",
 ];
 
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist"]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS]);
 
 // `scripts/codemods/*` are one-time migration/verification tools whose entire job is to
 // match legacy pricing import strings as literal data (to rewrite them, or diff against

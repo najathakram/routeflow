@@ -51,15 +51,11 @@ const ALLOWLIST: Record<string, { count: number; why: string }> = {
 
 const SOURCE = /\.[cm]?[tj]sx?$/;
 const NOT_PRODUCTION = /\.(spec|test)\.[cm]?[tj]sx?$|\.d\.ts$/;
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".next",
-  "dist",
-  "__tests__",
-  "e2e",
-  ".expo",
-  "coverage",
-]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS, "__tests__", "e2e"]);
 
 function walk(dir: string, out: string[]): void {
   if (!fs.existsSync(dir)) return;

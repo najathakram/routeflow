@@ -34,16 +34,11 @@ const SCAN_DIRS = [
   "apps/mobile",
   "packages",
 ];
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".next",
-  "dist",
-  "worktrees",
-  ".git",
-  ".turbo",
-  ".expo",
-  "coverage",
-]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS, "worktrees", ".git"]);
 
 // ---------------------------------------------------------------------------------------------
 // The scanner. Exported-in-spirit: the mutant pins below run in-memory source through the SAME

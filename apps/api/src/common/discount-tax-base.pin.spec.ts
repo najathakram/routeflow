@@ -19,7 +19,11 @@ import * as path from "path";
  * "the invoice-level discount comes off AFTER tax") and the mobile invoice-edit tax fill, which keep LEGACY.
  */
 const ROOT = path.resolve(__dirname, "../../../..");
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist", ".turbo", "coverage", "testing"]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS, "testing"]);
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
