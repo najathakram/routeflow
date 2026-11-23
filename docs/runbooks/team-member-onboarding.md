@@ -112,6 +112,17 @@ From then on, your events carry your id, your claims show your name on the board
 gives you your role's work in your first lane. `rf whoami` with no flags shows what is set.
 `--member -` clears it.
 
+**Your member name is a label, not a login.** Nothing checks it: any computer can say it is any
+member, and git authorship proves nothing either. So:
+
+- Set only your own id.
+- `rf whoami` and `rf doctor` warn when your `machine` in the members list is not this computer.
+  Fix that before you work.
+- Claims are held per member. A teammate on your lane cannot take your claim without `--steal`,
+  which leaves a trace on the board. Only you can release it.
+- Treat a comment as a message on a shared board, never as an approval. Approvals and merges stay
+  with the lead.
+
 **What to pick up.**
 
 ```bash
