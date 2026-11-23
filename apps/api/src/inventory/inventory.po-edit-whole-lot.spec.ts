@@ -7,9 +7,10 @@ import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { wireStockHelper } from "./testing/stock-helper-mock";
 
 /**
- * SA-1238 M1: a PO edit is a lot write path too. An existing labelled line ("6 Pieces", pack 6) keeps its
- * whole-pack quantity (the bill's assertWholeLotQty, on the RESULTING row) and its pack (a re-pack is the
- * bill's locked refusal). Entry: the linked bill is voided, so the line edit is open.
+ * SA-1238 M1, A2-A5: a PO edit is a lot write path too. A stored labelled line ("6 Pieces", pack 6) CARRIES its
+ * label and pack (the incoming pack is never written), a changed quantity must be whole packs, and a product
+ * change on it is 409 SPLIT_LINE_LOCKED. An unlabelled line takes what is sent. Entry: the linked bill is
+ * voided, so the line edit is open.
  */
 const D = (n: number) => new Prisma.Decimal(n);
 const stored = (over: any = {}) => ({
@@ -26,20 +27,28 @@ const stored = (over: any = {}) => ({
   ...over,
 });
 
-async function edit(line: any, patch: any, more?: { line: any; patch: any }) {
+async function edit(
+  line: any,
+  patch: any,
+  more?: { line: any; patch: any },
+  opts: { status?: string; dto?: any } = {},
+) {
   const prisma = createMockPrisma();
   wireStockHelper(prisma);
   prisma.purchaseOrder.findUnique.mockResolvedValue({
     id: "po-1",
     poNumber: "PO-2026-0001",
     supplierId: "sup-1",
-    status: "SENT",
+    status: opts.status ?? "SENT",
     items: more ? [line, more.line] : [line],
   });
   prisma.vendorBill.findFirst.mockResolvedValue(null); // the linked bill is void
   prisma.purchaseOrder.update.mockResolvedValue({});
   prisma.purchaseOrder.findUniqueOrThrow.mockResolvedValue({ id: "po-1" });
-  prisma.product.findMany.mockResolvedValue([{ id: "prod-1", name: "Soda", kind: "SIMPLE" }]);
+  prisma.product.findMany.mockResolvedValue([
+    { id: "prod-1", name: "Soda", kind: "SIMPLE" },
+    { id: "prod-2", name: "Water", kind: "SIMPLE" },
+  ]);
   const mod = await Test.createTestingModule({
     providers: [
       InventoryService,
@@ -55,6 +64,7 @@ async function edit(line: any, patch: any, more?: { line: any; patch: any }) {
     .updatePurchaseOrder(
       "po-1",
       {
+        ...opts.dto,
         items: [
           { id: "poi-1", productId: "prod-1", unitCost: 3, ...patch },
           ...(more ? [{ id: more.line.id, productId: "prod-1", unitCost: 3, ...more.patch }] : []),
@@ -70,6 +80,7 @@ async function edit(line: any, patch: any, more?: { line: any; patch: any }) {
     status: e?.getStatus?.(),
     code: e?.getResponse?.()?.code,
     message: e?.getResponse?.()?.message,
+    written: prisma.purchaseOrder.update.mock.calls.length,
     update: prisma.purchaseOrder.update.mock.calls[0]?.[0]?.data?.items?.update?.[0]?.data,
   };
 }
@@ -118,6 +129,52 @@ describe("updatePurchaseOrder: a labelled lot line (SA-1238 M1)", () => {
     expect(
       (await edit(legacy, { qtyOrdered: 10 }, { line: other, patch: { qtyOrdered: 10 } })).code,
     ).toBe("LOT_QTY_NOT_WHOLE");
+  });
+
+  const water = { productId: "prod-2" };
+
+  it("R11: switching a labelled lot line to another product is 409 and writes nothing", async () => {
+    const r = await edit(stored(), { ...water, qtyOrdered: 12 });
+    expect(r).toMatchObject({ status: 409, code: "SPLIT_LINE_LOCKED", written: 0 });
+    expect(r.message).toBe(
+      "To change the product on this line, remove the line and add a new one.",
+    );
+  });
+
+  it("R12: the same product with a new qty is carried (pin)", async () => {
+    const r = await edit(stored(), { qtyOrdered: 18 });
+    expect(r.update).toMatchObject({ packSize: 6, qtyOrdered: 18 });
+  });
+
+  it("R13: a labelled piece line switched to another product is 409", async () => {
+    const piece = stored({ unitLabel: "1 Piece", packSize: null });
+    expect(await edit(piece, { ...water, qtyOrdered: 12 })).toMatchObject({
+      status: 409,
+      written: 0,
+    });
+  });
+
+  it("R14: a legacy part lot switched to another product is 409, even at its stored qty", async () => {
+    const legacy = stored({ qtyOrdered: D(9) });
+    expect(await edit(legacy, { ...water, qtyOrdered: 9 })).toMatchObject({
+      status: 409,
+      written: 0,
+    });
+  });
+
+  it("R15: a received labelled line switched to another product is refused before any write", async () => {
+    const got = stored({ qtyReceived: D(6) });
+    const r = await edit(got, { ...water, qtyOrdered: 12 }, undefined, {
+      status: "PARTIAL",
+      dto: { reapplyInventory: false },
+    });
+    expect(r).toMatchObject({ status: 409, code: "SPLIT_LINE_LOCKED", written: 0 }); // the new 409 fires before :2378
+  });
+
+  it("R16: an unlabelled line switched to another product is accepted, pack as sent", async () => {
+    const plain = stored({ unitLabel: null });
+    const r = await edit(plain, { ...water, qtyOrdered: 12, packSize: 4 });
+    expect(r.update).toMatchObject({ productId: "prod-2", packSize: 4 });
   });
 
   it("R8': an unlabelled line is no lot, so null to 6 takes qty 9 and 12 alike (observed)", async () => {

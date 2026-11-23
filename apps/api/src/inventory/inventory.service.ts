@@ -2350,6 +2350,7 @@ export class InventoryService {
         if (!ex) continue;
         const description = products.find((p) => p.id === line.productId)?.name ?? line.productId;
         line.packSize = editedLinePack(ex, {
+          productId: line.productId,
           packSize: line.packSize,
           qty: line.qtyOrdered,
           description,

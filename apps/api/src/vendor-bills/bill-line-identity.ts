@@ -121,20 +121,32 @@ const locked = (message: string) =>
   new ConflictException({ code: API_ERROR_CODES.SPLIT_LINE_LOCKED, message });
 
 /**
- * SA-1238 A2/A3: the pack the edit of a stored PO line writes. A labelled line carries its STORED pack (part of
- * its identity); an unlabelled line takes the incoming one. Only a CHANGED line is judged (an untouched legacy
- * part lot is left to the receive check): qty (pieces) must be whole packs by an exact Decimal remainder.
+ * SA-1238 A2-A5: the pack the edit of a stored PO line writes. A labelled line carries its STORED pack and
+ * label (its identity), so a product change on it is refused (409); an unlabelled line takes the incoming pack.
+ * A lot line is judged only when its qty changed (an untouched legacy part lot is left to the receive check):
+ * qty (pieces) must be whole packs by an exact Decimal remainder.
  */
 export function editedLinePack(
-  stored: { packSize?: unknown; unitLabel?: string | null; qtyOrdered: Prisma.Decimal.Value },
-  next: { packSize?: unknown; qty: Prisma.Decimal.Value; description: string },
+  stored: {
+    productId?: string | null;
+    packSize?: unknown;
+    unitLabel?: string | null;
+    qtyOrdered: Prisma.Decimal.Value;
+  },
+  next: {
+    productId?: string | null;
+    packSize?: unknown;
+    qty: Prisma.Decimal.Value;
+    description: string;
+  },
 ) {
   const labelled = billLineUnit({ unitLabel: stored.unitLabel }).stated;
+  if (labelled && next.productId !== stored.productId) {
+    throw locked("To change the product on this line, remove the line and add a new one.");
+  }
   const pack = labelled ? stored.packSize : next.packSize;
   const row = { packSize: pack, unitLabel: stored.unitLabel };
-  const changed =
-    !new Prisma.Decimal(next.qty).eq(stored.qtyOrdered) ||
-    (!labelled && next.packSize !== undefined && next.packSize !== stored.packSize);
+  const changed = !new Prisma.Decimal(next.qty).eq(stored.qtyOrdered);
   if (changed && isLotLine(row) && !new Prisma.Decimal(next.qty).mod(unitFactor(row)).isZero()) {
     throw wholeLot(
       API_ERROR_CODES.LOT_QTY_NOT_WHOLE,

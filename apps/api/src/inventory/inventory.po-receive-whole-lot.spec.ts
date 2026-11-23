@@ -98,6 +98,16 @@ describe("receivePurchaseOrder: a lot line is received in whole packs (SA-1227 M
     expect(r).toMatchObject({ status: undefined, poStatus: "RECEIVED" });
   });
 
+  it("R2' leg: an edited-then-carried 6 Pieces/6 line takes whole packs and refuses a part pack", async () => {
+    expect((await receive(line(), { receivedQty: 12 })).status).toBeUndefined();
+    expect((await receive(line(), { receivedQty: 4 })).code).toBe("RECEIVE_PARTIAL_UNIT");
+  });
+
+  it("R6 leg: a carried 1 Piece line (no pack) receives its 9 pieces", async () => {
+    const piece = line({ unitLabel: "1 Piece", packSize: null, qtyOrdered: D(9) });
+    expect((await receive(piece, { receivedQty: 9 })).status).toBeUndefined();
+  });
+
   it("green: a case line (pack, no label) still takes any piece qty", async () => {
     expect((await receive(line({ unitLabel: null }), { receivedQty: 3 })).status).toBeUndefined();
   });
