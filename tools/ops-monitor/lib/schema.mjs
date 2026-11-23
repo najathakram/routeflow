@@ -39,6 +39,8 @@ export const TYPES = [
 export const HARMS = ["live", "latent", "none"];
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PR_ACTIONS = ["create", "ready", "merge", "close", "edit"];
+/** Team member roles (specs ops/config.json `members[].role`, item `role`, `rf next --role`). */
+export const ROLES = ["builder", "tester", "reviewer"];
 /** Longest comment body (a comment is a message on the item, not a spec: link a file for more). */
 export const COMMENT_TEXT_MAX = 2000;
 
@@ -65,6 +67,8 @@ const ITEM_FIELDS = {
   // customer harmed, "none" = not harmful, null = not judged (derived from census items).
   harm: (v) => v === null || HARMS.includes(v),
   lane: (v) => v === null || (typeof v === "string" && LANE_RE.test(v)),
+  // Who picks it up: builder (the default when unset), tester or reviewer (`rf next --role`).
+  role: (v) => v === null || ROLES.includes(v),
   train: (v) => v === null || (typeof v === "string" && /^[RT]\d{1,2}[a-z]?$/.test(v)),
   area: (v) => v === null || (typeof v === "string" && v.length <= 80),
   parent: (v) => v === null || (typeof v === "string" && ITEM_ID_RE.test(v)),
@@ -161,9 +165,15 @@ export const KINDS = {
     data: {
       branch: [optStr(200), false],
       steal: [(v) => v === undefined || typeof v === "boolean", false],
+      // The member who claims (rf whoami --member); claims are held per member, not per lane.
+      member: [(v) => v === undefined || (typeof v === "string" && LANE_RE.test(v)), false],
     },
   },
-  release: { needsItem: "required", needsLane: true, data: {} },
+  release: {
+    needsItem: "required",
+    needsLane: true,
+    data: { member: [(v) => v === undefined || (typeof v === "string" && LANE_RE.test(v)), false] },
+  },
   status: {
     needsItem: "required",
     data: { status: [(v) => STATUSES.includes(v), true], note: [optStr(500), false] },

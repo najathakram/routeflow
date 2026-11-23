@@ -51,14 +51,18 @@ export function freedItems(state) {
   return out;
 }
 
-/** Ranked list of `{ item, reason }` the lane may take, best first. */
-export function rankCandidates(state, laneId, config, { now = Date.now() } = {}) {
+/**
+ * Ranked list of `{ item, reason }` the lane may take, best first. `role` (builder | tester |
+ * reviewer) keeps only items for that role; an item with no role is builder work.
+ */
+export function rankCandidates(state, laneId, config, { now = Date.now(), role } = {}) {
   const lane = config?.lanes?.find((l) => l.id === laneId);
   const areas = lane?.areas ?? [];
   const out = [];
   for (const item of state.items.values()) {
     if (!PICKABLE_STATUSES.includes(item.status)) continue;
     if (item.type === "release" || item.type === "epic") continue;
+    if (role && (item.role ?? "builder") !== role) continue;
     if (item.blocked || item.claimedBy || openBlockers(item, state.items).length > 0) continue;
     const openChild = item.children.some((c) => {
       const ch = state.items.get(c);

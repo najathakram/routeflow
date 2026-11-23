@@ -3,14 +3,19 @@
 // Exit codes: 0 ok, 1 refused (validation) or error, 2 usage, 3 committed but not pushed.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   REPO_ROOT,
   boardDir,
+  MEMBER_FILE,
+  findMember,
   laneId,
   loadConfig,
   machineId,
+  memberName,
+  memberProblems,
+  membersOf,
   normalizeLane,
   opsHome,
   specsDir,
@@ -23,14 +28,22 @@ import {
   TYPES,
   PRIORITIES,
   PR_ACTIONS,
+  ROLES,
   needsBusinessStory,
 } from "../lib/schema.mjs";
 import { newEventId } from "../lib/ids.mjs";
+import {
+  actorFor as identityActor,
+  currentMember,
+  defaultLane,
+  memberMachineWarning,
+  whoIsHere,
+} from "../lib/identity.mjs";
 import { fold } from "../lib/fold.mjs";
 import { freedItems, laneNow, rankCandidates } from "../lib/next.mjs";
 import { linkMatches, readPrTitle } from "../lib/link-check.mjs";
 import { registerModeOf, runSync } from "../lib/sync.mjs";
-import { checkoutRoot, laneForCwd, setLane } from "../lib/lanes-local.mjs";
+import { checkoutRoot, setLane } from "../lib/lanes-local.mjs";
 import { runStatusSync } from "../lib/status-sync.mjs";
 import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/brief.mjs";
 import {
@@ -113,9 +126,10 @@ const USAGE = `usage: rf <command> [args]
   status <id> <status> [--note T]                  block <id> --by X [--unblocker Y]   unblock <id>
   comment <id> "<text>" [--to lane|member,...] [--reply-to <eventId>]   talk on the item (the only channel)
   inbox [--all] [--keep] [--json]   comments for you (mentions, replies, your claimed items); marks them read
-  next [--lane L] [--claim] [--json]
+  next [--lane L] [--role builder|tester|reviewer] [--claim] [--json]   (a member gets their role's work)
   item new --title T --type X [--priority P] [--status S] [--lane L] [--train R1] [--area A]
            [--parent ID] [--eta E] [--gate G] [--id ID] [--blocked-by ID,ID]  (rf item edit: - clears it)
+           [--role builder|tester|reviewer]   (who picks it up; unset = builder)
            [--problem "what is wrong"] [--impact "who it hurts, what it costs"] [--solution "how we fix it"]
            [--owner-ask "what we need from the owner"] [--harm live|latent|none|null]   (P0/P1 bug/feature/incident: --problem + --impact required)
   item edit <id> [--title ..] [--priority ..] ...   item show <id> [--json]
@@ -126,7 +140,7 @@ const USAGE = `usage: rf <command> [args]
   status-sync [--no-push]                                          lane status files -> heartbeat events
   auto-status [--apply] [--no-push]   linked PRs merged/live/open -> item statuses, one pass (dry run by default)
   brief [--lane L] [--since <eventId|iso>] [--refresh] [--json]   what the monitor says, in plain words
-  whoami [--machine M] [--lane L]   backfill [--dry]   views [--dry] [--no-push]   doctor   hash-password
+  whoami [--machine M] [--lane L] [--member <id>|-]   backfill [--dry]   views [--dry] [--no-push]   doctor   hash-password
 global: --json  --no-push  --no-sync  --quiet (no stdout on success)`;
 
 const NULLABLE = [
@@ -164,13 +178,6 @@ async function prepare(ctx, flags, { sync }) {
   return { ...ctx, config, machine: machineId(config, ctx.env) };
 }
 
-/** No --lane: RF_LANE, else the lane recorded for this directory (rf whoami --lane), else null. */
-function defaultLane(config, env) {
-  return (
-    laneId(undefined, config, env) ?? laneForCwd(process.cwd(), env, { config, home: opsHome(env) })
-  );
-}
-
 function resolveLane(raw, c, { required = false } = {}) {
   let lane;
   if (raw === undefined) lane = defaultLane(c.config, c.env);
@@ -183,26 +190,40 @@ function resolveLane(raw, c, { required = false } = {}) {
   return lane;
 }
 
-/** The name events are written under: RF_ACTOR, else the lane, else machine:folder. */
+/** The name events are written under: the one rule, in lib/identity.mjs. `c`: { env, machine, config }. */
 function actorFor(c, lane) {
-  return (c.env.RF_ACTOR || lane || `${c.machine}:${basename(process.cwd())}`).slice(0, 80);
+  return identityActor({ env: c.env, machine: c.machine, config: c.config }, lane);
 }
 
-/** Who reads comments here: { lane, actor }. */
+/** Who reads comments here: { lane, actor, member } (lib/identity.mjs). */
 function meFor(c, lane) {
-  return { lane: lane ?? null, actor: actorFor(c, lane) };
+  return whoIsHere({ env: c.env, machine: c.machine, config: c.config, lane: lane ?? null });
+}
+
+/** "macmini (Alex Rivera)" when a member holds the claim, else the lane. */
+function claimWords(it, config) {
+  if (!it.claimedBy) return "-";
+  const name = memberName(config, it.claimedMember);
+  return name ? `${it.claimedBy} (${name})` : it.claimedBy;
 }
 
 /** A --to value -> a lane id or a member id; an unknown name is a usage error (nothing written). */
 function resolveMention(raw, config) {
   const t = String(raw).trim();
-  const member = (config.members ?? []).find((m) => m.id === t.toLowerCase());
+  const member = findMember(config, t);
   if (member) return member.id;
   const lane = normalizeLane(t, config);
   if (lane) return lane;
   throw new UsageError(
     `unknown lane or member "${t}" (lanes and members live in the specs ops/config.json)`,
   );
+}
+
+/** A claim or release carries this computer's member: claims are held per member. */
+function withClaimMember(c, kind, data) {
+  if (kind !== "claim" && kind !== "release") return data;
+  const member = currentMember(c.config, c.env)?.id;
+  return member && data?.member === undefined ? { ...data, member } : data;
 }
 
 function makeEvent(c, kind, item, data, lane) {
@@ -216,7 +237,7 @@ function makeEvent(c, kind, item, data, lane) {
     lane: lane ?? null,
     kind,
     item,
-    data,
+    data: withClaimMember(c, kind, data),
   };
 }
 
@@ -257,6 +278,12 @@ function itemFields(flags, c) {
   if (flags.trainLabel !== undefined) f.trainLabel = flags.trainLabel;
   if (flags.lane !== undefined) {
     f.lane = CLEAR_WORDS.has(String(flags.lane)) ? null : resolveLane(flags.lane, c);
+  }
+  if (flags.role !== undefined) {
+    const r = String(flags.role);
+    if (CLEAR_WORDS.has(r)) f.role = null;
+    else if (ROLES.includes(r)) f.role = r;
+    else throw new UsageError(`--role must be one of ${ROLES.join(", ")}`);
   }
   for (const k of ["tags", "members", "related"]) if (flags[k] !== undefined) f[k] = list(flags[k]);
   if (flags["blocked-by"] !== undefined) {
@@ -486,15 +513,20 @@ async function cmdSimple(kind, positional, flags, env) {
   return cmdEvent(rest, flags, env);
 }
 
-function fmtItem(it) {
-  return `${it.id.padEnd(7)} ${it.priority} ${it.status.padEnd(9)} ${it.type.padEnd(8)} ${(it.lane ?? "-").padEnd(10)} ${(it.train ?? "-").padEnd(3)} ${it.title}`;
+function fmtItem(it, config) {
+  const claim = it.claimedBy ? `  @${claimWords(it, config)}` : "";
+  return `${it.id.padEnd(7)} ${it.priority} ${it.status.padEnd(9)} ${it.type.padEnd(8)} ${(it.lane ?? "-").padEnd(10)} ${(it.train ?? "-").padEnd(3)} ${it.title}${claim}`;
 }
 
 async function cmdNext(flags, env) {
+  if (flags.role !== undefined && !ROLES.includes(flags.role))
+    throw new UsageError(`--role must be one of ${ROLES.join(", ")}`);
   const c = await prepare(ctxFor(env), flags, { sync: true });
   const lane = resolveLane(flags.lane, c, { required: true });
+  // A member gets work for their role unless --role says otherwise; a lane session sees every role.
+  const role = flags.role ?? currentMember(c.config, c.env)?.role;
   const state = stateOf(c);
-  const ranked = rankCandidates(state, lane, c.config, { now: Date.now() });
+  const ranked = rankCandidates(state, lane, c.config, { now: Date.now(), role });
   const top = ranked[0] ?? null;
   const runnersUp = ranked.slice(1, 5);
   const now = laneNow(state, lane);
@@ -516,7 +548,14 @@ async function cmdNext(flags, env) {
   if (flags.json) {
     process.stdout.write(
       JSON.stringify(
-        { lane, item: top ? slim(top) : null, runnersUp: runnersUp.map(slim), claimed, now },
+        {
+          lane,
+          role: role ?? null,
+          item: top ? slim(top) : null,
+          runnersUp: runnersUp.map(slim),
+          claimed,
+          now,
+        },
         null,
         2,
       ) + "\n",
@@ -525,7 +564,7 @@ async function cmdNext(flags, env) {
   }
   if (!top) {
     process.stdout.write(
-      `nothing to pick for ${lane}${now.length ? ` (in flight: ${now.join(", ")})` : ""}\n`,
+      `nothing to pick for ${lane}${role ? ` (${role} work)` : ""}${now.length ? ` (in flight: ${now.join(", ")})` : ""}\n`,
     );
     return code;
   }
@@ -601,7 +640,7 @@ async function cmdItem(positional, flags, env) {
       `${it.id}  ${it.title}`,
       `type ${it.type}  priority ${it.priority}  status ${it.status}  lane ${it.lane ?? "-"}  train ${it.train ?? "-"}`,
       `area ${it.area ?? "-"}  parent ${it.parent ?? "-"}  eta ${it.eta ?? "-"}  gate ${it.gate ?? "-"}`,
-      `claimed by ${it.claimedBy ?? "-"}${it.claimedAt ? ` since ${iso(it.claimedAt)}` : ""}${it.blocked ? `  BLOCKED by ${it.blocked.by}` : ""}`,
+      `claimed by ${claimWords(it, c.config)}${it.claimedAt ? ` since ${iso(it.claimedAt)}` : ""}${it.blocked ? `  BLOCKED by ${it.blocked.by}` : ""}`,
       `links  prs ${it.links.prs.join(",") || "-"}  branches ${it.links.branches.join(",") || "-"}`,
       `children ${it.children.join(",") || "-"}  blocked by ${it.blockedBy.join(",") || "-"}  updated ${iso(it.updatedAt)}`,
       "history:",
@@ -694,7 +733,10 @@ async function cmdLs(flags, env) {
       a.priority.localeCompare(b.priority) || num(a.id) - num(b.id) || a.id.localeCompare(b.id),
   );
   if (flags.json) process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
-  else process.stdout.write(rows.length ? rows.map(fmtItem).join("\n") + "\n" : "no items\n");
+  else
+    process.stdout.write(
+      rows.length ? rows.map((it) => fmtItem(it, c.config)).join("\n") + "\n" : "no items\n",
+    );
   return 0;
 }
 
@@ -707,6 +749,21 @@ async function cmdWhoami(flags, env) {
     writeFileSync(join(ctx.home, "machine"), String(flags.machine).trim() + "\n");
   }
   const config = loadConfig(ctx.dir);
+  if (flags.member !== undefined) {
+    const raw = typeof flags.member === "string" ? flags.member.trim() : "";
+    const file = join(ctx.home, MEMBER_FILE);
+    if (CLEAR_WORDS.has(raw)) {
+      if (existsSync(file)) writeFileSync(file, "");
+    } else {
+      const m = findMember(config, raw);
+      if (!m)
+        throw new UsageError(
+          `unknown member "${raw}" (members live in the specs ops/config.json; ask the lead to add you)`,
+        );
+      mkdirSync(ctx.home, { recursive: true });
+      writeFileSync(file, `${m.id}\n`);
+    }
+  }
   if (flags.lane !== undefined) {
     const lane = typeof flags.lane === "string" ? normalizeLane(flags.lane, config) : null;
     if (!lane) throw new UsageError(`unknown lane "${flags.lane}"`);
@@ -723,18 +780,23 @@ async function cmdWhoami(flags, env) {
   }
   const machine = machineId(config, env);
   const lane = defaultLane(config, env);
+  const member = currentMember(config, env);
   const info = {
     machine,
+    member: member ? { id: member.id, name: member.name, role: member.role } : null,
     lane,
-    actor: actorFor({ env, machine }, lane),
+    actor: actorFor({ env, machine, config }, lane),
     specsDir: ctx.dir,
     clone: existsSync(join(ctx.dir, ".git")) ? "present" : "missing",
   };
   print(
     flags,
     info,
-    `machine ${info.machine}\nlane ${info.lane ?? "-"}\nname ${info.actor} (events and comments are written under it)\nspecs ${info.specsDir}\nclone ${info.clone}`,
+    `machine ${info.machine}\nmember ${member ? `${member.id} (${member.name}, ${member.role})` : "-"}\nlane ${info.lane ?? "-"}\nname ${info.actor} (events and comments are written under it)\nspecs ${info.specsDir}\nclone ${info.clone}`,
   );
+  // The member is a label, not a login (one shared GitHub account): say so when it looks wrong.
+  const warning = memberMachineWarning(config, env, machine);
+  if (warning) process.stderr.write(`${warning}\n`);
   return 0;
 }
 
@@ -1083,7 +1145,7 @@ async function cmdBrief(flags, env) {
 `);
     return 0;
   }
-  const me = meFor({ env, machine: machineId(config, env) }, lane);
+  const me = meFor({ env, machine: machineId(config, env), config }, lane);
   const text = renderBrief(state, {
     lane,
     now,
@@ -1190,6 +1252,17 @@ async function cmdDoctor(flags, env) {
   );
   const config = loadConfig(ctx.dir);
   row(true, "config", `${config.lanes.length} lanes, machine ${machineId(config, env)}`);
+  const members = membersOf(config);
+  const byRole = ROLES.map((r) => `${members.filter((m) => m.role === r).length} ${r}`).join(", ");
+  const problems = memberProblems(config);
+  row(
+    problems.length === 0,
+    "members",
+    `${members.length} members (${byRole})${problems.length ? `; ignored: ${problems.join("; ")}` : ""}`,
+  );
+  const machineWarning = memberMachineWarning(config, env, machineId(config, env));
+  const me = currentMember(config, env)?.id ?? "none set";
+  row(!machineWarning, "member", machineWarning ?? `${me} (a label, not a login)`);
   try {
     const bugs = await loadBugIds(env.RF_REPO_ROOT || REPO_ROOT);
     row(

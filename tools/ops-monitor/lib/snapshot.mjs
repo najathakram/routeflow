@@ -17,7 +17,7 @@ import {
   revertedNumbers,
 } from "./reconcile.mjs";
 import { summarizeChecks } from "./collector.mjs";
-import { resolveLaneId } from "./config.mjs";
+import { memberName, membersOf, resolveLaneId } from "./config.mjs";
 
 export { linkItemFor };
 
@@ -572,6 +572,7 @@ export function buildSnapshot({
       harmEvidence: it.harm ? null : (derivedHarm.get(it.id) ?? null),
       domain: itemDomain(it, bugById),
       claimedBy: it.claimedBy,
+      claimedByName: memberName(cfg, it.claimedMember),
       blocked: it.blocked
         ? {
             ...it.blocked,
@@ -1139,6 +1140,13 @@ export function buildSnapshot({
     trains,
     shippingNext,
     lanes,
+    // Team members as the board shows them (no machine names).
+    members: membersOf(cfg).map(({ id, name, lanes: memberLanes, role }) => ({
+      id,
+      name,
+      lanes: memberLanes,
+      role,
+    })),
     machines,
     ownerQueue,
     ownerTodos,

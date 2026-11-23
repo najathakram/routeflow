@@ -21,7 +21,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -83,7 +83,7 @@ const refreshDue = (home, now) => {
  * Exported for the timing test; `deps` are the ops-monitor modules (loaded dynamically by main).
  */
 export function briefFor(payload, env, now, deps) {
-  const { opsHome, specsDir, loadConfig, readAllEvents, fold, lanes, brief, turn } = deps;
+  const { opsHome, specsDir, loadConfig, readAllEvents, fold, brief, turn } = deps;
   const dir = specsDir(env);
   if (!existsSync(join(dir, "events"))) return { text: "", refresh: false };
   const home = opsHome(env);
@@ -94,11 +94,11 @@ export function briefFor(payload, env, now, deps) {
   const loaded = deps.loadClientNames?.({ env, home }) ?? { names: [], error: null };
   const clientNames = Array.isArray(loaded) ? loaded : (loaded.names ?? []);
   const namesError = Array.isArray(loaded) ? null : (loaded.error ?? null);
-  const lane = lanes.laneForCwd(cwd, env, { config, home });
   const markerFile = join(home, "seen", `${turn.sanitizeSessionId(payload.session_id)}.json`);
-  // Who reads the comments: the lane, and the name events are written under (as rf writes them).
-  const actor = env.RF_ACTOR || lane || `${deps.machine}:${basename(cwd)}`;
-  const me = { lane, actor };
+  // Who reads the comments: the ONE rule in lib/identity.mjs, the same one rf writes events under
+  // (the lane, the member set by rf whoami --member, and the actor name).
+  const me = deps.identity.whoIsHere({ env, machine: deps.machine, config, cwd });
+  const { lane, actor, member } = me;
   const events = readAllEvents(dir);
   const newest = brief.lastEventId(events);
 
@@ -160,7 +160,7 @@ export function briefFor(payload, env, now, deps) {
     // Nothing arrived at all (same newest event, same count): quiet, without a fold.
     if (newest === marker.lastEventId && events.length === marker.count)
       return { text: "", refresh };
-    const own = (e) => (lane ? e.lane === lane : e.actor === actor);
+    const own = (e) => (member || !lane ? e.actor === actor : e.lane === lane);
     const { before, sorted } = brief.splitAtMarker(events, marker, own);
     let text = "";
     const nowState = fold(sorted);
@@ -214,6 +214,7 @@ async function main() {
     brief: await import(lib("brief.mjs")),
     turn: await import(lib("turn-actions.mjs")),
     inbox: await import(lib("inbox.mjs")),
+    identity: await import(lib("identity.mjs")),
     machine: "",
   };
   deps.machine = config.machineId(config.loadConfig(config.specsDir()), process.env);
