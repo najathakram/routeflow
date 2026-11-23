@@ -882,6 +882,8 @@ export const API_ERROR_CODES = {
    * BOTH ("Keep this one or open the other?"), never overwrites.
    */
   DRAFT_CHANGED: "DRAFT_CHANGED",
+  /** 404 from /drafts/:id (SA-1234): the draft itself is gone (or not the caller's). Any other 404 is a missing reference, not a gone draft. */
+  DRAFT_NOT_FOUND: "DRAFT_NOT_FOUND",
   /**
    * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
    * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier

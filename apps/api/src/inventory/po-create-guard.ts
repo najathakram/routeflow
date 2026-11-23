@@ -1,7 +1,8 @@
 import { ConflictException } from "@nestjs/common";
-import { Prisma } from "@prisma/client";
 import { createHash } from "crypto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { uniqueViolationOn } from "../common/prisma-unique";
+import { TX_CONFLICT_BACKOFF_MS, TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
 import type { IdempotencyService } from "../common/idempotency.service";
 import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
 
@@ -15,8 +16,10 @@ import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
  *  - DRAFT (cleanup + second tab): `deleteMany` of the caller's own PURCHASE_ORDER draft. Count 0 on a new key means
  *    it was already turned into a PO or deleted: 409 PO_DRAFT_GONE before any PO row is written.
  *  - NUMBER: `findFirst + 1` under `@@unique([tenantId, poNumber])`; a P2002 aborts the transaction, so the whole
- *    transaction runs again once with a fresh read.
- *  - No key and no draftId: the plain create, unchanged. The lock is a key lock only (never `withAdvisoryLock`).
+ *    transaction runs again with a fresh read, up to the house `TX_CONFLICT_MAX_ATTEMPTS`, backing off
+ *    outside the transaction (the key lock is not held while waiting).
+ *  - Every create runs through this guard; with no key and no draftId only a number clash behaves differently
+ *    (it retries). The lock is a key lock only (never `withAdvisoryLock`).
  */
 const SCOPE = "poCreate";
 
@@ -43,9 +46,6 @@ export function poCreateFingerprint(body: Record<string, unknown>): string {
   const { draftId: _draftId, ...rest } = body;
   return createHash("sha256").update(stable(rest)).digest("hex");
 }
-
-const isPoNumberClash = (err: unknown): boolean =>
-  err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
 
 export async function createPurchaseOrderGuarded<T>(opts: {
   prisma: { tenantTransaction: (fn: (tx: any) => Promise<any>) => Promise<any> };
@@ -102,8 +102,9 @@ export async function createPurchaseOrderGuarded<T>(opts: {
       );
       return out.created ?? (await opts.load(out.poId));
     } catch (err) {
-      if (attempt === 0 && isPoNumberClash(err)) continue; // a concurrent create took the number
-      throw err;
+      if (attempt >= TX_CONFLICT_MAX_ATTEMPTS - 1 || !uniqueViolationOn(err, "poNumber")) throw err;
+      // a concurrent create took the number
+      await new Promise((r) => setTimeout(r, TX_CONFLICT_BACKOFF_MS[attempt] ?? 300));
     }
   }
 }

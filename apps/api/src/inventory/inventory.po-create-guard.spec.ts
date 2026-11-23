@@ -157,14 +157,39 @@ describe("InventoryService.createPurchaseOrder: key, draft and number race (SA-1
     expect(prisma.purchaseOrder.create).toHaveBeenCalledTimes(2);
   });
 
-  it("a second P2002 is not swallowed", async () => {
-    prisma.purchaseOrder.create.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError("dup", { code: "P2002", clientVersion: "x" }),
-    );
+  const clash = (target: string[]) =>
+    new Prisma.PrismaClientKnownRequestError("dup", {
+      code: "P2002",
+      clientVersion: "x",
+      meta: { target },
+    });
+
+  it("B-M2 (SA-1234): two number clashes then success resolves after 3 writes", async () => {
+    let clashes = 0;
+    prisma.purchaseOrder.create.mockImplementation(async (a: any) => {
+      if (clashes++ < 2) throw clash(["tenantId", "poNumber"]);
+      seq += 1;
+      return { id: `po-${seq}`, poNumber: a.data.poNumber, items: [] };
+    });
+    const po = await service.createPurchaseOrder(body() as never, "u1");
+    expect(po.id).toBe("po-1");
+    expect(prisma.purchaseOrder.create).toHaveBeenCalledTimes(3);
+  });
+
+  it("B-M2: three clashes reject after exactly 3 writes (the house attempt cap)", async () => {
+    prisma.purchaseOrder.create.mockRejectedValue(clash(["tenantId", "poNumber"]));
     await expect(service.createPurchaseOrder(body() as never, "u1")).rejects.toMatchObject({
       code: "P2002",
     });
-    expect(prisma.purchaseOrder.create).toHaveBeenCalledTimes(2);
+    expect(prisma.purchaseOrder.create).toHaveBeenCalledTimes(3);
+  });
+
+  it("B-M2: a P2002 on another unique index is not retried", async () => {
+    prisma.purchaseOrder.create.mockRejectedValue(clash(["tenantId", "supplierRef"]));
+    await expect(service.createPurchaseOrder(body() as never, "u1")).rejects.toMatchObject({
+      code: "P2002",
+    });
+    expect(prisma.purchaseOrder.create).toHaveBeenCalledTimes(1);
   });
 
   it("with no key and no draftId the create is the plain one: no idempotency row, no draft delete", async () => {
@@ -173,6 +198,13 @@ describe("InventoryService.createPurchaseOrder: key, draft and number race (SA-1
     expect(idem.save).not.toHaveBeenCalled();
     expect(prisma.saleDraft.deleteMany).not.toHaveBeenCalled();
     expect(prisma.purchaseOrder.create).toHaveBeenCalledTimes(1);
+    // By value (SA-1234): the plain create writes a DRAFT PO, the next number, and lines stamped with the tenant.
+    const data = prisma.purchaseOrder.create.mock.calls[0][0].data;
+    expect(data.status).toBe("DRAFT");
+    expect(data.poNumber).toBe(`PO-${year}-0001`);
+    expect(data.items.create).toEqual([
+      expect.objectContaining({ productId: "prod-1", tenantId: prisma.getTenantId() }),
+    ]);
   });
 
   it("money is unchanged: the line total is still rounded server-side", async () => {

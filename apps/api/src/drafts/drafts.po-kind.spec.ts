@@ -101,6 +101,64 @@ describe("DraftsService: PURCHASE_ORDER kind (SA-1222 PR-A)", () => {
     expect(prisma.saleDraft.update).not.toHaveBeenCalled();
   });
 
+  describe("M1 (SA-1234): the ref check runs on a kind change too", () => {
+    const stored = (kind: string, payload: unknown) =>
+      prisma.saleDraft.findUnique.mockResolvedValue({ id: "d1", userId: "user-1", kind, payload });
+
+    it("a kind-only PATCH to PURCHASE_ORDER over a stored payload with foreign ids is a 404 and nothing is written", async () => {
+      stored("ORDER", poPayload("sup-other"));
+      await expect(
+        service.update(user as never, "d1", { kind: "PURCHASE_ORDER" } as never),
+      ).rejects.toMatchObject({ response: { message: "Supplier not found" } });
+      expect(prisma.saleDraft.update).not.toHaveBeenCalled();
+    });
+
+    it("a kind-only PATCH to PURCHASE_ORDER over a stored payload with own ids saves", async () => {
+      stored("ORDER", poPayload("sup-a"));
+      await service.update(user as never, "d1", { kind: "PURCHASE_ORDER" } as never);
+      expect(prisma.saleDraft.update.mock.calls[0][0].data).toEqual({ kind: "PURCHASE_ORDER" });
+    });
+
+    it("a stored payload that is not an object passes (it names no ids)", async () => {
+      stored("ORDER", []);
+      await service.update(user as never, "d1", { kind: "PURCHASE_ORDER" } as never);
+      expect(prisma.saleDraft.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("a kind-only PATCH to ORDER, and a title-only PATCH on a PO draft, run no ref check", async () => {
+      stored("PURCHASE_ORDER", poPayload("sup-other"));
+      await service.update(user as never, "d1", { kind: "ORDER" } as never);
+      await service.update(user as never, "d1", { title: "Acme restock" } as never);
+      expect(prisma.supplier.findMany).not.toHaveBeenCalled();
+      expect(prisma.saleDraft.update).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("A-M2 (SA-1234): a gone draft carries DRAFT_NOT_FOUND", () => {
+    const gone = { response: { code: "DRAFT_NOT_FOUND", message: "Draft not found" }, status: 404 };
+
+    it("get, patch and delete of a missing draft are a coded 404", async () => {
+      prisma.saleDraft.findUnique.mockResolvedValue(null);
+      await expect(service.get(user as never, "nope")).rejects.toMatchObject(gone);
+      await expect(service.update(user as never, "nope", {} as never)).rejects.toMatchObject(gone);
+      await expect(service.remove(user as never, "nope")).rejects.toMatchObject(gone);
+    });
+
+    it("another user's draft is the same coded 404", async () => {
+      prisma.saleDraft.findUnique.mockResolvedValue({ id: "d1", userId: "someone-else" });
+      await expect(service.get(user as never, "d1")).rejects.toMatchObject(gone);
+    });
+
+    it("an unresolvable customerId stays a plain 404 with no code", async () => {
+      const err: any = await service
+        .update(user as never, "d1", { customerId: "cust-other" } as never)
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(NotFoundException);
+      expect(err.getStatus()).toBe(404);
+      expect(err.getResponse().code).toBeUndefined();
+    });
+  });
+
   it("an ORDER draft's payload is still not read for suppliers (the payload check is PO-only)", async () => {
     await service.create(
       user as never,

@@ -3,7 +3,7 @@
  *
  *  - R7:  the same Idempotency-Key sent together -> ONE PO, both responses carry its id.
  *  - R9:  one `draftId` from two tabs with DIFFERENT keys -> ONE PO and one 409 PO_DRAFT_GONE, no orphan PO row, draft gone.
- *  - R10: no key, sent together -> two POs with distinct numbers and no 500 (the P2002 retry).
+ *  - R10: no key, sent together -> two POs with distinct numbers and no 500 (the P2002 retry); three-way too (SA-1234).
  * R8 (a sequential replay with a new draftId) stays on mocks: inventory.po-create-guard.spec.ts.
  *
  * Collected only by `jest.db.config.js` (`.db.spec.ts$`), run via `npm run local:test:db`.
@@ -168,5 +168,17 @@ describeDb("PO create: key, draft and number race: real Postgres", () => {
     const pos = await prisma.purchaseOrder.findMany({ where: { tenantId: w.tenantId } });
     expect(pos).toHaveLength(6);
     expect(new Set(pos.map((p) => p.poNumber)).size).toBe(6);
+  });
+
+  it("R10 (three-way, SA-1234): three creates with no key sent together make three distinct numbers and no 500", async () => {
+    const w = await seedWorld("r10x3");
+    for (let round = 0; round < 3; round++) {
+      // eslint-disable-next-line no-await-in-loop
+      const settled = await Promise.allSettled([create(w, {}), create(w, {}), create(w, {})]);
+      expect(settled.map((s) => s.status)).toEqual(["fulfilled", "fulfilled", "fulfilled"]);
+    }
+    const pos = await prisma.purchaseOrder.findMany({ where: { tenantId: w.tenantId } });
+    expect(pos).toHaveLength(9);
+    expect(new Set(pos.map((p) => p.poNumber)).size).toBe(9);
   });
 });

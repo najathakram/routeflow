@@ -15,6 +15,10 @@ describe("orderSideDrafts (SA-1222)", () => {
     expect(orderSideDrafts([d("po", "PURCHASE_ORDER")])).toHaveLength(0);
   });
 
+  it("an allowlist: a kind this build has never heard of is dropped (mobile openableDrafts parity)", () => {
+    expect(orderSideDrafts([d("x", "ESTIMATE"), d("a", "ORDER")]).map((x) => x.id)).toEqual(["a"]);
+  });
+
   it("a non-array (loading or mocked read) is no drafts", () => {
     expect(orderSideDrafts(undefined)).toEqual([]);
     expect(orderSideDrafts({})).toEqual([]);
@@ -27,7 +31,9 @@ describe("orderSideDrafts (SA-1222)", () => {
       path.join(root, "app/(dashboard)/orders/_components/ParkedSales.tsx"),
       "utf8",
     );
-    expect(page).toContain("orderSideDrafts(drafts)");
+    // B-M3 (SA-1234): the orders page keeps master's spacer line; the dock lists every kind.
+    expect(page).not.toContain("orderSideDrafts(drafts)");
+    expect(page).toContain("const hasDrafts = (drafts?.length ?? 0) > 0;");
     expect(parked).toContain("orderSideDrafts(draftRows)");
   });
 });

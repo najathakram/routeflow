@@ -116,7 +116,7 @@ function payloadLineItems(payload: unknown): DraftLineItem[] {
  */
 export function orderSideDrafts(drafts: unknown): SaleDraft[] {
   return Array.isArray(drafts)
-    ? (drafts as SaleDraft[]).filter((d) => d.kind !== "PURCHASE_ORDER")
+    ? (drafts as SaleDraft[]).filter((d) => d.kind === "ORDER" || d.kind === "INVOICE")
     : [];
 }
 

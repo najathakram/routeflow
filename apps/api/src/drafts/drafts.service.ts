@@ -82,8 +82,13 @@ export class DraftsService {
   async update(user: JwtPayload, id: string, dto: SaveDraftDto) {
     const draft = await this.assertOwned(user, id);
     await assertRefsInTenant(this.prisma, { customerIds: [dto.customerId] }); // 681 site 11
-    if (dto.payload !== undefined)
-      await this.assertPoPayloadRefs(dto.kind ?? draft.kind, dto.payload);
+    // A kind change alone can turn a stored payload into a PO payload, so the check runs on either change.
+    if (dto.kind !== undefined || dto.payload !== undefined) {
+      await this.assertPoPayloadRefs(
+        dto.kind ?? draft.kind,
+        (dto.payload ?? draft.payload) as Record<string, unknown> | undefined,
+      );
+    }
     const data: Prisma.SaleDraftUpdateInput = {};
     if (dto.kind !== undefined) data.kind = dto.kind;
     if (dto.customerId !== undefined) data.customerId = dto.customerId;
@@ -129,7 +134,12 @@ export class DraftsService {
    */
   private async assertOwned(user: JwtPayload, id: string) {
     const draft = await this.prisma.forTenant().saleDraft.findUnique({ where: { id } });
-    if (!draft || draft.userId !== user.sub) throw new NotFoundException("Draft not found");
+    if (!draft || draft.userId !== user.sub) {
+      throw new NotFoundException({
+        code: API_ERROR_CODES.DRAFT_NOT_FOUND,
+        message: "Draft not found",
+      });
+    }
     return draft;
   }
 
