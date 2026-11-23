@@ -79,6 +79,7 @@ import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { assertBuyerQtySplit } from "./buyer-qty-split";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
+import { toBuyerStatement } from "./buyer-statement-view";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -311,8 +312,9 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get buyer's account statement at the selected seller" })
-  getStatement(@CurrentBuyerCustomer() ctx: any) {
-    return this.customersService.getStatementForOperator(ctx.customerId);
+  async getStatement(@CurrentBuyerCustomer() ctx: any) {
+    // SA-1214: the buyer reads the credit TOTAL and the credit list (never the staff notes-only tile).
+    return toBuyerStatement(await this.customersService.getStatementForOperator(ctx.customerId));
   }
 
   @Get("account-statement")

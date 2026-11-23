@@ -175,6 +175,27 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     expect(args).toHaveLength(1);
   });
 
+  // SA-1221 M1: the buyer route wraps the operator result in toBuyerStatement; unwiring it leaves the staff $300 tile.
+  it("getStatement: the buyer's availableCredit is the $500 total and equals the sum of its credit rows", async () => {
+    customersService.getStatementForOperator.mockResolvedValue({
+      availableCredit: 300,
+      advanceBalance: 200,
+      creditTotal: 500,
+      creditItems: [
+        { kind: "NOTE", id: "cn-1", date: "2026-10-01T00:00:00.000Z", remaining: 300 },
+        { kind: "ADVANCE", id: "adv-1", date: "2026-10-02T00:00:00.000Z", remaining: 200 },
+      ],
+      creditItemsTruncated: false,
+    });
+
+    const res: any = await controller.getStatement(MOCK_CTX as any);
+
+    expect(res.availableCredit).toBe(500);
+    expect(res.creditItems.reduce((n: number, i: any) => n + i.remaining, 0)).toBe(
+      res.availableCredit,
+    );
+  });
+
   it("getStandingOrders: the buyer-filtered list, by customerId — no userId lookup (row 479)", async () => {
     await controller.getStandingOrders(MOCK_CTX as any);
 

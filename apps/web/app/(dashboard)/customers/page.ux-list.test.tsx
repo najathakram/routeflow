@@ -305,13 +305,13 @@ describe("W-1117 customers list — ?statement for a customer not on the page", 
 });
 
 describe("PKG-1 customers list — F24 columns below sm (relocation, not removal)", () => {
-  it("C7: Email, Phone, Credits, Tags hide below sm on th and td; Name, Business, Open balance, Status do not", () => {
+  it("C7: Email, Phone, Credit, Tags hide below sm on th and td; Name, Business, Open balance, Status do not", () => {
     renderWithProviders(<CustomersPage />);
     for (const id of ["email-cell", "phone-cell", "credits-cell", "tags-cell"]) {
       const td = screen.getAllByTestId(id)[0].closest("td")!;
       expect(td).toHaveClass("hidden", "sm:table-cell");
     }
-    for (const name of [/^email$/i, /^phone$/i, /^credits$/i, /^tags$/i]) {
+    for (const name of [/^email$/i, /^phone$/i, /^credit$/i, /^tags$/i]) {
       expect(screen.getByRole("columnheader", { name })).toHaveClass("hidden", "sm:table-cell");
     }
     for (const id of ["open-balance-cell"]) {

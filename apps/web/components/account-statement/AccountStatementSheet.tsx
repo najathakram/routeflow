@@ -255,8 +255,9 @@ export function AccountStatementBody({
             {statement.credits.map((c) => (
               <li key={c.id} className="flex justify-between gap-3 py-2">
                 <span>
-                  {c.number ?? (c.kind === "ADVANCE" ? "Advance" : "Credit")} ·{" "}
-                  {fmtCalendarDate(c.date)}
+                  {c.label
+                    ? `${c.label}, ${fmtCalendarDate(c.date)}`
+                    : `${c.number ?? (c.kind === "ADVANCE" ? "Advance" : "Credit")} · ${fmtCalendarDate(c.date)}`}
                   {c.reason ? ` · ${c.reason}` : ""}
                   {c.expiresAt ? ` · Expires ${fmtCalendarDate(c.expiresAt)}` : ""}
                 </span>

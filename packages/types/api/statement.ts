@@ -50,6 +50,8 @@ export interface AccountStatementCredit {
   kind: "CREDIT_NOTE" | "ADVANCE";
   id: string;
   number: string | null;
+  /** Buyer route only: an advance row's whole name, "Credit from payment" (no reference, never "Advance"). */
+  label?: string;
   /** the tenant-zone day it was issued or received, "YYYY-MM-DD" */
   date: string;
   /** a credit note's reason only; always null for an advance (its notes are staff-only) */

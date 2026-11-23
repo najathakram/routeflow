@@ -11,6 +11,7 @@ import {
   sumConfirmed,
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
+import { loadAvailableCredit } from "../customers/available-credit";
 
 /** Strict "YYYY-MM" — anything else is a 400 before any query runs. */
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -71,7 +72,7 @@ export class StatementService {
     const { from, to } = monthRange(month);
     const db = this.prisma.forTenant();
 
-    const [customer, invoices, monthPayments, creditNotes] = await Promise.all([
+    const [customer, invoices, monthPayments, walletCredit] = await Promise.all([
       db.customer.findFirst({
         where: { id: customerId },
         select: { id: true, businessName: true },
@@ -126,10 +127,8 @@ export class StatementService {
           invoice: { select: { invoiceNumber: true } },
         },
       }),
-      db.creditNote.findMany({
-        where: { customerId },
-        select: { amount: true, amountUsed: true, status: true, expiresAt: true },
-      }),
+      // SA-1208 D7: open notes plus advances, the one available-credit read (never netted into the closing).
+      loadAvailableCredit(db, customerId, now),
     ]);
     if (!customer) throw new NotFoundException("Customer not found");
 
@@ -170,16 +169,7 @@ export class StatementService {
     let adjustments = roundMoney(closing - (opening + charges - payments - credits));
     if (Math.abs(adjustments) < 0.005) adjustments = 0;
 
-    const availableCredit = roundMoney(
-      creditNotes
-        .filter(
-          (c) =>
-            c.status !== "VOID" &&
-            Number(c.amount) - Number(c.amountUsed) > 0.001 &&
-            (!c.expiresAt || new Date(c.expiresAt) > now),
-        )
-        .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
-    );
+    const availableCredit = walletCredit.total;
 
     const lineItems: StatementLineItem[] = [
       ...monthInvoices.map((inv) => ({
