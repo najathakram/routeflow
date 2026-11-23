@@ -27,8 +27,18 @@ function importFailureCopy(err: unknown): string {
 import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Download } from "lucide-react";
 import { downloadCsv } from "@/lib/export";
 import { cn, useToast } from "@routeflow/ui/web";
+import Link from "next/link";
+import {
+  IMPORT_REQUIREMENT_NEXT_STEP,
+  IMPORT_SKIPPED_COLUMNS_TOAST,
+  skippedColumnsNotice,
+} from "@/lib/import-skipped-columns-copy";
 import type { ImportColumnAlias } from "@routeflow/types";
-import type { ImportFamilyRowInfo, ImportFamilySummary } from "@routeflow/types";
+import type {
+  ImportFamilyRowInfo,
+  ImportFamilySummary,
+  ImportSkippedColumn,
+} from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 
 interface ImportRowPlan {
@@ -100,6 +110,8 @@ export interface ImportCsvResult {
   skippedRows: { row: number; label: string; reason: string }[];
   warnings: string[];
   unknownColumns: string[];
+  /** SA-1193: product headers not imported because the account lacks what they need (absent on contacts and older servers). */
+  skippedColumns?: ImportSkippedColumn[];
   dryRun: boolean;
   /** SA-823: the family block of a file with a Family column. */
   families?: ImportFamilySummary;
@@ -142,6 +154,14 @@ function summarize(
     parts.push(`${result.imported} imported`);
   }
   return parts.join(", ") || "Done";
+}
+
+/** The toast after an apply: the counts, plus one fixed line when columns were skipped (SA-1193 K6). */
+function appliedDescription(result: ImportCsvResult): string {
+  const counts = summarize(result);
+  return result.skippedColumns && result.skippedColumns.length > 0
+    ? `${counts}. ${IMPORT_SKIPPED_COLUMNS_TOAST}`
+    : counts;
 }
 
 const ACTION_STYLES: Record<ImportRowPlan["action"], string> = {
@@ -402,6 +422,49 @@ function ResultTable({ result, testIdPrefix }: { result: ImportCsvResult; testId
   );
 }
 
+/** SA-1193 K6: one warning notice for every skipped gated column, from `requires` in fixed words; Import stays enabled. */
+function SkippedColumnsNotice({
+  result,
+  done,
+  testIdPrefix,
+}: {
+  result: ImportCsvResult;
+  done: boolean;
+  testIdPrefix: string;
+}) {
+  const notice = skippedColumnsNotice(result.skippedColumns, done);
+  if (!notice) return null;
+  return (
+    <div
+      data-testid={`${testIdPrefix}-skipped-columns`}
+      className="rounded-lg border border-warning/30 bg-warning-bg/50 px-3 py-2 text-xs text-warning"
+    >
+      <p className="font-medium">{notice.title}</p>
+      <ul className="mt-0.5 space-y-0.5">
+        {notice.lines.map((l) => {
+          const next = l.label ? IMPORT_REQUIREMENT_NEXT_STEP[l.requires] : undefined;
+          return (
+            <li key={l.requires}>
+              {l.text}
+              {next && l.label && (
+                <>
+                  {" "}
+                  {next.before(l.label)}
+                  <Link href={next.href} className="font-medium underline">
+                    {next.linkText}
+                  </Link>
+                  {next.after}
+                </>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-0.5">{notice.footer}</p>
+    </div>
+  );
+}
+
 export function ImportCsvPanel({
   endpoint,
   title,
@@ -484,7 +547,11 @@ export function ImportCsvPanel({
       } else {
         setFinal(data);
         onImported?.(data);
-        toast({ title: `${title} imported`, description: summarize(data), variant: "success" });
+        toast({
+          title: `${title} imported`,
+          description: appliedDescription(data),
+          variant: "success",
+        });
       }
     } catch (err: any) {
       const refusal = importRefusalCopy(err?.response?.data?.code);
@@ -493,9 +560,11 @@ export function ImportCsvPanel({
         setGateError(refusal);
         setPreview(null);
       } else if (err?.response?.status === 403) {
-        // Today's behaviour, deliberately: the server names WHICH add-on or flag is needed (and a role 403 reads differently).
-        // Moving this to fixed copy needs codes + structured fields first (B991).
-        setGateError(err?.response?.data?.message ?? "This column needs an add-on to import");
+        // A column never refuses the file: a gated column is skipped and named (SA-1193). What is
+        // left is a permission refusal (role), so show the server's words, else a neutral line.
+        setGateError(
+          err?.response?.data?.message ?? "You don’t have permission to import this file.",
+        );
         setPreview(null);
       } else {
         toast({
@@ -534,7 +603,7 @@ export function ImportCsvPanel({
           latest.current.onImported?.(result);
           latest.current.toast({
             title: `${latest.current.title} imported`,
-            description: summarize(result),
+            description: appliedDescription(result),
             variant: "success",
           });
           return;
@@ -672,7 +741,12 @@ export function ImportCsvPanel({
           accept=".csv"
           disabled={jobRunning}
           className="hidden"
-          onChange={(e) => pickFile(e.target.files?.[0])}
+          onChange={(e) => {
+            pickFile(e.target.files?.[0]);
+            // A browser fires no change for the same selection, so an edited file picked again
+            // from the same place would keep the old File. Clearing the value lets every pick count.
+            e.target.value = "";
+          }}
         />
         <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
         {file ? (
@@ -723,7 +797,7 @@ export function ImportCsvPanel({
         )}
       </div>
 
-      {/* Gate refusal — blocking, no retry-without-the-column affordance (FIX5) */}
+      {/* Whole-file refusal (fixed-copy refusals, or a permission 403): blocking until another file is chosen */}
       {gateError && (
         <div
           ref={gateRef}
@@ -765,6 +839,8 @@ export function ImportCsvPanel({
           </span>
         </div>
       )}
+
+      {active && <SkippedColumnsNotice result={active} done={!!final} testIdPrefix={prefix} />}
 
       {active?.families && (
         <FamilyBlock summary={active.families} done={!!final} testIdPrefix={prefix} />

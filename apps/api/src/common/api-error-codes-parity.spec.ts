@@ -35,15 +35,11 @@ function readShared(): Record<string, unknown> {
 const CONSTANTS_FILE = path.join("apps", "api", "src", "common", "api-error-codes.ts");
 const SHARED_CONSTANTS_FILE = path.join("packages", "types", "api", "error-codes.ts");
 const SCAN_ROOTS = ["apps/api/src", "apps/web", "apps/mobile", "packages"];
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".next",
-  "dist",
-  "e2e",
-  "__tests__",
-  ".expo",
-  "coverage",
-]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS, "e2e", "__tests__"]);
 const TEST_FILE = /\.(spec|test)\.[cm]?[tj]sx?$/;
 const SOURCE_FILE = /\.[cm]?[tj]sx?$/;
 

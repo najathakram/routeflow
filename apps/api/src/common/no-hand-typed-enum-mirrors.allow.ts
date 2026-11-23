@@ -40,14 +40,11 @@ apps/api/src/auth/permissions/staff-capabilities.ts | OperatorPermissionGroup | 
 apps/api/src/auth/permissions/staff-capabilities.ts | UserRole | 2 | pending:B7 | array+union {OPERATOR,TENANT_ADMIN,SUPER_ADMIN}
 apps/api/src/authorizations/authorizations.service.ts | AuthorizationStatus | 1 | pending:B7 | union {NONE,PENDING_REVIEW,VERIFIED,EXPIRED,REJECTED}
 apps/api/src/billing/auto-lock-gate.ts | TenantClass | 1 | pending:B7 | array {TEST,DEMO,INTERNAL}
-apps/api/src/billing/billing-cron.service.ts | UserRole | 1 | pending:B7 | array {TENANT_ADMIN,OPERATOR,DRIVER}
 apps/api/src/billing/billing.service.ts | TenantStatus | 1 | pending:B7 | union {ACTIVE,CANCELLED,SUSPENDED,READ_ONLY}
-apps/api/src/billing/entitlements.service.ts | MeterKey | 1 | pending:B7 | object {SEATS,ROUTES,SCANS,MSGS,CUSTOMERS}
 apps/api/src/billing/meter.service.ts | MeterKey | 2 | pending:B7 | array+chain {SEATS,ROUTES,SCANS,MSGS,CUSTOMERS}
 apps/api/src/billing/meter.service.ts | UserRole | 1 | pending:B7 | array {TENANT_ADMIN,OPERATOR,DRIVER}
 apps/api/src/billing/plan-catalog.constants.ts | MeterKey | 1 | pending:B7 | array {SEATS,ROUTES,SCANS,MSGS,CUSTOMERS}
 apps/api/src/billing/plan-catalog.constants.ts | TenantPlan | 4 | pending:B7 | array+object+union {LITE,STARTER,GROWTH,SCALE,ENTERPRISE}
-apps/api/src/billing/subscription-mutation.service.ts | UserRole | 1 | pending:B7 | array {TENANT_ADMIN,OPERATOR,DRIVER}
 apps/api/src/bookkeeping/bookkeeping.controller.ts | ExpenseStatus | 1 | pending:B7 | union {PENDING,RECEIVED,PAID,VOID}
 apps/api/src/bookkeeping/bookkeeping.service.ts | ExpenseStatus | 1 | pending:B7 | union {PENDING,RECEIVED,PAID,VOID}
 apps/api/src/bookkeeping/dto/create-expense.dto.ts | ExpenseStatus | 2 | pending:B7 | array+union {PENDING,RECEIVED,PAID,VOID}
@@ -183,7 +180,6 @@ apps/web/app/(dashboard)/customers/_components/walk-in-protection.tsx | UserStat
 apps/web/app/(dashboard)/dashboard/page.tsx | OrderStatus | 2 | pending:B5 | object {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…
 apps/web/app/(dashboard)/dashboard/page.tsx | UserRole | 1 | pending:B5 | chain {OPERATOR,SUPER_ADMIN,TENANT_ADMIN}
 apps/web/app/(dashboard)/dispatch/page.tsx | RouteRunStatus | 1 | pending:B5 | union {IN_PROGRESS,COMPLETED,CANCELLED,SCHEDULED}
-apps/web/app/(dashboard)/estimates/page.tsx | PriceType | 1 | pending:B6 | union {STANDARD,SPECIAL,DISCOUNTED,MANUAL}
 apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx | CommissionAdjustmentKind | 1 | pending:B5 | object {CLAWBACK,RATE_CHANGE,REASSIGNMENT,MANUAL}
 apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx | CommissionStatementLineKind | 1 | pending:B5 | object {CLAIM,ADJUSTMENT,CARRYFORWARD}
 apps/web/app/(dashboard)/finance/payments/[id]/page.tsx | PaymentStatus | 1 | pending:B5 | union {PAID,DRAFT,VOID}
@@ -311,7 +307,6 @@ packages/types/api/fulfilment.ts | FulfillPath | 1 | pending:B3 | union {ROUTE,S
 packages/types/api/inline-returns.ts | ReturnStatus | 1 | pending:B3 | union {RECEIVED,REFUNDED,REJECTED,CANCELLED}
 packages/types/api/messaging-delivery.ts | NotificationEvent | 1 | subset | array {STAFF_NEW_ORDER,BUYER_ORDER_EDITED,BUYER_ORDER_CANCELLED}: the three emails the office gets about a customer order (SA-1063), the one list the rules card and EMAIL_KIND_VALUES share
 packages/types/api/messaging-matrix.ts | MessageChannel | 1 | pending:B3 | array {EMAIL,WHATSAPP,SMS,PORTAL}
-packages/types/api/misc.ts | PriceType | 1 | pending:B6 | union {STANDARD,SPECIAL,DISCOUNTED}
 packages/types/api/permissions.ts | OperatorPermissionGroup | 1 | pending:B3 | object {ORDERS,DISPATCH,CUSTOMERS,CATALOG,PRICING,REGU…
 packages/types/api/permissions.ts | UserRole | 1 | pending:B3 | union {SUPER_ADMIN,TENANT_ADMIN,OPERATOR,DRIVER,CUSTO…
 packages/types/api/products.ts | OrderStatus | 1 | pending:B3 | union {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…

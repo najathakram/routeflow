@@ -105,6 +105,26 @@ describe("BuyerOrderDetailPage: change requests on a shipped order (B1135)", () 
     expect(screen.queryByText("server wording")).toBeNull();
   });
 
+  it("SA-1173 T3c: a refused split shows the fixed sentence, never the raw server text", async () => {
+    mockOrder = dispatched({ status: "IN_PROGRESS" });
+    mockCreateCr.mockRejectedValue({
+      response: { status: 400, data: { code: "QTY_SPLIT_MISMATCH", message: "raw server text" } },
+    });
+    renderWithProviders(<BuyerOrderDetailPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /request a change/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Note for the driver" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "add one case" } });
+    fireEvent.click(screen.getByRole("button", { name: /send request/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("This item's quantity didn't come through. Choose it again and resend."),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("raw server text")).toBeNull();
+  });
+
   it("a carrier order (no route run) is never offered a change request", () => {
     mockOrder = dispatched(null);
     renderWithProviders(<BuyerOrderDetailPage />);

@@ -75,6 +75,46 @@ function makeService(overrides?: {
 }
 
 describe("BillingNotificationService", () => {
+  describe("B1371 K9: the downgrade-scheduled notice states what the downgrade changes", () => {
+    const at = new Date("2026-10-01T00:00:00.000Z");
+    const sentOf = async (details: any) => {
+      const { svc, sendPlatform } = makeService();
+      await svc.notifyDowngradeScheduled("t1", "Growth", "Starter", at, details);
+      const arg = sendPlatform.mock.calls[0][0];
+      return `${arg.subject}\n${arg.text}\n${arg.html}`;
+    };
+    const SENTENCE =
+      "You have 312 customers. Starter includes 250. Your current customers stay as they are. " +
+      "Once you add one past 250, you have 7 days. After that, a new customer needs a Customer pack or a bigger plan.";
+
+    it("carries the new price, each add-on that starts billing and the customer sentence", async () => {
+      const body = await sentOf({
+        newMonthlyPrice: 99,
+        addons: [{ name: "Buyer portal", monthlyPrice: 49 }],
+        customerNote: SENTENCE,
+      });
+      expect(body).toContain("Starter is $99.00 a month");
+      expect(body).toContain("Buyer portal isn't included in Starter");
+      expect(body).toContain("$49.00 a month");
+      expect(body).toContain(SENTENCE);
+    });
+
+    it("never mentions logins, seats, deactivation or read-only", async () => {
+      const body = await sentOf({
+        newMonthlyPrice: 99,
+        addons: [{ name: "Buyer portal", monthlyPrice: 49 }],
+        customerNote: SENTENCE,
+      });
+      expect(body).not.toMatch(/login|seat|deactivat|read-only/i);
+    });
+
+    it("without details it still sends the dates, with no price or sentence", async () => {
+      const body = await sentOf(undefined);
+      expect(body).toContain("Starter");
+      expect(body).not.toMatch(/a month|customers/);
+    });
+  });
+
   describe("idempotency", () => {
     it("sends once, then a second call for the SAME (tenant, milestone, key) is a no-op", async () => {
       let calls = 0;

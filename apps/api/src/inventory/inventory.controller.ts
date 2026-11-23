@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -228,8 +229,12 @@ export class InventoryController {
 
   // ── Purchase Orders ──
   @Post("purchase-orders")
-  createPO(@Body() dto: CreatePurchaseOrderDto, @CurrentUser() user: { id: string }) {
-    return this.inventoryService.createPurchaseOrder(dto, user.id);
+  createPO(
+    @Body() dto: CreatePurchaseOrderDto,
+    @CurrentUser() user: { id: string },
+    @Headers("idempotency-key") idempotencyKey?: string,
+  ) {
+    return this.inventoryService.createPurchaseOrder(dto, user.id, idempotencyKey);
   }
 
   @Get("purchase-orders")

@@ -72,6 +72,7 @@ describeDb(
       // The REAL revert (with its NOWAIT Invoice row lock), bound to the real Prisma service.
       const realRevert = InvoicesService.prototype.revertLinkedInvoicesForOrderEdit.bind({
         prisma,
+        commissionEngine: { syncInvoiceCommissionSafe: async () => undefined }, // B1372 K5a: the revert re-syncs
       } as any);
       orders = Object.assign(Object.create(OrdersService.prototype), {
         prisma,
@@ -247,14 +248,36 @@ describeDb(
       expect(await snapshot(o.id)).toEqual(before);
     }, 60_000);
 
-    it("retryable: once the holder lets go, the same edit applies and the SENT invoice really reverts to DRAFT", async () => {
+    it("retryable: once the holder lets go, the same (confirmed) edit applies and the SENT invoice really reverts to DRAFT", async () => {
       const { o, line, inv } = await confirmedOrderWithSentInvoice();
-      await edit(o.id, { replaceAll: false, items: [{ id: line.id, qty: 6 }] });
+      // B1372 N2: the staff editor confirmed the revert (the web sends this once the confirm was shown)
+      await edit(o.id, {
+        replaceAll: false,
+        items: [{ id: line.id, qty: 6 }],
+        ackSentRevert: true,
+      });
       const after = await snapshot(o.id);
       expect(Number(after.lines[0].qty)).toBe(6);
       const reverted = after.invoices.find((i) => i.id === inv.id)!;
       expect(reverted.status).toBe("DRAFT");
       expect(reverted.sentAt).toBeNull();
+    }, 60_000);
+
+    // B1372 N2 (SA-1177 A2 K3): the confirm is enforced where the state is true, inside the edit transaction.
+    it("PIN N2: an invoice sent between the editor's read and the save, no ack: 409 naming it, nothing written", async () => {
+      // the editor's page showed nothing to confirm; the invoice was sent before the save, so the request has no ack
+      const { o, line, inv } = await confirmedOrderWithSentInvoice();
+      const before = await snapshot(o.id);
+      const err: any = await edit(o.id, {
+        replaceAll: false,
+        items: [{ id: line.id, qty: 6 }],
+      }).catch((e: unknown) => e);
+      expect(err?.getStatus?.()).toBe(409);
+      expect(err?.getResponse?.()).toMatchObject({
+        code: "ORDER_EDIT_REVERTS_SENT_INVOICE",
+        invoiceNumbers: [inv.invoiceNumber],
+      });
+      expect(await snapshot(o.id)).toEqual(before);
     }, 60_000);
   },
 );

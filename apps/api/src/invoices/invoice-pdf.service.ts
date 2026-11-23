@@ -1,5 +1,10 @@
 import React from "react";
 import { readInvoiceLayout } from "./invoice-layout";
+import {
+  accountBlockRows,
+  readInvoiceAccountBalance,
+  type InvoiceAccountBalance,
+} from "../customers/invoice-account-balance";
 import { invoiceLinesInOrder } from "./invoice-line-position";
 import { withFamilyNames } from "./invoice-line-name";
 import { SEND_SNAPSHOT_INCLUDE, type SendSnapshot } from "./invoice-send-snapshot";
@@ -56,20 +61,27 @@ export class InvoicePdfService {
 
   async getOrGenerate(
     invoiceId: string,
-    opts?: { force?: boolean; variant?: InvoicePdfVariant; model?: SendSnapshot | null },
+    opts?: {
+      force?: boolean;
+      variant?: InvoicePdfVariant;
+      model?: SendSnapshot | null;
+      /** SA-1197 C4: the send's one account read, handed in so the PDF and the email print the same object. */
+      account?: InvoiceAccountBalance;
+    },
   ): Promise<string> {
     // Always render fresh: the DRAFT/FINAL badge + watermark and the
     // "Generated <datetime>" stamp must reflect the current moment and the
     // invoice's live stage, so returning a cached copy would show a stale
     // timestamp (and possibly the wrong stage). `opts.force` is kept for API
     // compatibility; generation is now unconditional.
-    return this.generateAndUpload(invoiceId, opts?.variant, opts?.model);
+    return this.generateAndUpload(invoiceId, opts?.variant, opts?.model, opts?.account);
   }
 
   async generateAndUpload(
     invoiceId: string,
     variantArg?: InvoicePdfVariant,
     model?: SendSnapshot | null,
+    account?: InvoiceAccountBalance,
   ): Promise<string> {
     // SA-860: the email path hands in its ONE snapshot (taken after the send-time credits) so the PDF is rendered from the
     // same object as the email and the fingerprint; every other caller reads its own.
@@ -157,6 +169,12 @@ export class InvoicePdfService {
     // Off skips every product-barcode draw here (no bwip call) and the template prints nothing for a null barcode.
     const layout = await readInvoiceLayout(this.systemConfig);
     const showBarcodes = !layout.hideBarcodes;
+    // SA-1197 C4/C5/C8: the send hands in its one read; a download reads for itself (no query when the switch is off or the
+    // invoice cannot carry the block). The rows are decided once here; the template prints what it is given.
+    const accountRows = accountBlockRows(
+      account ?? (await readInvoiceAccountBalance(this.prisma, inv, layout)),
+      { hideBalanceDue: layout.hideBalanceDue },
+    );
 
     // Generate barcodes for each line item. Row 510: the staff-only override stamp is stripped here, in the one
     // mapper the template model is built from (the findUnique above includes whole item rows).
@@ -253,6 +271,7 @@ export class InvoicePdfService {
       hidePerPiece,
       hideAmountPaid,
       hideBalanceDue,
+      ...(accountRows.length > 0 ? { accountRows } : {}), // SA-1197 T18: absent when nothing prints
     };
 
     let pdfBuffer: Buffer;

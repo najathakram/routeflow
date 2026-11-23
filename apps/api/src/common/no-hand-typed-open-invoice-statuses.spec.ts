@@ -40,15 +40,11 @@ const SCAN_ROOTS = [
 /** A group with at least this many of the open statuses is a copy of the open set. */
 const MIN_OPEN_MEMBERS = 3;
 
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".next",
-  ".expo",
-  "dist",
-  "e2e",
-  "__tests__",
-  "__mocks__",
-]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS, "e2e", "__tests__", "__mocks__"]);
 const SKIP_FILE = /\.(test|spec)\.[cm]?[jt]sx?$|\.d\.ts$/;
 
 /**

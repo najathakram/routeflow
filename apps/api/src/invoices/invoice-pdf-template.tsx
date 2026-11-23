@@ -19,6 +19,7 @@ import {
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 import { pdfTermsView } from "./invoice-pdf-terms";
 import { pdfTotalsVisibility } from "./invoice-pdf-totals-visibility";
+import type { InvoiceAccountRow } from "@routeflow/types";
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -80,6 +81,8 @@ export interface InvoicePdfData {
   /** R6a: the tenant's Paid / Balance Due switches (absent = shown); see pdfTotalsVisibility. */
   hideAmountPaid?: boolean;
   hideBalanceDue?: boolean;
+  /** SA-1197: the server's account rows (accountBlockRows), printed as given under Balance Due; absent = none. */
+  accountRows?: InvoiceAccountRow[];
   /** Tenant's "hide original/pre-promo price" setting (F03/R9) — same source as
    *  the invoice detail endpoint's `hideOriginalPrice` field. */
   hideOriginalPrice?: boolean | null;
@@ -346,6 +349,11 @@ function buildStyles(primary: string, navy: string) {
     totalsBox: { width: 220 },
     totalRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 },
     totalLabel: { fontSize: 9, color: GRAY },
+    // SA-1197 (G7): the account block, smaller than Balance Due and neutral (never DANGER or SUCCESS)
+    accountRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 2 },
+    accountLabel: { fontSize: 8, color: GRAY },
+    accountHeading: { fontSize: 8, color: GRAY, fontFamily: "Helvetica-Bold", marginTop: 6 },
+    accountValue: { fontSize: 8, color: GRAY, fontFamily: "Helvetica-Bold" },
     totalValue: { fontSize: 9, color: navy, fontFamily: "Helvetica-Bold" },
     // W-1185: the count can list several units; it wraps right-aligned inside the box, off its label.
     itemsLabel: { fontSize: 9, color: GRAY, flexShrink: 0 },
@@ -954,6 +962,16 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   </Text>
                 </View>
               ) : null}
+              {(invoice.accountRows ?? []).map((row) => (
+                <View key={row.kind} style={styles.accountRow}>
+                  <Text style={row.amount == null ? styles.accountHeading : styles.accountLabel}>
+                    {row.label}
+                  </Text>
+                  {row.amount == null ? null : (
+                    <Text style={styles.accountValue}>{fmt(row.amount)}</Text>
+                  )}
+                </View>
+              ))}
             </View>
           </View>
 

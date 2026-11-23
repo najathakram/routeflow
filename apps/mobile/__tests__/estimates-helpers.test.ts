@@ -14,6 +14,7 @@ describe("estimatePillFor", () => {
     ["SENT", "brand", "Sent"],
     ["ACCEPTED", "green", "Accepted"],
     ["DECLINED", "red", "Declined"],
+    ["VOID", "gray", "Void"],
     ["CONVERTED", "purple", "Converted"],
   ];
   it.each(cases)("%s → %s / %s", (status, variant, label) => {
@@ -51,6 +52,15 @@ describe("estimateActionFlags", () => {
 
   it("CONVERTED → no actions (terminal, cannot void)", () => {
     expect(estimateActionFlags("CONVERTED")).toEqual({
+      canSend: false,
+      canAcceptDecline: false,
+      canConvert: false,
+      canVoid: false,
+    });
+  });
+
+  it("VOID → no actions, cannot void again", () => {
+    expect(estimateActionFlags("VOID")).toEqual({
       canSend: false,
       canAcceptDecline: false,
       canConvert: false,

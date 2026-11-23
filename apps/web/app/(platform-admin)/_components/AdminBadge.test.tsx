@@ -1,6 +1,6 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
-import { AdminBadge, statusLabel } from "./AdminBadge";
+import { AdminBadge, planLabel, statusLabel } from "./AdminBadge";
 
 // T14-1 / R23: AdminBadge gains GROWTH -> "Growth" (teal ring) and SCALE -> "Scale" (indigo
 // ring) plan entries; the existing PROFESSIONAL -> "Business" mapping stays unchanged.
@@ -42,5 +42,16 @@ describe("AdminBadge — status variant (W-785)", () => {
 
   it("falls back to sentence case for an unknown status", () => {
     expect(statusLabel("SOME_NEW_STATE")).toBe("Some new state");
+  });
+});
+
+// SA-1204 PR-1 R5: the two new plan keys carry the owner's plan names, not the raw fallback.
+describe("AdminBadge — planLabel for CORE and ALL_IN (SA-1204 PR-1)", () => {
+  it("labels CORE as 'Core'", () => {
+    expect(planLabel("CORE")).toBe("Core");
+  });
+
+  it("labels ALL_IN as 'All-in'", () => {
+    expect(planLabel("ALL_IN")).toBe("All-in");
   });
 });

@@ -1,6 +1,6 @@
 // ─── Misc: margin config, cost history, sale drafts, estimates (wave E / imp-10b) ─
 
-import type { EstimateStatus } from "./enums";
+import type { EstimateStatus, PriceType } from "./enums";
 
 export interface MarginConfig {
   /** FIFO is retired (SA-804 (1)): a stored FIFO reads as WEIGHTED_AVERAGE. */
@@ -21,7 +21,7 @@ export interface CostHistoryEntry {
 
 export interface SaleDraft {
   id: string;
-  kind: "ORDER" | "INVOICE";
+  kind: "ORDER" | "INVOICE" | "PURCHASE_ORDER";
   customerId?: string | null;
   customerName?: string | null;
   title?: string | null;
@@ -57,10 +57,13 @@ export interface EstimateItem {
   unitPrice: number;
   subtotal?: number;
   total?: number;
-  priceType?: "STANDARD" | "SPECIAL" | "DISCOUNTED";
+  /** PROMO is never written on a quote. */
+  priceType?: Exclude<PriceType, "PROMO">;
   originalPrice?: number;
   boxes?: number;
   pieces?: number;
+  /** The box size the line was quoted at (null = not boxed). */
+  unitsPerBox?: number | null;
 }
 
 export interface Estimate {
@@ -78,6 +81,8 @@ export interface Estimate {
   total: number;
   notes?: string;
   terms?: string;
+  /** The invoice a CONVERTED estimate produced. */
+  invoiceId?: string | null;
   items: EstimateItem[];
   createdAt: string;
   updatedAt: string;

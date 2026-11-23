@@ -9,6 +9,8 @@ import BuyerTemplatesPage from "./page";
  */
 const mutateAsync = jest.fn();
 const mockUseBuyerReorder = jest.fn();
+const mockQuote = { current: { quote: undefined as unknown, busy: false } };
+const mockActive = { current: null as unknown };
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ seller: "acme" }),
@@ -53,7 +55,13 @@ let mockCatalog: Array<Record<string, unknown>> = [
   { id: "p2", buyerPrice: 2.5, category: null, unitsPerBox: null },
 ];
 
+const quoteHook = jest.fn();
 jest.mock("@/lib/api/buyer", () => ({
+  useBuyerCartQuote: (...a: unknown[]) => {
+    quoteHook(...a);
+    return mockQuote.current;
+  },
+  useBuyerActiveOrder: () => ({ isSuccess: true, data: mockActive.current }),
   useBuyerTemplates: () => ({ data: { data: [template], meta: { total: 1 } }, isLoading: false }),
   useBuyerReorder: (...a: unknown[]) => {
     mockUseBuyerReorder(...a);
@@ -136,6 +144,50 @@ describe("buyer standing orders — Reorder review", () => {
     expect(screen.queryByText(/uuid|not found/i)).not.toBeInTheDocument();
   });
 
+  it("12: the sheet shows the server quote total, not the client subtotal, labelled for the fold", async () => {
+    mockQuote.current = {
+      quote: { subtotal: 60, tax: 4.95, levy: 6, total: 70.95, taxExempt: false },
+      busy: false,
+    };
+    mockActive.current = { id: "o-old" };
+    try {
+      const user = userEvent.setup();
+      render(<BuyerTemplatesPage />);
+      await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
+      const dialog = within(await screen.findByRole("dialog"));
+      expect(dialog.getByText("Total for these items")).toBeInTheDocument();
+      expect(dialog.getByText("$70.95")).toBeInTheDocument();
+      expect(dialog.getByText("Other taxes and fees")).toBeInTheDocument();
+      expect(dialog.queryByText(/estimated total/i)).not.toBeInTheDocument();
+      expect(dialog.queryByText(/tax is added when the order is placed/i)).not.toBeInTheDocument();
+    } finally {
+      mockQuote.current = { quote: undefined, busy: false };
+      mockActive.current = null;
+    }
+  });
+
+  const asked = () => quoteHook.mock.calls.filter((c) => c[3] === true);
+
+  it("MUST-1: when every line is resolved the quote body is the live lines", async () => {
+    const user = userEvent.setup();
+    render(<BuyerTemplatesPage />);
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
+    await screen.findByRole("dialog");
+    expect(asked().at(-1)?.[1]).toEqual([
+      { productId: "p1", qty: 2 },
+      { productId: "p2", qty: 3 },
+    ]);
+  });
+
+  it("MUST-1: with an unresolved line no quote is asked for (the server could quote a line generateOrder skips)", async () => {
+    mockCatalog = [{ id: "p1", buyerPrice: 30, category: null, unitsPerBox: 12 }];
+    const user = userEvent.setup();
+    render(<BuyerTemplatesPage />);
+    await user.click(await screen.findByRole("button", { name: /^reorder$/i }));
+    await screen.findByRole("dialog");
+    expect(asked()).toHaveLength(0);
+  });
+
   it("a successful placement closes the review", async () => {
     const user = userEvent.setup();
     render(<BuyerTemplatesPage />);
@@ -158,10 +210,10 @@ describe("buyer standing orders — Reorder review", () => {
 
     expect(dialog.getByText("Almond Bar")).toBeInTheDocument();
     expect(dialog.getByText("Price on confirmation")).toBeInTheDocument();
-    expect(dialog.getAllByText("$60.00")).toHaveLength(2); // the line and the estimated total
+    expect(dialog.getAllByText("$60.00")).toHaveLength(2); // the line and the subtotal
     expect(dialog.getByRole("button", { name: "Place order" })).toBeEnabled();
     // A license-gated or banned line is skipped by the server, so never promise it is ordered.
-    expect(dialog.getByText(/may also be left out of the order/i)).toBeInTheDocument();
+    expect(dialog.getByText(/isn't priced here and isn't in this total/i)).toBeInTheDocument();
     expect(dialog.queryByText(/still on the order/i)).not.toBeInTheDocument();
   });
 

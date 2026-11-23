@@ -52,6 +52,7 @@ const VALUE: Record<string, unknown> = {
   items: [],
   namesLines: true,
   expectedRevisionNumber: 1,
+  ackSentRevert: true, // B1372 N2: staff only; a buyer never sees the confirm, so a buyer body carrying it is refused
   replaceAll: false,
   orderNotes: "x",
   shippingFee: 1,

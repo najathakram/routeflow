@@ -21,7 +21,7 @@ import type {
   CounterSalePaymentMethod,
   CounterSaleResponse,
 } from "@routeflow/types";
-import { API_ERROR_CODES, staffMay } from "@routeflow/types";
+import { API_ERROR_CODES, CREDIT_WORDS, staffMay } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
 import {
@@ -180,9 +180,16 @@ import {
   creditMayApply,
   isPartPayExceedsTotal,
   PART_PAY_FULL_COPY,
+  TENDER_NOT_NUMBERS_COPY,
+  onAccountCopy,
+  onAccountLabel,
+  ON_ACCOUNT_ARM_COPY,
   tenderAmount,
+  tenderIntent,
+  tenderTextProblem,
 } from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
+import { isFamilyProduct } from "@/lib/product-search-groups";
 
 interface PickedCustomer {
   id: string;
@@ -358,7 +365,8 @@ export function CounterSaleScreen() {
     setError((e) => (isFinalSaleMessage(e) ? e : ""));
   }, [lines]);
   // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
-  const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
+  const clearUnderpaidError = () =>
+    setError((e) => (isTenderShortCopy(e) || e === TENDER_NOT_NUMBERS_COPY ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   const zoneRead = useTenantTimeZoneQuery();
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
@@ -670,6 +678,16 @@ export function CounterSaleScreen() {
     total: payTotal,
     tendered: tenderedNum,
   }); // S4: "Pay $X now · $Y goes on account" while an identified customer's tender is short
+  // SA-1219: nothing tendered in cash by a named customer is On account (the shared intent), said under the total
+  const putOnAccount =
+    tenderIntent({
+      method: resolveTender(method, checkNotReceived).method,
+      isWalkIn: walkInBuyer,
+      total: payTotal,
+      tendered: tenderedNum,
+    }) === "ON_ACCOUNT" &&
+    resolveTender(method, checkNotReceived).method === "CASH" &&
+    tenderTextProblem(tendered) === null;
 
   const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: customerSearch.trim() || undefined,
@@ -880,7 +898,9 @@ export function CounterSaleScreen() {
   const tenderEnter = useArmedEnter(tenderKey); // any change of method, figure or total ends the arm (A-2)
   const onTenderEnter = () =>
     tenderEnter.press(
-      tenderNeedsSecondEnter(payTotal, tenderedNum),
+      // SA-1232: an empty tender that would go on account needs the deliberate second Enter too (a habitual double Enter
+      // must not book cash already taken as owed)
+      tenderNeedsSecondEnter(payTotal, tenderedNum) || putOnAccount,
       () => void completeSale(false),
     );
   // The ONE place the payment area takes focus (Enter in an empty scan box, and the tender radiogroup's arrow keys).
@@ -965,17 +985,19 @@ export function CounterSaleScreen() {
     focusPaymentControl(section.querySelector<HTMLElement>('[role="radio"][tabindex="0"]'));
   };
 
+  // B1373: the quantity field the clerk typed in since it took focus (Tab out of it re-arms the scan box)
+  const typedQtyRef = React.useRef<HTMLInputElement | null>(null);
   // A scanner may end a read with CR+LF (or a double Enter): the empty Enter only counts after a human pause.
   const lastScanActivityRef = React.useRef(Number.NEGATIVE_INFINITY);
   // W-852: the live match list under the scan field; a row (click, or Enter on the highlighted one) lands through scan.pick.
   const pickLive = (product: any) => {
     lastScanActivityRef.current = performance.now();
     if (lineLocked || saleInFlight()) return;
+    if (isFamilyProduct(product)) return; // a family is a header, never a line (a family with no live variants can show)
     setScanText("");
     scan.pick(product);
     refocus();
   };
-  const live = useCounterLiveMatches({ text: scanText, enabled: !lineLocked, onPick: pickLive });
   const newItem = useCounterNewItem({
     allowed: mayEditPrices && !lineLocked,
     add: addProduct,
@@ -984,6 +1006,15 @@ export function CounterSaleScreen() {
       scan.dismissMessage();
       setScanText("");
     },
+  });
+  const addedIds = React.useMemo(() => new Set(lines.map((l) => l.productId)), [lines]);
+  const live = useCounterLiveMatches({
+    text: scanText,
+    enabled: !lineLocked,
+    onPick: pickLive,
+    // a read-only session gets no create row (the old empty-state button was a WriteButton)
+    onCreate: readOnlyGate.readOnly ? undefined : newItem.open,
+    addedIds,
   });
   // W-1186: an unknown scan opens the New product window straight away, barcode filled in (the regular order does the same);
   // a buzz on phones that have one. A clerk who cannot set prices keeps the miss line (newItem.open is undefined for them).
@@ -1341,7 +1372,16 @@ export function CounterSaleScreen() {
     // W-863: the return is quoted BEFORE Complete (a blocked one says why); the key pair is minted here, once per attempt.
     const inlineReturn = customer ? ret.prepare(customer.id) : undefined;
     if (inlineReturn === null) return null;
-    const tender = resolveTender(method, checkNotReceived);
+    const resolved = resolveTender(method, checkNotReceived);
+    // SA-1219: text in Amount tendered that is not money says so, instead of "Enter at least $X"
+    const unreadable =
+      resolved.method === "CASH" && !walkInBuyer ? tenderTextProblem(tendered) : null;
+    if (unreadable) {
+      setError(unreadable);
+      setTenderFix((n) => n + 1);
+      return null;
+    }
+    const tender: typeof resolved = putOnAccount ? { method: "ON_ACCOUNT" } : resolved;
     const partPayProblem = partPayAmountProblem({
       method: tender.method,
       isWalkIn: walkInBuyer,
@@ -1944,7 +1984,7 @@ export function CounterSaleScreen() {
             ) : null}
           </div>
           {/* W-852: in the page flow (not a floating panel) so the fixed payment bar at 390 never covers a row. */}
-          <CounterLiveMatches live={live} onPick={pickLive} onCreate={newItem.open} />
+          <CounterLiveMatches live={live} onPick={pickLive} />
           {/* The multiply tip lives under the field: in the placeholder it was cut off at 390px. */}
           <p id="counter-scan-hint" className="-mt-1 text-xs text-navy/70" data-testid="scan-hint">
             Type a quantity first to multiply.
@@ -2040,6 +2080,29 @@ export function CounterSaleScreen() {
             sortable={lineMove.sortable}
             onMove={lineMove.onMove}
             enabled={lineMove.enabled}
+            // B1373: a line's quantity fields are the order row's (typed live). Enter hands the cursor back to the scan box;
+            // so does Tab out of a line's LAST quantity field after the clerk typed in it (a plain Tab moves on normally).
+            onFocus={(e) => {
+              if ((e.target as HTMLElement) !== typedQtyRef.current) typedQtyRef.current = null;
+            }}
+            onChange={(e) => {
+              const t = e.target as HTMLElement;
+              if (t instanceof HTMLInputElement && t.type === "number") typedQtyRef.current = t;
+            }}
+            onKeyDown={(e) => {
+              const t = e.target as HTMLElement;
+              if (!(t instanceof HTMLInputElement) || t.type !== "number") return;
+              const fields = t.closest("li")?.querySelectorAll('input[type="number"]');
+              const tabOut =
+                e.key === "Tab" &&
+                !e.shiftKey &&
+                typedQtyRef.current === t &&
+                fields?.[fields.length - 1] === t;
+              if (e.key !== "Enter" && !tabOut) return;
+              e.preventDefault();
+              typedQtyRef.current = null;
+              refocusFromActive();
+            }}
           >
             {lines.length === 0 ? (
               <li className="p-3 text-sm text-navy/60">No items yet.</li>
@@ -2063,9 +2126,9 @@ export function CounterSaleScreen() {
                 onPriceReset={resetPrice}
                 onPriceClosed={refocus}
                 onNoteClosed={refocus}
-                onQtyEnter={refocusFromActive}
                 hideOriginalPrice={settings?.hideOriginalPrice === true}
                 moveId={l.tempId}
+                active={l.tempId === lines[lines.length - 1]?.tempId}
               />
             ))}
           </CartMovableList>
@@ -2190,9 +2253,11 @@ export function CounterSaleScreen() {
                       setTendered(e.target.value);
                       clearUnderpaidError();
                     }}
+                    onBlur={tenderEnter.disarm}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
+                        if (e.repeat) return; // a held Enter is not a second press
                         onTenderEnter();
                       }
                     }}
@@ -2245,7 +2310,7 @@ export function CounterSaleScreen() {
 
             {tenderEnter.armed ? (
               <p role="status" className="text-sm font-medium text-navy">
-                Press Enter again to complete the sale.
+                {putOnAccount ? ON_ACCOUNT_ARM_COPY : "Press Enter again to complete the sale."}
               </p>
             ) : null}
           </section>
@@ -2433,6 +2498,8 @@ export function CounterSaleScreen() {
               total={totals.total}
               cash={method === "CASH"}
               due={amountDue(payTotal, tenderedNum)}
+              returned={ret.returned}
+              payTotal={payTotal}
             />
 
             {method === "CASH" ? (
@@ -2444,10 +2511,15 @@ export function CounterSaleScreen() {
             ) : null}
             {ret.storeCredit > 0 ? (
               <p className="text-sm font-semibold text-navy" data-testid="return-store-credit">
-                Store credit {money(ret.storeCredit)}
+                {CREDIT_WORDS.noun} {money(ret.storeCredit)}
               </p>
             ) : null}
 
+            {putOnAccount ? (
+              <p className="text-sm font-medium text-navy" data-testid="counter-on-account">
+                {onAccountCopy(payTotal, creditMayApply(creditView.autoApplyCredit))}
+              </p>
+            ) : null}
             {partSplit ? (
               <CounterPartPaySplit
                 split={partSplit}
@@ -2505,7 +2577,7 @@ export function CounterSaleScreen() {
                   parkBusy
                 }
               >
-                Complete &amp; show receipt
+                {putOnAccount ? onAccountLabel("show receipt") : "Complete & show receipt"}
               </Button>
               <Button
                 className="min-h-[44px]"
@@ -2523,7 +2595,7 @@ export function CounterSaleScreen() {
                   parkBusy
                 }
               >
-                Complete &amp; next sale
+                {putOnAccount ? onAccountLabel("next sale") : "Complete & next sale"}
               </Button>
             </div>
           </div>

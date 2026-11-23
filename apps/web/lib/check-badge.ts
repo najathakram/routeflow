@@ -37,3 +37,33 @@ export function checkBadgeFor(p: {
       return null;
   }
 }
+
+/**
+ * B1151 (SA-1228, SA-1240): the status cell of a buyer payment row. The payment's own status decides the
+ * word, so no cell is empty and a voided or unconfirmed check never reads Recorded or Cleared. A check keeps
+ * its lifecycle word only where it is true: Bounced (stored as VOID, its NSF fee line sits under it), the
+ * post-dated pending word, and the lifecycle badge once PAID. A credit note or advance is never cash (B421).
+ * The five words are the owner's (2026-11-23); renaming one is a one-entry change here.
+ */
+export function paymentRowBadge(
+  p: Parameters<typeof checkBadgeFor>[0],
+): ReturnType<typeof checkBadgeFor> {
+  const check = checkBadgeFor(p);
+  switch (p.status) {
+    case "VOID":
+      return p.checkStatus === "BOUNCED" ? check : { label: "Void", variant: "danger" };
+    case "DRAFT":
+      return { label: "Not confirmed", variant: "neutral" };
+    case "PENDING":
+      return check ?? { label: "Pending", variant: "warning" };
+    case "PAID":
+      return (
+        check ??
+        (p.method === "CREDIT_NOTE" || p.method === "ADVANCE"
+          ? { label: "Applied", variant: "info" }
+          : { label: "Received", variant: "success" })
+      );
+    default:
+      return check;
+  }
+}

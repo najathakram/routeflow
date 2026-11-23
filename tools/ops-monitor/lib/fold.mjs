@@ -98,6 +98,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     decisions: [],
     rulings: [],
     notes: [],
+    comments: [], // { id, ts, item, text, to, replyTo, actor, lane, machine }, fold order
     pushes: [],
     prEvents: [],
     anomalies: [],
@@ -220,7 +221,14 @@ export function fold(events, { bugs = new Map() } = {}) {
       it.related = it.related.map(swap);
       it.blockedBy = it.blockedBy.map(swap);
     }
-    for (const list of [state.pushes, state.prEvents, state.rulings, state.notes, state.decisions])
+    for (const list of [
+      state.pushes,
+      state.prEvents,
+      state.rulings,
+      state.notes,
+      state.decisions,
+      state.comments,
+    ])
       for (const rec of list) if (rec.item === from) rec.item = to;
   };
 
@@ -417,6 +425,37 @@ export function fold(events, { bugs = new Map() } = {}) {
         if (ev.item && !it) break;
         state.notes.push({ ts, item: ev.item, text: d.text, actor: ev.actor });
         touched = !!it;
+        break;
+      }
+      case "comment": {
+        it = resolve(ev.item, ev);
+        if (!it) break;
+        const replyTo = d.replyTo ?? null;
+        if (replyTo) {
+          const parent = state.comments.find((c) => c.id === replyTo);
+          if (!parent || parent.item !== it.id)
+            anomaly(
+              "orphan-reply",
+              ev.id,
+              ev.item,
+              parent
+                ? `comment replies to ${replyTo}, which is on ${parent.item}`
+                : `comment replies to unknown comment ${replyTo}`,
+              ts,
+            );
+        }
+        state.comments.push({
+          id: ev.id,
+          ts,
+          item: it.id,
+          text: d.text,
+          to: [...(d.to ?? [])],
+          replyTo,
+          actor: ev.actor,
+          lane: ev.lane,
+          machine: ev.machine,
+        });
+        touched = true;
         break;
       }
       case "push": {

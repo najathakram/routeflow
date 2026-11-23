@@ -4,8 +4,8 @@ import { CounterLineRow } from "./CounterLineRow";
 import type { SaleLine } from "./counter-sale-scan";
 
 /**
- * P2 (SA-1071): on the counter, History matches Change price beside it: the same secondary button, 44 px below `lg` and
- * 28 px from `lg`. The builder keeps its own label.
+ * P2 (SA-1071) / B1373: on the counter, History is the order row's own button beside the price: 44 px below `lg`, compact
+ * from `lg`. The price is the Change price control now (no second button).
  */
 const noop = () => undefined;
 const line: SaleLine = {
@@ -17,8 +17,8 @@ const line: SaleLine = {
   qty: 1,
 };
 
-describe("CounterLineRow: History matches Change price", () => {
-  it("has the same height classes at both widths", () => {
+describe("CounterLineRow: History beside Change price", () => {
+  it("keeps a 44 px touch floor below lg and sits beside the price control", () => {
     renderWithProviders(
       <ul>
         <CounterLineRow
@@ -35,13 +35,14 @@ describe("CounterLineRow: History matches Change price", () => {
       </ul>,
     );
     const history = screen.getByRole("button", { name: "Price history" });
-    const change = screen.getByRole("button", { name: /change price/i });
+    // B1373: the price itself is the Change price control (the order row's tap-to-edit price), beside History
+    expect(screen.getByRole("button", { name: "Change price for Cola" })).toHaveTextContent(
+      "$10.00 / piece",
+    );
     expect(history).toHaveTextContent("History");
     const classes = history.className.split(/\s+/);
-    for (const c of ["h-7", "min-h-[44px]", "lg:min-h-0"]) {
-      expect(change.className.split(/\s+/)).toContain(c);
+    for (const c of ["min-h-11", "min-w-11", "lg:min-h-0", "lg:min-w-0"]) {
       expect(classes).toContain(c);
     }
-    expect(classes).not.toContain("h-6");
   });
 });

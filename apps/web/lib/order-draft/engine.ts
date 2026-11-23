@@ -16,7 +16,7 @@ import type { MirrorWriteInput } from "./mirror";
 export const DRAFT_AUTOSAVE_MS = 900;
 
 export interface DraftRowMeta {
-  kind: "ORDER";
+  kind: "ORDER" | "INVOICE" | "PURCHASE_ORDER";
   customerId?: string | null;
   customerName?: string | null;
   title?: string | null;
@@ -50,7 +50,7 @@ export interface DraftConflict {
 
 export class DraftConflictError extends Error {
   constructor() {
-    super("This order was changed on another device.");
+    super("This was changed on another device.");
     this.name = "DraftConflictError";
   }
 }
@@ -171,6 +171,7 @@ export function createOrderDraftEngine(deps: OrderDraftEngineDeps): OrderDraftEn
   const mirror = (payload: DraftPayload, meta: DraftRowMeta) => {
     deps.mirror?.write({
       localId: deps.localId,
+      kind: meta.kind,
       serverDraftId: draftId,
       serverUpdatedAt,
       syncedHash,
@@ -372,7 +373,7 @@ export function createOrderDraftEngine(deps: OrderDraftEngineDeps): OrderDraftEn
         const theirs = withDraftSubmitKey(current.payload, deps.mintKey()) as DraftPayload;
         const parked = await Promise.resolve(
           deps.createDraft({
-            kind: "ORDER",
+            kind: latestMeta.kind, // the draft's OWN kind (SA-1222): a PO copy is never parked as an order
             customerId: current.customerId ?? null,
             customerName: current.customerName ?? null,
             title: current.title ?? null,

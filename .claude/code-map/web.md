@@ -107,3 +107,7 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-16-w52.md](web/landing-2026-11-16-w52.md) | Window 52: buyer sentence for a delivered order (web portal and mobile) |
 | [web/landing-2026-11-19-w54-59.md](web/landing-2026-11-19-w54-59.md) | Windows 54-59: one settings Business card, receivable footer, plan-gated AR links, RecordCard and FiltersDisclosure, optimize copy |
 | [web/landing-2026-11-19-site-wheel.md](web/landing-2026-11-19-site-wheel.md) | #4367: the home wheel fits its box (one pose, legend, end-state trial button), the snap stops throwing scroll, spec 84 on the local lane |
+| [web/landing-2026-11-21-w38.md](web/landing-2026-11-21-w38.md) | Window 38: phone cards, command palette from the menu, pay-one-invoice, nav-index.ts, invoice layout card, sent-invoice confirm, counter lines, estimate form, import skip notice |
+| [web/landing-2026-11-23-w39.md](web/landing-2026-11-23-w39.md) | Window 39: pinned sidebar layout, sort memo, card payment link block, shared inventory modal panel, bill line unit editor, Family - Variant names |
+| [web/landing-2026-11-23-w40.md](web/landing-2026-11-23-w40.md) | Window 40: Create PO scan bar, PO line on hand, counter return line and Credit word, sidebar order and hidden |
+| [web/landing-2026-11-23-w41.md](web/landing-2026-11-23-w41.md) | Window 41: counter part or no payment (tenderIntent, on-account button), buyer credit tile, Credit column |

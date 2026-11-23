@@ -10,7 +10,7 @@ import {
 import { FulfillPath } from "@prisma/client";
 import { roundMoney, confirmedRemaining } from "@routeflow/pricing";
 import { sumInlineReturnCredit } from "../../returns/inline-return-credit.util";
-import type { CounterSaleResponse } from "@routeflow/types";
+import type { CounterSaleResponse, CounterTenderSplitFields } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { creditAfterTender } from "../credit-limit-guard";
 import { configuredTaxRatePercent } from "../../common/tax-rate";
@@ -58,7 +58,7 @@ import type { DuplicatePaymentRefExisting } from "@routeflow/types";
 import { duplicateOf, tenderRefDedupe } from "./counter-duplicate-ref";
 import { markOpenInvoicesToCollect } from "../../invoices/to-collect";
 import { WalkInCustomerService } from "./walk-in-customer";
-import { readReturnData } from "./counter-return-read";
+import { readReturnData, readReturnItems } from "./counter-return-read";
 import { counterReturnSplit, type CounterReturnSplit } from "./counter-sale-today";
 import { counterCloseShared, counterTenderPaidAt } from "./counter-tender-window";
 
@@ -678,7 +678,7 @@ export class CounterSaleService {
     orderId: string,
     invoices: InvoiceRow[],
     replayed: boolean,
-  ): Promise<CounterReturnSplit | undefined> {
+  ): Promise<(CounterReturnSplit & Pick<CounterTenderSplitFields, "returnItems">) | undefined> {
     try {
       const payments = invoices.flatMap((i) =>
         (i.payments ?? []).map((p) => ({
@@ -706,7 +706,7 @@ export class CounterSaleService {
         select: { id: true },
       });
       const read = await readReturnData(tenantId, db, orderId, payments);
-      return counterReturnSplit({
+      const split = counterReturnSplit({
         orderId,
         invoiceIds: allInvoices.map((i) => i.id),
         payments: read.payments,
@@ -714,6 +714,17 @@ export class CounterSaleService {
         carriedReturns: read.returnData.carriedReturns,
         creditNotes: read.returnData.creditNotes,
       });
+      // SA-1211 A1.1 / SA-1231: the goods of the returns rung on THIS sale (never an older credit applied as a tender); its
+      // own try, so a failed list never drops the money fields above
+      let returnItems: Awaited<ReturnType<typeof readReturnItems>>;
+      try {
+        returnItems = await readReturnItems(tenantId, db, read.returnData.returns);
+      } catch (e) {
+        this.logger.warn(
+          `counter sale ${orderId}: returned items not read (${(e as Error).message})`,
+        );
+      }
+      return returnItems ? { ...split, returnItems } : split;
     } catch (e) {
       this.logger.warn(`counter sale ${orderId}: tender split not read (${(e as Error).message})`);
       return undefined;

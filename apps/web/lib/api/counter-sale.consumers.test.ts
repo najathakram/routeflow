@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 /**
+ * UXG-R8: the command palette no longer reads the gate; the layout does, and builds the palette's rows from the menu.
  * BO-07 census (L-305): every module that calls useCounterSaleGate is listed here, so a NEW reader of the gate must be
  * added on purpose, with its till-permission behaviour thought through (`showButton` / `opensAsCounter` already fold in
  * `mayUseTill`; a reader of `capability` alone does not hide anything).
@@ -25,7 +26,8 @@ const CONSUMERS: Record<string, string> = {
   "app/(dashboard)/dashboard/page.tsx":
     "header Counter sale + Invoice a customer (showButton, deniedGroups)",
   "app/(dashboard)/invoices/[id]/page.tsx": "capability only: wording, nothing hidden",
-  "app/(dashboard)/layout.tsx": "sidebar, drawer and g t (showButton)",
+  "app/(dashboard)/layout.tsx":
+    "sidebar, drawer, g t and, through the menu, the palette's New counter sale (showButton)",
   "app/(dashboard)/orders/[id]/_components/CompleteAtCounter.tsx":
     "I-120 Complete at counter (mayUseTill + capability into completeAtCounterOffered): a till action",
   "app/(dashboard)/orders/[id]/_components/PickupHandOver.tsx":
@@ -38,7 +40,6 @@ const CONSUMERS: Record<string, string> = {
     "header + New Order opening as the counter (showButton, opensAsCounter)",
   "app/(dashboard)/settings/_components/use-settings-nav.ts":
     "finder rows needing the counter (showButton)",
-  "components/CommandPalette.tsx": "New counter sale action (showButton)",
 };
 
 describe("useCounterSaleGate readers (census)", () => {
@@ -48,7 +49,7 @@ describe("useCounterSaleGate readers (census)", () => {
     .filter((rel) => /\buseCounterSaleGate\b/.test(fs.readFileSync(path.join(WEB, rel), "utf8")))
     .sort();
 
-  it("is exactly the ten pinned modules", () => {
+  it("is exactly the nine pinned modules", () => {
     expect(readers).toEqual(Object.keys(CONSUMERS).sort());
   });
 });

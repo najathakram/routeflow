@@ -1,7 +1,8 @@
 /**
  * The ONE reader of the tenant's invoice display switches (SystemConfig, Settings > Invoicing > Invoice layout).
  * Every renderer (PDF, email, reminder, receipt, invoice detail) and the settings controller go through here;
- * invoice-layout.sites.spec.ts fails on a key string anywhere else. Absent = shown: only the string "true" hides.
+ * invoice-layout.sites.spec.ts fails on a key string anywhere else. Only the string "true" turns a switch on: a hide* key
+ * absent = shown, the one show* key (SA-1197, the account block) absent = off.
  */
 export const INVOICE_LAYOUT_KEYS = {
   hideOriginalPrice: "invoice.hideOriginalPrice",
@@ -9,6 +10,7 @@ export const INVOICE_LAYOUT_KEYS = {
   hidePerPiece: "invoice.hidePerPiece",
   hideAmountPaid: "invoice.hideAmountPaid",
   hideBalanceDue: "invoice.hideBalanceDue",
+  showAccountBalance: "invoice.showAccountBalance",
 } as const;
 
 export type InvoiceLayout = { [K in keyof typeof INVOICE_LAYOUT_KEYS]: boolean };
@@ -23,6 +25,7 @@ export function parseInvoiceLayout(
     hidePerPiece: on("hidePerPiece"),
     hideAmountPaid: on("hideAmountPaid"),
     hideBalanceDue: on("hideBalanceDue"),
+    showAccountBalance: on("showAccountBalance"),
   };
 }
 

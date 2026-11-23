@@ -19,6 +19,9 @@ import { CustomerRecordPaymentModal } from "./CustomerRecordPaymentModal";
  */
 const mockToast = jest.fn(); // the page-local toast (useToast)
 const mockGlobalToast = jest.fn(); // the app-wide MutationCache handler
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
   useToast: () => ({ toast: mockToast }),

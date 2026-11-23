@@ -2,8 +2,8 @@
    Source: apps/api/prisma/plan-catalog-v13.definitions.ts (newest catalog). v13 changes only Lite's flags, so
    prices and customers are the rows it inherits from v11/v12.
    Yearly price = monthly x 10 ("2 months free", billing-math.ts), computed below. Enterprise has no stored price.
-   SA-1080 (2026-11-01): plans differ by price and customers included only. Seats, routes, scans and messages are not
-   shown (not enforced, or not available to a trial), and the Forecasting add-on is off the page (open to every plan). */
+   SA-1080 (2026-11-01): plans differ by price and customers included only. Seats are unlimited on every plan; routes and scans are not shown
+   (messages are not shown either), and the Forecasting add-on is off the page (open to every plan). */
 window.RF_PRICES = {
   catalogVersion: 13,
   currency: "USD",

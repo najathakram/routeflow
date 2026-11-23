@@ -42,3 +42,9 @@ export function redactAddresses(msg: string): string {
       .slice(0, REDACT_MAX_INPUT)
   );
 }
+
+/** B911: the log form of a recipient: the domain only, never the full address (EmailService and the messaging provider share it). */
+export function logRecipient(to: string): string {
+  const at = to.lastIndexOf("@");
+  return at >= 0 ? to.slice(at) : "<no-domain>";
+}

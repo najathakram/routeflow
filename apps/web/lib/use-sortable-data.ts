@@ -42,6 +42,8 @@ export interface UseSortableDataResult<T> {
   sortKey: string | null;
   sortDir: SortDirection;
   requestSort: (key: string) => void;
+  /** Set the column and direction directly (the phone sort control: no unsorted step). */
+  setSort: (key: string, dir: SortDirection) => void;
   /** Reset sort to the default (or unsorted if no default was given). */
   reset: () => void;
 }
@@ -94,6 +96,11 @@ export function useSortableData<T>(
     [sortKey, sortDir],
   );
 
+  const setSort = React.useCallback((key: string, dir: SortDirection) => {
+    setSortKey(key);
+    setSortDir(dir);
+  }, []);
+
   const reset = React.useCallback(() => {
     setSortKey(defaultKey != null ? String(defaultKey) : null);
     setSortDir(defaultDir);
@@ -128,9 +135,14 @@ export function useSortableData<T>(
     sortKey,
     sortDir,
     requestSort: requestSortFull,
+    setSort,
     reset,
   };
 }
+
+/** One shared collator (same options the old per-call `localeCompare` used): building one per
+ *  comparison made a 2.5k-row sort ~24x slower. */
+const NAME_COLLATOR = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
 
 /**
  * Default comparator. Handles numbers, Dates, strings (locale-aware,
@@ -157,8 +169,5 @@ function compareValues(a: unknown, b: unknown): number {
     return an - bn;
   }
 
-  return String(a).localeCompare(String(b), undefined, {
-    sensitivity: "base",
-    numeric: true,
-  });
+  return NAME_COLLATOR.compare(String(a), String(b));
 }

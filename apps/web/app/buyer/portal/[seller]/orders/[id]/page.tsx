@@ -33,7 +33,12 @@ import {
   useBuyerCreateChangeRequest,
   type BuyerOrder,
 } from "@/lib/api/buyer";
-import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
+import {
+  billedChargeLines,
+  computeLineSubtotal,
+  normalizeBoxesPieces,
+  roundMoney,
+} from "@routeflow/pricing";
 import { buyerEditPayloadItems } from "@/lib/buyer-edit-payload";
 import {
   API_ERROR_CODES,
@@ -154,6 +159,14 @@ function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutra
   if (s === "REFUSED") return "warning";
   if (s === "CANCELLED") return "danger";
   return "neutral";
+}
+
+/** The regulated levy this order bills: its live lines' own stored amounts (never re-derived). 0 for none. */
+function orderLevyOf(order: {
+  lineItems: ReadonlyArray<{ status?: string; categoryTaxAmount?: unknown }>;
+}): number {
+  const live = order.lineItems.filter((l) => l.status !== "CANCELLED");
+  return roundMoney(billedChargeLines(live).reduce((n, c) => n + c.amount, 0));
 }
 
 function fmt(n: number) {
@@ -378,6 +391,8 @@ function RequestChangeModal({
         setFormError(
           "The delivery run for this order has ended — changes can no longer be requested.",
         );
+      } else if (code === API_ERROR_CODES.QTY_SPLIT_MISMATCH) {
+        setFormError("This item's quantity didn't come through. Choose it again and resend."); // SA-1173 K3: fixed text, never the raw message
       } else if (code === API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CHANGE_REQUEST) {
         setFormError(SHIPPED_ORDER_MESSAGE); // B1135: the order has shipped; there is no request to send
       } else {
@@ -883,6 +898,10 @@ export default function BuyerOrderDetailPage() {
         {[
           { label: "Subtotal", value: fmt(Number(order.subtotal)) },
           { label: "Tax", value: fmt(Number(order.tax)) },
+          // SA-1172 K9 (S-3): the regulated levy is part of the total, so it is a row, or the figures do not add up.
+          ...(orderLevyOf(order) > 0
+            ? [{ label: "Other taxes and fees", value: fmt(orderLevyOf(order)) }]
+            : []),
           {
             label: "Discount",
             value:

@@ -23,7 +23,13 @@ import { restrictionOverrideNoteOf } from "./restriction-override-note";
  * fixtures so they cannot drift. Display only — never used to derive or store a price.
  */
 
-export const PRODUCT_NAME_SEPARATOR = " - ";
+// SA-1216: the one name rule + separator live in `@routeflow/types` (re-exported for callers).
+import {
+  displayProductName,
+  PRODUCT_NAME_SEPARATOR,
+  type DisplayProductLike,
+} from "@routeflow/types/api/product-name";
+export { displayProductName, PRODUCT_NAME_SEPARATOR };
 
 /** Where a row may break a long name: a clampable family `stem` + a never-clamped `anchor`. */
 export function splitProductName(name: string): { stem: string | null; anchor: string } {
@@ -35,24 +41,7 @@ export function splitProductName(name: string): { stem: string | null; anchor: s
   return { stem, anchor };
 }
 
-interface ProductLike {
-  name: string;
-  variantName?: string | null;
-  parentProductId?: string | null;
-  parent?: { name: string } | null;
-}
-
-/** "<Parent> - <Variant>" for a catalog variant (the composed name is never persisted). */
-export function displayProductName(product: ProductLike): string {
-  if (!product.parentProductId && !product.parent) return product.name;
-  const variantPart = (product.variantName ?? product.name).trim();
-  if (!variantPart) return product.name;
-  const parentName = product.parent?.name ?? null;
-  if (!parentName) return variantPart;
-  const prefix = `${parentName}${PRODUCT_NAME_SEPARATOR}`;
-  if (variantPart.toLowerCase().startsWith(prefix.toLowerCase())) return variantPart;
-  return `${parentName}${PRODUCT_NAME_SEPARATOR}${variantPart}`;
-}
+type ProductLike = DisplayProductLike;
 
 /** The name to show for an order line on a READ surface; null when neither exists. */
 export function orderLineName(line: {

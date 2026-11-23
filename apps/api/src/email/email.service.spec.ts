@@ -365,6 +365,50 @@ describe("EmailService — attachments threaded to every transport", () => {
     } as any);
     expect((sendSpy.mock.calls[0][0] as any).subject).toBe("Invoice INV-1");
   });
+
+  // B1372 (SA-1177 K2): a sent invoice an edit turned back into a draft is re-issued as the updated copy, never silently.
+  const changedLine = (n: string) =>
+    `Invoice ${n} changed since we last sent it. This is the updated copy.`;
+  const base = {
+    to: "buyer@example.com",
+    customerName: "Acme Buyer",
+    invoiceNumber: "INV-1",
+    invoiceId: "inv-1",
+    issueDate: "Jan 1, 2026",
+    dueDate: "Jan 31, 2026",
+    total: 100,
+    items: [],
+  };
+
+  it("B1372 K2: the completion email names each invoice that changed since it was last sent (html and text)", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({
+      ...base,
+      completion: { orderNumber: "ORD-7" },
+      changedSinceSent: ["INV-1", "INV-1-R1"],
+    } as any);
+    const sent = sendSpy.mock.calls[0][0] as any;
+    for (const n of ["INV-1", "INV-1-R1"]) {
+      expect(sent.html).toContain(changedLine(n));
+      expect(sent.text).toContain(changedLine(n));
+    }
+  });
+
+  it("B1372 K2: nothing changed since the last send (or a reminder): no changed line", async () => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, changedSinceSent: [] } as any);
+    await svc.sendInvoice({ ...base, isReminder: true, changedSinceSent: ["INV-1"] } as any);
+    for (const [sent] of sendSpy.mock.calls as any[]) {
+      expect(sent.html).not.toContain("changed since we last sent it");
+      expect(sent.text).not.toContain("changed since we last sent it");
+    }
+  });
 });
 
 /**
@@ -2665,5 +2709,89 @@ describe("EmailService — one-line subject at the send seam (B460)", () => {
       delivery: { tenantId: "t1", kind: "INVOICE", entityType: "Invoice", entityId: "i1" } as any,
     });
     expect((chain.mock.calls[0][0] as any).subject).toBe(SAFE);
+  });
+});
+
+// SA-1197 (T21, T11, T22-tone): the invoice email prints the server's account rows under Balance Due, HTML and text alike.
+describe("EmailService.sendInvoice - the account block (SA-1197)", () => {
+  const base = {
+    to: "buyer@example.com",
+    customerName: "Acme Buyer",
+    invoiceNumber: "INV-6101",
+    invoiceId: "inv-6101",
+    issueDate: "Nov 1, 2026",
+    dueDate: "Dec 1, 2026",
+    total: 50,
+    totalPaid: 0,
+    balanceDue: 50,
+    items: [{ description: "Sample Cola 12pk", qty: 1, unitPrice: 50, subtotal: 50 }],
+  };
+  const FULL = [
+    { kind: "heading", label: "Your account on Nov 20, 2026", amount: null },
+    { kind: "others", label: "Other unpaid invoices", amount: 30 },
+    { kind: "thisInvoice", label: "This invoice", amount: 50 },
+    { kind: "openBalance", label: "Open balance", amount: 80 },
+  ];
+  const ONE = [{ kind: "openBalanceOn", label: "Open balance on Nov 20, 2026", amount: 80 }];
+  const send = async (over: Record<string, unknown>) => {
+    const svc = makeService();
+    const sendSpy = jest
+      .spyOn(svc, "send")
+      .mockResolvedValue({ delivered: true, transport: "smtp" } as any);
+    await svc.sendInvoice({ ...base, ...over } as any);
+    return sendSpy.mock.calls[0][0] as { html: string; text: string };
+  };
+
+  it("T18 guard: no rows (absent or empty) = today's body exactly", async () => {
+    const today = await send({});
+    const empty = await send({ accountRows: [] });
+    expect(empty.html).toBe(today.html);
+    expect(empty.text).toBe(today.text);
+  });
+
+  it("the full block prints under Balance Due, in HTML and text, with the same rows", async () => {
+    const { html, text } = await send({ accountRows: FULL });
+    const balanceAt = html.indexOf(">Balance Due</td>");
+    expect(balanceAt).toBeGreaterThan(0);
+    for (const row of FULL) {
+      const at = html.indexOf(`>${row.label}</td>`);
+      expect(at).toBeGreaterThan(balanceAt);
+    }
+    expect(html).toContain(">$30.00</td>");
+    expect(html).toContain(">$80.00</td>");
+    expect(text).toContain(
+      "Balance Due: $50.00\nYour account on Nov 20, 2026\nOther unpaid invoices: $30.00\nThis invoice: $50.00\nOpen balance: $80.00",
+    );
+  });
+
+  it("T22 tone: the block is neutral, never the danger red or the success green", async () => {
+    const { html } = await send({ accountRows: FULL });
+    const start = html.lastIndexOf("<tr>", html.indexOf(">Your account on Nov 20, 2026</td>"));
+    const end = html.indexOf("</tr>", html.indexOf(">Open balance</td>")) + 5;
+    const blockRows = html.slice(start, end);
+    expect(blockRows).toContain("Other unpaid invoices");
+    expect(blockRows).not.toMatch(/#dc2626|#16a34a/);
+  });
+
+  it("T11: Balance Due hidden -> the one 'Open balance on' line, and no Balance Due", async () => {
+    const { html, text } = await send({ hideBalanceDue: true, accountRows: ONE });
+    expect(html).not.toContain("Balance Due");
+    expect(html).toContain(">Open balance on Nov 20, 2026</td>");
+    expect(html).not.toContain("This invoice");
+    expect(text).toContain("Open balance on Nov 20, 2026: $80.00");
+    expect(text).not.toContain("This invoice");
+  });
+
+  it("T21 guard: a reminder never prints the block, even if rows are passed", async () => {
+    const { html, text } = await send({ isReminder: true, accountRows: FULL });
+    expect(html).not.toContain("Other unpaid invoices");
+    expect(text).not.toContain("Other unpaid invoices");
+  });
+
+  it("C12: a label is escaped like any text (the block prints constants, but the renderer never trusts them)", async () => {
+    const { html } = await send({
+      accountRows: [{ kind: "openBalanceOn", label: "Open <b> on", amount: 1 }],
+    });
+    expect(html).toContain("Open &lt;b&gt; on");
   });
 });

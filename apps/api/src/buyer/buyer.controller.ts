@@ -72,12 +72,14 @@ import { withAdvisoryLock } from "../common/db-locks";
 import { logDiscountedSkip, mergeBlockedByDiscount } from "../orders/merge-discount-guard";
 import { overdueCutoff } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
+import { buyerAnalyticsSpend } from "./buyer-spend";
 import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
 import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { assertBuyerQtySplit } from "./buyer-qty-split";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
+import { toBuyerStatement } from "./buyer-statement-view";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -310,8 +312,9 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get buyer's account statement at the selected seller" })
-  getStatement(@CurrentBuyerCustomer() ctx: any) {
-    return this.customersService.getStatementForOperator(ctx.customerId);
+  async getStatement(@CurrentBuyerCustomer() ctx: any) {
+    // SA-1214: the buyer reads the credit TOTAL and the credit list (never the staff notes-only tile).
+    return toBuyerStatement(await this.customersService.getStatementForOperator(ctx.customerId));
   }
 
   @Get("account-statement")
@@ -1289,50 +1292,20 @@ export class BuyerController {
     const db = this.prisma.forTenant();
     const customerId: string = ctx.customerId;
 
-    // Monthly spend — last 12 months of non-cancelled orders
-    const twelveMonthsAgo = new Date();
-    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 11);
-    twelveMonthsAgo.setDate(1);
-    twelveMonthsAgo.setHours(0, 0, 0, 0);
-
-    const orders = await db.order.findMany({
-      where: {
-        customerId,
-        status: { notIn: ["CANCELLED", "DRAFT"] },
-        createdAt: { gte: twelveMonthsAgo },
-      },
-      select: { createdAt: true, total: true },
-      orderBy: { createdAt: "asc" },
-    });
-
-    // Aggregate by month (YYYY-MM)
-    const monthMap = new Map<string, { spend: number; orderCount: number }>();
-    for (const o of orders) {
-      const key = `${o.createdAt.getFullYear()}-${String(o.createdAt.getMonth() + 1).padStart(2, "0")}`;
-      const existing = monthMap.get(key) ?? { spend: 0, orderCount: 0 };
-      monthMap.set(key, {
-        spend: existing.spend + Number(o.total),
-        orderCount: existing.orderCount + 1,
-      });
-    }
-    const monthlySpend = Array.from(monthMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, v]) => ({ month, spend: v.spend, orderCount: v.orderCount }));
-
-    // Summary — all time
-    const allOrders = await db.order.findMany({
-      where: { customerId, status: { notIn: ["CANCELLED", "DRAFT"] } },
-      select: { total: true },
-    });
-    const totalOrders = allOrders.length;
-    const totalSpend = allOrders.reduce((s, o) => s + Number(o.total), 0);
-    const avgOrderValue = totalOrders > 0 ? totalSpend / totalOrders : 0;
+    // SA-1211 A1.3: spend is the buyer's issued invoices less posted credit notes, by the tenant's
+    // days (buyer-spend.ts); Avg order value stays order-based. Orders are never summed.
+    const zone = await tenantTimeZone(this.prisma);
+    const { totalSpend, monthlySpend, totalOrders, avgOrderValue } = await buyerAnalyticsSpend(
+      db,
+      customerId,
+      zone,
+    );
 
     // Invoice breakdown (SA-770 r-note): the staff rule - an open invoice that still owes a balance and
     // whose due day has ended in THIS seller's zone is overdue; the total is BALANCE due, never gross.
     // Bounded: PAID invoices are only counted, and only OPEN ones are fetched, each with just the
     // confirmed payments (amount, status, method) the classifier nets.
-    const [paidInvoiceCount, openInvoices, zone] = await Promise.all([
+    const [paidInvoiceCount, openInvoices] = await Promise.all([
       db.invoice.count({ where: { customerId, status: "PAID" } }),
       db.invoice.findMany({
         where: { customerId, status: { in: [...OPEN_INVOICE_STATUSES] } },
@@ -1346,7 +1319,6 @@ export class BuyerController {
           },
         },
       }),
-      tenantTimeZone(this.prisma),
     ]);
     const summary = summarizeOpenInvoices(openInvoices, overdueCutoff(new Date(), zone));
     const paidCount = paidInvoiceCount + summary.settledCount;

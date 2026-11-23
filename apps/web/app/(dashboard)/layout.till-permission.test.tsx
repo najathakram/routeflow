@@ -4,6 +4,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@/lib/i18n";
 import { createTestQueryClient } from "@/test-utils/render";
 import DashboardLayout from "./layout";
+import type { NavEntry } from "./_components/nav-config";
+import { quickActions } from "./_components/nav-index";
 
 /**
  * BO-07: the shell's Counter entries (sidebar, drawer, g t) follow the till permission. The REAL
@@ -81,8 +83,13 @@ jest.mock("@/lib/drive-mode", () => ({
 }));
 jest.mock("@/lib/presence-cookies", () => ({ setLastPortalCookie: jest.fn() }));
 jest.mock("@/components/TenantLogo", () => ({ TenantLogo: () => <span>logo</span> }));
+// The palette is generated from the menu the shell hands it (UXG-R8): capture that menu to pin the shell -> palette link.
+let mockPaletteNav: NavEntry[] = [];
 jest.mock("@/components/CommandPalette", () => ({
-  CommandPalette: () => null,
+  CommandPalette: (p: { nav: NavEntry[] }) => {
+    mockPaletteNav = p.nav;
+    return null;
+  },
   useCommandPalette: () => ({ open: false, setOpen: jest.fn() }),
 }));
 jest.mock("@/components/PwaInstallPrompt", () => ({ PwaInstallPrompt: () => null }));
@@ -105,6 +112,7 @@ function renderShell() {
 }
 
 beforeEach(() => {
+  mockPaletteNav = [];
   mockPush.mockClear();
   mockPath = "/orders";
   mockRole = "OPERATOR";
@@ -130,6 +138,9 @@ afterEach(() => {
   localStorage.clear();
 });
 
+const paletteActionIds = () =>
+  quickActions(mockPaletteNav, { staff: true, readOnly: false }).map((a) => a.id);
+
 describe("shell Counter entries and the operator's till permission", () => {
   it("an operator without ORDERS: no Counter in the sidebar or the drawer, and g t goes nowhere", async () => {
     mockGroups = ["PRICING", "FINANCE"];
@@ -142,6 +153,9 @@ describe("shell Counter entries and the operator's till permission", () => {
     fireEvent.keyDown(window, { key: "g" });
     fireEvent.keyDown(window, { key: "t" });
     expect(mockPush).not.toHaveBeenCalled();
+    // the palette is built from the same gated menu: no New counter sale either (was CommandPalette.till-permission)
+    expect(paletteActionIds()).not.toContain("act-counter-sale");
+    expect(paletteActionIds()).toContain("act-new-order");
   });
 
   it("an operator with ORDERS: Counter is in the sidebar and drawer, and g t opens it", async () => {
@@ -154,6 +168,7 @@ describe("shell Counter entries and the operator's till permission", () => {
     fireEvent.keyDown(window, { key: "g" });
     fireEvent.keyDown(window, { key: "t" });
     expect(mockPush).toHaveBeenCalledWith("/orders/counter-sale");
+    expect(paletteActionIds()).toContain("act-counter-sale");
   });
 
   it("a tenant admin: Counter shows and permissions are never asked for", async () => {
@@ -163,5 +178,6 @@ describe("shell Counter entries and the operator's till permission", () => {
       await within(screen.getByTestId("sidebar-aside")).findByText("Counter"),
     ).toBeInTheDocument();
     expect(mockGet).not.toHaveBeenCalledWith("/users/me/permissions");
+    expect(paletteActionIds()).toContain("act-counter-sale");
   });
 });

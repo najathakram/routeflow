@@ -9,7 +9,7 @@
  * Source scan, comments excluded; `*.spec.ts` skipped. Paths are relative to apps/api/src.
  */
 jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn() }));
-jest.mock("../bookkeeping/invoice.service", () => ({ InvoiceService: jest.fn() }));
+jest.mock("../invoices/invoice-pdf.service", () => ({ InvoicePdfService: jest.fn() }));
 jest.mock("../vendor-bills/vendor-bills.service", () => ({ VendorBillsService: jest.fn() }));
 jest.mock("../storage/compress.util", () => ({ compressDocument: jest.fn() }));
 
@@ -45,6 +45,8 @@ const USES_CLASSIFIER: Record<string, string> = {
   "invoices/invoice-kpi-summary.ts": "KPI tiles: per-invoice balance (confirmedBalance)",
   "customers/customer-statement.ts":
     "statement overdueAmount (row 309), buyer's and operator's: classifyInvoiceBalance in the statement's tenant zone, one zone lookup per statement. CLAMPED since SA-1078 PR-1 (it was the signed net, row 326): the statement's outstandingAmount (the open balance) is statementOutstandingAmount, a status-free running roundMoney sum of classifyInvoiceBalance(...).balanceDue over the open-balance set the caller passes (SA-1164 22:24Z; it equals summarizeOpenInvoices(...).unpaidTotal on issued rows), the sum of each open invoice's clamped balance, so an overpaid open invoice adds 0 and the rows add up to the total, and overdueAmount (also clamped) can no longer read above it; the ledger's per-invoice signed runningBalance is untouched",
+  "customers/invoice-account-balance.ts":
+    "SA-1197 invoice account block: This invoice is classifyInvoiceBalance(model, overdueCutoff).balanceDue, the Balance Due the document prints; Other unpaid invoices is customer-statement.ts's statementOutstandingAmount over the open-balance set, so the open balance is the statement's figure to the cent",
   "customers/account-statement.ts":
     "SA-1078 account statement: each open row's unpaid is classifyInvoiceBalance's clamped balanceDue; openBalance and overdue come from customer-statement.ts's statementOutstandingAmount / statementOverdueAmount, so the rows add up to the total",
   "bookkeeping/bookkeeping.service.ts":
@@ -254,6 +256,7 @@ describe("SA-770 — every overdue-cutoff reader is balance-aware or accounted f
     "invoices/invoice-kpi-summary.ts": /\bclassifyInvoiceBalance\(/,
     "customers/customer-statement.ts": /\bclassifyInvoiceBalance\(/,
     "customers/account-statement.ts": /\bclassifyInvoiceBalance\(/,
+    "customers/invoice-account-balance.ts": /\bclassifyInvoiceBalance\(/,
     "bookkeeping/bookkeeping.service.ts": /\bconfirmedBalance\(/,
     "buyer/buyer.controller.ts": /\bsummarizeOpenInvoices\(/,
     "buyer/buyer-dashboard.service.ts": /\bsummarizeOpenInvoices\(/,

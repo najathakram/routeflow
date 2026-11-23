@@ -129,6 +129,15 @@ const rows = () =>
   within(screen.getByRole("list", { name: "Items" }))
     .getAllByRole("listitem")
     .map((li) => li.textContent ?? "");
+/** B1373: a line's quantity is the value of the order row's number field (no "× N" text). */
+const qtyAt = (i: number) =>
+  Number(
+    (
+      within(
+        within(screen.getByRole("list", { name: "Items" })).getAllByRole("listitem")[i],
+      ).getByRole("spinbutton", { name: /Set quantity of/ }) as HTMLInputElement
+    ).value,
+  );
 const names = () => rows().map((t) => /^(Cola|Water|Juice)/.exec(t)?.[1]);
 const handle = (name: string) =>
   screen.getByRole("button", { name: new RegExp(`^Move ${name}, line`) });
@@ -258,7 +267,7 @@ describe("CounterSaleScreen: drag a line into any order (W-1187 PR-2b)", () => {
     await altDown("Cola"); // Water, Cola
     await scan("WATER"); // Water already first: quantity up, position unchanged
     expect(names()).toEqual(["Water", "Cola"]);
-    expect(rows()[0]).toMatch(/× 2/);
+    expect(qtyAt(0)).toBe(2);
     await scan("JUICE");
     expect(names()).toEqual(["Water", "Cola", "Juice"]);
   });
@@ -281,7 +290,7 @@ describe("CounterSaleScreen: drag a line into any order (W-1187 PR-2b)", () => {
     await user.keyboard("cola12345678{Enter}");
     await waitFor(() => expect(mockLookups.length).toBeGreaterThan(0));
     expect(mockLookups).toEqual(["cola12345678"]);
-    await waitFor(() => expect(rows()[0]).toMatch(/× 2/));
+    await waitFor(() => expect(qtyAt(0)).toBe(2));
     expect(names()).toEqual(["Cola", "Water"]);
     expect(mockToast).not.toHaveBeenCalled();
   });
@@ -516,7 +525,7 @@ describe("CounterSaleScreen: a drag and a scan never get in each other's way (W-
     act(() => lastToast().action!.onClick());
     await waitFor(() => expect(scanBox()).toHaveFocus());
     await typeCode("COLA");
-    await waitFor(() => expect(rows()[0]).toMatch(/× 2/));
+    await waitFor(() => expect(qtyAt(0)).toBe(2));
     expect(mockLookups).toEqual(["JUICE", "COLA"]);
   });
 

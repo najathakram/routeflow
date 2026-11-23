@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
-import { sendReminder } from "./invoice-reminder-email";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { resolveRecipientEmail, sendReminder } from "./invoice-reminder-email";
 
 jest.mock("./invoice-email-payload", () => ({
   buildReminderEmailPayload: jest.fn((_inv: unknown, opts: { recipientEmail: string }) => ({
@@ -71,5 +72,18 @@ describe("sendReminder: who the reminder goes to", () => {
   it("a sentinel override with no on-file address is also a 400", async () => {
     const { d } = deps(null);
     await expect(sendReminder(d, "inv-1", SENTINEL)).rejects.toThrow(/No email address on file/);
+  });
+});
+
+describe("resolveRecipientEmail: the no-email refusal is typed (W-1286, C28)", () => {
+  it("carries API_ERROR_CODES.INVOICE_RECIPIENT_MISSING, so callers never read the message", () => {
+    let thrown: any;
+    try {
+      resolveRecipientEmail(undefined, SENTINEL);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(API_ERROR_CODES.INVOICE_RECIPIENT_MISSING).toBe("INVOICE_RECIPIENT_MISSING");
+    expect(thrown.getResponse().code).toBe(API_ERROR_CODES.INVOICE_RECIPIENT_MISSING);
   });
 });

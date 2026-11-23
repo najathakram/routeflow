@@ -15,9 +15,18 @@ import {
   classifyInvoiceBalance,
   type ClassifiableInvoice,
 } from "../invoices/invoice-balance-classify";
-import { overdueCutoff } from "../common/calendar-date";
+import { overdueCutoff, tenantTodayDay } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { toCollectSummary } from "../invoices/to-collect";
+import {
+  creditNoteRemaining,
+  isAdvanceAvailable,
+  loadAdvanceSourceStatuses,
+  loadAvailableCredit,
+} from "./available-credit";
+
+/** SA-1214: the buyer's credit list is capped at this many rows (newest first); a longer list says so. */
+export const BUYER_CREDIT_ITEMS_CAP = 50;
 
 /**
  * The customer statement builds, moved verbatim out of `CustomersService` (size-ratchet headroom, no
@@ -96,13 +105,14 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
   const LEDGER_INVOICE_CAP = 50;
   const LEDGER_CREDIT_NOTE_CAP = 50;
 
+  const now = new Date();
   const [
     openInvoices,
     ledgerInvoicesRaw,
-    openCreditNotes,
     ledgerCreditNotesRaw,
     lifetimeInvoicedAgg,
     lifetimeReceivedAgg,
+    walletCredit,
   ] = await Promise.all([
     prisma.forTenant().invoice.findMany({
       // The ONE open-balance basis (SA-1164 22:05Z): settled/dead/forgiven out, an unsent DRAFT in only on a post-delivery order.
@@ -114,10 +124,6 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
       orderBy: { createdAt: "desc" },
       take: LEDGER_INVOICE_CAP + 1,
       select: INVOICE_SELECT,
-    }),
-    prisma.forTenant().creditNote.findMany({
-      where: { customerId: customer.id, status: { not: "VOID" } },
-      select: CREDIT_NOTE_SELECT,
     }),
     prisma.forTenant().creditNote.findMany({
       where: { customerId: customer.id },
@@ -145,6 +151,8 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
         invoice: { customerId: customer.id },
       },
     }),
+    // SA-1208 D7: open notes plus advances, the one available-credit read (uncapped, this customer only).
+    loadAvailableCredit(prisma.forTenant(), customer.id, now),
   ]);
 
   // Each ledger read asks for one row MORE than its cap; a read that comes
@@ -177,20 +185,8 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
 
   const overdue = statementOverdueAmount(openInvoicesWithPaid, statementZone);
 
-  // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
-  // (not face amount) prevents the double-count — a partial credit already sits on
-  // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
-  const now = new Date();
-  const availableCredit = roundMoney(
-    openCreditNotes
-      .filter(
-        (c) =>
-          c.status !== "VOID" &&
-          Number(c.amount) - Number(c.amountUsed) > 0.001 &&
-          (!c.expiresAt || new Date(c.expiresAt) > now),
-      )
-      .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
-  );
+  // SA-1208 D7: P5-13's wallet (open note remainders) PLUS advance balances, from available-credit.ts only.
+  const availableCredit = walletCredit.total;
 
   // True whenever the transactions ledger below is a partial view of the
   // customer's full history (the ledger reads ALL statuses, capped) —
@@ -211,21 +207,19 @@ export async function buildMyStatement(prisma: PrismaService, user: JwtPayload) 
       id: i.id,
       description: `Invoice #${i.invoiceNumber}`,
       date: i.createdAt.toISOString(),
-      amount: Number(i.total),
+      amount: roundMoney(Number(i.total)),
       runningBalance: -roundMoney(Number(i.total) - i.amountPaid),
       status: i.status,
     })),
     ...ledgerCreditNotes.map((c) => {
-      const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
-      const remaining =
-        c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
+      const remaining = creditNoteRemaining(c, now);
       return {
         type: "CREDIT_NOTE" as const,
         id: c.id,
         description: `Credit Note #${c.creditNoteNumber}`,
         date: c.createdAt.toISOString(),
-        amount: -Number(c.amount),
-        runningBalance: remaining > 0.001 ? remaining : 0,
+        amount: -roundMoney(Number(c.amount)),
+        runningBalance: remaining,
         status: c.status,
         expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
       };
@@ -278,6 +272,7 @@ export async function buildOperatorStatement(
     method: true,
     reference: true,
     receivedAt: true,
+    sourcePaymentId: true,
   } as const;
   // REG-B110: the LEDGER caps below are for the transactions DISPLAY only —
   // the money figures (outstanding/overdue/availableCredit/advanceBalance)
@@ -288,18 +283,18 @@ export async function buildOperatorStatement(
   const LEDGER_CREDIT_NOTE_CAP = 50;
   const LEDGER_ADVANCE_CAP = 50;
 
+  const now = new Date();
   const [
     openInvoices,
     ledgerInvoicesRaw,
-    openCreditNotes,
     ledgerCreditNotesRaw,
-    openAdvancePayments,
     ledgerAdvancePaymentsRaw,
     pendingOrders,
     lifetimeInvoicedAgg,
     lifetimeReceivedAgg,
     exposure,
     sweepable,
+    walletCredit,
   ] = await Promise.all([
     prisma.forTenant().invoice.findMany({
       // The ONE open-balance basis (SA-1164 22:05Z): settled/dead/forgiven out, an unsent DRAFT in only on a post-delivery order.
@@ -313,18 +308,10 @@ export async function buildOperatorStatement(
       select: INVOICE_SELECT,
     }),
     prisma.forTenant().creditNote.findMany({
-      where: { customerId, status: { not: "VOID" } },
-      select: CREDIT_NOTE_SELECT,
-    }),
-    prisma.forTenant().creditNote.findMany({
       where: { customerId },
       orderBy: { createdAt: "desc" },
       take: LEDGER_CREDIT_NOTE_CAP + 1,
       select: CREDIT_NOTE_SELECT,
-    }),
-    prisma.forTenant().advancePayment.findMany({
-      where: { customerId, balance: { gt: 0 } },
-      select: ADVANCE_PAYMENT_SELECT,
     }),
     prisma.forTenant().advancePayment.findMany({
       where: { customerId },
@@ -377,6 +364,8 @@ export async function buildOperatorStatement(
           now: new Date(),
         })
       : Promise.resolve(null),
+    // SA-1208 D7: the one available-credit read. The staff statement keeps its two tiles (notes, advances).
+    loadAvailableCredit(prisma.forTenant(), customerId, now),
   ]);
 
   // Each ledger read asks for one row MORE than its cap; a read that comes
@@ -388,6 +377,11 @@ export async function buildOperatorStatement(
   const ledgerInvoices = ledgerInvoicesRaw.slice(0, LEDGER_INVOICE_CAP);
   const ledgerCreditNotes = ledgerCreditNotesRaw.slice(0, LEDGER_CREDIT_NOTE_CAP);
   const ledgerAdvancePayments = ledgerAdvancePaymentsRaw.slice(0, LEDGER_ADVANCE_CAP);
+  // SA-1225 MED-1: the ledger row reads the same predicate as the tile, so an unconfirmed advance never shows AVAILABLE.
+  const ledgerAdvanceSources = await loadAdvanceSourceStatuses(
+    prisma.forTenant(),
+    ledgerAdvancePayments,
+  );
 
   // CONFIRMED (PAID) basis — a DRAFT (unconfirmed) payment must never count
   // as paid (F03/sumConfirmed); VOID (e.g. a bounced check, P5-12) already
@@ -411,24 +405,23 @@ export async function buildOperatorStatement(
 
   const overdue = statementOverdueAmount(openInvoicesWithPaid, statementZone);
 
-  // P5-13: wallet = Σ remaining over OPEN, non-expired credits. amount − amountUsed
-  // (not face amount) prevents the double-count — a partial credit already sits on
-  // the invoice as a CREDIT_NOTE payment, so only its unused remainder appears here.
-  const now = new Date();
-  const availableCredit = roundMoney(
-    openCreditNotes
-      .filter(
-        (c) =>
-          c.status !== "VOID" &&
-          Number(c.amount) - Number(c.amountUsed) > 0.001 &&
-          (!c.expiresAt || new Date(c.expiresAt) > now),
-      )
-      .reduce((sum, c) => sum + roundMoney(Number(c.amount) - Number(c.amountUsed)), 0),
-  );
-
-  const advanceBalance = roundMoney(
-    openAdvancePayments.reduce((sum, a) => sum + Number(a.balance), 0),
-  );
+  // SA-1208 D7: the staff tiles stay two (notes, advances); both come from available-credit.ts, never recomputed.
+  const availableCredit = walletCredit.notes;
+  const advanceBalance = walletCredit.advances;
+  // SA-1214: the buyer route shows the TOTAL and a list that sums to it, both from this one read (buyer-statement-view.ts).
+  const creditTotal = walletCredit.total;
+  const creditItemsTruncated = walletCredit.items.length > BUYER_CREDIT_ITEMS_CAP;
+  const creditItems = walletCredit.items.slice(0, BUYER_CREDIT_ITEMS_CAP).map((i) => ({
+    kind: i.kind,
+    id: i.id,
+    date: i.date.toISOString(),
+    remaining: i.remaining,
+    // F8: a buyer never sees the staff-typed reference or method; an advance reads only as credit from a payment.
+    description:
+      i.kind === "NOTE"
+        ? `Credit Note #${i.number}`
+        : `Credit from payment, ${tenantTodayDay(statementZone, i.date)}`,
+  }));
 
   const pendingOrdersAmount = roundMoney(
     pendingOrders.reduce((sum, o) => sum + Number(o.total), 0),
@@ -453,21 +446,19 @@ export async function buildOperatorStatement(
       id: i.id,
       description: `Invoice #${i.invoiceNumber}`,
       date: i.createdAt.toISOString(),
-      amount: Number(i.total),
+      amount: roundMoney(Number(i.total)),
       runningBalance: -roundMoney(Number(i.total) - i.amountPaid),
       status: i.status,
     })),
     ...ledgerCreditNotes.map((c) => {
-      const expired = !!c.expiresAt && new Date(c.expiresAt) <= now;
-      const remaining =
-        c.status === "VOID" || expired ? 0 : roundMoney(Number(c.amount) - Number(c.amountUsed));
+      const remaining = creditNoteRemaining(c, now);
       return {
         type: "CREDIT_NOTE" as const,
         id: c.id,
         description: `Credit Note #${c.creditNoteNumber}`,
         date: c.createdAt.toISOString(),
-        amount: -Number(c.amount),
-        runningBalance: remaining > 0.001 ? remaining : 0,
+        amount: -roundMoney(Number(c.amount)),
+        runningBalance: remaining,
         status: c.status,
         expiresAt: c.expiresAt ? c.expiresAt.toISOString() : null,
       };
@@ -477,9 +468,13 @@ export async function buildOperatorStatement(
       id: a.id,
       description: `Advance Payment${a.reference ? ` (${a.reference})` : ""}`,
       date: a.receivedAt.toISOString(),
-      amount: Number(a.amount),
-      runningBalance: Number(a.balance),
-      status: Number(a.balance) > 0 ? "AVAILABLE" : "USED",
+      amount: roundMoney(Number(a.amount)),
+      runningBalance: roundMoney(Number(a.balance)),
+      status: !isAdvanceAvailable(a, ledgerAdvanceSources.get(a.sourcePaymentId ?? ""))
+        ? "NOT_CONFIRMED"
+        : Number(a.balance) > 0
+          ? "AVAILABLE"
+          : "USED",
     })),
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -488,6 +483,9 @@ export async function buildOperatorStatement(
     overdueAmount: overdue,
     availableCredit,
     advanceBalance,
+    creditTotal,
+    creditItems,
+    creditItemsTruncated,
     pendingOrdersAmount,
     lifetimeInvoiced,
     lifetimeReceived,

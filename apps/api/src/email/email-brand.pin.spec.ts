@@ -26,7 +26,6 @@ const FILES = [
   "customers/portal-invite-email.ts",
   "messaging/providers/email-channel.provider.ts",
   "email/mailbox/mailbox-alert.copy.ts",
-  "bookkeeping/invoice-template.tsx",
 ];
 
 /** Identifiers that are never renamed (program B app allow-list) and the one typed host. */

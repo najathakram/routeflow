@@ -1,6 +1,6 @@
 import { BRAND } from "../common/brand";
 import { renderEmailLayout } from "./email-layout";
-import { loadInvoiceModule, renderPlatformMails } from "../testing/render-platform-mail";
+import { renderPlatformMails } from "../testing/render-platform-mail";
 
 /**
  * T-B5 (the T45 row for mail): with the brand module mocked to a fixture, every platform mail the
@@ -158,10 +158,6 @@ const LABELS = [
   "intake-sentback#html",
   "intake-sentback#subject",
   "intake-sentback#text",
-  "invoice-text-paid",
-  "invoice-text-unpaid",
-  "invoice-tree-paid",
-  "invoice-tree-unpaid",
   "lifecycle-reminder#html",
   "lifecycle-reminder#subject",
   "lifecycle-reminder#text",
@@ -194,7 +190,7 @@ const LABELS = [
 
 describe("lane B1b: launch-day mail and strings under a fixture brand", () => {
   it("renders exactly the B1b label set (a label that stops being produced goes red)", () => {
-    const own = /^(demo-|intake-|lifecycle-|portal-invite|channel-|mailalert-|invoice-)/;
+    const own = /^(demo-|intake-|lifecycle-|portal-invite|channel-|mailalert-)/;
     expect(
       Object.keys(out)
         .filter((k) => own.test(k))
@@ -240,45 +236,6 @@ describe("lane B1b: launch-day mail and strings under a fixture brand", () => {
     } finally {
       brand.name = original;
     }
-  });
-});
-
-describe("lane B1b: the invoice PDF under a fixture brand", () => {
-  const labels = ["paid", "unpaid"];
-
-  it("prints the brand's name, host and initials, and no trace of the real brand", () => {
-    for (const l of labels) {
-      const tree = out[`invoice-tree-${l}`];
-      const text = out[`invoice-text-${l}`];
-      expect(tree).toContain(`"author": "${BRAND.name}"`);
-      expect(text).toContain(BRAND.name);
-      expect(text).toContain(`Austin, TX · fixture.test`);
-      expect(text).toContain(`${BRAND.name} · Austin, TX · fixture.test`);
-      expect(text.split("\n")).toContain("FT");
-      expect(`${tree}${text}`).not.toMatch(/route\s?flow/i);
-    }
-  });
-
-  it("the clock is pinned: every invoice prints the fixed 'Generated' date", () => {
-    for (const l of ["paid", "unpaid"]) {
-      expect(out[`invoice-text-${l}`].split("\n")).toContain("Mar 4, 2026");
-      expect(out[`invoice-tree-${l}`]).toContain("Mar 4, 2026");
-    }
-  });
-
-  it("the money lines are untouched by the brand (totals print as rounded cents)", () => {
-    expect(out["invoice-text-paid"]).toContain("$24.51");
-    expect(out["invoice-text-paid"]).toContain("$20.01");
-  });
-
-  it("derives initials from the name: two words, a camel hump, a dotted name, a short name", () => {
-    const { brandInitials } = loadInvoiceModule() as { brandInitials(n: string): string };
-    expect(brandInitials("RouteFlow")).toBe("RF");
-    expect(brandInitials("FIXTURE.TEST")).toBe("FT");
-    expect(brandInitials("Acme Foods Inc")).toBe("AF");
-    expect(brandInitials("Acme")).toBe("AC");
-    expect(brandInitials("a")).toBe("A");
-    expect(brandInitials("  ")).toBe("");
   });
 });
 

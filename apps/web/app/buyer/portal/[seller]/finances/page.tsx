@@ -15,7 +15,6 @@ import {
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerAnalytics, useBuyerStatement } from "@/lib/api/buyer";
-import { fmtCalendarDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -102,9 +101,9 @@ export default function FinancesPage() {
   // are disclosed below. `creditRows` is what the (possibly capped) ledger
   // actually carried; `activeCredits` is the six rows this card renders.
   const ACTIVE_CREDIT_DISPLAY_CAP = 6;
-  const creditRows = (statement?.transactions ?? []).filter(
-    (t) => t.type === "CREDIT_NOTE" && t.runningBalance > 0.001,
-  );
+  // SA-1214: the rows come from the server's credit list (notes AND advances, the same read as the total), never
+  // from a filter over the capped ledger, so an advance-only buyer sees a row and the rows sum to the tile.
+  const creditRows = statement?.creditItems ?? [];
   const activeCredits = creditRows.slice(0, ACTIVE_CREDIT_DISPLAY_CAP);
   // M3: "active" presence and the sub-label read the uncapped `availableCredit`
   // total, never a count of `activeCredits` — that list is a capped, partial
@@ -112,7 +111,7 @@ export default function FinancesPage() {
   const hasActiveCredit = (statement?.availableCredit ?? 0) > 0;
   // The card shows fewer credits than exist whenever EITHER cap bit: the
   // server truncated the ledger, or the 6-row budget dropped rows it did send.
-  const ledgerTruncated = statement?.transactionsTruncated === true;
+  const ledgerTruncated = statement?.creditItemsTruncated === true;
   const activeCreditsTruncated = ledgerTruncated || creditRows.length > activeCredits.length;
 
   if (isLoading) {
@@ -166,7 +165,7 @@ export default function FinancesPage() {
           icon={ShoppingCart}
           label="Total orders"
           value={String(summary.totalOrders)}
-          sub={`Avg ${fmt(summary.avgOrderValue)} / order`}
+          sub={summary.totalOrders > 0 ? `Avg ${fmt(summary.avgOrderValue)} / order` : undefined}
           color="bg-blue-50 text-blue-600"
         />
         <StatCard
@@ -241,13 +240,10 @@ export default function FinancesPage() {
               <div key={c.id} className="flex items-center justify-between py-2.5">
                 <div className="min-w-0">
                   <p className="text-xs font-medium text-navy truncate">{c.description}</p>
-                  <p className="text-[11px] text-navy/70 mt-0.5">
-                    {fmtDate(c.date)}
-                    {c.expiresAt ? ` · Expires ${fmtCalendarDate(c.expiresAt)}` : ""}
-                  </p>
+                  <p className="text-[11px] text-navy/70 mt-0.5">{fmtDate(c.date)}</p>
                 </div>
                 <span className="ml-3 flex-shrink-0 text-sm font-semibold text-buyer-600">
-                  {fmt(c.runningBalance)}
+                  {fmt(c.remaining)}
                 </span>
               </div>
             ))}

@@ -209,8 +209,7 @@
 //                    value-import this package), PARKED_REVERSALS_UNRESOLVED and PARKED_REVERSAL_UNRESOLVABLE (the 409s of the regulated
 //                    report and the parked-reversal resolver), REGULATED_POD_REQUIRED (the 400s of the regulated proof-of-delivery guard).
 //   B987-E1 — import and statement/payment refusals that now carry a code and structured fields (status and message unchanged):
-//                    IMPORT_COLUMN_NEEDS_ENTITLEMENT — `body.code` of the import 403 when a CSV column needs an entitlement the tenant lacks;
-//                    body carries `requires` (MSRP | TOBACCO_DEALER | FORECASTING) and `column` (the user's own header, capped at 120).
+//                    (IMPORT_COLUMN_NEEDS_ENTITLEMENT retired by SA-1193: a gated column is now skipped and named in `skippedColumns`.)
 //                    INSIGHT_WINDOW_INVALID — `body.code` of the products export's 400 when its from/to window is refused; body carries
 //                    `reason` (NOT_A_DAY | TO_NOT_A_DAY | FROM_NOT_A_DAY | BAD_GRAIN | TO_BEFORE_FROM | WINDOW_TOO_LONG | TOO_MANY_BUCKETS)
 //                    and numeric params (maxMonths, buckets, maxBuckets) or a validated grain; the message is unchanged. Opt-in: other
@@ -395,6 +394,8 @@ export const API_ERROR_CODES = {
   BUYER_EDIT_INPUT_NOT_ALLOWED: "BUYER_EDIT_INPUT_NOT_ALLOWED",
   /** SA-1144: a pre-delivery edit of an order whose invoice holds payments or is closed (PAID, PARTIAL, WRITTEN_OFF). 400. */
   ORDER_EDIT_INVOICE_HAS_PAYMENTS: "ORDER_EDIT_INVOICE_HAS_PAYMENTS",
+  /** B1372 N2 (SA-1177 A2 K3): a staff items edit would turn a SENT / VIEWED / OVERDUE invoice back into a draft and the request did not confirm it (`ackSentRevert`). 409 naming `invoiceNumbers`, nothing written. */
+  ORDER_EDIT_REVERTS_SENT_INVOICE: "ORDER_EDIT_REVERTS_SENT_INVOICE",
   /** B692: a manual PARTIALLY_DELIVERED names what was delivered per line (or the order already has delivery data). 409. */
   ORDER_PD_NEEDS_QUANTITIES: "ORDER_PD_NEEDS_QUANTITIES",
   /** B692: a delivered / partly-delivered order whose delivery quantities were never recorded is not cancelled blind. 409. */
@@ -498,6 +499,9 @@ export const API_ERROR_CODES = {
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
   BILL_NEEDS_A_LINE: "BILL_NEEDS_A_LINE",
+  SPLIT_LINE_LOCKED: "SPLIT_LINE_LOCKED",
+  RECEIVE_PARTIAL_UNIT: "RECEIVE_PARTIAL_UNIT",
+  LOT_QTY_NOT_WHOLE: "LOT_QTY_NOT_WHOLE",
   BILL_NOT_EDITABLE: "BILL_NOT_EDITABLE",
   BILL_PO_SUPPLIER_LOCKED: "BILL_PO_SUPPLIER_LOCKED",
   BILL_NEVER_RECEIVED: "BILL_NEVER_RECEIVED",
@@ -516,6 +520,11 @@ export const API_ERROR_CODES = {
   INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
+  /**
+   * 409 from POST /inventory/purchase-orders (SA-1222): the body's `draftId` names a Create PO builder draft that is already gone (turned into a PO by
+   * another tab, or deleted). Raised before any PO row is written. The client shows "This draft was already turned into a PO or deleted. Check your POs."
+   */
+  PO_DRAFT_GONE: "PO_DRAFT_GONE",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
   /** B297 PR5: a money-bearing edit to a line whose regulated SALE rows sit in a LOCKED filing period. */
   FILED_PERIOD_LOCKED: "FILED_PERIOD_LOCKED",
@@ -538,6 +547,8 @@ export const API_ERROR_CODES = {
   ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
   INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
   EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
+  /** W-1286 (SA-1202 C28): an invoice email has no routable recipient (none on file, or an import sentinel). Read the code, never the message. */
+  INVOICE_RECIPIENT_MISSING: "INVOICE_RECIPIENT_MISSING",
   EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
   /** #2088: the same invoice was emailed too many times in a short window (429). */
   EMAIL_SEND_THROTTLED: "EMAIL_SEND_THROTTLED",
@@ -637,7 +648,6 @@ export const API_ERROR_CODES = {
   PARKED_REVERSALS_UNRESOLVED: "PARKED_REVERSALS_UNRESOLVED",
   PARKED_REVERSAL_UNRESOLVABLE: "PARKED_REVERSAL_UNRESOLVABLE",
   REGULATED_POD_REQUIRED: "REGULATED_POD_REQUIRED",
-  IMPORT_COLUMN_NEEDS_ENTITLEMENT: "IMPORT_COLUMN_NEEDS_ENTITLEMENT",
   INSIGHT_WINDOW_INVALID: "INSIGHT_WINDOW_INVALID",
   STATEMENT_APPLY_DISCARDED: "STATEMENT_APPLY_DISCARDED",
   STATEMENT_APPLY_NOT_MATCHED: "STATEMENT_APPLY_NOT_MATCHED",
@@ -880,6 +890,11 @@ export const API_ERROR_CODES = {
    */
   QTY_SPLIT_MISMATCH: "QTY_SPLIT_MISMATCH",
   /**
+   * 409 at the stop (approve a customer ADD_ITEM): the request carries a quantity and a box split that disagree, so merging
+   * it would bill the split's quantity. Nothing is written and the request stays open: the approver declines it (SA-1173 K2).
+   */
+  CHANGE_REQUEST_SPLIT_MISMATCH: "CHANGE_REQUEST_SPLIT_MISMATCH",
+  /**
    * 503 from create(): the order WAS saved but its credit-note sync exhausted its retries. The body carries
    * `orderId`: open that order and apply the credits there; a replay of the key never applies them.
    */
@@ -1095,6 +1110,8 @@ export const API_ERROR_CODES = {
    * BOTH ("Keep this one or open the other?"), never overwrites.
    */
   DRAFT_CHANGED: "DRAFT_CHANGED",
+  /** 404 from /drafts/:id (SA-1234): the draft itself is gone (or not the caller's). Any other 404 is a missing reference, not a gone draft. */
+  DRAFT_NOT_FOUND: "DRAFT_NOT_FOUND",
   /**
    * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
    * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier
@@ -1126,6 +1143,10 @@ export const API_ERROR_CODES = {
   EMAIL_CHANGE_ACCOUNT_INACTIVE: "EMAIL_CHANGE_ACCOUNT_INACTIVE",
   /** 400 from POST /auth/verify-email: the sign-up link is validly signed but past its 24h expiry. Get a new one from POST /public/tenants/resend-verification (B2). */
   VERIFICATION_LINK_EXPIRED: "VERIFICATION_LINK_EXPIRED",
+  /** 400 from POST /users/operator: a driver account is created from the Drivers page (it needs a driver profile), never from Add User. Nothing was written (B862, SA-1171 K2). */
+  DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
+  /** 409 from PATCH /users/:id: the person is a driver with an open run, so their role cannot move off Driver yet. Nothing was written (B862, SA-1171 K4). */
+  DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

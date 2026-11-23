@@ -11,7 +11,7 @@ import {
 } from "@nestjs/common";
 import { createHash } from "crypto";
 import { mayCompleteAtCounter, roundMoney, confirmedRemaining } from "@routeflow/pricing";
-import type { PickupCompleteResponse } from "@routeflow/types";
+import type { PickupCompleteResponse, PickupEmailOutcome } from "@routeflow/types";
 import { OrderStatus } from "@prisma/client";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { assertOrderReviewed } from "../offline/order-review-gate";
@@ -420,10 +420,18 @@ export class PickupCompleteService {
         ? await this.creditRecheck(order, gateNetted, planError, user).catch(() => null)
         : null;
 
-    const emailed = await this.completionEmail(id, invoices, walkIn, planError, user, handedOverAt);
+    const emailOutcome = await this.completionEmail(
+      id,
+      invoices,
+      walkIn,
+      planError,
+      user,
+      handedOverAt,
+    );
     return {
       ...this.respond(order, invoices, shown, handedOverAt, planError, alreadyPickedUp, duplicate),
-      ...(emailed ? { emailed: true } : {}),
+      ...(emailOutcome === "EMAILED" ? { emailed: true } : {}),
+      ...(emailOutcome ? { emailOutcome } : {}),
       ...(creditOverLimit ? { creditOverLimit } : {}),
     };
   }
@@ -478,7 +486,8 @@ export class PickupCompleteService {
    * (recorded, or on account by choice: no `planError`). SA-909: exactly once PER COMPLETION (keyed on its `completionAt`, SA-919),
    * reserved by one conditional update on the claim row and sent with NO lock held (pickup-complete-claim.ts); the #2088 send
    * record is the delivery fact if the flag never got written. The hand-over is committed: a failed send is logged, never
-   * thrown; the reservation is released so the same-key retry sends it.
+   * thrown; the reservation is released so the same-key retry sends it. W-1286 (SA-1202 C28): the answer names the outcome
+   * (undefined when no email was due); "no email on file" is the typed INVOICE_RECIPIENT_MISSING code, never the message text.
    */
   private async completionEmail(
     orderId: string,
@@ -487,29 +496,29 @@ export class PickupCompleteService {
     planError: string | undefined,
     user: JwtPayload,
     handedOverAt: Date | null,
-  ): Promise<boolean> {
+  ): Promise<PickupEmailOutcome | undefined> {
     if (walkIn || planError || invoices.length === 0 || !handedOverAt || !user.tenantId)
-      return false;
+      return undefined;
     const tenantId = user.tenantId;
     const claim = await this.prisma.forTenant().auditLog.findFirst({
       where: { tenantId, entityType: "Order", entityId: orderId, action: "PICKUP_COMPLETE_CLAIM" },
       orderBy: { createdAt: "asc" },
       select: { id: true, meta: true },
     });
-    if (!claim) return false;
+    if (!claim) return undefined;
     const completionFor = handedOverAt.toISOString();
     if (
       (claim.meta as { completionEmailedFor?: string } | null)?.completionEmailedFor ===
       completionFor
     )
-      return false;
+      return undefined;
     // SA-909 item 4: the email went but the flag was never written (markSent threw): record it, send nothing.
     if (await completionAlreadyRecorded(this.prisma, tenantId, invoices[0].id, handedOverAt)) {
       await finishCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
-      return false;
+      return undefined;
     }
     const at = await reserveCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
-    if (!at) return false; // emailed already, or another call holds a live reservation
+    if (!at) return undefined; // emailed already, or another call holds a live reservation
     try {
       const sent = await this.invoices.sendCompletionEmail(
         orderId,
@@ -518,10 +527,10 @@ export class PickupCompleteService {
       );
       if (!sent?.delivered) {
         await releaseCompletionEmail(this.prisma, tenantId, claim.id, completionFor, at);
-        return false;
+        return "NOT_SENT";
       }
       await finishCompletionEmail(this.prisma, tenantId, claim.id, completionFor);
-      return true;
+      return "EMAILED";
     } catch (e) {
       this.logger.warn(
         `pickup complete ${orderId}: completion email not sent (${(e as Error)?.message ?? e})`,
@@ -529,7 +538,8 @@ export class PickupCompleteService {
       await releaseCompletionEmail(this.prisma, tenantId, claim.id, completionFor, at).catch(
         () => undefined,
       );
-      return false;
+      const code = (e as { getResponse?: () => { code?: string } } | null)?.getResponse?.()?.code;
+      return code === API_ERROR_CODES.INVOICE_RECIPIENT_MISSING ? "NO_EMAIL_ON_FILE" : "NOT_SENT";
     }
   }
 

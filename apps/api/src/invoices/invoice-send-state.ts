@@ -337,6 +337,44 @@ export async function readSendState(
   return decideSendState(last, current, inv.sentAt);
 }
 
+/**
+ * B1372 (SA-1177 K2, owner box Q2 "Warn, re-send at hand-over"): the numbers of the invoices in THIS email that were emailed
+ * before and whose CONTENT differs now. The email then says so: an edit turned a sent invoice back into a draft, and the
+ * hand-over or delivery issue is the updated copy. `ids` = the invoice being sent, then a completion email's others.
+ * N1 (SA-1177 A2 K2): the stage is not content. The shared fingerprint hashes `variant` (#2088's detail read keeps that), so
+ * a recorded `fp` is compared with this invoice's fingerprint at BOTH stages: a draft emailed and then sent final with the
+ * same lines matches its "draft" copy and is unchanged. Only a tracked `v1:` record is compared (an older or untracked send
+ * cannot be checked). Best-effort: a failed read never stops the email, it only leaves the line out.
+ */
+export async function changedSinceSentNumbers(
+  prisma: PrismaLike,
+  ids: string[],
+): Promise<string[]> {
+  const db = prisma.forTenant();
+  const tenantId = prisma.getTenantId();
+  const changed: string[] = [];
+  try {
+    for (const id of ids) {
+      const last = await lastEmailRow(db, tenantId, id);
+      const sent = last ? metaOf(last).fp : null;
+      if (!sent?.startsWith(`${FINGERPRINT_VERSION}:`)) continue;
+      const inv = await db.invoice.findUnique({ where: { id }, include: FINGERPRINT_INCLUDE });
+      if (!inv) continue;
+      const same = ["draft", "final"].some(
+        (variant) => invoiceFingerprint({ ...inv, variant }) === sent,
+      );
+      if (!same && inv.invoiceNumber) changed.push(inv.invoiceNumber);
+    }
+  } catch (err) {
+    logger.warn(
+      `invoice ${ids[0]}: the changed-since-sent check failed, the email goes without it: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  return changed;
+}
+
 /** `sendEmail`'s arguments: (invoice id, address override, PDF variant, the sender's user id for the record). */
 export type SendEmailArgs = [
   id: string,

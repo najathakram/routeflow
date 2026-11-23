@@ -64,6 +64,7 @@ import {
   type CheckStatus,
 } from "@/lib/api/invoices";
 import { isPendingMirrorInvoice, pendingMirrorCopy } from "@/lib/invoice-pending-mirror";
+import { InvoicePreviewToggle } from "./InvoicePreviewToggle";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isStoreOnly } from "@/lib/counter-sale";
 import { canSendReminder } from "@/lib/invoice-reminder";
@@ -2287,29 +2288,12 @@ export default function InvoiceDetailPage() {
               </Button>
             )}
 
-            {/* Draft/Final version toggle — controls which stage the printed,
-              downloaded, or emailed PDF renders as (both available anytime). */}
-            <div
-              className="inline-flex items-center rounded-lg border border-surface-border p-0.5"
-              role="group"
-              aria-label="Invoice PDF version"
-            >
-              {(["draft", "final"] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setPdfVariant(v)}
-                  className={cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
-                    pdfVariant === v
-                      ? "bg-brand-500 text-white"
-                      : "text-navy/70 hover:bg-surface-raised",
-                  )}
-                >
-                  {v}
-                </button>
-              ))}
-            </div>
+            {/* B1372 K4.1: a preview of the printed / downloaded / emailed version; the invoice's own stage is the server's */}
+            <InvoicePreviewToggle
+              stage={defaultPdfVariant}
+              preview={pdfVariant}
+              onPreview={setPdfVariant}
+            />
 
             {/* Print — always available */}
             <Button
@@ -2776,6 +2760,8 @@ export default function InvoiceDetailPage() {
                 balanceDue={balanceDue}
                 isDraft={status === "DRAFT"}
                 itemCount={formatInvoiceLineCounts(invoice.items ?? [])}
+                accountBlock={invoice.accountBlock}
+                customerId={invoice.customerId}
               />
             </div>
 
@@ -2955,6 +2941,14 @@ export default function InvoiceDetailPage() {
                           {pmt.reference && (
                             <span className="text-xs text-navy/70">· {pmt.reference}</span>
                           )}
+                          {pmt.method !== "CREDIT_NOTE" && pmt.method !== "ADVANCE" && (
+                            <Link
+                              href={`/finance/payments/${pmt.id}`}
+                              className="text-xs font-medium text-brand-600 hover:underline"
+                            >
+                              View receipt
+                            </Link>
+                          )}
                         </div>
                         {pmt.noLongerFits && !isVoided && (
                           <p className="mt-1 text-xs font-medium text-warning">
@@ -2969,7 +2963,7 @@ export default function InvoiceDetailPage() {
                             className="mt-1 flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
                           >
                             <Paperclip className="h-3 w-3" />
-                            View receipt
+                            View image
                           </button>
                         )}
                         {pmt.method === "CREDIT_NOTE" &&

@@ -10,11 +10,10 @@ jest.mock("@anthropic-ai/sdk", () => ({
   default: jest.fn(() => ({ messages: { create: mockAnthropicCreate } })),
 }));
 
-// Mock invoice.service.ts to avoid loading @react-pdf/renderer (ESM-only)
-jest.mock("./invoice.service", () => ({
-  InvoiceService: jest.fn().mockImplementation(() => ({
-    generateInvoice: jest.fn(),
-    getPresignedUrl: jest.fn(),
+// Mock invoice-pdf.service.ts to avoid loading @react-pdf/renderer (ESM-only)
+jest.mock("../invoices/invoice-pdf.service", () => ({
+  InvoicePdfService: jest.fn().mockImplementation(() => ({
+    getOrGenerate: jest.fn(),
   })),
 }));
 
@@ -38,7 +37,7 @@ import {
   writeIssueBaseLabels,
   writeIssueDisplayUnits,
 } from "../invoices/invoice-display-unit";
-import { InvoiceService } from "./invoice.service";
+import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { StorageService } from "../storage/storage.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -79,12 +78,12 @@ const MOCK_INVOICE = {
 describe("BookkeepingService", () => {
   let service: BookkeepingService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let invoiceService: { getPresignedUrl: jest.Mock };
+  let invoiceService: { getOrGenerate: jest.Mock };
   let recordAiUsage: jest.Mock;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    invoiceService = { getPresignedUrl: jest.fn() };
+    invoiceService = { getOrGenerate: jest.fn() };
     recordAiUsage = jest.fn();
     mockAnthropicCreate.mockReset();
 
@@ -100,7 +99,7 @@ describe("BookkeepingService", () => {
         },
         BookkeepingService,
         { provide: PrismaService, useValue: prisma },
-        { provide: InvoiceService, useValue: invoiceService },
+        { provide: InvoicePdfService, useValue: invoiceService },
         {
           provide: StorageService,
           useValue: {
@@ -607,16 +606,11 @@ describe("BookkeepingService", () => {
   });
 
   describe("getPdfUrl", () => {
-    it("should return url when PDF exists", async () => {
-      invoiceService.getPresignedUrl.mockResolvedValue("https://r2.example.com/invoice.pdf");
-      const result = await service.getPdfUrl("txn-1");
+    it("returns the tenant renderer's url for an invoice id", async () => {
+      invoiceService.getOrGenerate.mockResolvedValue("https://r2.example.com/invoice.pdf");
+      const result = await service.getPdfUrl("inv-1");
       expect(result).toEqual({ url: "https://r2.example.com/invoice.pdf" });
-    });
-
-    it("should return null when PDF is not yet generated", async () => {
-      invoiceService.getPresignedUrl.mockResolvedValue(null);
-      const result = await service.getPdfUrl("txn-1");
-      expect(result).toBeNull();
+      expect(invoiceService.getOrGenerate).toHaveBeenCalledWith("inv-1");
     });
   });
 

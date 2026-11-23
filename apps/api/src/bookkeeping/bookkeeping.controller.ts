@@ -90,15 +90,7 @@ export class BookkeepingController {
 
   @Get("transactions/:id/pdf")
   async getInvoicePdf(@Param("id") id: string) {
-    const result = await this.bookkeepingService.getPdfUrl(id);
-    if (!result) {
-      // PDF not yet generated — return 202 Accepted
-      throw new HttpException(
-        { message: "Invoice PDF not yet available — generation in progress" },
-        HttpStatus.ACCEPTED,
-      );
-    }
-    return result;
+    return this.bookkeepingService.getPdfUrl(id);
   }
 
   // ── Expense Categories ──

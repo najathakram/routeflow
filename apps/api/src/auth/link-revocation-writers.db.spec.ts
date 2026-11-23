@@ -109,6 +109,7 @@ describeDb("account writers burn live links through the real tenant transaction 
     for (const id of [tenantId, otherTenantId]) {
       if (!id) continue;
       await prisma.customer.deleteMany({ where: { tenantId: id } });
+      await prisma.driver.deleteMany({ where: { tenantId: id } }); // a DRIVER user now has a Driver row (B862)
       await prisma.user.deleteMany({ where: { tenantId: id } }); // tokens cascade
       await prisma.tenant.deleteMany({ where: { id } });
     }

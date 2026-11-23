@@ -7,6 +7,12 @@ import { TOUCH_FIRST_QUERY } from "@/lib/touch-first";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
+/** B1373: a till line shows its quantity in the order row's number field (no "× N" text). */
+const qtyOf = (line: HTMLElement) =>
+  Number(
+    (within(line).getByRole("spinbutton", { name: /Set quantity of/ }) as HTMLInputElement).value,
+  );
+
 /**
  * SA-1059: the counter's continuous camera on a phone. The camera HOOK is mocked (jsdom has no camera), so a test drives the
  * decoded frames itself, at a clock it controls; everything behind the hook is the real strip, queue, ladder and screen.
@@ -226,6 +232,11 @@ const lines = () =>
   within(screen.getByRole("list", { name: "Items" }))
     .queryAllByRole("listitem")
     .filter((li) => li.textContent !== "No items yet.");
+/** B1373: a boxed line's whole-boxes and loose-pieces fields (the order row's controls). */
+const boxesPieces = () => [
+  (within(lines()[0]).getByTitle(/^Number of whole /) as HTMLInputElement).value,
+  (within(lines()[0]).getByRole("spinbutton", { name: /^Extra / }) as HTMLInputElement).value,
+];
 const deferred = <T,>() => {
   let resolve!: (v: T) => void;
   let reject!: (e: unknown) => void;
@@ -267,8 +278,8 @@ describe("C1/C2: a decoded code is looked up whole, never parsed as typed text",
     // the next scan is NOT multiplied by 123
     hold("200000000001");
     await waitFor(() => expect(lines()).toHaveLength(1));
-    expect(lines()[0]).toHaveTextContent("× 1");
-    expect(lines()[0]).not.toHaveTextContent("× 123");
+    expect(qtyOf(lines()[0])).toBe(1);
+    expect(qtyOf(lines()[0])).not.toBe(123);
   });
 
   it("C1: decode '123' that IS a product's exact code adds it once, as a code", async () => {
@@ -277,7 +288,7 @@ describe("C1/C2: a decoded code is looked up whole, never parsed as typed text",
     hold("123");
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect(lines()[0]).toHaveTextContent("Sample Cola");
-    expect(lines()[0]).toHaveTextContent("× 1");
+    expect(qtyOf(lines()[0])).toBe(1);
     expect(screen.queryByTestId("pending-qty")).toBeNull();
   });
 
@@ -291,7 +302,7 @@ describe("C1/C2: a decoded code is looked up whole, never parsed as typed text",
       renderPhoneTill();
       hold(decoded);
       await waitFor(() => expect(lines()).toHaveLength(1));
-      expect(lines()[0]).toHaveTextContent("× 1");
+      expect(qtyOf(lines()[0])).toBe(1);
       expect(barcodeCalls()).toContain(decoded);
       expect(barcodeCalls()).not.toContain("1234");
     },
@@ -311,9 +322,9 @@ describe("C3/C4: camera and wedge share ONE queue", () => {
     gate.resolve(COLA);
     await waitFor(() => expect(lines()).toHaveLength(2));
     expect(lines()[0]).toHaveTextContent("Sample Cola");
-    expect(lines()[0]).toHaveTextContent("× 2");
+    expect(qtyOf(lines()[0])).toBe(2);
     expect(lines()[1]).toHaveTextContent("Sample Chips");
-    expect(lines()[1]).toHaveTextContent("× 1");
+    expect(qtyOf(lines()[1])).toBe(1);
     expect(barcodeCalls()).toEqual(["200000000001", "200000000002", "200000000001"]);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$9.00");
   });
@@ -325,7 +336,7 @@ describe("C3/C4: camera and wedge share ONE queue", () => {
     expect(screen.getByTestId("pending-qty")).toHaveTextContent("×3");
     hold("200000000001");
     await waitFor(() => expect(lines()).toHaveLength(1));
-    expect(lines()[0]).toHaveTextContent("× 3");
+    expect(qtyOf(lines()[0])).toBe(3);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$7.50");
     expect(screen.queryByTestId("pending-qty")).toBeNull();
   });
@@ -337,10 +348,10 @@ describe("C5/C6: the repeat gap, the aim box and the steady read", () => {
     renderPhoneTill();
     hold("200000000001", 20);
     await waitFor(() => expect(lines()).toHaveLength(1));
-    expect(lines()[0]).toHaveTextContent("× 1");
+    expect(qtyOf(lines()[0])).toBe(1);
     clock += 700; // out of view for longer than the 0.6 s repeat gap
     hold("200000000001", 5);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(2));
     expect(barcodeCalls()).toEqual(["200000000001", "200000000001"]);
   });
 
@@ -369,17 +380,17 @@ describe("C7: the scanned level decides the line, as it does for the wedge", () 
     renderPhoneTill();
     hold("400500600028");
     await waitFor(() => expect(lines()).toHaveLength(1));
-    expect(lines()[0]).toHaveTextContent("0 boxes + 1 pcs");
+    expect(boxesPieces()).toEqual(["0", "1"]);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$1.25");
 
     clock += 1000;
     hold("400500600011");
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("1 box + 1 pcs"));
+    await waitFor(() => expect(boxesPieces()).toEqual(["1", "1"]));
     expect(screen.getByTestId("running-total")).toHaveTextContent("$31.25");
 
     clock += 1000;
     hold("SHARED");
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("2 boxes + 1 pcs"));
+    await waitFor(() => expect(boxesPieces()).toEqual(["2", "1"]));
     expect(screen.getByTestId("running-total")).toHaveTextContent("$61.25");
   });
 });
@@ -405,7 +416,7 @@ describe("C8: the camera pauses while the till waits on the clerk, and a held co
     });
     expect(screen.queryByTestId("counter-scan-picker")).toBeNull();
     expect(lines()).toHaveLength(1);
-    expect(lines()[0]).toHaveTextContent("× 1");
+    expect(qtyOf(lines()[0])).toBe(1);
     expect(barcodeCalls().filter((c) => c === "COLA")).toHaveLength(1);
   });
 
@@ -428,7 +439,7 @@ describe("C8: the camera pauses while the till waits on the clerk, and a held co
       await new Promise((r) => setTimeout(r, 30));
     });
     expect(lines()).toHaveLength(1);
-    expect(lines()[0]).toHaveTextContent("× 1");
+    expect(qtyOf(lines()[0])).toBe(1);
     expect(barcodeCalls().filter((c) => c === "200000000001")).toHaveLength(2); // the scan and its one retry
   });
 
@@ -452,7 +463,7 @@ describe("C8: the camera pauses while the till waits on the clerk, and a held co
         await new Promise((r) => setTimeout(r, 30));
       });
       expect(lines()).toHaveLength(1);
-      expect(lines()[0]).toHaveTextContent("\u00d7 1");
+      expect(qtyOf(lines()[0] as HTMLElement)).toBe(1);
       expect(barcodeCalls().filter((c) => c === "200000000001")).toHaveLength(2); // the scan and its one retry
     },
   );
@@ -473,7 +484,7 @@ describe("C8: the camera pauses while the till waits on the clerk, and a held co
       });
       expect(screen.queryByTestId("counter-scan-picker")).toBeNull();
       expect(lines()).toHaveLength(1);
-      expect(lines()[0]).toHaveTextContent("\u00d7 1");
+      expect(qtyOf(lines()[0] as HTMLElement)).toBe(1);
       expect(barcodeCalls().filter((c) => c === "COLA")).toHaveLength(1);
     },
   );
@@ -639,7 +650,7 @@ describe("C10: a frame is dropped while the clerk is doing something else", () =
       await new Promise((r) => setTimeout(r, 30));
     });
     expect(lines()).toHaveLength(1);
-    expect(lines()[0]).toHaveTextContent("× 1");
+    expect(qtyOf(lines()[0])).toBe(1);
     expect(barcodeCalls()).toEqual(["200000000001"]);
   });
 });
@@ -679,7 +690,7 @@ describe("C10 clock: only the time the code was in view is frozen", () => {
     hold("200000000001", 5);
     await settle();
     expect(lines()).toHaveLength(1);
-    expect(lines()[0]).toHaveTextContent("\u00d7 1");
+    expect(qtyOf(lines()[0] as HTMLElement)).toBe(1);
   });
 
   it("away for 5 s after a block (no frames at all), the same code is a new scan when it comes back", async () => {
@@ -688,7 +699,7 @@ describe("C10 clock: only the time the code was in view is frozen", () => {
     tender.blur();
     clock += 5000; // nothing is in front of the camera for 5 s
     hold("200000000001", 5);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("\u00d7 2"));
+    await waitFor(() => expect(qtyOf(lines()[0] as HTMLElement)).toBe(2));
     expect(barcodeCalls()).toEqual(["200000000001", "200000000001"]);
   });
 });
@@ -788,7 +799,7 @@ describe("C11: on a touch-first device the keyboard is never raised for the cler
       await new Promise((r) => setTimeout(r, 30));
     });
     expect(document.activeElement).toBe(document.body);
-    expect(lines()[0]).toHaveTextContent("\u00d7 3");
+    expect(qtyOf(lines()[0] as HTMLElement)).toBe(3);
     hold("200000000002"); // a frame is no longer dropped as "the clerk is typing"
     await waitFor(() => expect(lines()).toHaveLength(2));
   });
@@ -1100,7 +1111,7 @@ describe("W-1041: the new-customer window pauses the camera", () => {
         hold("200000000001", 10);
         await settle();
         expect(rows()).toHaveLength(1);
-        expect(rows()[0]).toHaveTextContent("\u00d7 1");
+        expect(qtyOf(rows()[0] as HTMLElement)).toBe(1);
         expect(barcodeCalls()).toEqual(["200000000001"]);
         hold("200000000002", 5); // a new accepted frame after the window scans normally
         await waitFor(() => expect(rows()).toHaveLength(2));
@@ -1171,7 +1182,7 @@ describe("SA-1071 K1/K3/K4: a held code, one step back from a read, and a closed
     await waitFor(() => expect(lines()).toHaveLength(1));
     expect({
       cue: within(strip()).queryAllByText(HELD_CUE).length,
-      qty: lines()[0].textContent?.includes("× 1"),
+      qty: qtyOf(lines()[0]) === 1,
       beeps: (playScanCue as jest.Mock).mock.calls.length,
     }).toEqual({ cue: 1, qty: true, beeps: 1 });
   });
@@ -1184,17 +1195,17 @@ describe("SA-1071 K1/K3/K4: a held code, one step back from a read, and a closed
     await waitFor(() => expect(within(strip()).queryAllByText(HELD_CUE)).toHaveLength(0), {
       timeout: 3000,
     });
-    expect(lines()[0]).toHaveTextContent("× 1");
+    expect(qtyOf(lines()[0])).toBe(1);
   });
 
   it("K1: a code that is lifted and shown again is a new count and carries no cue at that moment", async () => {
     barcodeFor["200000000001"] = () => COLA;
     renderPhoneTill();
     hold("200000000001", 12);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(1));
     clock += 700;
     hold("200000000001", 4);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(2));
   });
 
   it("K3: Undo on the picture takes back a read that made the line: the line goes", async () => {
@@ -1219,13 +1230,13 @@ describe("SA-1071 K1/K3/K4: a held code, one step back from a read, and a closed
     barcodeFor["200000000001"] = () => COLA;
     renderPhoneTill();
     hold("200000000001", 4);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(1));
     clock += 700;
     hold("200000000001", 4);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(2));
     await waitFor(() => expect(undoBtn()).not.toBeNull());
     fireEvent.click(undoBtn()!);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(1));
     expect(lines()).toHaveLength(1);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$2.50");
   });
@@ -1236,9 +1247,9 @@ describe("SA-1071 K1/K3/K4: a held code, one step back from a read, and a closed
     hold("200000000001", 4);
     await waitFor(() => expect(lines()).toHaveLength(1));
     fireEvent.click(screen.getByRole("button", { name: "Add one Sample Cola" }));
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(2));
     fireEvent.click(undoBtn()!);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(1));
     expect(lines()).toHaveLength(1);
   });
 
@@ -1291,14 +1302,14 @@ describe("SA-1071 K1/K3/K4: a held code, one step back from a read, and a closed
     barcodeFor["200000000001"] = () => COLA;
     renderPhoneTill();
     hold("200000000001", 4);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(1));
     await wedge("3");
     clock += 700;
     hold("200000000001", 4);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 4"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(4));
     await waitFor(() => expect(undoBtn()).not.toBeNull());
     fireEvent.click(undoBtn()!);
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 1"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(1));
     expect(lines()).toHaveLength(1);
   });
 

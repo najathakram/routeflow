@@ -302,7 +302,7 @@ describe("W-853 the history button on a counter line", () => {
     await pick("Walk-in Record");
     await scan("JUICE");
     expect(historyButtons()).toHaveLength(0);
-    expect(interactiveCount("Cola")).toBe(7); // remove, 2 steppers, qty, Change price, Add note + the move handle (two lines): no history button
+    expect(interactiveCount("Cola")).toBe(6); // remove, 2 steppers, qty, Add note + the move handle (two lines): no history button (the price itself is a tap target, not a button)
     expect(historyCalls()).toHaveLength(0);
   });
 
@@ -324,13 +324,13 @@ describe("W-853 the history button on a counter line", () => {
     },
   );
 
-  it("an OPERATOR gets it too: the button is one more tab stop beside Change price", async () => {
+  it("an OPERATOR gets it too: the button is one more tab stop beside the Change price target", async () => {
     mockUser = OPERATOR;
     renderTill(<CounterSaleScreen />);
     await scan("COLA");
     await pick("Beta Deli");
     expect(historyButtons()).toHaveLength(1);
-    expect(interactiveCount("Cola")).toBe(7);
+    expect(interactiveCount("Cola")).toBe(6); // remove, 2 steppers, qty, Add note, History
     expect(historyButtons()[0]).toBeEnabled();
   });
 
@@ -464,9 +464,11 @@ describe("W-853 Use this price: a line that needs a reason opens the dialog, and
   it("SA-942 MUST 13: a history BOX price on a 24-pack line of 1 box + 6 pieces is computeLineSubtotal, never qty x price", async () => {
     renderTill(<CounterSaleScreen />);
     await scan("CRATE");
-    for (let i = 0; i < 6; i++) {
-      fireEvent.click(screen.getByRole("button", { name: "Add a piece to Crate" }));
-    }
+    // B1373: no one-tap piece stepper on a boxed line: open the loose-pieces field and type 6
+    fireEvent.click(within(lineOf("Crate")).getByRole("button", { name: /^\+ .*: add extra / }));
+    fireEvent.change(within(lineOf("Crate")).getByRole("spinbutton", { name: /^Extra / }), {
+      target: { value: "6" },
+    });
     await waitFor(() => expect(total()).toHaveTextContent("$60.00")); // 48 + 6 x (48/24)
     await pick("Beta Deli");
     fireEvent.click(await priceBtn(await openHistory("Crate"), "$36.00")); // SA-1071 P1: at once
@@ -893,9 +895,16 @@ describe("W-853 structure: one component, no local copy of its rules", () => {
       .filter((f) => /^(Counter|useCounter|counter-).*\.tsx?$/.test(f) && !/\.test\./.test(f))
       .map((f) => ({ f, src: fs.readFileSync(path.join(dir, f), "utf8") }));
 
-  it("the counter row imports PriceHistoryButton from components/PriceHistory", () => {
+  it("the counter row draws the order row, which imports PriceHistoryButton from components/PriceHistory", () => {
+    // B1373: the till lists its lines through the order builder's LineItemRow; the history button is that row's one
     const row = fs.readFileSync(path.join(dir, "CounterLineRow.tsx"), "utf8");
-    expect(row).toMatch(
+    expect(row).toMatch(/import \{[^}]*\bLineItemRow\b[^}]*\} from "@\/components\/LineItemRow"/);
+    expect(row).toMatch(/customerPriceHistory=/);
+    const orderRow = fs.readFileSync(
+      path.join(dir, "../../../../components/LineItemRow.tsx"),
+      "utf8",
+    );
+    expect(orderRow).toMatch(
       /import \{[^}]*\bPriceHistoryButton\b[^}]*\} from "@\/components\/PriceHistory"/,
     );
   });

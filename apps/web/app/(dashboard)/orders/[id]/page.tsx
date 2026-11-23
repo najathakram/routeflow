@@ -70,6 +70,7 @@ import { LicenseGuardModal } from "../_components/LicenseGuardModal";
 import { CancelOrderButton } from "./CancelOrderButton";
 import { OrderShipmentSection } from "./_components/OrderShipmentSection";
 import { UnmarkShippedConfirm } from "./UnmarkShippedConfirm";
+import { useSentInvoiceEditConfirm } from "./_components/SentInvoiceEditConfirm";
 import { orderHasFinalInvoice } from "@/lib/unmark-shipped";
 import { orderActionAccess } from "./order-action-access";
 import { ShippedOrderExits } from "./ShippedOrderExits";
@@ -286,7 +287,8 @@ export default function OrderDetailPage() {
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
-    if (overpay.capture(err) || stale.capture(err) || rw.handle(err, retry)) return;
+    if (overpay.capture(err) || stale.capture(err) || sentEdit.capture(err, retry)) return; // B1372 N2
+    if (rw.handle(err, retry)) return;
     const restricted = parseSellingRestricted(err);
     if (restricted) {
       setRestrictedBlock(restricted);
@@ -330,9 +332,10 @@ export default function OrderDetailPage() {
     if (n > 0) toast({ title: "Someone else changed this order — re-check it", variant: "error" });
   });
   const updateItems = useUpdateOrderItems({
-    localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e),
+    localErrorToast: (e) => overpay.ownsToast(e) || stale.ownsToast(e) || sentEdit.ownsToast(e),
   });
   const savingItems = updateItems.isPending;
+  const sentEdit = useSentInvoiceEditConfirm(order?.editRevertsSentInvoices, isEditing); // B1372 K2
   const saveLatchRef = React.useRef(false);
   const [focusFirstQty, setFocusFirstQty] = React.useState(false);
   const [editItems, setEditItems] = React.useState<EditItemState[]>([]);
@@ -652,6 +655,7 @@ export default function OrderDetailPage() {
     // id). F30/R10 (B198) made the flag explicit-only, so omitting it would merge
     // too; sending false states the intent at the call site rather than relying on
     // the server default.
+    if (sentEdit.ask(() => handleSaveItems())) return; // B1372 K2: an already-sent invoice turns back into a draft
     saveLatchRef.current = true;
     const onSaved = () => {
       markLinesSaved(); // r5 N10: bring the saved lines into view once the editor closes
@@ -669,6 +673,7 @@ export default function OrderDetailPage() {
         items: updates,
         replaceAll: false,
         expectedRevisionNumber: stale.expected(), // row 372: the revision this editor loaded
+        ...sentEdit.ack(), // B1372 N2: the confirmed revert
         ...(feeChanged ? { shippingFee: editShippingFee } : {}),
         // Credit-note selection: only sent when the operator actually touched
         // the picker — undefined on the wire leaves the server's stored
@@ -1583,6 +1588,7 @@ export default function OrderDetailPage() {
                                     // lines. Mirrors handleSaveItems.
                                     replaceAll: false,
                                     expectedRevisionNumber: stale.expected(), // row 372 MF4
+                                    ...sentEdit.ack(), // B1372 N2
                                     ...(feeChanged ? { shippingFee: editShippingFee } : {}),
                                     // Same dual-path threading as handleSaveItems — the
                                     // line payload is shared (buildItemUpdates) but this
@@ -1607,7 +1613,7 @@ export default function OrderDetailPage() {
                                 doPublish();
                               }
                             };
-                            saveThenPublish();
+                            if (!sentEdit.ask(saveThenPublish)) saveThenPublish(); // B1372 K2
                           }}
                           disabled={layerBlocked}
                           loading={updateItems.isPending || updateStatus.isPending}
@@ -2144,6 +2150,7 @@ export default function OrderDetailPage() {
         }}
       />
 
+      {sentEdit.dialog}
       <UnmarkShippedConfirm
         open={showUnmarkConfirm}
         onClose={() => setShowUnmarkConfirm(false)}

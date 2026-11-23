@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
@@ -150,9 +150,12 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
   it("a boxed line with loose pieces re-prices through the box proration, never qty x price", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("WATER");
-    for (let i = 0; i < 3; i++) {
-      fireEvent.click(screen.getByRole("button", { name: "Add a piece to Water" }));
-    }
+    // B1373: no one-tap piece stepper on a boxed line: open the loose-pieces field and type 3
+    const line = screen.getByRole("button", { name: "Remove Water" }).closest("li") as HTMLElement;
+    fireEvent.click(within(line).getByRole("button", { name: /^\+ .*: add extra / }));
+    fireEvent.change(within(line).getByRole("spinbutton", { name: /^Extra / }), {
+      target: { value: "3" },
+    });
     await waitFor(() => expect(total()).toHaveTextContent("$15.00")); // 1 box + 3 pcs at 12/box
     pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$11.25")); // 9 + 3 x (9/12)
@@ -165,6 +168,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     await scanBoth();
     pickAcme();
     await waitFor(() => expect(screen.getByTestId("counter-reprice-busy")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the buttons keep their "Complete" names (an empty tender reads "Put on account")
     expect(completeBtn()).toBeDisabled();
     expect(screen.getByRole("button", { name: /Complete & next sale/ })).toBeDisabled();
     expect(total()).toHaveTextContent("$14.50"); // old prices until the lookup answers
@@ -183,6 +187,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     expect(alert).toHaveTextContent("Couldn't update prices");
     expect(alert.textContent).not.toMatch(/boom/); // fixed copy, never the raw error
     expect(total()).toHaveTextContent("$14.50");
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the button keeps its "Complete" name
     expect(completeBtn()).toBeDisabled();
     pricesFor = async () => ({ data: [] });
     fireEvent.click(screen.getByRole("button", { name: "Retry price update" }));
@@ -212,6 +217,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     await waitFor(() => expect(total()).toHaveTextContent("$14.50"));
     expect(screen.getByText("Acme Cafe")).toBeInTheDocument(); // still the customer on the sale
     expect(screen.queryByTestId("counter-reprice-note")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the button keeps its "Complete" name
     expect(completeBtn()).not.toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
     await waitFor(() => expect(screen.getByText("Walk-in customer")).toBeInTheDocument());
@@ -264,6 +270,7 @@ describe("SA-1071 C3: changing the buyer to Walk-in can be undone", () => {
     await waitFor(() => expect(total()).toHaveTextContent("$11.00"));
     expect(seen()).toEqual({ buyer: "Acme Cafe", walkInLines: [] });
     expect(screen.getByTestId("counter-buyer-choice")).toHaveAttribute("data-kind", "customer");
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the button keeps its "Complete" name
     expect(completeBtn()).not.toBeDisabled();
   });
 

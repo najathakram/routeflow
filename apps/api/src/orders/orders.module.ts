@@ -1,5 +1,4 @@
 import { Module } from "@nestjs/common";
-import { BullModule } from "@nestjs/bull";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import { OrdersController } from "./orders.controller";
@@ -71,7 +70,6 @@ import { StorageModule } from "../storage/storage.module";
 @Module({
   imports: [
     AuthModule,
-    BullModule.registerQueue({ name: "invoices" }),
     GatewaysModule,
     NotificationsModule,
     InvoicesModule,

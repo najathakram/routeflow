@@ -168,7 +168,7 @@ describe("#3207 D1/D2/D6: carrier order write paths", () => {
     const [id, tx, opts] = invoices.revertLinkedInvoicesForOrderEdit.mock.calls[0];
     expect(id).toBe("ord-1");
     expect(tx).toBeDefined(); // the edit's own transaction, never a separate connection
-    expect(opts).toEqual({ lockRows: true });
+    expect(opts).toEqual({ lockRows: true, requireAck: true }); // B1372 N2: an unconfirmed staff edit
   });
 
   it("#3219 S4: a replayed merge into a reopened with-carrier order re-syncs in place, as the fold did", async () => {

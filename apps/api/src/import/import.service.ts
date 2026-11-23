@@ -7,7 +7,11 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
-import type { ImportFamilyRowInfo, ImportFamilySummary } from "@routeflow/types";
+import type {
+  ImportFamilyRowInfo,
+  ImportFamilySummary,
+  ImportSkippedColumn,
+} from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { calendarStampFromInput } from "../common/calendar-date";
@@ -26,11 +30,17 @@ import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
 import {
+  IMPORT_FAMILY_TOBACCO_HINT,
   ProductFamilyImportService,
+  importFamilyTobaccoAddonReason,
   type FamilyDecision,
   type FamilyPlan,
   type FamilyRowInput,
 } from "./product-family-import.service";
+import {
+  ImportRequirementLabelService,
+  type ImportRequirementLabels,
+} from "./import-requirement-labels";
 import { roundMoney, roundUnitCost } from "@routeflow/pricing";
 import { stripParentPrefix } from "../products/product-variant-name";
 import { ProductImportJobService } from "./product-import-job.service";
@@ -78,7 +88,7 @@ function normalizeNameKey(name: string): string {
 /**
  * B858/B859 file-level entitlement gate (import.service.ts's `importProducts`): tells a genuine
  * entitlement DENIAL apart from an entitlement-check OUTAGE, so the gate's catch never turns an
- * outage into a false "needs the flag" 403.
+ * outage into a false "needs the flag" skip (SA-1193: a denial skips the column; an outage refuses the file).
  *
  * The three asserts this backs (`ProductsService.assertMsrpAllowed` / `assertCanFlagTobacco` /
  * `assertReorderAllowed`) only ever throw a `ForbiddenException` for an actual denial — a plain
@@ -132,7 +142,7 @@ import {
 import { ensureWriteOffEvent } from "../invoices/invoice-write-off";
 import { lockInvoiceRow } from "../invoices/invoice-send-guard";
 import { hasOpenReviewBlock } from "../orders/offline/order-review-gate";
-import { columnEntitlementDenied } from "./import-column-entitlement";
+import { skipDeniedGatedColumns } from "./import-gated-columns";
 import { stampInvoicePositions } from "../invoices/invoice-line-position";
 import { maskedIdentity } from "../customers/customer-identity-fields";
 
@@ -272,6 +282,8 @@ export class ImportService {
     @Optional() private readonly familyImport?: ProductFamilyImportService,
     // SA-823 section 5: the queue a large family-import apply runs on (absent in specs that never regroup in bulk).
     @Optional() private readonly productImportJobs?: ProductImportJobService,
+    // SA-1193 A1-2: the billing page's names for what a skipped column needs (absent in specs where no gate denies).
+    @Optional() private readonly requirementLabels?: ImportRequirementLabelService,
   ) {}
 
   private parseCsv(buffer: Buffer): any[] {
@@ -2529,9 +2541,10 @@ export class ImportService {
    *
    * Every write goes through `ProductsService.create`/`update` (SA-284 a — no raw
    * `prisma.product.create`), so the addon/plan-flag guards, sku/barcode/unitSku collision
-   * checks, and `emitProductChanged` always run. A gated column present in the header (Tobacco /
-   * MSRP) refuses the WHOLE file before any write, identically in `dryRun` and real (SA-284 b). A
-   * bad cell skips only that ROW with a reason; blank never clears an existing value.
+   * checks, and `emitProductChanged` always run. A gated column (MSRP / Tobacco / Reorder) the tenant
+   * lacks is dropped and named in `skippedColumns` before any write, identically in `dryRun` and real
+   * (SA-1193, superseding SA-284 b's whole-file refusal for denials; an entitlement outage still refuses).
+   * A bad cell skips only that ROW with a reason; blank never clears an existing value.
    */
   async importProducts(
     buffer: Buffer,
@@ -2559,6 +2572,8 @@ export class ImportService {
     skippedRows: { row: number; label: string; reason: string }[];
     warnings: string[];
     unknownColumns: string[];
+    /** SA-1193: every header not imported because the tenant lacks what it needs (preview, apply and queued alike). */
+    skippedColumns: ImportSkippedColumn[];
     dryRun: boolean;
     /** SA-823: the family header block, present only when the file has a Family column. */
     families?: ImportFamilySummary;
@@ -2568,47 +2583,52 @@ export class ImportService {
     const dryRun = !!opts?.dryRun;
     const rawRows = this.parseCsv(buffer);
     const headers = rawRows.length > 0 ? Object.keys(rawRows[0]) : [];
-    const resolved = resolveColumns(headers, PRODUCT_COLUMNS);
-
-    // ── File-level entitlement gate — BEFORE any write-capable query, identical wording and
-    // behavior in dryRun and real (SA-284 b) ──────────────────────────────────────────────────
-    if (resolved.byField.msrp) {
-      try {
-        await this.productsService.assertMsrpAllowed();
-      } catch (e) {
-        if (!isEntitlementDenial(e)) throw e;
-        throw columnEntitlementDenied(
-          "MSRP",
-          resolved.byField.msrp,
-          `Column "${resolved.byField.msrp}" needs the MSRP plan flag; remove the column or enable it`,
-        );
-      }
-    }
-    if (resolved.byField.isTobacco) {
-      try {
-        await this.productsService.assertCanFlagTobacco(true);
-      } catch (e) {
-        if (!isEntitlementDenial(e)) throw e;
-        throw columnEntitlementDenied(
-          "TOBACCO_DEALER",
-          resolved.byField.isTobacco,
-          `Column "${resolved.byField.isTobacco}" needs tobacco_dealer add-on; remove the column or enable it`,
-        );
-      }
-    }
-    const reorderColumn = resolved.byField.reorderPoint ?? resolved.byField.reorderQty;
-    if (reorderColumn) {
-      try {
-        await this.productsService.assertReorderAllowed();
-      } catch (e) {
-        if (!isEntitlementDenial(e)) throw e;
-        throw columnEntitlementDenied(
-          "FORECASTING",
-          reorderColumn,
-          `Column "${reorderColumn}" needs the forecasting plan flag; remove the column or enable it`,
-        );
-      }
-    }
+    // ── SA-1193 K1: file-level entitlement gates — BEFORE any write-capable query, identical in dryRun and real. Every
+    // gate whose column is present is asked (no short-circuit); a denied column is dropped and named, an outage refuses.
+    const {
+      resolved,
+      skippedColumns: skips,
+      verdicts,
+    } = await skipDeniedGatedColumns(
+      headers,
+      resolveColumns(headers, PRODUCT_COLUMNS),
+      PRODUCT_COLUMNS,
+      {
+        msrp: () => this.productsService.assertMsrpAllowed(),
+        tobacco: () => this.productsService.assertCanFlagTobacco(true),
+        forecasting: () => this.productsService.assertReorderAllowed(),
+      },
+      isEntitlementDenial,
+    );
+    // SA-1193 A1-2: the billing page's names, looked up at most once per import and only when a name is needed.
+    let labelsOnce: Promise<ImportRequirementLabels> | undefined;
+    const labels = () => {
+      if (!this.requirementLabels)
+        throw new Error("ImportRequirementLabelService is not available");
+      return (labelsOnce ??= this.requirementLabels.labels());
+    };
+    const skippedColumns: ImportSkippedColumn[] =
+      skips.length === 0
+        ? []
+        : await labels().then((l) => skips.map((s) => ({ ...s, label: l[s.requires] })));
+    // SA-1193 A1-1: the file's ONE Tobacco entitlement verdict. K1's answer when the file has the column; otherwise
+    // asked once, and only if a plain row meets a tobacco family. A denial picks the add-on reason; an outage refuses.
+    let tobaccoOnce: Promise<boolean> | undefined =
+      verdicts.tobacco === undefined ? undefined : Promise.resolve(verdicts.tobacco);
+    const tobaccoAllowed = () =>
+      (tobaccoOnce ??= (async () => {
+        try {
+          await this.productsService.assertCanFlagTobacco(true);
+          return true;
+        } catch (e) {
+          if (!isEntitlementDenial(e)) throw e;
+          return false;
+        }
+      })());
+    const plainIntoTobaccoReason = async () =>
+      (await tobaccoAllowed())
+        ? IMPORT_FAMILY_TOBACCO_HINT
+        : importFamilyTobaccoAddonReason((await labels()).TOBACCO_DEALER);
 
     // SA-823: a Family column is refused for the WHOLE file (too many rows, or family pricing on) before any lookup.
     const hasFamilyColumn = !!resolved.byField.family;
@@ -2670,6 +2690,7 @@ export class ImportService {
         skippedRows: [],
         warnings: [],
         unknownColumns: resolved.unknownColumns,
+        skippedColumns,
         dryRun: false,
         queued: { jobId, rows: famCellCount },
       };
@@ -2709,7 +2730,7 @@ export class ImportService {
       if (real.length > 0) {
         // The cap and the pricing 409 apply only to a file that really regroups or creates (SA-823 section 4/5).
         familyImport.assertRowCap(rawRows.length);
-        famPlan = await familyImport.planRows(real);
+        famPlan = await familyImport.planRows(real, { plainIntoTobaccoReason });
         const changesFamily = (d: FamilyDecision) =>
           d.skip === undefined &&
           (!d.existing ||
@@ -3249,6 +3270,7 @@ export class ImportService {
       skippedRows,
       warnings,
       unknownColumns: resolved.unknownColumns,
+      skippedColumns,
       dryRun,
       ...(families ? { families } : {}),
     };

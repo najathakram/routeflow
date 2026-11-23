@@ -4,6 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
@@ -21,8 +22,6 @@ import { newDocumentDiscountMode } from "../common/discount-tax-mode";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
-import { InjectQueue } from "@nestjs/bull";
-import type { Queue } from "bull";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { appendOrderRevisionInTx, appendReopenRevisionInTx } from "./order-revisions";
@@ -65,7 +64,12 @@ import {
 } from "./at-stop-conflicts";
 import { sourceLineFor } from "./source-line";
 import { assertCustomerMayNotDraft, type CreateOrderOptions } from "./order-create-options";
-import { checkQtySplitConsistency, warnQtySplit, type QtySplitLine } from "./qty-split-consistency";
+import {
+  checkQtySplitConsistency,
+  splitModeFor,
+  warnQtySplit,
+  type QtySplitLine,
+} from "./qty-split-consistency";
 import { warnOrderLine } from "./order-line-ambiguity";
 import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import {
@@ -189,6 +193,7 @@ import { currentTaxRate } from "../common/tax-rate";
 import { NotificationsService } from "../notifications/notifications.service";
 import { InvoicesService } from "../invoices/invoices.service";
 import { dueStamp } from "../invoices/invoice-due-dates";
+import { sentRevertNeedsAck } from "../invoices/order-edit-revert-set"; // B1372 N2
 import {
   decrementStockForSale,
   restoreStockForReopen,
@@ -303,7 +308,6 @@ export class OrdersService implements OnApplicationBootstrap {
     // A1) read this off an explicit `self: OrdersService` from outside the class — TS `private` is
     // compile-time only, so this is byte-identical at runtime.
     readonly prisma: PrismaService,
-    @InjectQueue("invoices") private readonly invoiceQueue: Queue,
     private readonly gateway: RouteFlowGateway,
     private readonly notifications: NotificationsService,
     readonly invoicesService: InvoicesService,
@@ -926,7 +930,9 @@ export class OrdersService implements OnApplicationBootstrap {
       // 0/1 — the web still sends boxes:1 for unitsPerBox:1) keeps the operator's
       // qty instead of falling into normalizeBoxesPieces' non-boxed branch with no
       // qty at all, which derives 0 and trips the invariant below.
-      this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
+      if (!options.quote) {
+        this.warnSplit(options.counterSale ? "counter.sale" : "orders.create.lines", item, upb);
+      } // SA-1172 K2a: a quote adds no census line
       if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
         const split = normalizeBoxesPieces({
           boxes: item.boxes,
@@ -1150,7 +1156,10 @@ export class OrdersService implements OnApplicationBootstrap {
       shipping: orderShippingFee,
       total,
     });
-    if (!isDraft) await options.beforeWrite?.({ total }); // B1209: a refusal here has written nothing
+    if (!isDraft) {
+      await options.beforeWrite?.({ total, subtotal, tax, categoryTax, isTaxExempt }); // B1209: a refusal here has written nothing
+    }
+    if (options.quote) throw new InternalServerErrorException("quote reached the write path"); // SA-1172 K2b
 
     // W6: license guard — a real (non-draft) sale of a license-required category to
     // a customer without a VERIFIED authorization (or active §8 override) throws a
@@ -2232,13 +2241,13 @@ export class OrdersService implements OnApplicationBootstrap {
         // delivered-line lock, unit checks): refuse first, write after. Lock order Order -> Invoice, NOWAIT on the
         // invoice rows (409 INVOICE_BUSY, retryable); the paid-mirror refusal is re-counted under that lock, because
         // the pre-tx preflight is advisory. Any later refusal in this tx rolls the revert back with the edit.
+        const revertOpts = { lockRows: true, requireAck: sentRevertNeedsAck(user, dto, opts) };
         const carrierLocked = await carrierGuard.carrierRevertUnderLock(
           tx,
           orderId,
           carrier,
           postDeliveryEdit,
-          () =>
-            this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, { lockRows: true }),
+          () => this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId, tx, revertOpts),
         );
 
         // Customer/Driver path: replace items by productId. A4: a DRIVER diff payload skips this branch
@@ -4091,13 +4100,15 @@ export class OrdersService implements OnApplicationBootstrap {
             };
             // row 531: the add's own qty-vs-split check first (a buyer's is refused, staff/driver warn)
             checkQtySplitConsistency({
-              mode: cr.requestedByRole === UserRole.CUSTOMER ? "enforce" : "warn",
+              mode: splitModeFor(cr.requestedByRole),
               path: "orders.cr.add.merge",
               items: [{ ...payload, productId: product.id, qty: addQty } as QtySplitLine],
               // the add was filed at the LIVE pack; a repacked line is the helper's 409, never a split 400
               upbFor: () => upb,
               tenantId: this.prisma?.getTenantId?.(),
               logger: this.logger,
+              // SA-1173 K2: the approver's own refusal (409, decline-only), never the buyer's cart sentence
+              refuse: () => atStopConflict(API_ERROR_CODES.CHANGE_REQUEST_SPLIT_MISMATCH),
             });
             const merged = mergeIntoStoredLine({
               line: lineShape,

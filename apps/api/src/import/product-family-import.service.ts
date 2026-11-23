@@ -35,6 +35,12 @@ export const IMPORT_FAMILY_NAME_ONLY_REASON =
   "Add the product's id, SKU or barcode to move it into a family.";
 export const IMPORT_FAMILY_CLASS_REASON = "A family's items must share their regulated category.";
 export const IMPORT_FAMILY_TOBACCO_HINT = "Set Tobacco to Yes to add this to a tobacco family.";
+/**
+ * SA-1193 K7 + A1: the same row when the tenant lacks the Tobacco add-on (with or without a Tobacco column): "Set Tobacco
+ * to Yes" would be a false fix. `addonName` is the catalog's name for the add-on (the billing page's), never typed here.
+ */
+export const importFamilyTobaccoAddonReason = (addonName: string): string =>
+  `This is a tobacco family. Adding to it needs the ${addonName} add-on.`;
 
 /** The family a row groups under: an existing container (`id` set) or one this import creates (`id` null). */
 export interface FamilyTarget {
@@ -239,7 +245,16 @@ export class ProductFamilyImportService {
    * matches), the family (SA-823 section 2 a-d), the variant label, and the in-file guards (a duplicate label skips BOTH rows;
    * the first row of a family sets its regulated class). The preview and the apply run this same method.
    */
-  async planRows(rows: FamilyRowInput[]): Promise<FamilyPlan> {
+  async planRows(
+    rows: FamilyRowInput[],
+    opts: {
+      /**
+       * SA-1193 A1-1: what a new plain row meeting a tobacco family reads. The import keys it to the file's one Tobacco
+       * entitlement verdict and asks it at most once per file, only when such a row exists. Absent: the hint.
+       */
+      plainIntoTobaccoReason?: () => Promise<string>;
+    } = {},
+  ): Promise<FamilyPlan> {
     const tenantId = this.tenant();
     const db = this.prisma.forTenant().product;
     const plan: FamilyPlan = { decisions: new Map(), newFamilies: new Map(), created: new Map() };
@@ -308,7 +323,9 @@ export class ProductFamilyImportService {
         const plainIntoTobacco =
           !d.existing && ref.isTobacco && !cls.isTobacco && r.values.isTobacco !== true;
         plan.decisions.set(r.index, {
-          skip: plainIntoTobacco ? IMPORT_FAMILY_TOBACCO_HINT : IMPORT_FAMILY_CLASS_REASON,
+          skip: plainIntoTobacco
+            ? ((await opts.plainIntoTobaccoReason?.()) ?? IMPORT_FAMILY_TOBACCO_HINT)
+            : IMPORT_FAMILY_CLASS_REASON,
         });
         continue;
       }

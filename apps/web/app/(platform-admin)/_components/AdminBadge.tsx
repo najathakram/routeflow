@@ -42,6 +42,8 @@ const PLAN_COLORS: Record<TenantPlanValue, string> = {
   BUSINESS: BLUE,
   PROFESSIONAL: BLUE,
   SCALE: "bg-indigo-900/40 text-indigo-400 ring-indigo-600/30",
+  ALL_IN: "bg-indigo-900/40 text-indigo-400 ring-indigo-600/30",
+  CORE: TEAL,
   ENTERPRISE: "bg-purple-900/40 text-purple-400 ring-purple-600/30",
 };
 
@@ -55,6 +57,8 @@ const PLAN_LABELS: Record<TenantPlanValue, string> = {
   PROFESSIONAL: "Business",
   GROWTH: "Growth",
   SCALE: "Scale",
+  CORE: "Core",
+  ALL_IN: "All-in",
   ENTERPRISE: "Enterprise",
 };
 

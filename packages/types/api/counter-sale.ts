@@ -11,6 +11,9 @@ import type { RestrictionAck } from "./restrictions";
 export const COUNTER_SALE_PAYMENT_METHOD_VALUES = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
 export type CounterSalePaymentMethod = (typeof COUNTER_SALE_PAYMENT_METHOD_VALUES)[number];
 
+/** W-1286 (SA-1202 C28): the completion email's outcome on the pickup-complete result; the field is absent when no email was due. */
+export type PickupEmailOutcome = "EMAILED" | "NO_EMAIL_ON_FILE" | "NOT_SENT";
+
 export interface CounterSaleItem {
   productId: string;
   /** a selling-unit quantity (the line's own unit) — or `boxes` / `pieces` for a boxed product */
@@ -114,6 +117,29 @@ export interface CounterTenderSplitFields {
    * carrier order holding another sale's INLINE return has all zeros. Omitted by an older server: master's wording, no return line.
    */
   returnLines?: { applied: number; refunded: number; kept: number; used: number; pending: boolean };
+  /**
+   * SA-1211 A1.1 (VF-6): the items the sale's returns took back, from the STORED return lines (never re-derived), so the
+   * receipt lists each with its reason. `reason` is the stored code (a `ReturnReason`), null when none was recorded. Omitted
+   * when the sale has no live return (a refused or cancelled return is not listed) or by an older server.
+   */
+  returnItems?: CounterReturnItem[];
+}
+
+/** One returned item as the server stored it: the product's name, the quantity as stored, and the reason code. */
+export interface CounterReturnItem {
+  name: string;
+  qty: number;
+  reason: string | null;
+  /** SA-1231: the return's kind: an INLINE item stores pieces, a STANDARD item the sold line's own axis. Absent from an older server. */
+  kind?: "INLINE" | "STANDARD";
+  /** SA-1231: a snapshot of the sold line the item names (never the live product), null when none or it no longer exists. */
+  line?: {
+    unitLabel: string | null;
+    unitsPerBox: number | null;
+    boxes: number | null;
+    pieces: number | null;
+    qty: number;
+  } | null;
 }
 
 export interface CounterSaleResponse extends CounterTenderSplitFields {
@@ -265,6 +291,11 @@ export interface PickupCompleteResponse {
   alreadyPickedUp?: boolean;
   /** I-120 (SA-861 rule 8): true when THIS call sent the ONE completion email (a named customer, the tender final). */
   emailed?: boolean;
+  /**
+   * W-1286 (SA-1202 C28): why the completion email did or did not go. Absent when none was due (a walk-in, or already
+   * emailed). `emailed: true` is kept for older clients and equals EMAILED.
+   */
+  emailOutcome?: PickupEmailOutcome;
   /**
    * I-120 (SA-872 cond. 2, SA-849 on the hand-over): the delivery credit gate counted this hand-over's till tender, the
    * tender did not record, and without it the customer is over their limit (ENFORCED). Omitted otherwise.

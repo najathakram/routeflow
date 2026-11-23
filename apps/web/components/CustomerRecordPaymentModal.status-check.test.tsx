@@ -14,6 +14,9 @@ import { CustomerRecordPaymentModal } from "./CustomerRecordPaymentModal";
  * of a second Save that could look like a fresh payment).
  */
 const mockToast = jest.fn();
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
   useToast: () => ({ toast: mockToast }),

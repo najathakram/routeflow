@@ -1,5 +1,8 @@
 import { cn } from "@routeflow/ui/web";
+import type { InvoiceAccountRow } from "@routeflow/types";
 import { fmt } from "@/lib/formatting";
+import { InvoiceAccountRows } from "@/components/InvoiceAccountRows";
+import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
 
 export interface InvoiceTotalsSummaryProps {
   subtotal: number;
@@ -20,7 +23,14 @@ export interface InvoiceTotalsSummaryProps {
   isDraft?: boolean;
   /** W-1185: the lines/units count, already formatted ("12 lines · 30 boxes · 6 pcs"). Not money. */
   itemCount?: string;
+  /** SA-1197: the server's account rows, printed as given under Balance due (never summed here, L-119). */
+  accountBlock?: ReadonlyArray<InvoiceAccountRow>;
+  /** SA-1197 A3: the invoice's customer, so the block's Open balance figure opens the statement sheet (U21). */
+  customerId?: string | null;
 }
+
+/** SA-1197 A3: the statement's own figure taps; the heading and the two parts stay plain. */
+const TAPS = new Set<InvoiceAccountRow["kind"]>(["openBalance", "openBalanceOn"]);
 
 /**
  * The invoice detail page's line-items totals footer (Subtotal → Balance
@@ -43,6 +53,8 @@ export function InvoiceTotalsSummary({
   balanceDue,
   isDraft = false,
   itemCount,
+  accountBlock = [],
+  customerId,
 }: InvoiceTotalsSummaryProps) {
   return (
     <div className="w-72 space-y-1.5 text-sm">
@@ -117,6 +129,20 @@ export function InvoiceTotalsSummary({
         <span>Balance due</span>
         <span className="money">{fmt(balanceDue)}</span>
       </div>
+      {/* SA-1197: the customer's open balance, smaller and neutral so Balance due stays the one big figure. */}
+      <InvoiceAccountRows
+        rows={accountBlock}
+        figure={(row, node) =>
+          TAPS.has(row.kind) ? (
+            // A DRAFT's block is a forecast the statement does not hold yet (C15): plain, never a tap to other cents.
+            <OpenBalanceButton customerId={customerId} unavailable={isDraft} chevron>
+              {node}
+            </OpenBalanceButton>
+          ) : (
+            node
+          )
+        }
+      />
     </div>
   );
 }

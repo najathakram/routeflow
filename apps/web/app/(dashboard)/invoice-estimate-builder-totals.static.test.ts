@@ -15,7 +15,7 @@ const read = (rel: string): string => readFileSync(join(__dirname, rel), "utf8")
 const PAGES: Array<[string, string, string]> = [
   ["invoices/new (new sale / invoice builder)", "invoices/new/page.tsx", "invoiceFooterTotals("],
   ["invoices/[id]/edit", "invoices/[id]/edit/page.tsx", "invoiceFooterTotals("],
-  ["estimates (estimate builder)", "estimates/page.tsx", "computeInvoiceTotals("],
+  ["estimates (estimate builder)", "estimates/EstimateFormModal.tsx", "computeInvoiceTotals("],
 ];
 
 describe("the invoice footer helper stays on the pricing helper", () => {

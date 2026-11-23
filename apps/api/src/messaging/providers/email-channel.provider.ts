@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { MessageChannel } from "@prisma/client";
 import { EmailService } from "../../email/email.service";
-import { BRAND } from "../../common/brand";
+import { logRecipient } from "../../email/redact-addresses";
 import { MessageProvider, SendInput, SendResult } from "./message-provider.interface";
 import { buildNotificationEmailBody } from "./email-notification-template";
 
@@ -33,7 +33,7 @@ export class EmailChannelProvider implements MessageProvider {
       return { providerMsgId: `email-provider-skip-${input.channel}`, status: "failed" };
     }
 
-    const subject = input.subject ?? `Update from ${BRAND.name}`;
+    const subject = input.subject ?? "Update from RouteFlow";
 
     // EmailService.send() is documented as honest-by-result and never-throw
     // (R5), but MessageProvider.send()'s own contract is stricter — "MUST
@@ -43,7 +43,7 @@ export class EmailChannelProvider implements MessageProvider {
     // tenant-name lookup rides inside the same try — a DB hiccup there must
     // not throw out of this provider either.
     try {
-      // Opus review (N1): the template hard-coded the platform name — this is
+      // Opus review (N1): the template hard-coded "RouteFlow" — this is
       // buyer-facing mail and must carry the SAME tenant brand invoice emails
       // do, not the platform's own name.
       const look = await this.emailService.tenantLook();
@@ -59,10 +59,21 @@ export class EmailChannelProvider implements MessageProvider {
             ? `This is an automated message from ${brandName}.`
             : "This is an automated message.",
         },
+        // W-1286 (SA-1202 C7): an order-status email records its delivery row, so a later bounce can be matched.
+        ...(input.entity && input.tenantId
+          ? {
+              delivery: {
+                tenantId: input.tenantId,
+                kind: "ORDER_STATUS" as const,
+                entityType: input.entity.type,
+                entityId: input.entity.id,
+              },
+            }
+          : {}),
       });
       if (!result.delivered) {
         this.logger.warn(
-          `send to ${input.to} not delivered (transport=${result.transport}): ` +
+          `send to ${logRecipient(input.to)} not delivered (transport=${result.transport}): ` +
             `${result.error ?? "no reason given"}`,
         );
         return { providerMsgId: result.id ?? `email-failed-${Date.now()}`, status: "failed" };

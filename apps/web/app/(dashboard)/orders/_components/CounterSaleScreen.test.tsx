@@ -138,7 +138,7 @@ describe("CounterSaleScreen", () => {
     expect(screen.getByTestId("pending-qty")).toHaveTextContent("×3");
     await scan("012345678905");
     await waitFor(() => expect(screen.getByText(/Cola/)).toBeInTheDocument());
-    expect(screen.getByText(/× 3/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Set quantity of Cola")).toHaveValue(3);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$7.50");
     expect(screen.queryByTestId("pending-qty")).toBeNull(); // the multiplier is consumed
     expect(screen.getByLabelText("Scan or search items")).toHaveFocus();
@@ -148,11 +148,11 @@ describe("CounterSaleScreen", () => {
     renderTill(<CounterSaleScreen />);
     await scan("WATER");
     await scan("WATER");
-    // W-1185: the item-count chip also reads "2 boxes", so the line is read inside the Items list.
+    // W-1185: the item-count chip also reads "2 boxes", so the line is read inside the Items list (B1373: its boxes field).
     await waitFor(() =>
       expect(
-        within(screen.getByRole("list", { name: "Items" })).getByText(/2 boxes/),
-      ).toBeInTheDocument(),
+        within(screen.getByRole("list", { name: "Items" })).getByTitle(/^Number of whole /),
+      ).toHaveValue(2),
     );
     expect(screen.getAllByRole("listitem", { name: "" }).length).toBeGreaterThan(0);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$24.00");
@@ -411,16 +411,16 @@ describe("CounterSaleScreen", () => {
       fireEvent.change(note, { target: { value: "cold" } });
       fireEvent.keyDown(note, { key: "Enter" });
       await waitFor(() => expect(scanField()).toHaveFocus());
-      expect(screen.queryByLabelText("Note for Cola")).toBeNull();
-      expect(screen.getByTestId("line-note")).toHaveTextContent("cold");
+      // B1373: a line that has a note keeps its field on show (the order row's way)
+      expect(screen.getByLabelText("Note for Cola")).toHaveValue("cold");
     });
 
-    it("Clear note hands focus to the scan box (not <body>)", async () => {
+    it("Emptying the note and closing it hands focus to the scan box (not <body>)", async () => {
       await withCola();
       fireEvent.click(addNoteBtn());
       fireEvent.change(screen.getByLabelText("Note for Cola"), { target: { value: "cold" } });
-      fireEvent.keyDown(screen.getByLabelText("Note for Cola"), { key: "Enter" });
-      fireEvent.click(await screen.findByRole("button", { name: /Clear the note on Cola/ }));
+      fireEvent.change(screen.getByLabelText("Note for Cola"), { target: { value: "" } });
+      fireEvent.keyDown(screen.getByLabelText("Note for Cola"), { key: "Enter" }); // no Clear note button any more
       await waitFor(() => expect(scanField()).toHaveFocus());
       expect(document.body).not.toHaveFocus();
     });
@@ -433,7 +433,7 @@ describe("CounterSaleScreen", () => {
       note.focus();
       note.blur();
       await waitFor(() => expect(scanField()).toHaveFocus());
-      expect(screen.getByTestId("line-note")).toHaveTextContent("cold");
+      expect(screen.getByLabelText("Note for Cola")).toHaveValue("cold");
     });
 
     it("Tab out of the last quantity field goes to the scan box, not to Add note", async () => {
@@ -1752,7 +1752,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       await scan("ONE");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$1.00"));
       const cart = screen.getByRole("list", { name: "Items" });
-      expect(cart).toHaveTextContent("Single · × 1");
+      expect(within(cart).getByLabelText("Set quantity of Single")).toHaveValue(1);
       expect(cart.textContent).not.toMatch(/box/i);
       const receipt = await completeAndReceipt();
       expect(receipt).toHaveTextContent("Single");
@@ -1778,7 +1778,9 @@ describe("CounterSaleScreen: API contract wiring", () => {
       renderTill(<CounterSaleScreen />);
       await scan("WATER");
       await waitFor(() => expect(screen.getByTestId("running-total")).toHaveTextContent("$12.00"));
-      expect(screen.getByRole("list", { name: "Items" })).toHaveTextContent("Water · 1 box");
+      expect(
+        within(screen.getByRole("list", { name: "Items" })).getByTitle(/^Number of whole /),
+      ).toHaveValue(1);
       const receipt = await completeAndReceipt();
       expect(receipt).toHaveTextContent("1 box × $12.00 per box");
     });

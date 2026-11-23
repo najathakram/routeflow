@@ -1,7 +1,16 @@
 import { BadgePercent, Handshake, MapPin, ShieldCheck, Store, Truck } from "lucide-react";
+import type { NavLayout } from "@routeflow/types";
+import { applyNavLayout } from "./nav-layout";
 import { driverNavItemVisible } from "@/lib/portal-routing";
 import { matchPlanGatedRoute, modeGatedVisible, planFlagVisible } from "@/lib/plan-gated-nav";
-import { CUSTOMER_NAV, DRIVER_NAV, OPERATOR_NAV, type NavEntry, type NavLeaf } from "./nav-config";
+import {
+  CUSTOMER_NAV,
+  DRIVER_NAV,
+  INSIGHTS_LEAF,
+  OPERATOR_NAV,
+  type NavEntry,
+  type NavLeaf,
+} from "./nav-config";
 
 /**
  * Everything the sidebar needs to decide which entries exist. The dashboard layout reads these
@@ -18,8 +27,12 @@ export type OperatorNavContext = {
   counterEnabled: boolean;
   regulatedLoading: boolean;
   regulatedSections: ReadonlyArray<{ id: string; name: string }> | undefined;
+  /** useInsightsAccess(): may this viewer open Product insights? (the same predicate as every other entry to it) */
+  insightsAccess: boolean;
   plan: { flags: readonly string[] | undefined; resolved: boolean; failed: boolean };
   modes?: Readonly<Record<string, string>>;
+  /** The business's saved sidebar layout (GET /settings); undefined while loading or when the read failed. */
+  navLayout?: NavLayout;
 };
 
 function getNavForRole(
@@ -46,7 +59,7 @@ function getNavForRole(
   ).map((entry): NavEntry => {
     if (entry.kind !== "group" || entry.label !== "Dispatch") return entry;
     // Inside a visible Dispatch group, the routes/delivery leaves are each
-    // gated on their own feature; Overview and Drivers are shared by both
+    // gated on their own feature; the Dispatch overview and Drivers are shared by both
     // and always render once the group itself is showing.
     return {
       ...entry,
@@ -134,7 +147,36 @@ function filterPlanGatedNav(
   }, []);
 }
 
+/** Product insights is added, never removed: only a viewer who may use it gets the leaf (last child of Reports & analytics). */
+function withInsights(entries: NavEntry[], insightsAccess: boolean): NavEntry[] {
+  if (!insightsAccess) return entries;
+  return entries.map((entry): NavEntry =>
+    entry.kind === "group" && entry.label === "Reports & analytics"
+      ? { ...entry, children: [...entry.children, INSIGHTS_LEAF] }
+      : entry,
+  );
+}
+
+/**
+ * The whole sidebar: the base menu for this viewer, then the tenant's layout pass at this ONE exit (SA-1209), so both
+ * return paths of `buildBaseNav` and the injected entries go through it. Only staff get a layout; undefined (loading or
+ * failed) leaves the base menu unchanged.
+ */
 export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
+  const base = buildBaseNav(ctx);
+  const isStaff = ctx.role !== "CUSTOMER" && ctx.role !== "DRIVER";
+  return isStaff ? applyNavLayout(base, ctx.navLayout) : base;
+}
+
+/**
+ * The viewer's visible menu BEFORE the business's layout: what the command palette, the g keys, the shortcut help and
+ * the quick actions read (display only, L-305: hiding a page only tidies the sidebar).
+ */
+export function buildOperatorNavIndex(ctx: OperatorNavContext): NavEntry[] {
+  return buildOperatorNav({ ...ctx, navLayout: undefined });
+}
+
+function buildBaseNav(ctx: OperatorNavContext): NavEntry[] {
   const { role, counterEnabled, addonsLoading, hasSalesAgents, regulatedLoading } = ctx;
   const isStaff = role !== "CUSTOMER" && role !== "DRIVER";
   const nav = getNavForRole(
@@ -153,7 +195,7 @@ export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
   let base = nav;
   if (isStaff && addonsLoading) {
     const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
-    const skeleton: NavEntry = { kind: "skeleton", key: "dispatch-skeleton" };
+    const skeleton: NavEntry = { kind: "skeleton", key: "dispatch-skeleton", holds: "dispatch" };
     base = idx === -1 ? [...base, skeleton] : [...base.slice(0, idx), skeleton, ...base.slice(idx)];
   }
 
@@ -182,10 +224,11 @@ export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
   const inject: NavEntry[] = [];
   const sections = ctx.regulatedSections ?? [];
   if (regulatedLoading) {
-    inject.push({ kind: "skeleton", key: "regulated-skeleton" });
+    inject.push({ kind: "skeleton", key: "regulated-skeleton", holds: "regulated" });
   } else if (sections.length > 0) {
     inject.push({
       kind: "group",
+      id: "regulated",
       label: "Regulated items",
       icon: ShieldCheck,
       children: sections.map((s) => ({
@@ -202,7 +245,11 @@ export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
     // same addons fetch as Dispatch — hold a skeleton at the leaf's position
     // (right after Customers) meanwhile.
     const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
-    const skeleton: NavEntry = { kind: "skeleton", key: "sales-agents-skeleton" };
+    const skeleton: NavEntry = {
+      kind: "skeleton",
+      key: "sales-agents-skeleton",
+      holds: "/sales-agents",
+    };
     base =
       idx === -1
         ? [...base, skeleton]
@@ -234,7 +281,7 @@ export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
   // Lite-L2 (WP8/R4.3): hide gated leaves before the Reports & analytics-relative inject index
   // is computed, so Regulated Items still lands in the right spot even when that group is hidden
   // (reports and analytics are both in PLAN_GATED_NAV).
-  base = filterPlanGatedNav(base, ctx.plan, ctx.modes);
+  base = filterPlanGatedNav(withInsights(base, ctx.insightsAccess), ctx.plan, ctx.modes);
 
   if (inject.length === 0) return base;
 

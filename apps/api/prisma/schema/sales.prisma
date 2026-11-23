@@ -177,6 +177,9 @@ model Customer {
   deliveryWindowStart   String?
   deliveryWindowEnd     String?
   email                 String?
+  // W-1286 (SA-1202 C8): set by the bounce reader (PR-2) when a hard bounce names this address; no writer yet.
+  emailBouncedAt        DateTime?
+  emailBounceCode       String?
   mobile                String?
   customerType          String      @default("BUSINESS")
   supplierOnly          Boolean     @default(false) // true = this contact is a vendor/supplier; hide from Customers list
@@ -1434,7 +1437,7 @@ model SaleDraft {
   id           String   @id @default(uuid())
   tenantId     String
   userId       String // owner — drafts are per-user
-  kind         String   @default("ORDER") // ORDER | INVOICE
+  kind         String   @default("ORDER") // ORDER | INVOICE | PURCHASE_ORDER (SA-1222; a String column, no migration)
   customerId   String?
   customerName String? // denormalized label for the draft dock (no join needed)
   title        String?

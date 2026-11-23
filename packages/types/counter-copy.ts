@@ -17,9 +17,37 @@ export const COUNTER_COPY = {
   completeConfirm: "Complete",
   completed: "Completed at counter.",
   completedEmailed: "Completed at counter. The invoice was emailed to the customer.",
+  /** W-1286 (SA-1202 C28): the two ways a completion invoice email did not go, and the no-email action (web link; the phone shell shows the words) */
+  completedNoEmail: "Completed at counter. No email on file, so the invoice was not emailed.",
+  completedEmailNotSent:
+    "Completed at counter. The invoice email did not send. Email it from the invoice.",
+  addEmail: "Add an email",
   /** SA-913 R8: the run confirm's action; it re-sends the same request with `takeOffRun: true` */
   takeOffRun: "Take off run and complete",
 } as const;
+
+/**
+ * W-1286 (SA-1202 C28): the outcome line of a finished "Complete at counter", one rule for web and mobile. `emailOutcome`
+ * is the api's typed answer (absent when no email was due: a walk-in, or already emailed); `emailed: true` is the older
+ * server's EMAILED. Never says "Delivered".
+ */
+export function completedCopy(res: {
+  emailed?: boolean;
+  emailOutcome?: "EMAILED" | "NO_EMAIL_ON_FILE" | "NOT_SENT";
+}): string {
+  if (res.emailOutcome === "NO_EMAIL_ON_FILE") return COUNTER_COPY.completedNoEmail;
+  if (res.emailOutcome === "NOT_SENT") return COUNTER_COPY.completedEmailNotSent;
+  return res.emailed || res.emailOutcome === "EMAILED"
+    ? COUNTER_COPY.completedEmailed
+    : COUNTER_COPY.completed;
+}
+
+/**
+ * B1372 (SA-1177 K4.2): the api's 409 COUNTER_COMPLETE_SHIPPED message, one copy. It names the next step: an unmark keeps
+ * `shippedAt`, so the switch to Store pickup is what lets the counter take the order.
+ */
+export const COUNTER_COMPLETE_SHIPPED_MESSAGE =
+  "This order is with the carrier. To hand it over here, first Unmark shipped, then switch it to Store pickup.";
 
 /** SA-913 R8: the run confirm's sentence, naming the driver the api sent with COUNTER_COMPLETE_ON_RUN. */
 export function onDriverRunCopy(driverName: unknown): string {
@@ -50,7 +78,7 @@ export function counterCompleteRefusalCopy(
   switch (body?.code) {
     // I-120 R8/R9 (owner 7a, SA-913), all refused before any write
     case API_ERROR_CODES.COUNTER_COMPLETE_SHIPPED:
-      return "Nothing changed. This order has shipped with the carrier.";
+      return `Nothing changed. ${COUNTER_COMPLETE_SHIPPED_MESSAGE}`;
     case API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN:
       // W-778: a question the clerk can answer with "Take off run and complete", not an error, so it never says "Nothing changed."
       return onDriverRunCopy(body.driverName);

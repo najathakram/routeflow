@@ -58,12 +58,16 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     name: displayProductName(p),
     sku: p.sku,
     unitsPerBox: p.unitsPerBox ?? null,
+    currentStock: p.currentStock ?? null,
   }));
   const catalogById = React.useMemo(
     () => new Map(products.map((p: { id: string }) => [p.id, p])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [productsData],
-  ) as Map<string, { id: string; name?: string; unitsPerBox?: number | null }>;
+  ) as Map<
+    string,
+    { id: string; name?: string; unitsPerBox?: number | null; currentStock?: number | null }
+  >;
 
   if (isLoading) {
     return (

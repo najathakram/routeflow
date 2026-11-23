@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useDebounce } from "@/lib/hooks/useDebounce";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { getStoredActiveSeller, getStoredBuyerId } from "@/lib/buyer-auth";
 import { buyerSubmitKeyFor, clearBuyerSubmitKey } from "./buyer-submit-key";
@@ -8,6 +9,7 @@ import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type {
   AccountStatement,
+  BuyerInvoiceDetailAccount,
   BuyerOrderItemEdit,
   ReorderLinesRequest,
   OrderStatusGroupValue,
@@ -340,6 +342,51 @@ export function toPromotionRules(promos: BuyerPromotion[] | undefined): Promotio
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 /**
+ * SA-1172 (B304): what the server will bill for a cart, as OrdersService.create() prices it (POST /buyer/cart/quote).
+ * Mirrors the API's `BuyerCartQuote` (apps/api/src/orders/order-quote.ts); `levy` is the regulated per-category tax.
+ */
+export interface BuyerCartQuote {
+  subtotal: number;
+  tax: number;
+  levy: number;
+  total: number;
+  taxExempt: boolean;
+}
+
+/**
+ * The cart quote. The body is exactly what the submit sends (`cartOrderItems(lines)`, unresolved lines included) plus
+ * the chosen fulfil path. Debounced 400 ms, cached per seller + cart for 30 s, never retried on a 4xx or a 429. While a new
+ * quote loads the previous one stays (same seller only: another seller's figures are never shown). `busy` is true until
+ * the quote for the CURRENT cart has settled; `quote` is undefined on a failure, so the caller shows its fallback.
+ */
+export function useBuyerCartQuote(
+  sellerSlug: string,
+  items: ReadonlyArray<{ productId: string; qty: number; boxes?: number; pieces?: number }>,
+  fulfillPath: FulfilmentMethod | null | undefined,
+  enabled = true,
+): { quote: BuyerCartQuote | undefined; busy: boolean } {
+  const wanted = JSON.stringify({ items, ...(fulfillPath ? { fulfillPath } : {}) });
+  const body = useDebounce(wanted, 400);
+  const on = enabled && items.length > 0 && !!sellerSlug;
+  const q = useQuery<BuyerCartQuote>({
+    queryKey: ["buyer", "cartQuote", sellerSlug, body],
+    queryFn: () => buyerApiClient.post("/buyer/cart/quote", JSON.parse(body)).then((r) => r.data),
+    enabled: on,
+    staleTime: 30_000,
+    retry: (count, err) => {
+      const status = (err as { response?: { status?: number } })?.response?.status ?? 0;
+      return status >= 500 && count < 1;
+    },
+    placeholderData: (prev, prevQuery) =>
+      prevQuery?.queryKey?.[2] === sellerSlug ? prev : undefined,
+  });
+  return {
+    quote: on && !q.isError ? q.data : undefined,
+    busy: on && (body !== wanted || q.isFetching || q.isPlaceholderData),
+  };
+}
+
+/**
  * `fulfillPath` scopes the read to the order a cart on that path would fold into (the server's own
  * merge search); omitted = the buyer's most recent active order, as before.
  */
@@ -526,7 +573,7 @@ export function useBuyerCreateChangeRequest() {
 
 // ─── Invoice Detail ──────────────────────────────────────────────────────────
 
-export interface BuyerInvoiceDetail {
+export interface BuyerInvoiceDetail extends BuyerInvoiceDetailAccount {
   id: string;
   invoiceNumber: string;
   /** The business's "Show price per piece on invoices" switch: true = the Per piece column is off (owner ruling 2026-11-04). */

@@ -254,7 +254,7 @@ describe("SA-776 job pin: every cron and queue processor is classified", () => {
   it("finds the whole job surface (an empty scan must not report green)", () => {
     expect(found.filter((j) => j.kind === "cron").length).toBeGreaterThanOrEqual(35);
     expect(found.filter((j) => j.kind === "process").map((j) => j.name)).toContain(
-      "invoices.generate-invoice",
+      "product-import.apply",
     );
   });
 

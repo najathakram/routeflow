@@ -43,9 +43,11 @@ export function resolveRecipientEmail(
   const onFileEmail = isInternalEmail(customerEmail) ? null : customerEmail;
   const recipientEmail = requestedEmail || onFileEmail;
   if (!recipientEmail)
-    throw new BadRequestException(
-      "No email address on file for this customer. Provide an email address.",
-    );
+    // W-1286: typed, so callers (the pickup completion) read the code and never the message text.
+    throw new BadRequestException({
+      code: API_ERROR_CODES.INVOICE_RECIPIENT_MISSING,
+      message: "No email address on file for this customer. Provide an email address.",
+    });
   return recipientEmail;
 }
 
@@ -93,7 +95,7 @@ export async function sendReminder(deps: ReminderEmailDeps, id: string, override
   let pdfUrl: string | undefined;
   let attachment: InvoiceEmailAttachment | undefined;
   try {
-    pdfUrl = await deps.pdfService.getOrGenerate(id);
+    pdfUrl = await deps.pdfService.getOrGenerate(id, { account: { show: false } }); // SA-1197 C13: no account block
     if (pdfUrl) {
       const dl = deps.storage.download.bind(deps.storage);
       attachment = await buildInvoiceEmailAttachment(dl, deps.logger, id, inv.invoiceNumber);

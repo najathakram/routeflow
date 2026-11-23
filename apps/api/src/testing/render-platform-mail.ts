@@ -4,16 +4,8 @@
  * the output; a before/after run under the real brand proves a seam change altered no mail.
  * Sample data is placeholder-only (Acme). Not compiled into `dist/` (`**\/testing/**` is excluded).
  */
-import { readFileSync } from "fs";
-import { join } from "path";
-import * as React from "react";
-import * as ts from "typescript";
 import { BuyerAuthService } from "../buyer/buyer-auth.service";
 import * as signedToken from "../common/signed-token";
-import * as pdfDate from "../common/pdf-date";
-import * as brandModule from "../common/brand";
-import * as brandHostModule from "../common/brand-host";
-import * as pricing from "@routeflow/pricing";
 import { DemoBookingService } from "../demo-booking/demo-booking.service";
 import { OnboardingIntakeService } from "../onboarding/onboarding-intake.service";
 import { OnboardingLifecycleService } from "../onboarding/onboarding-lifecycle.service";
@@ -424,116 +416,8 @@ export async function renderPlatformMails(): Promise<Out> {
   buyerSent.forEach((s, i) => put(out, `buyer-${i}`, s));
 
   await renderLaneB1bMails(out);
-  renderInvoiceDocument(out);
 
   return out;
-}
-
-type Node = { $: string; props: Record<string, unknown>; children: unknown[] };
-
-/**
- * Jest's `transform` here covers `.ts` and `.js` only and `moduleFileExtensions` lacks `tsx`, so
- * the invoice template cannot be imported. This reads the file, compiles it with the TypeScript
- * API (the same compiler ts-jest uses) and runs it with a `@react-pdf/renderer` stand-in whose
- * components are plain string-typed elements, so the element tree can be serialised.
- */
-export function loadInvoiceModule(): Record<string, unknown> {
-  const file = join(__dirname, "..", "bookkeeping", "invoice-template.tsx");
-  const { outputText } = ts.transpileModule(readFileSync(file, "utf8"), {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2020,
-      jsx: ts.JsxEmit.React,
-      esModuleInterop: true,
-    },
-  });
-  const el = (type: string) => (props: Record<string, unknown>) => React.createElement(type, props);
-  const reactPdf = {
-    Document: el("Document"),
-    Page: el("Page"),
-    View: el("View"),
-    Text: el("Text"),
-    StyleSheet: { create: (s: unknown) => s },
-  };
-  const known: Record<string, unknown> = {
-    react: React,
-    "@react-pdf/renderer": reactPdf,
-    "../common/pdf-date": pdfDate,
-    "../common/brand": brandModule,
-    "../common/brand-host": brandHostModule,
-    "@routeflow/pricing": pricing,
-  };
-  const mod = { exports: {} as Record<string, unknown> };
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval -- test harness: must run in Jest's own realm so the fake clock reaches the template (vm.runInThisContext does not)
-  (new Function("require", "module", "exports", outputText) as (...a: unknown[]) => void)(
-    (id: string) => {
-      if (!(id in known)) throw new Error(`invoice-template: unexpected import ${id}`);
-      return known[id];
-    },
-    mod,
-    mod.exports,
-  );
-  return mod.exports;
-}
-
-/** Expands function components and flattens an element tree to plain, deterministic data. */
-function serialiseTree(node: unknown): unknown {
-  if (Array.isArray(node)) return node.flatMap((n) => serialiseTree(n) ?? []);
-  if (node === null || node === undefined || typeof node === "boolean") return null;
-  if (typeof node !== "object") return node;
-  const element = node as { type: unknown; props: Record<string, unknown> };
-  if (typeof element.type === "function") {
-    return serialiseTree((element.type as (p: unknown) => unknown)(element.props));
-  }
-  const { children, ...props } = element.props;
-  const kids = [children].flat(Infinity).flatMap((c) => serialiseTree(c) ?? []);
-  return { $: String(element.type), props, children: kids } satisfies Node;
-}
-
-function textOf(node: unknown): string[] {
-  if (Array.isArray(node)) return node.flatMap(textOf);
-  if (node && typeof node === "object") return textOf((node as Node).children);
-  return node === null || node === undefined ? [] : [String(node as string | number)];
-}
-
-/** The invoice PDF's element tree and its text, with the clock pinned (it prints "Generated"). */
-function renderInvoiceDocument(out: Out): void {
-  const Invoice = loadInvoiceModule().InvoiceTemplate as (p: { transaction: unknown }) => unknown;
-  const base = {
-    id: "txn-0001-abcdef",
-    customer: { businessName: "Acme Foods", contactName: "Sam Buyer" },
-    order: { orderNumber: "ORD-1" },
-    createdAt: "2026-01-02T00:00:00Z",
-    dueDate: "2026-02-01T00:00:00Z",
-    notes: "Thank you.",
-    items: [
-      { id: "i1", description: "Widget", qty: 2, unitPrice: 10.005, subtotal: 20.01 },
-      { id: "i2", description: "Gadget", qty: "1", unitPrice: "4.5", subtotal: "4.5" },
-    ],
-  };
-  const cases = {
-    paid: {
-      ...base,
-      status: "PAID",
-      totalOwed: 24.51,
-      totalPaid: 24.51,
-      paidAt: "2026-01-20T00:00:00Z",
-      payments: [
-        { id: "p1", amount: 24.51, method: "CARD", reference: "r1", createdAt: "2026-01-20" },
-      ],
-    },
-    unpaid: { ...base, status: "UNPAID", totalOwed: 24.51, totalPaid: 0, payments: [] },
-  };
-  jest.useFakeTimers({ now: new Date("2026-03-04T12:00:00Z") });
-  try {
-    for (const [name, transaction] of Object.entries(cases)) {
-      const tree = serialiseTree(Invoice({ transaction }));
-      out[`invoice-tree-${name}`] = JSON.stringify(tree, null, 1);
-      out[`invoice-text-${name}`] = textOf(tree).join("\n");
-    }
-  } finally {
-    jest.useRealTimers();
-  }
 }
 
 /** The mail and strings of the launch-day files (lane B1b), rendered with fixed inputs. */

@@ -8,6 +8,9 @@ export const EMAIL_KINDS = [
   "BUYER_ORDER_CANCELLED",
   "LOW_STOCK_DIGEST",
   "INVOICE_SENT",
+  // W-1286 (SA-1202 C6, C7): an invoice reminder, and an order-status email (confirmed, out for delivery, ...).
+  "INVOICE_REMINDER",
+  "ORDER_STATUS",
   "AUTH_OTHER",
   "Z_REPORT",
   "RECEIPT",
@@ -31,6 +34,8 @@ export const EMAIL_KIND_AUDIENCE: Record<EmailKind, EmailAudience> = {
   BUYER_ORDER_CANCELLED: "tenant",
   LOW_STOCK_DIGEST: "tenant",
   INVOICE_SENT: "tenant",
+  INVOICE_REMINDER: "tenant",
+  ORDER_STATUS: "tenant",
   AUTH_OTHER: "tenant",
   Z_REPORT: "tenant",
   RECEIPT: "tenant",

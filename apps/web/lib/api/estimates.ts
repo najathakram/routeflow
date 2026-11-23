@@ -45,6 +45,8 @@ export function useEstimate(id: string) {
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export interface CreateEstimateItem {
+  /** A draft edit only: the stored line this one re-sends. */
+  id?: string;
   productId?: string;
   description: string;
   qty: number;
@@ -67,6 +69,32 @@ export function useCreateEstimate() {
   return useMutation<Estimate, Error, CreateEstimateDto>({
     mutationFn: (dto) => apiClient.post("/estimates", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["estimates"] }),
+  });
+}
+
+/** PATCH /estimates/:id: edit a DRAFT. Omitted fields keep their value; `items` replaces the lines. */
+export type UpdateEstimateDto = Partial<CreateEstimateDto>;
+
+export function useUpdateEstimate() {
+  const qc = useQueryClient();
+  return useMutation<Estimate, Error, { id: string; dto: UpdateEstimateDto }>({
+    mutationFn: ({ id, dto }) => apiClient.patch(`/estimates/${id}`, dto).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["estimates"] });
+      qc.invalidateQueries({ queryKey: ["estimates", id] });
+    },
+  });
+}
+
+/** A SENT or ACCEPTED estimate back to DRAFT, so it can be revised. */
+export function useRevertEstimateToDraft() {
+  const qc = useQueryClient();
+  return useMutation<Estimate, Error, string>({
+    mutationFn: (id) => apiClient.post(`/estimates/${id}/revert-to-draft`).then((r) => r.data),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ["estimates"] });
+      qc.invalidateQueries({ queryKey: ["estimates", id] });
+    },
   });
 }
 

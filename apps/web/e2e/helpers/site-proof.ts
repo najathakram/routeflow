@@ -295,6 +295,13 @@ export async function openHome(
   await waitForWheel(page);
 }
 
+/** Collects every uncaught page error into the returned array; assert it is empty when the test ends. */
+export function collectPageErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  return errors;
+}
+
 /** Waits n animation frames (no sleeps). */
 export async function frames(page: Page, n = 2): Promise<void> {
   await page.evaluate(

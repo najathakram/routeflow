@@ -120,6 +120,79 @@ describe("findPoMatchViolations — the bill-vs-PO hard gate (units/PO step 7)",
   });
 });
 
+describe("check X (SA-1207 P2a): line money is judged in the line's own unit", () => {
+  // 5 boxes + 2 loose, pack 24, 5.00 a box: 122 pcs, 0.2083 a piece, stored total 25.42.
+  const poLine = (totalCost = 25.42) => ({
+    productId: "p1",
+    qtyOrdered: 122,
+    unitCost: 0.2083,
+    totalCost,
+  });
+  /** A lot: qty 1 of 122 pieces at `cost`, as billLineToPieces hands it over (pieces, per piece 4 dp). */
+  const lot = (cost: number) => ({
+    productId: "p1",
+    description: "Widget",
+    qty: 122,
+    unitCost: Math.round((cost / 122) * 1e4) / 1e4,
+    ownQty: 1,
+    ownUnitCost: cost,
+  });
+
+  it("passes a lot at the PO's own stored total (it read 0.2084 a piece and was refused)", () => {
+    expect(findPoMatchViolations([poLine()], [lot(25.42)])).toEqual([]);
+  });
+
+  it("allows the larger of the two stored figures, plus a cent", () => {
+    // pieces x unitCost = 25.4126; the stored total is the larger one here
+    expect(findPoMatchViolations([poLine(25.45)], [lot(25.46)])).toEqual([]);
+    expect(reasons(findPoMatchViolations([poLine(25.45)], [lot(25.47)]))).toContain(
+      "PRICE_EXCEEDS_PO",
+    );
+    // and pieces x unitCost is the larger one here
+    expect(findPoMatchViolations([poLine(25.0)], [lot(25.42)])).toEqual([]);
+  });
+
+  it("refuses a lot two cents above both figures, and passes one cent above", () => {
+    expect(findPoMatchViolations([poLine()], [lot(25.43)])).toEqual([]);
+    expect(reasons(findPoMatchViolations([poLine()], [lot(25.44)]))).toEqual([
+      "PRICE_EXCEEDS_PO",
+      "TOTAL_EXCEEDS_PO",
+    ]);
+  });
+
+  it("the whole bill is held to the larger of the two PO sums, plus a cent a line", () => {
+    const lines = [
+      { productId: "p1", qtyOrdered: 10, unitCost: 1, totalCost: 10.02 },
+      { productId: "p2", qtyOrdered: 10, unitCost: 2, totalCost: 19.98 },
+    ];
+    const one = (productId: string, cost: number) => ({
+      productId,
+      description: productId,
+      qty: 10,
+      unitCost: cost / 10,
+      ownQty: 1,
+      ownUnitCost: cost,
+    });
+    expect(findPoMatchViolations(lines, [one("p1", 10.02), one("p2", 19.98)])).toEqual([]);
+    const v = findPoMatchViolations(lines, [one("p1", 10.03), one("p2", 20.01)]);
+    expect(v.find((x) => x.reason === "TOTAL_EXCEEDS_PO")).toMatchObject({
+      billed: "30.04",
+      allowed: "30",
+    });
+  });
+
+  it("a piece line carries no own-unit fields and is judged as before", () => {
+    expect(findPoMatchViolations([poLine()], [bill("p1", 122, 0.2083)])).toEqual([]);
+    expect(reasons(findPoMatchViolations([poLine()], [bill("p1", 122, 0.2085)]))).toContain(
+      "PRICE_EXCEEDS_PO",
+    );
+  });
+
+  it("R-005 stays a hard 409 with the same code", () => {
+    expect(() => assertBillWithinPo("PO-1", [poLine()], [lot(25.5)])).toThrow(ConflictException);
+  });
+});
+
 describe("assertBillWithinPo", () => {
   it("is a no-op for a bill within the PO", () => {
     expect(() =>

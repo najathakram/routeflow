@@ -12,14 +12,10 @@ import * as path from "path";
  */
 const WEB_ROOT = path.resolve(__dirname, "..");
 const UI_ROOT = path.resolve(WEB_ROOT, "../../packages/ui");
-const SKIP_DIRS = new Set([
-  "node_modules",
-  ".next",
-  "coverage",
-  "e2e",
-  "playwright-report",
-  "dist",
-]);
+const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS, "e2e", "playwright-report"]);
 
 const HOST = "components/billing/EmbeddedCheckoutHost.tsx";
 const PANEL = "components/billing/EmbeddedCheckoutPanel.tsx";

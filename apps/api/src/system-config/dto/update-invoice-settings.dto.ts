@@ -41,6 +41,12 @@ export class UpdateInvoiceSettingsDto {
   @IsBoolean()
   hideBalanceDue?: boolean;
 
+  // SA-1197: SystemConfig `invoice.showAccountBalance`. When true an account customer's invoice PDF, invoice email and
+  // invoice page print the open balance block under Balance Due. Absent = off (only the string "true" turns it on).
+  @IsOptional()
+  @IsBoolean()
+  showAccountBalance?: boolean;
+
   // WP-D1: tenant-wide deposit policy. Absent/0 = no tenant deposit default (a
   // customer's own defaultDepositPercent, or no deposit at all, still applies via
   // InvoicesService.resolveDefaultTerms's effectiveDepositPercent resolution). Send 0 to clear: null is refused (652).

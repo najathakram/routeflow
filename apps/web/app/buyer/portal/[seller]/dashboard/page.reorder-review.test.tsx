@@ -46,6 +46,8 @@ const template = {
 };
 
 jest.mock("@/lib/api/buyer", () => ({
+  useBuyerCartQuote: () => ({ quote: undefined, busy: false }),
+  useBuyerActiveOrder: () => ({ isSuccess: true, data: null }),
   useBuyerDashboard: () => ({
     isLoading: false,
     isError: false,

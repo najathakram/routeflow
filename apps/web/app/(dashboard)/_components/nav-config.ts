@@ -16,6 +16,7 @@ import {
   Package,
   Receipt,
   RotateCcw,
+  ScanSearch,
   Settings,
   ShoppingCart,
   Truck,
@@ -24,13 +25,28 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import type { NavGroupId } from "@routeflow/types";
+import { activeNavGroup, activeNavLeaf } from "./nav-index";
+
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
 export type NavLeaf = { kind: "leaf"; label: string; href: string; icon: LucideIcon };
-export type NavGroup = { kind: "group"; label: string; icon: LucideIcon; children: NavLeaf[] };
+export type NavGroup = {
+  kind: "group";
+  /** Stable id the stored layout names (never the label, which can be renamed or translated). */
+  id: NavGroupId | "pinned";
+  label: string;
+  icon: LucideIcon;
+  children: NavLeaf[];
+};
 /** Placeholder row held at a gated entry's position while its addon/entitlement
  *  query is still resolving, so the rail never grows once the answer lands. */
-export type NavSkeleton = { kind: "skeleton"; key: string };
+export type NavSkeleton = {
+  kind: "skeleton";
+  key: string;
+  /** The group id or leaf href this row stands in for, so `order` keeps its place while it loads. */
+  holds?: string;
+};
 export type NavEntry = NavLeaf | NavGroup | NavSkeleton;
 
 /** Full operator nav — all sections visible */
@@ -38,6 +54,7 @@ export const OPERATOR_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
     kind: "group",
+    id: "orders",
     label: "Orders",
     icon: ShoppingCart,
     children: [
@@ -48,10 +65,11 @@ export const OPERATOR_NAV: NavEntry[] = [
   },
   {
     kind: "group",
+    id: "dispatch",
     label: "Dispatch",
     icon: Truck,
     children: [
-      { kind: "leaf", label: "Overview", href: "/dispatch", icon: LayoutDashboard },
+      { kind: "leaf", label: "Dispatch", href: "/dispatch", icon: LayoutDashboard },
       { kind: "leaf", label: "Routes", href: "/routes", icon: MapPin },
       { kind: "leaf", label: "Order delivery", href: "/deliveries", icon: Package },
       // Moved here from Finance (UX guide improvement 3). Without a Dispatch group buildOperatorNav
@@ -63,6 +81,7 @@ export const OPERATOR_NAV: NavEntry[] = [
   { kind: "leaf", label: "Customers", href: "/customers", icon: Users },
   {
     kind: "group",
+    id: "warehouse",
     label: "Warehouse",
     icon: Package,
     children: [
@@ -84,10 +103,16 @@ export const OPERATOR_NAV: NavEntry[] = [
   },
   {
     kind: "group",
+    id: "finance",
     label: "Finance",
     icon: Wallet,
     children: [
-      { kind: "leaf", label: "Overview", href: "/finance/dashboard", icon: LayoutDashboard },
+      {
+        kind: "leaf",
+        label: "Finance overview",
+        href: "/finance/dashboard",
+        icon: LayoutDashboard,
+      },
       { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
       { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
       {
@@ -100,9 +125,12 @@ export const OPERATOR_NAV: NavEntry[] = [
     ],
   },
   // Reports and Analytics (app-wide: Revenue, Products & Inventory, Customers, Operations) share one
-  // group (UX guide improvement 3); Analytics keeps the one sidebar entry for product insights (SA-1087).
+  // group (UX guide improvement 3). Product insights (SA-1087, as amended by UXG-R8) is NOT here: it is
+  // INSIGHTS_LEAF below, which buildOperatorNav appends only when the viewer may use it, so the default menu
+  // never offers it by accident.
   {
     kind: "group",
+    id: "reports",
     label: "Reports & analytics",
     icon: BarChart3,
     children: [
@@ -113,11 +141,20 @@ export const OPERATOR_NAV: NavEntry[] = [
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
+/** The Product insights entry: the last child of Reports & analytics, added by buildOperatorNav when insightsAccess is true. */
+export const INSIGHTS_LEAF: NavLeaf = {
+  kind: "leaf",
+  label: "Product insights",
+  href: "/insights",
+  icon: ScanSearch,
+};
+
 /** Customer nav — orders, invoices, returns and their own account only */
 export const CUSTOMER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   {
     kind: "group",
+    id: "orders",
     label: "Orders",
     icon: ShoppingCart,
     children: [
@@ -149,26 +186,13 @@ export const DRIVER_NAV: NavEntry[] = [
  * remembered per user by useOpenNavGroups).
  */
 export function defaultOpenGroup(nav: NavEntry[], pathname: string): string | null {
-  const active = nav.find(
-    (e): e is NavGroup => e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
-  );
+  const active = activeNavGroup(nav, pathname);
   if (active) return active.label;
   return nav.some((e) => e.kind === "group" && e.label === "Warehouse") ? "Warehouse" : null;
 }
 
-/** The sidebar label for the operator route `pathname` sits under (longest matching leaf href), so
+/** The sidebar label for the operator route `pathname` sits under (the one active-entry rule, see nav-index), so
  *  a lock card can name the feature the person actually clicked. */
 export function navLabelForPath(rawPathname: string): string | null {
-  // SA-1087: the product insights pages are part of Analytics, which has the one sidebar entry.
-  const pathname = /^\/insights(\/|$)/.test(rawPathname) ? "/analytics" : rawPathname;
-  let best: NavLeaf | null = null;
-  const consider = (leaf: NavLeaf) => {
-    const hit = pathname === leaf.href || pathname.startsWith(leaf.href + "/");
-    if (hit && (!best || leaf.href.length > best.href.length)) best = leaf;
-  };
-  for (const e of OPERATOR_NAV) {
-    if (e.kind === "leaf") consider(e);
-    else if (e.kind === "group") e.children.forEach(consider);
-  }
-  return (best as NavLeaf | null)?.label ?? null;
+  return activeNavLeaf([...OPERATOR_NAV, INSIGHTS_LEAF], rawPathname)?.label ?? null;
 }

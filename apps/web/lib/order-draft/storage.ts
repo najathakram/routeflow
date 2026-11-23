@@ -13,6 +13,8 @@ export interface LocalDraftRecord {
   localId: string;
   tenantId: string;
   userId: string;
+  /** SA-1222: the draft kind this copy belongs to. A record written before this field reads as an ORDER. */
+  kind?: "ORDER" | "INVOICE" | "PURCHASE_ORDER";
   /** The bound server `SaleDraft`, once one exists. */
   serverDraftId: string | null;
   /** The server draft's `updatedAt` as of our last confirmed sync: the `expectedUpdatedAt` of the next PATCH. */

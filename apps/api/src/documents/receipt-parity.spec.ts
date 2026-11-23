@@ -331,13 +331,13 @@ describe("print / reprint / email carry one money model (SA-762r)", () => {
 });
 
 describe("B1262 / SA-838: an advance application is a tender on the email as on the print", () => {
-  it("an all-advance sale: email == print, Advance, Paid, no On account", () => {
+  it("an all-advance sale: email == print, Credit (A1.7: Advance reads Credit), Paid, no On account", () => {
     const { emailModel, reprint } = build({
       total: "12.50",
       tax: "0.00",
       payments: [{ method: "ADVANCE", amount: "12.50" }],
     });
-    expect(emailModel.methodLabel).toBe("Advance $12.50");
+    expect(emailModel.methodLabel).toBe("Credit $12.50");
     expect(emailModel.showPaid).toBe(true);
     expect(emailModel.onAccount).toBe(false);
     expect(emailModel.paid).toBe(12.5);
@@ -347,7 +347,7 @@ describe("B1262 / SA-838: an advance application is a tender on the email as on 
     expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
   });
 
-  it("advance $5 + cash $7.50: email == print, Advance then Cash, Paid $12.50", () => {
+  it("advance $5 + cash $7.50: email == print, Credit then Cash, Paid $12.50", () => {
     const { emailModel, reprint } = build({
       total: "12.50",
       tax: "0.00",
@@ -356,11 +356,11 @@ describe("B1262 / SA-838: an advance application is a tender on the email as on 
         { method: "ADVANCE", amount: "5.00" },
       ],
     });
-    expect(emailModel.methodLabel).toBe("Advance $5.00 + Cash $7.50");
+    expect(emailModel.methodLabel).toBe("Credit $5.00 + Cash $7.50");
     expect(emailModel.paid).toBe(12.5);
     expect(emailModel.onAccount).toBe(false);
     // the SAME Payment method line on both, amounts included (SA-751r: a figure is never on one receipt and not the other)
-    expect(reprint.methodLabel).toBe("Advance $5.00 + Cash $7.50");
+    expect(reprint.methodLabel).toBe("Credit $5.00 + Cash $7.50");
     expect(reprint.methodLabel).toBe(emailModel.methodLabel);
     expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
   });
@@ -514,7 +514,7 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
     expect(reprint.balanceDue).toBe(0);
   });
 
-  it("(b) Advance $5.00 + Cash $7.50, Paid 12.50, Refunded 2.50; the email agrees on every money row", () => {
+  it("(b) Credit $5.00 + Cash $7.50, Paid 12.50, Refunded 2.50; the email agrees on every money row", () => {
     const { reprint, emailModel } = sale(
       [
         { method: "ADVANCE", amount: "5.00" },
@@ -523,7 +523,7 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
       [refunded],
     );
     expect(rows(reprint)).toMatchObject({
-      method: "Advance $5.00 + Cash $7.50",
+      method: "Credit $5.00 + Cash $7.50",
       paid: 12.5,
       refunded: 2.5,
     });
@@ -531,14 +531,14 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
     expect(moneyRows(emailModel)).toEqual(moneyRows(reprint));
   });
 
-  it("(c) Advance $12.50, Paid 12.50, Credit kept 3.00; the email agrees on every money row", () => {
+  it("(c) Credit $12.50, Paid 12.50, Credit kept 3.00; the email agrees on every money row", () => {
     const { reprint, emailModel } = sale(
       [{ method: "ADVANCE", amount: "12.50" }],
       [ret({ creditSubtotal: "3.00" })],
       issued,
     );
     expect(rows(reprint)).toMatchObject({
-      method: "Advance $12.50",
+      method: "Credit $12.50",
       paid: 12.5,
       creditKept: 3,
       returned: null,
@@ -719,7 +719,7 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
       ]);
     });
 
-    it("SA-838 (b) $5 advance + $7.50 cash, $2.50 refunded: Advance $5.00 + Cash $7.50 / Paid $12.50 / Refunded", () => {
+    it("SA-838 (b) $5 advance + $7.50 cash, $2.50 refunded: Credit $5.00 + Cash $7.50 / Paid $12.50 / Refunded", () => {
       same(
         sale(
           [
@@ -729,17 +729,17 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
           [refunded2],
         ),
         [
-          "Payment method Advance $5.00 + Cash $7.50",
+          "Payment method Credit $5.00 + Cash $7.50",
           "Paid $12.50",
           "Refunded $2.50 (returned items)",
         ],
       );
     });
 
-    it("SA-838 (c) paid fully from an advance, $3 kept: Advance $12.50 / Paid $12.50 / Credit kept $3.00", () => {
+    it("SA-838 (c) paid fully from an advance, $3 kept: Credit $12.50 / Paid $12.50 / Credit kept $3.00", () => {
       same(
         sale([{ method: "ADVANCE", amount: "12.50" }], [ret({ creditSubtotal: "3.00" })], issued),
-        ["Payment method Advance $12.50", "Paid $12.50", "Credit kept $3.00 (returned items)"],
+        ["Payment method Credit $12.50", "Paid $12.50", "Credit kept $3.00 (returned items)"],
       );
     });
 
@@ -753,7 +753,7 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
 
     it("(d) store credit from ANOTHER order's return stays the tender Store credit", () => {
       same(sale([note("12.50", { creditNoteId: "cn-9" })], []), [
-        "Payment method Store credit $12.50",
+        "Payment method Credit $12.50",
         "Paid $12.50",
       ]);
     });
@@ -806,7 +806,7 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
           },
         },
       });
-      same(b, ["Payment method Cash $7.50 + Store credit $5.00", "Paid $12.50"]);
+      same(b, ["Payment method Cash $7.50 + Credit $5.00", "Paid $12.50"]);
     });
 
     it("the double-claim fixture: a store-credit tender whose note another order's return made prints once, no Credit used", () => {
@@ -835,7 +835,7 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
           },
         },
       });
-      same(b, ["Payment method Cash $7.50 + Store credit $5.00", "Paid $12.50"]);
+      same(b, ["Payment method Cash $7.50 + Credit $5.00", "Paid $12.50"]);
     });
 
     it("the carrier order B of A's INLINE return prints NO return line, and its store credit is a tender", () => {
@@ -859,7 +859,7 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
           },
         },
       });
-      same(b, ["Payment method Cash $7.00 + Store credit $5.50", "Paid $12.50"]);
+      same(b, ["Payment method Cash $7.00 + Credit $5.50", "Paid $12.50"]);
     });
 
     it("an on-account sale with only its own return credit: Returned −$6.25 / Balance due $6.25, and the On account block", () => {
@@ -968,7 +968,7 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
       // the store-credit application stays a tender and part of Paid on a non-counter order. #3576 Opus MUST: master's
       // LITERAL line (labels only, no amounts), not this renderer compared against itself.
       expect(textLines(withReads.rendered)).toEqual([
-        "Payment method Cash + Store credit",
+        "Payment method Cash + Credit",
         "Paid $7.50",
         "Balance due $5.00",
       ]);
@@ -976,20 +976,20 @@ describe("SA-838a: a sale with its own return reads the same rows on the reprint
 
     it.each([
       // master folded an advance application into Store credit and printed labels only
-      [[{ method: "ADVANCE", amount: "12.50" }], "Store credit"],
+      [[{ method: "ADVANCE", amount: "12.50" }], "Credit"],
       [
         [
           { method: "CASH", amount: "7.50" },
           { method: "ADVANCE", amount: "5.00" },
         ],
-        "Cash + Store credit",
+        "Cash + Credit",
       ],
       [
         [
           { method: "ADVANCE", amount: "5.00" },
           { method: "CREDIT_NOTE", amount: "2.50" },
         ],
-        "Store credit",
+        "Credit",
       ],
     ])("a DELIVERY order paid %j reads master's %s", (payments, label) => {
       const { emailModel } = build({ total: "12.50", tax: "0.00", counterSale: false, payments });
@@ -1618,7 +1618,7 @@ describe("SA-1077 / W-1090: the till receipt reads the same split as the reprint
     const b = t1();
     expect(b.live.tendered).toBe(6);
     expect(lines(b.live)).toEqual([
-      "Payment method Cash $6.00 + Store credit $10.00",
+      "Payment method Cash $6.00 + Credit $10.00",
       "Paid $16.00",
       "Tendered $6.00",
       "Change $0.00",
@@ -1627,7 +1627,7 @@ describe("SA-1077 / W-1090: the till receipt reads the same split as the reprint
 
   it("R3 T1: the method line names both legs, as the reprint does", () => {
     const b = t1();
-    expect(b.live.methodLabel).toBe("Cash $6.00 + Store credit $10.00");
+    expect(b.live.methodLabel).toBe("Cash $6.00 + Credit $10.00");
     expect(b.live.methodLabel).toBe(b.reprint.methodLabel);
   });
 
@@ -1639,7 +1639,7 @@ describe("SA-1077 / W-1090: the till receipt reads the same split as the reprint
       carried: [olderReturn("10.00")],
       notes: applied(10),
     });
-    expect(b.live.methodLabel).toBe("Card $6.00 + Store credit $10.00");
+    expect(b.live.methodLabel).toBe("Card $6.00 + Credit $10.00");
     expect(lines(b.live)).toEqual(lines(b.reprint));
   });
 
@@ -1653,7 +1653,7 @@ describe("SA-1077 / W-1090: the till receipt reads the same split as the reprint
       liveMethod: "ON_ACCOUNT",
     });
     expect(b.live.onAccount).toBe(true);
-    expect(b.live.methodLabel).toBe("Store credit $4.00");
+    expect(b.live.methodLabel).toBe("Credit $4.00");
     expect(b.live.paid).toBe(4);
     expect(b.live.showPaid).toBe(true);
     expect(b.live.balanceDue).toBe(6);
@@ -1669,7 +1669,7 @@ describe("SA-1077 / W-1090: the till receipt reads the same split as the reprint
       notes: applied(10),
       liveMethod: "CASH",
     });
-    expect(b.live.methodLabel).toBe("Store credit $10.00");
+    expect(b.live.methodLabel).toBe("Credit $10.00");
     expect(b.live.paid).toBe(10);
     expect(b.live.tendered).toBeNull();
   });
@@ -1682,7 +1682,7 @@ describe("SA-1077 / W-1090: the till receipt reads the same split as the reprint
       tendered: "6.00",
     });
     expect(b.live.tendered).toBe(6);
-    expect(b.live.methodLabel).toBe("Cash $6.00 + Store credit $10.00");
+    expect(b.live.methodLabel).toBe("Cash $6.00 + Credit $10.00");
     expect(lines(b.live)).toEqual(lines(b.reprint));
   });
 

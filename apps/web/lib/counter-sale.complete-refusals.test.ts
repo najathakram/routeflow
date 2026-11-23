@@ -65,7 +65,7 @@ describe("pickupCompleteErrorCopy: R8/R9 refusals (owner 7a)", () => {
   const refusal = (data: Record<string, unknown>) => ({ response: { status: 409, data } });
   it("shipped with the carrier (Q2 = A)", () => {
     expect(pickupCompleteErrorCopy(refusal({ code: "COUNTER_COMPLETE_SHIPPED" }))).toBe(
-      "Nothing changed. This order has shipped with the carrier.",
+      "Nothing changed. This order is with the carrier. To hand it over here, first Unmark shipped, then switch it to Store pickup.",
     );
   });
   it("on a driver's run, naming the driver (Q1 = A)", () => {

@@ -382,7 +382,7 @@ describe("SA-1067 A-3: a tender that does not read as money is refused, never po
     expect(hint()).toBeNull();
   });
 
-  it("A3-1/A3-2: an identified customer on Cash, 10.00 then 4011 and 10. then 4011: no post (a short cash tender is a part payment, a garbled one is not)", async () => {
+  it("A3-1/A3-2: an identified customer on Cash, 10.00 then 4011 and 10. then 4011: no post (a short cash tender is a part payment, a garbled one says to enter numbers)", async () => {
     const user = userEvent.setup();
     renderTill(<CounterSaleScreen />);
     pickPlain();
@@ -392,7 +392,7 @@ describe("SA-1067 A-3: a tender that does not read as money is refused, never po
       await user.type(tenderField(), `${text}{Enter}`);
       expect(posted()).toBe(0);
     }
-    expect(await screen.findByText(SHORT)).toBeInTheDocument();
+    expect(await screen.findByText("Enter the amount in numbers, like 50.00.")).toBeInTheDocument();
   });
 
   it("A3-3: an identified customer on Card, Amount paying now 10. then 4011, Enter: no post, the amount refusal", async () => {
@@ -435,5 +435,93 @@ describe("SA-1067 A-3: a tender that does not read as money is refused, never po
     await user.type(tenderField(), "{Enter}");
     expect(posted()).toBe(0);
     expect(await screen.findByText(SHORT)).toBeInTheDocument();
+  });
+});
+
+describe("SA-1232: an empty tender that goes on account needs a deliberate second Enter", () => {
+  const ARM = "Press Enter again to put this sale on account.";
+  const armed = () => screen.queryByText(ARM);
+  const named = async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    const tender = screen.getByLabelText("Amount tendered");
+    await user.click(tender);
+    return { user, tender };
+  };
+
+  it("A1/A2: the first Enter arms and posts nothing; the second posts one ON_ACCOUNT; a third posts nothing more", async () => {
+    const { user } = await named();
+    await user.keyboard("{Enter}");
+    expect(posted()).toBe(0);
+    expect(armed()).toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(posted()).toBe(1));
+    expect(mutateAsync.mock.calls[0][0].dto.payment).toEqual({ method: "ON_ACCOUNT" });
+    await user.keyboard("{Enter}");
+    expect(posted()).toBe(1);
+  });
+
+  it("A3: a held Enter (repeat) is not a second press", async () => {
+    const { user, tender } = await named();
+    await user.keyboard("{Enter}");
+    expect(armed()).toBeInTheDocument();
+    fireEvent.keyDown(tender, { key: "Enter", repeat: true });
+    expect(posted()).toBe(0);
+  });
+
+  it("A4: leaving the field disarms; Enter again only arms", async () => {
+    const { user, tender } = await named();
+    await user.keyboard("{Enter}");
+    expect(armed()).toBeInTheDocument();
+    fireEvent.blur(tender);
+    expect(armed()).toBeNull();
+    await user.click(tender);
+    await user.keyboard("{Enter}");
+    expect(posted()).toBe(0);
+    expect(armed()).toBeInTheDocument();
+  });
+
+  it("A5: typing a real tender after the arm posts CASH, never ON_ACCOUNT", async () => {
+    const { user } = await named();
+    await user.keyboard("{Enter}");
+    await user.keyboard("12.50{Enter}");
+    await waitFor(() => expect(posted()).toBe(1));
+    expect(mutateAsync.mock.calls[0][0].dto.payment).toEqual({ method: "CASH", amount: 12.5 });
+  });
+
+  it("A6: a change of the total ends the arm", async () => {
+    const { user } = await named();
+    await user.keyboard("{Enter}");
+    expect(armed()).toBeInTheDocument();
+    await scanCase();
+    expect(armed()).toBeNull();
+    await user.click(screen.getByLabelText("Amount tendered"));
+    await user.keyboard("{Enter}");
+    expect(posted()).toBe(0);
+  });
+
+  it("L1a/L1b: both buttons name the action while the tender is empty, and go back with a tender", async () => {
+    const { user } = await named();
+    expect(
+      screen.getByRole("button", { name: "Put on account & show receipt" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Put on account & next sale" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Amount tendered"), "5");
+    expect(screen.getByRole("button", { name: "Complete & show receipt" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Complete & next sale" })).toBeInTheDocument();
+  });
+
+  it("pins: a typed tender posts once with no arm; a walk-in's empty tender is still refused after two Enters", async () => {
+    const user = userEvent.setup();
+    renderTill(<CounterSaleScreen />);
+    await scanCase();
+    const tender = screen.getByLabelText("Amount tendered");
+    await user.click(tender);
+    await user.keyboard("{Enter}{Enter}");
+    expect(posted()).toBe(0);
+    expect(armed()).toBeNull();
+    expect(await screen.findByText("Enter at least $12.50.")).toBeInTheDocument();
   });
 });

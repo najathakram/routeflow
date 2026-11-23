@@ -481,6 +481,26 @@ describe("AccountStatementSheet", () => {
     expect(screen.getByTestId("account-statement-credits").textContent).toContain("Oct 18, 2026");
   });
 
+  it("SA-1214 A1: a buyer's advance row reads 'Credit from payment, <date>', never Advance or a reference", async () => {
+    statement.credits = [
+      {
+        kind: "ADVANCE",
+        id: "adv1",
+        number: null,
+        label: "Credit from payment",
+        date: "2026-10-02",
+        reason: null,
+        remaining: 200,
+        expiresAt: null,
+      },
+    ];
+    renderWithProviders(<OpenBalanceButton customerId="c1">$120.00</OpenBalanceButton>);
+    await open();
+    const text = (await screen.findByTestId("account-statement-credits")).textContent ?? "";
+    expect(text).toContain("Credit from payment, Oct 2, 2026");
+    expect(text).not.toContain("Advance");
+  });
+
   it("A-3: a credit with an expiry prints it, and one without prints none", async () => {
     const credit = (id: string, expiresAt: string | null) => ({
       kind: "CREDIT_NOTE" as const,

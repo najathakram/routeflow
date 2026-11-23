@@ -210,6 +210,11 @@ jobs:
     # job takes about 38 minutes and keeps no token on disk.
     runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted","routeflow-ephemeral"]') || 'ubuntu-latest' }}
     # Turbo alone took 25m23s on 2026-10-31; 30 cut the script self-tests off.
+    # The cap is 45 and the Verify step's budget 41 (SA-1195 A1). The cap counts from job start,
+    # and Verify starts 1.4-2.5 min in (checkout, setup-node, install, prisma; 8 runs, 2026-11-20),
+    # so 2.5 + 41 + 1 min kill grace = 44.5 lands the step's group kill before the cap. Tonight's
+    # Verify steps ran 21.6 to 36.1 minutes. control's ci-workflow.spec.ts pins
+    # budget + grace <= cap - 3, so changing either number alone fails.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -348,13 +353,38 @@ jobs:
       # do not set this variable, so a local FULL_VERIFY still runs control).
       # The script ACCEPTS ONLY that one name and exits 1 on any other (an allow-list, so a later edit
       # here cannot silently exclude api/web); widening it means editing scripts/verify-turbo.mjs.
+      #
+      # SA-1195 K2 (2026-11-20): the step has its own 41-minute budget under the 45-minute job cap.
+      # - `timeout -k 60 41m` leads its own process group and signals all of it, so every jest and
+      #   turbo grandchild dies at the budget. `verify` is an `sh -c` chain, and sh does not pass a
+      #   cancel on to its children: two cancels of one PR's Verify took 55:00 against a 45:00 cap,
+      #   and GitHub kept no log of either.
+      # - A run past the budget exits 124 ("timed out") and the job ends on its own instead of being
+      #   cancelled, so its log should be kept (the two cancelled runs kept none).
+      # - The command inside is still exactly `npm run verify`, byte-identical to the pre-push hook.
+      # - The notice records the runner's size (nproc, memory). TURBO_RUN_SUMMARY makes turbo write
+      #   each task's duration to .turbo/runs/*.json, uploaded below. That is a record, not a cache:
+      #   nothing restores it.
       - name: Verify (lockfile, bug-signature scan, types, lint, tests)
-        run: npm run verify
+        run: |
+          echo "::notice title=Verify runner::nproc $(nproc), $(free -m | awk '/^Mem:/ {print "memory " $2 " MB total, " $7 " MB available"}')"
+          timeout -k 60 41m npm run verify
         env:
           VERIFY_EXCLUDE: "@routeflow/control"
           # Setting this splits verify into check-types + lint first, then jest (scripts/verify-turbo.mjs), so
           # the api spec type check (about 11 GB) and the jest workers no longer share the runner's memory.
           JEST_MAX_WORKERS: "2"
+          TURBO_RUN_SUMMARY: "true"
+
+      - name: Upload turbo run summary
+        # SA-1195 K2: each turbo task's duration, kept even when Verify fails or hits its budget.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: turbo-run-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .turbo/runs/
+          if-no-files-found: warn
+          retention-days: 7
 
       # Registry state, not tree state — so this belongs in CI and not in the
       # local pre-push gate, where it would add network latency to every push.

@@ -213,6 +213,8 @@ const CODE_COPY: Record<string, string> = {
     "This order's total can't drop below the credit already issued or held against its returns. Raise the total, or deal with the return credit first.",
   [API_ERROR_CODES.UNIT_AWARE_LINE_UNVERIFIABLE]:
     "This invoice's lines couldn't be verified, so it can't be edited. Ask an admin.",
+  [API_ERROR_CODES.CHANGE_REQUEST_SPLIT_MISMATCH]:
+    "This request's quantity and box count don't match, so it can't be applied: decline it.",
   [API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED]:
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
   [API_ERROR_CODES.MERGE_ALREADY_DECIDED]:
@@ -241,6 +243,11 @@ const CODE_COPY: Record<string, string> = {
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   // B292: an edit that would clear every line is refused; the bill is voided or deleted instead.
   [API_ERROR_CODES.BILL_NEEDS_A_LINE]: "A bill needs at least one line. Void or delete it instead.",
+  // SA-1207 S2b: a lot or split line changes its price only; a lot is received whole.
+  [API_ERROR_CODES.SPLIT_LINE_LOCKED]:
+    "A split line can change its price only. Edit this bill on the web.",
+  [API_ERROR_CODES.RECEIVE_PARTIAL_UNIT]: "A lot is received whole, not in part.",
+  [API_ERROR_CODES.LOT_QTY_NOT_WHOLE]: "A pack line needs a whole number of packs.",
   // Row 648: vendor bill refusals the page used to explain by rendering the server message.
   [API_ERROR_CODES.BILL_NOT_EDITABLE]:
     "Only draft bills can be edited. Revert the bill to draft first.",

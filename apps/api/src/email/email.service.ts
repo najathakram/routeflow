@@ -1,4 +1,11 @@
-import { redactAddresses } from "./redact-addresses";
+import { logRecipient, redactAddresses } from "./redact-addresses";
+import {
+  DELIVERY_REF_HEADER,
+  classifyFallbackReason,
+  newDeliveryRefToken,
+  type EmailFallbackClass,
+  type EmailRoute,
+} from "./bounces/email-bounce-keys";
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Resend } from "resend";
@@ -53,6 +60,7 @@ import {
   type PerBaseUnitPrice,
 } from "@routeflow/pricing";
 import { sellerDisplayName } from "../common/seller-display-name";
+import type { InvoiceAccountRow } from "@routeflow/types";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
 // Tenants control smtpHost; without this guard they could point it at
@@ -284,6 +292,13 @@ export type EmailSendResult = {
    * to the platform address, and that's part of the disclosure, not a footnote.
    */
   fromAddress?: string;
+  /**
+   * W-1286 (SA-1202 C5): where the send actually left from. `transport` keeps its values for today's readers and is
+   * never the route (both SMTP paths say "smtp"). A tenant-server failure that falls back reports `platform-smtp`.
+   */
+  route?: EmailRoute;
+  /** C29: why a tenant-server send fell back, as a class only (never provider text). Set on the fallback's result. */
+  fallbackReason?: EmailFallbackClass;
 };
 
 @Injectable()
@@ -1134,6 +1149,8 @@ export class EmailService {
     /** R6a: the tenant's `invoice.hideAmountPaid` / `invoice.hideBalanceDue`: true leaves that line out of the invoice email (a reminder ignores both). */
     hideAmountPaid?: boolean;
     hideBalanceDue?: boolean;
+    /** SA-1197: the server's account rows (accountBlockRows), printed as given under Balance Due; a reminder prints none. */
+    accountRows?: InvoiceAccountRow[];
     /**
      * Row 401: a counter sale paid at the till is settled when it is rung, so the body prints no Due Date and no
      * Terms (the caller decides with `isPaidAtSale`, the rule the invoice page follows). Absent/false = both show.
@@ -1155,8 +1172,15 @@ export class EmailService {
      * same invoice body (lines, paid now, balance). Absent = today's invoice email, unchanged.
      */
     completion?: { orderNumber: string };
+    /**
+     * B1372 (SA-1177 K2): the numbers of the invoices in this email that were emailed before and changed since. Each gets
+     * one line under the intro: "Invoice {n} changed since we last sent it. This is the updated copy." Absent/empty = none.
+     */
+    changedSinceSent?: string[];
     /** I-120: the order's other invoices' PDFs, one attachment each, beside `attachment`. */
     extraAttachments?: { filename: string; content: Buffer; contentType: string }[];
+    /** W-1286 (SA-1202 C6): the other invoices this email is about (a completion email); each gets its own delivery row. */
+    alsoInvoiceIds?: string[];
   }) {
     const businessName = await this.getTenantBusinessName();
     const subject = params.completion
@@ -1166,6 +1190,9 @@ export class EmailService {
         : `Invoice ${params.invoiceNumber}`;
 
     const { html, text } = this.buildInvoiceEmail(params, businessName, await this.tenantLook());
+    // W-1286 (SA-1202 C6): the invoice email records its own delivery row (one per invoice it names), so a later bounce
+    // finds it. No tenant in scope (a system caller) = nothing recorded, as before.
+    const tenantId = this.prisma.getTenantId();
     return this.send({
       to: params.to,
       subject,
@@ -1175,6 +1202,17 @@ export class EmailService {
         params.attachment || params.extraAttachments?.length
           ? [...(params.attachment ? [params.attachment] : []), ...(params.extraAttachments ?? [])]
           : undefined,
+      ...(tenantId
+        ? {
+            delivery: {
+              tenantId,
+              kind: params.isReminder ? ("INVOICE_REMINDER" as const) : ("INVOICE_SENT" as const),
+              entityType: "Invoice",
+              entityId: params.invoiceId,
+              ...(params.alsoInvoiceIds?.length ? { alsoEntityIds: params.alsoInvoiceIds } : {}),
+            },
+          }
+        : {}),
     });
   }
 
@@ -1182,8 +1220,7 @@ export class EmailService {
 
   /** B911: the log form of a recipient — the domain only, never the full address. */
   private logRecipient(to: string): string {
-    const at = to.lastIndexOf("@");
-    return at >= 0 ? to.slice(at) : "<no-domain>";
+    return logRecipient(to);
   }
 
   /**
@@ -1259,14 +1296,16 @@ export class EmailService {
     const { delivery, ...rest } = params;
     if (!delivery) return this.sendUnrecorded(rest);
 
+    // W-1286 (SA-1202 C4'): a recorded send carries one random reference header, stored with its row.
+    const refToken = newDeliveryRefToken();
     let result: EmailSendResult;
     try {
-      result = await this.sendUnrecorded(rest);
+      result = await this.sendUnrecorded(rest, refToken);
     } catch (err) {
       result = {
         delivered: false,
         transport: "none",
-        error: (err as Error)?.message ?? "Email send failed",
+        error: redactAddresses((err as Error)?.message ?? "Email send failed"),
       };
     }
     try {
@@ -1285,6 +1324,10 @@ export class EmailService {
             ),
         attempts: 1,
         sentAt: result.delivered ? new Date() : null,
+        alsoEntityIds: delivery.alsoEntityIds,
+        route: result.route ?? "none",
+        refToken,
+        fallbackReason: result.fallbackReason ?? null,
       });
     } catch {
       // audit failure must never change the send result
@@ -1293,7 +1336,12 @@ export class EmailService {
   }
 
   /** The transport chain itself (mailbox, tenant SMTP, platform SMTP, Resend), no audit row. PRIVATE: every caller goes through `send`, the one entry a recipient guard can sit on. */
-  private async sendUnrecorded(params: EmailSendParams): Promise<EmailSendResult> {
+  private async sendUnrecorded(
+    params: EmailSendParams,
+    /** W-1286 (SA-1202 C4'): set only on a recorded send; the same value goes into every transport's header. */
+    refToken?: string,
+  ): Promise<EmailSendResult> {
+    const refHeaders = refToken ? { headers: { [DELIVERY_REF_HEADER]: refToken } } : {};
     // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
     // — not a set of skipped branches inside this method. `sendPlatform` never resolves
     // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses
@@ -1308,13 +1356,16 @@ export class EmailService {
           `Email "${params.subject.slice(0, 60)}" asked for a platform send with ${params.layout ? "a layout spec" : "attachments"}, which the platform path drops. Build a platform email with email-layout.ts, or send tenant mail without senderClass "platform".`,
         );
       }
-      return this.sendPlatform({
-        to: params.to,
-        subject: params.subject,
-        html: params.html,
-        text: params.text,
-        replyTo: params.replyTo,
-      });
+      return this.sendPlatform(
+        {
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+          text: params.text,
+          replyTo: params.replyTo,
+        },
+        refToken,
+      );
     }
 
     params = await this.composeLayout(params);
@@ -1341,11 +1392,13 @@ export class EmailService {
         replyTo,
         fromName: businessName || undefined,
         attachments: params.attachments,
+        ...refHeaders,
       });
       if (mailboxResult.delivered) {
         return {
           delivered: true,
           transport: "mailbox",
+          route: "mailbox",
           id: mailboxResult.id,
           fromAddress: mailboxResult.fromAddress,
         };
@@ -1357,6 +1410,7 @@ export class EmailService {
     const emailCfg = await this.getTenantEmailConfig();
     let smtpError: string | undefined;
     let smtpFallbackReason: string | undefined;
+    let fallbackReason: EmailFallbackClass | undefined; // C29: the class of the tenant-server failure, nothing else
     if (emailCfg) {
       try {
         assertSafeSmtpEndpoint(emailCfg.host, emailCfg.port);
@@ -1375,6 +1429,7 @@ export class EmailService {
           return {
             delivered: false,
             transport: "smtp",
+            route: "tenant-smtp",
             error: "Set a From email in Settings → Email",
           };
         }
@@ -1393,15 +1448,17 @@ export class EmailService {
           text: params.text,
           replyTo,
           attachments: params.attachments,
+          ...refHeaders,
         });
         this.logger.log(
           `Email sent via tenant SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
-        return { delivered: true, transport: "smtp", id: info.messageId };
+        return { delivered: true, transport: "smtp", route: "tenant-smtp", id: info.messageId };
       } catch (err: any) {
         const rawMessage: string = err?.message ?? "SMTP send failed";
         smtpError = rawMessage;
         smtpFallbackReason = mapSmtpError(err, emailCfg.host, emailCfg.port, emailCfg.user);
+        fallbackReason = classifyFallbackReason(err);
         this.logger.error(
           `Tenant SMTP send failed [code=${err?.code ?? "unknown"}` +
             `${err?.responseCode ? ` responseCode=${err.responseCode}` : ""}]: ` +
@@ -1433,6 +1490,7 @@ export class EmailService {
           html: params.html,
           replyTo,
           attachments: params.attachments,
+          ...refHeaders,
         });
         this.logger.log(
           `Email sent via platform SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
@@ -1440,8 +1498,10 @@ export class EmailService {
         return {
           delivered: true,
           transport: "smtp",
+          route: "platform-smtp",
           id: info.messageId,
           smtpFallbackReason,
+          fallbackReason,
           fromAddress: smtpFallbackReason ? this.addressOf(from) : undefined,
         };
       } catch (err: any) {
@@ -1459,8 +1519,10 @@ export class EmailService {
         return {
           delivered: false,
           transport: "smtp",
+          route: "platform-smtp",
           error: smtpError ?? redactAddresses(rawMessage),
           smtpFallbackReason: smtpFallbackReason ?? mapped,
+          fallbackReason,
         };
       }
     }
@@ -1481,6 +1543,7 @@ export class EmailService {
             filename: a.filename,
             content: a.content,
           })),
+          ...refHeaders,
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
@@ -1490,8 +1553,10 @@ export class EmailService {
           return {
             delivered: false,
             transport: "resend",
+            route: "resend",
             error: redactAddresses(String(msg)),
             smtpFallbackReason,
+            fallbackReason,
           };
         }
         this.logger.log(
@@ -1504,8 +1569,10 @@ export class EmailService {
         return {
           delivered: true,
           transport: "resend",
+          route: "resend",
           id: (result.data as any)?.id,
           smtpFallbackReason,
+          fallbackReason,
           fromAddress: smtpFallbackReason ? this.addressOf(from) : undefined,
         };
       } catch (err: any) {
@@ -1515,8 +1582,10 @@ export class EmailService {
         return {
           delivered: false,
           transport: "resend",
+          route: "resend",
           error: redactAddresses(String(err?.message ?? "Resend send failed")),
           smtpFallbackReason,
+          fallbackReason,
         };
       }
     }
@@ -1528,8 +1597,10 @@ export class EmailService {
     return {
       delivered: false,
       transport: emailCfg ? "smtp" : "none",
+      route: "none",
       error: smtpError,
       smtpFallbackReason,
+      fallbackReason,
     };
   }
 
@@ -1549,18 +1620,24 @@ export class EmailService {
    * as part of this merge rather than left dangling. `text` (N3's plain-text alternative)
    * is threaded through both transports.
    */
-  async sendPlatform(params: {
-    to: string;
-    subject: string;
-    html: string;
-    text?: string;
-    replyTo?: string;
-  }): Promise<{
+  async sendPlatform(
+    params: {
+      to: string;
+      subject: string;
+      html: string;
+      text?: string;
+      replyTo?: string;
+    },
+    /** W-1286 (SA-1202 C4'): the reference header value of a recorded send; absent = no header. */
+    refToken?: string,
+  ): Promise<{
     delivered: boolean;
     transport: "smtp" | "resend" | "none";
+    route?: EmailRoute;
     id?: string;
     error?: string;
   }> {
+    const refHeaders = refToken ? { headers: { [DELIVERY_REF_HEADER]: refToken } } : {};
     // B460: the same one-line subject rule as send(); billing and account mail enter here, not there.
     params = { ...params, subject: headerSafeSubject(params.subject) };
     // Sentinel guard (#2854 Opus r2): sendPlatform is PUBLIC and called directly
@@ -1589,17 +1666,23 @@ export class EmailService {
           html: params.html,
           text: params.text,
           replyTo: params.replyTo,
+          ...refHeaders,
         });
         this.logger.log(
           `Platform email sent via platform SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
-        return { delivered: true, transport: "smtp", id: info.messageId };
+        return { delivered: true, transport: "smtp", route: "platform-smtp", id: info.messageId };
       } catch (err: any) {
         const rawMessage: string = err?.message ?? "Platform SMTP send failed";
         this.logger.error(
           `Platform SMTP send failed [code=${err?.code ?? "unknown"}]: ${redactAddresses(rawMessage)}.`,
         );
-        return { delivered: false, transport: "smtp", error: redactAddresses(rawMessage) };
+        return {
+          delivered: false,
+          transport: "smtp",
+          route: "platform-smtp",
+          error: redactAddresses(rawMessage),
+        };
       }
     }
 
@@ -1613,18 +1696,29 @@ export class EmailService {
           html: params.html,
           text: params.text,
           replyTo: params.replyTo,
+          ...refHeaders,
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
           this.logger.error(
             `Resend rejected platform email to ${this.logRecipient(params.to)}: ${redactAddresses(String(msg))}`,
           );
-          return { delivered: false, transport: "resend", error: redactAddresses(String(msg)) };
+          return {
+            delivered: false,
+            transport: "resend",
+            route: "resend",
+            error: redactAddresses(String(msg)),
+          };
         }
         this.logger.log(
           `Platform email sent via Resend to ${this.logRecipient(params.to)} — id: ${(result.data as any)?.id}`,
         );
-        return { delivered: true, transport: "resend", id: (result.data as any)?.id };
+        return {
+          delivered: true,
+          transport: "resend",
+          route: "resend",
+          id: (result.data as any)?.id,
+        };
       } catch (err: any) {
         this.logger.error(
           `Failed to send platform email to ${this.logRecipient(params.to)}: ${redactAddresses(String(err?.message ?? ""))}`,
@@ -1632,6 +1726,7 @@ export class EmailService {
         return {
           delivered: false,
           transport: "resend",
+          route: "resend",
           error: redactAddresses(String(err?.message ?? "Resend send failed")),
         };
       }
@@ -1641,7 +1736,7 @@ export class EmailService {
     this.logger.warn(
       `[PLATFORM EMAIL NOT SENT] To: ${this.logRecipient(params.to)} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
     );
-    return { delivered: false, transport: "none" };
+    return { delivered: false, transport: "none", route: "none" };
   }
 
   // ─── Email template ────────────────────────────────────────────────────────
@@ -1694,6 +1789,8 @@ export class EmailService {
       isReminder?: boolean;
       /** I-120: the completion email's intro (see sendInvoice's doc). */
       completion?: { orderNumber: string };
+      /** B1372 K2: see sendInvoice's doc; a reminder never passes it. */
+      changedSinceSent?: string[];
       /** Tenant's `invoice.hideOriginalPrice` — see sendInvoice's doc. */
       hideOriginalPrice?: boolean;
       /** Tenant's `invoice.hidePerPiece` — see sendInvoice's doc. */
@@ -1701,6 +1798,8 @@ export class EmailService {
       /** R6a: see sendInvoice's doc; a reminder ignores both. */
       hideAmountPaid?: boolean;
       hideBalanceDue?: boolean;
+      /** SA-1197: see sendInvoice's doc. */
+      accountRows?: InvoiceAccountRow[];
       /** Row 401: no Due Date / Terms rows for a paid-at-sale counter invoice — see sendInvoice's doc. */
       hideTerms?: boolean;
       /** Deposit schedule (display-only, derived server-side) — null/absent renders nothing. */
@@ -1714,6 +1813,12 @@ export class EmailService {
       new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 
     const showPerPiece = !params.hidePerPiece && params.items.some((i) => !!i.perBaseUnit);
+    // B1372 K2: a sent invoice an edit turned back into a draft is re-issued as the updated copy, never silently
+    const changedLines = params.isReminder
+      ? []
+      : (params.changedSinceSent ?? []).map(
+          (n) => `Invoice ${n} changed since we last sent it. This is the updated copy.`,
+        );
     const itemRows = params.items
       .map((it) => {
         // F03/R9 — mirrors the web invoice detail renderer and the PDF: name the
@@ -1826,6 +1931,17 @@ export class EmailService {
                 <td colspan="${footSpan}" style="padding:8px 12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Total</td>
                 <td style="padding:8px 12px;font-size:15px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
               </tr>`;
+    // SA-1197: the account block under Balance Due, neutral (never the danger or success colour), smaller; the rows and their
+    // words are the server's (accountBlockRows, C5/C12). A reminder prints none (C13).
+    const accountRows = params.isReminder ? [] : (params.accountRows ?? []);
+    const accountRowsHtml = accountRows
+      .map(
+        (r) => `<tr>
+                <td colspan="${footSpan}" style="padding:6px 12px;font-size:12px;font-weight:${r.kind === "heading" ? 700 : 500};color:#4b5563;text-align:right;">${escapeHtml(r.label)}</td>
+                <td style="padding:6px 12px;font-size:13px;font-weight:600;color:#4b5563;text-align:right;">${r.amount == null ? "" : fmt(r.amount)}</td>
+              </tr>`,
+      )
+      .join("");
     const totalsFooter =
       params.balanceDue != null
         ? `${itemCountRow}${dropBalance ? totalRow : ""}${amountPaidRow}${creditAppliedRow}${advanceAppliedRow}${
@@ -1836,7 +1952,7 @@ export class EmailService {
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Balance Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:${params.balanceDue > 0 ? "#dc2626" : "#16a34a"};text-align:right;">${fmt(params.balanceDue)}</td>
               </tr>`
-          }`
+          }${accountRowsHtml}`
         : `${itemCountRow}<tr style="background:#f9fafb;">
                 <td colspan="${footSpan}" style="padding:12px;font-size:14px;font-weight:700;color:#1D2A3D;text-align:right;">Amount Due</td>
                 <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
@@ -1849,6 +1965,7 @@ export class EmailService {
           <p style="margin:0 0 24px;font-size:15px;color:#374151;">
             ${params.completion ? "Your order is complete. Your invoice is attached." : params.isReminder ? "This is a reminder that the following invoice is outstanding." : "Please find your invoice details below."}
           </p>
+          ${changedLines.map((line) => `<p style="margin:0 0 24px;font-size:15px;color:#374151;" data-changed-since-sent>${escapeHtml(line)}</p>`).join("")}
 
           <!-- Invoice meta -->
           <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
@@ -1926,6 +2043,7 @@ export class EmailService {
           ? "This is a reminder that the following invoice is outstanding."
           : "Please find your invoice details below.",
     );
+    bodyText.push(...changedLines);
     bodyText.push(
       [
         `Invoice No. ${params.invoiceNumber}`,
@@ -1956,6 +2074,9 @@ export class EmailService {
       totalsLines.push(`Advance applied: ${fmt(params.advanceApplied)}`);
     if (params.balanceDue == null) totalsLines.push(`Amount Due: ${fmt(params.total)}`);
     else if (!dropBalance) totalsLines.push(`Balance Due: ${fmt(params.balanceDue)}`);
+    if (params.balanceDue != null)
+      for (const r of accountRows)
+        totalsLines.push(r.amount == null ? r.label : `${r.label}: ${fmt(r.amount)}`);
     if (totalsLines.length > 0) bodyText.push(totalsLines.join("\n"));
     if (params.pdfUrl) bodyText.push(`Download PDF: ${params.pdfUrl}`);
     bodyText.push(

@@ -45,7 +45,30 @@ export class EmailDeliveryPruneService {
         this.logger.warn(`EmailDelivery prune failed for a tenant: ${(err as Error)?.message}`);
       }
     }
+    // C10 (W-1286): bounce-notice rows (a platform table, no ambient tenant) live 90 days like other delivery rows.
+    try {
+      deleted += await this.pruneNotices(cutoff);
+    } catch (err) {
+      this.logger.warn(`EmailBounceNotice prune failed: ${(err as Error)?.message}`);
+    }
     return { deleted };
+  }
+
+  /** Same bounded loop as `deleteAll`: at most BATCH ids per statement, until a select comes back empty. */
+  private async pruneNotices(cutoff: Date): Promise<number> {
+    let total = 0;
+    for (;;) {
+      const rows = await this.prisma.emailBounceNotice.findMany({
+        where: { processedAt: { lt: cutoff } },
+        select: { id: true },
+        take: BATCH,
+      });
+      if (rows.length === 0) return total;
+      const res = await this.prisma.emailBounceNotice.deleteMany({
+        where: { id: { in: rows.map((r) => r.id) } },
+      });
+      total += res.count;
+    }
   }
 
   /**

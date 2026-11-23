@@ -422,3 +422,24 @@ describe("invoiceFingerprintOf - the stage is part of the fingerprint", () => {
     expect(await invoiceFingerprintOf(prisma(null), {}, "inv-1")).toBeNull();
   });
 });
+
+// SA-1197 (T7, Q8): the account block never reaches the fingerprint. isWalkIn rides the snapshot's customer select (C7)
+// and the block's figures are read beside the model, never on it, so "changed since sent" (B1372) cannot move when
+// ANOTHER invoice of the customer is paid or a new one is issued.
+describe("invoiceFingerprint ignores the account block (SA-1197 T7)", () => {
+  it("isWalkIn on the customer does not change the hash", () => {
+    const a = fp();
+    expect(fp((s) => Object.assign(s.customer as object, { isWalkIn: null }))).toBe(a);
+    expect(fp((s) => Object.assign(s.customer as object, { isWalkIn: false }))).toBe(a);
+  });
+
+  it("account figures beside the model (any values) do not change the hash", () => {
+    const a = fp();
+    expect(
+      fp((s) => Object.assign(s, { accountRows: [{ kind: "openBalance", amount: 80 }] })),
+    ).toBe(a);
+    expect(
+      fp((s) => Object.assign(s, { accountRows: [{ kind: "openBalance", amount: 95 }] })),
+    ).toBe(a);
+  });
+});

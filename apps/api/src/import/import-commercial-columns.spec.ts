@@ -39,9 +39,13 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PRODUCT_COLUMNS, CUSTOMER_COLUMNS } from "./import-columns";
 import { IMPORT_PACK_READING, packCostAbovePieceCount } from "./import-pack-reading";
+import { ImportRequirementLabelService, requirementLabels } from "./import-requirement-labels";
+import { V11_ADDON_SEEDS } from "../../prisma/plan-catalog-v11.definitions";
 
 describe("ImportService — commercial columns (B858/B859)", () => {
   let service: ImportService;
+  // SA-1193 A1-2: the label source, over the real v11 catalog (the fixture catalog)
+  let labelService: { labels: jest.Mock };
   let prisma: ReturnType<typeof createMockPrisma>;
   let productsService: {
     create: jest.Mock;
@@ -81,8 +85,10 @@ describe("ImportService — commercial columns (B858/B859)", () => {
       setCustomerConsent: jest.fn().mockResolvedValue(undefined),
     };
 
+    labelService = { labels: jest.fn().mockResolvedValue(requirementLabels(V11_ADDON_SEEDS)) };
     const mod = await Test.createTestingModule({
       providers: [
+        { provide: ImportRequirementLabelService, useValue: labelService },
         {
           provide: SellingRestrictionsService,
           useValue: {
@@ -1045,22 +1051,22 @@ describe("ImportService — commercial columns (B858/B859)", () => {
     });
 
     it.each(["Reorder Point", "Reorder Qty"])(
-      "SA-322: a %s column without flag.forecasting refuses the WHOLE file, before any query (preview and run)",
+      // SA-1193 supersedes SA-284 b's whole-file refusal for a denial: the column is skipped and named, never written.
+      "SA-322 / SA-1193: a %s column without flag.forecasting is skipped and named; neither reorder field is written (preview and run)",
       async (header) => {
         productsService.assertReorderAllowed.mockRejectedValue(new ForbiddenException("denied"));
         const csv = `Item Name,SKU,Rate,${header}\nWidget,SKU-1,10,4\n`;
 
         for (const dryRun of [true, false]) {
-          await expect(
-            service.importProducts(Buffer.from(csv), "user-1", { dryRun }),
-          ).rejects.toThrow(
-            `Column "${header}" needs the forecasting plan flag; remove the column or enable it`,
-          );
+          const r: any = await service.importProducts(Buffer.from(csv), "user-1", { dryRun });
+          expect(r.skippedColumns).toEqual([
+            { column: header, requires: "FORECASTING", label: "Forecasting" },
+          ]);
         }
-        expect(prisma.product.findFirst).not.toHaveBeenCalled();
-        expect(prisma.product.findMany).not.toHaveBeenCalled();
-        expect(productsService.create).not.toHaveBeenCalled();
-        expect(productsService.update).not.toHaveBeenCalled();
+        expect(productsService.create).toHaveBeenCalledTimes(1);
+        const dto = productsService.create.mock.calls[0][0];
+        expect(dto).not.toHaveProperty("reorderPoint");
+        expect(dto).not.toHaveProperty("reorderQty");
       },
     );
 
@@ -1101,75 +1107,280 @@ describe("ImportService — commercial columns (B858/B859)", () => {
   // ── Pins (SA-284 / rulings-s4-s5.md S4) — not in the red gate ───────────────
 
   describe("pins", () => {
-    it("P6: a Tobacco column without the tobacco_dealer addon refuses the whole file (dryRun and real)", async () => {
+    // ── SA-1193 (B1377): SA-284 b's "refuse the whole file" is SUPERSEDED for a genuine denial. A gated column the tenant
+    // lacks is dropped and named in `skippedColumns`; the rest of the file imports. "Same in dryRun and real" is KEPT. ──
+
+    it("P6 (SA-1193): a Tobacco column without the tobacco_dealer add-on is skipped and named; the rest imports (dryRun and real)", async () => {
       productsService.assertCanFlagTobacco.mockRejectedValue(
         new ForbiddenException("tobacco_dealer add-on required"),
       );
-      const csv = "Item Name,SKU,Tobacco\nWidget,SKU-1,Yes\n";
-      // Cast to `any`: `dryRun` is not a parameter of today's `importProducts(buffer, userId)` —
-      // FIX3 adds the optional `opts` param this pin exercises.
-      const importAny = service.importProducts.bind(service) as any;
+      const csv = "Item Name,SKU,Rate,Tobacco\nWidget,SKU-1,10,Yes\n";
 
-      await expect(importAny(Buffer.from(csv), "user-1", { dryRun: true })).rejects.toThrow(
-        ForbiddenException,
-      );
-      await expect(importAny(Buffer.from(csv), "user-1")).rejects.toThrow(ForbiddenException);
-      expect(productsService.create).not.toHaveBeenCalled();
-      expect(productsService.update).not.toHaveBeenCalled();
+      const preview: any = await service.importProducts(Buffer.from(csv), "user-1", {
+        dryRun: true,
+      });
+      const real: any = await service.importProducts(Buffer.from(csv), "user-1");
+
+      for (const r of [preview, real]) {
+        expect(r.skippedColumns).toEqual([
+          { column: "Tobacco", requires: "TOBACCO_DEALER", label: "Regulated items" },
+        ]);
+        expect(r.unknownColumns).toEqual([]);
+      }
+      expect(preview.rows[0]).toMatchObject({ action: "create" });
+      expect(productsService.create).toHaveBeenCalledTimes(1);
+      expect(productsService.create.mock.calls[0][0]).not.toHaveProperty("isTobacco");
     });
 
-    it("P7: an MSRP column without the msrp plan flag refuses the whole file (dryRun and real)", async () => {
+    it("P7 (SA-1193): an MSRP column without flag.msrp is skipped and named; the rest imports (dryRun and real)", async () => {
       productsService.assertMsrpAllowed.mockRejectedValue(
         new ForbiddenException("msrp flag required"),
       );
-      const csv = "Item Name,SKU,MSRP\nWidget,SKU-1,19.99\n";
-      const importAny = service.importProducts.bind(service) as any;
+      const csv = "Item Name,SKU,Rate,MSRP\nWidget,SKU-1,10,19.99\n";
 
-      await expect(importAny(Buffer.from(csv), "user-1", { dryRun: true })).rejects.toThrow(
-        ForbiddenException,
-      );
-      await expect(importAny(Buffer.from(csv), "user-1")).rejects.toThrow(ForbiddenException);
-      expect(productsService.create).not.toHaveBeenCalled();
-      expect(productsService.update).not.toHaveBeenCalled();
+      const preview: any = await service.importProducts(Buffer.from(csv), "user-1", {
+        dryRun: true,
+      });
+      const real: any = await service.importProducts(Buffer.from(csv), "user-1");
+
+      for (const r of [preview, real]) {
+        expect(r.skippedColumns).toEqual([
+          { column: "MSRP", requires: "MSRP", label: "MSRP on invoices" },
+        ]);
+      }
+      expect(productsService.create).toHaveBeenCalledTimes(1);
+      expect(productsService.create.mock.calls[0][0]).not.toHaveProperty("msrp");
     });
 
-    // ── B987-E (c): the entitlement 403 carries a CODE and structured fields so the web shows fixed copy. The status and
-    // the message are unchanged; `column` is the user's own header, data only, capped. ──────────────────────────────────
+    // ── SA-1193 K3 (turned B987-E): the refusal code is never produced; each gated column answers 200 with
+    // `skippedColumns[{column, requires, label}]`, `column` being the user's own header. ────────────────────────────────────
 
     it.each([
-      ["MSRP", "MSRP", "assertMsrpAllowed", "MSRP", "needs the MSRP plan flag"],
-      [
-        "Tobacco",
-        "Tobacco",
-        "assertCanFlagTobacco",
-        "TOBACCO_DEALER",
-        "needs tobacco_dealer add-on",
-      ],
-      [
-        "Reorder Point",
-        "Reorder Point",
-        "assertReorderAllowed",
-        "FORECASTING",
-        "needs the forecasting plan flag",
-      ],
+      ["MSRP", "assertMsrpAllowed", "MSRP", "MSRP on invoices"],
+      ["Tobacco", "assertCanFlagTobacco", "TOBACCO_DEALER", "Regulated items"],
+      ["Reorder Point", "assertReorderAllowed", "FORECASTING", "Forecasting"],
     ])(
-      "B987-E: a %s column without its entitlement answers 403 IMPORT_COLUMN_NEEDS_ENTITLEMENT {requires, column}, message unchanged",
-      async (header, column, gate, requires, sentence) => {
+      "SA-1193: a %s column without its entitlement answers a result naming it in skippedColumns, never a 403",
+      async (header, gate, requires, label) => {
         (productsService as any)[gate].mockRejectedValue(new ForbiddenException("denied"));
-        const csv = `Item Name,SKU,${header}\nWidget,SKU-1,1\n`;
-        const err: any = await service
-          .importProducts(Buffer.from(csv), "user-1", { dryRun: true } as any)
+        const csv = `Item Name,SKU,Rate,${header}\nWidget,SKU-1,10,1\n`;
+        const r: any = await service
+          .importProducts(Buffer.from(csv), "user-1", { dryRun: true })
           .catch((e) => e);
-        expect(err).toBeInstanceOf(ForbiddenException);
-        expect(err.getStatus()).toBe(403);
-        expect(err.getResponse()).toEqual({
-          code: "IMPORT_COLUMN_NEEDS_ENTITLEMENT",
-          message: `Column "${column}" ${sentence}; remove the column or enable it`,
-          requires,
-          column,
-        });
+        expect(r).not.toBeInstanceOf(Error);
+        expect(r.skippedColumns).toEqual([{ column: header, requires, label }]);
+        expect(r.rows[0]).toMatchObject({ action: "create" });
+        expect(JSON.stringify(r)).not.toContain("IMPORT_COLUMN_NEEDS_ENTITLEMENT");
       },
     );
+
+    it("SA-1193: a file with no gated column carries an empty skippedColumns (preview and apply)", async () => {
+      const csv = "Item Name,SKU,Rate\nWidget,SKU-1,10\n";
+      const preview: any = await service.importProducts(Buffer.from(csv), "user-1", {
+        dryRun: true,
+      });
+      const real: any = await service.importProducts(Buffer.from(csv), "user-1");
+      expect(preview.skippedColumns).toEqual([]);
+      expect(real.skippedColumns).toEqual([]);
+    });
+
+    describe("SA-1193 K1/K5: every gate is asked, every mapped header is named", () => {
+      const TEMPLATE =
+        "Item Name,SKU,Barcode,Unit,Rate,Price Tier 2,Price Tier 3,Price Tier 4,Price Tier 5,Units Per Box," +
+        "Category,Description,Cost,MSRP,Tobacco,Reorder Point,Reorder Qty,Product ID,Family,Variant Name";
+      const denyAll = () => {
+        productsService.assertMsrpAllowed.mockRejectedValue(
+          new ForbiddenException({ code: "PLAN_GATE", message: "msrp" }),
+        );
+        productsService.assertCanFlagTobacco.mockRejectedValue(
+          new ForbiddenException("tobacco_dealer add-on required"),
+        );
+        // forecasting ENFORCED in the fixture: the gate denies like a live plan-flag guard
+        productsService.assertReorderAllowed.mockRejectedValue(
+          new ForbiddenException({ code: "PLAN_GATE", message: "forecasting" }),
+        );
+      };
+
+      it("K5 3: our own template, on a tenant with no entitlement, names all four gated headers and imports the row", async () => {
+        denyAll();
+        prisma.product.findFirst.mockResolvedValue(null);
+        const csv = `${TEMPLATE}\nWidget,SKU-1,,,10,,,,,,,,,19.99,Yes,4,12,,,\n`;
+
+        const preview: any = await service.importProducts(Buffer.from(csv), "user-1", {
+          dryRun: true,
+        });
+        const real: any = await service.importProducts(Buffer.from(csv), "user-1");
+
+        const expected = [
+          { column: "MSRP", requires: "MSRP", label: "MSRP on invoices" },
+          { column: "Tobacco", requires: "TOBACCO_DEALER", label: "Regulated items" },
+          { column: "Reorder Point", requires: "FORECASTING", label: "Forecasting" },
+          { column: "Reorder Qty", requires: "FORECASTING", label: "Forecasting" },
+        ];
+        expect(preview.skippedColumns).toEqual(expected);
+        expect(real.skippedColumns).toEqual(expected);
+        expect(preview.unknownColumns).toEqual([]);
+        // no short-circuit: all three gates were asked on both runs
+        expect(productsService.assertMsrpAllowed).toHaveBeenCalledTimes(2);
+        expect(productsService.assertCanFlagTobacco).toHaveBeenCalledTimes(2);
+        expect(productsService.assertReorderAllowed).toHaveBeenCalledTimes(2);
+        expect(real.created).toBe(1);
+        const dto = productsService.create.mock.calls[0][0];
+        for (const f of ["msrp", "isTobacco", "reorderPoint", "reorderQty"]) {
+          expect(dto).not.toHaveProperty(f);
+        }
+      });
+
+      it("SA-1193 A1-2: each entry's label is the catalog's name for its SKU (the billing page's), resolved once per import", async () => {
+        denyAll();
+        const csv = `${TEMPLATE}\nWidget,SKU-1,,,10,,,,,,,,,19.99,Yes,4,12,,,\n`;
+        const catalogName = (sku: string) => V11_ADDON_SEEDS.find((s) => s.sku === sku)!.name;
+
+        const r: any = await service.importProducts(Buffer.from(csv), "user-1", { dryRun: true });
+
+        // observed catalog strings (v11, unchanged in v12/v13): the names the billing page lists
+        expect(r.skippedColumns).toEqual([
+          { column: "MSRP", requires: "MSRP", label: "MSRP on invoices" },
+          { column: "Tobacco", requires: "TOBACCO_DEALER", label: "Regulated items" },
+          { column: "Reorder Point", requires: "FORECASTING", label: "Forecasting" },
+          { column: "Reorder Qty", requires: "FORECASTING", label: "Forecasting" },
+        ]);
+        // the same SKU the billing route bridges each gate's key to: flag.msrp, tobacco_dealer, flag.forecasting
+        expect(r.skippedColumns[0].label).toBe(catalogName("MSRP"));
+        expect(r.skippedColumns[1].label).toBe(catalogName("REGULATED_ITEMS"));
+        expect(r.skippedColumns[2].label).toBe(catalogName("FORECASTING"));
+        expect(labelService.labels).toHaveBeenCalledTimes(1);
+      });
+
+      it("SA-1193 A1-2: a file with nothing skipped never looks the labels up", async () => {
+        const r: any = await service.importProducts(
+          Buffer.from("Item Name,SKU,Rate\nWidget,SKU-1,10\n"),
+          "user-1",
+          { dryRun: true },
+        );
+        expect(r.skippedColumns).toEqual([]);
+        expect(labelService.labels).not.toHaveBeenCalled();
+      });
+
+      it("K5 3: every blank gated cell still names its column (the header alone is enough)", async () => {
+        denyAll();
+        const csv = `${TEMPLATE}\nWidget,SKU-1,,,10,,,,,,,,,,,,,,,\n`;
+        const r: any = await service.importProducts(Buffer.from(csv), "user-1", { dryRun: true });
+        expect(r.skippedColumns.map((s: any) => s.column)).toEqual([
+          "MSRP",
+          "Tobacco",
+          "Reorder Point",
+          "Reorder Qty",
+        ]);
+      });
+
+      it("K5 4: a Retail Price column with values never reaches create() as msrp", async () => {
+        denyAll();
+        const csv = "Item Name,SKU,Rate,Retail Price\nWidget,SKU-1,10,19.99\n";
+        const r: any = await service.importProducts(Buffer.from(csv), "user-1");
+        expect(r.skippedColumns).toEqual([
+          { column: "Retail Price", requires: "MSRP", label: "MSRP on invoices" },
+        ]);
+        expect(productsService.create).toHaveBeenCalledTimes(1);
+        expect(productsService.create.mock.calls[0][0]).not.toHaveProperty("msrp");
+      });
+
+      it("K5 4: a file with BOTH MSRP and Retail Price (and a case twin) names every header that maps to msrp", async () => {
+        denyAll();
+        const csv = "Item Name,SKU,Rate,MSRP,Retail Price,msrp\nWidget,SKU-1,10,19.99,18,17\n";
+        const r: any = await service.importProducts(Buffer.from(csv), "user-1");
+        expect(r.skippedColumns).toEqual([
+          { column: "MSRP", requires: "MSRP", label: "MSRP on invoices" },
+          { column: "Retail Price", requires: "MSRP", label: "MSRP on invoices" },
+          { column: "msrp", requires: "MSRP", label: "MSRP on invoices" },
+        ]);
+        expect(r.unknownColumns).toEqual([]);
+        expect(productsService.create.mock.calls[0][0]).not.toHaveProperty("msrp");
+      });
+
+      it("K5 5: an existing product's MSRP 24.99 is never touched by a skipped 19.99 cell (preview lists no msrp change)", async () => {
+        denyAll();
+        const existing = {
+          id: "prod-1",
+          name: "Widget",
+          sku: "SKU-1",
+          unitsPerBox: null,
+          pricePerUnit: 10,
+          msrp: 24.99,
+        };
+        prisma.product.findFirst.mockImplementation(async (args: any) =>
+          args?.where?.sku === "SKU-1" ? existing : null,
+        );
+        const csv = "Item Name,SKU,Rate,MSRP\nWidget,SKU-1,12,19.99\n";
+
+        const preview: any = await service.importProducts(Buffer.from(csv), "user-1", {
+          dryRun: true,
+        });
+        expect(preview.rows[0].action).toBe("update");
+        expect(preview.rows[0].changes).not.toHaveProperty("msrp");
+
+        await service.importProducts(Buffer.from(csv), "user-1");
+        expect(productsService.update).toHaveBeenCalledTimes(1);
+        expect(productsService.update.mock.calls[0][1]).not.toHaveProperty("msrp");
+      });
+
+      // #4394 read A L1: the reorder skip on the UPDATE path (the SA-322 twin pins create only).
+      it("K5 5: an existing product's reorder 5/20 is never touched by skipped Reorder Point/Qty cells (preview and run)", async () => {
+        denyAll();
+        const existing = {
+          id: "prod-1",
+          name: "Widget",
+          sku: "SKU-1",
+          unitsPerBox: null,
+          pricePerUnit: 10,
+          reorderPoint: 5,
+          reorderQty: 20,
+        };
+        prisma.product.findFirst.mockImplementation(async (args: any) =>
+          args?.where?.sku === "SKU-1" ? existing : null,
+        );
+        const csv = "Item Name,SKU,Rate,Reorder Point,Reorder Qty\nWidget,SKU-1,12,8,40\n";
+
+        const preview: any = await service.importProducts(Buffer.from(csv), "user-1", {
+          dryRun: true,
+        });
+        expect(preview.skippedColumns).toEqual([
+          { column: "Reorder Point", requires: "FORECASTING", label: "Forecasting" },
+          { column: "Reorder Qty", requires: "FORECASTING", label: "Forecasting" },
+        ]);
+        expect(preview.rows[0].action).toBe("update");
+        expect(preview.rows[0].changes).not.toHaveProperty("reorderPoint");
+        expect(preview.rows[0].changes).not.toHaveProperty("reorderQty");
+
+        await service.importProducts(Buffer.from(csv), "user-1");
+        expect(productsService.update).toHaveBeenCalledTimes(1);
+        const dto = productsService.update.mock.calls[0][1];
+        expect(dto).not.toHaveProperty("reorderPoint");
+        expect(dto).not.toHaveProperty("reorderQty");
+      });
+
+      it("K1: a skipped gate and an OUTAGE at another gate: the outage still refuses the whole file", async () => {
+        productsService.assertMsrpAllowed.mockRejectedValue(new ForbiddenException("msrp"));
+        const outage = new Error("connect ECONNREFUSED");
+        productsService.assertCanFlagTobacco.mockRejectedValue(outage);
+        const csv = "Item Name,SKU,Rate,MSRP,Tobacco\nWidget,SKU-1,10,19.99,Yes\n";
+        await expect(
+          service.importProducts(Buffer.from(csv), "user-1", { dryRun: true }),
+        ).rejects.toBe(outage);
+        await expect(service.importProducts(Buffer.from(csv), "user-1")).rejects.toBe(outage);
+        expect(productsService.create).not.toHaveBeenCalled();
+      });
+
+      it("K1: a tenant WITH every entitlement imports the gated columns as before (nothing skipped)", async () => {
+        const csv = "Item Name,SKU,Rate,MSRP,Tobacco\nWidget,SKU-1,10,19.99,Yes\n";
+        const r: any = await service.importProducts(Buffer.from(csv), "user-1");
+        expect(r.skippedColumns).toEqual([]);
+        expect(productsService.create.mock.calls[0][0]).toMatchObject({
+          msrp: 19.99,
+          isTobacco: true,
+        });
+      });
+    });
 
     // ── Opus #938 fold (B): the file-level gate's catch must never turn an entitlement OUTAGE
     // into "needs the flag" — only a genuine denial gets the friendly message; anything else

@@ -1,18 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { cn } from "@routeflow/ui/web";
 import { useProducts } from "@/lib/api/products";
 import { parseScanField } from "@/lib/counter-sale";
-import { formatMoney } from "@/lib/format";
-import { displayProductName } from "@/lib/product-display";
-import { sellableFlat } from "@/lib/product-search-groups";
-import { WriteButton } from "@/lib/read-only-gate";
+import { groupSearchRows, isFamilyProduct, isGroupExpanded } from "@/lib/product-search-groups";
+import { ProductSearchList, productSearchNavRows } from "@/components/ProductSearchList";
 import { useListboxNav } from "@/lib/use-listbox-nav";
 
 /** The same wait Create Order's product search uses before it asks the server. */
 export const LIVE_MATCH_DEBOUNCE_MS = 300;
-const MIN_TERM_CHARS = 2;
+/** B1373: the list starts at the first letter, as Create Order's does (a 1-3 digit entry is still a quantity). */
+const MIN_TERM_CHARS = 1;
 const MAX_ROWS = 10;
 
 interface Options {
@@ -22,15 +20,20 @@ interface Options {
   enabled: boolean;
   /** A row chosen by a click or by Enter on the highlighted row. */
   onPick: (product: any) => void;
+  /** W-1042: the typed text, offered as a new item (the list's last row). Absent when the clerk may not create one. */
+  onCreate?: (text: string) => void;
+  /** The products already on a line: their rows show dimmed, as in Create Order. */
+  addedIds?: ReadonlySet<string>;
 }
 
 /**
- * W-852: the till's live match list. The same pieces Create Order's product search uses: the debounced `useProducts`
- * server search, `sellableFlat` (a family is never a line, its variants are) and `useListboxNav` (nothing is highlighted
- * until an Arrow key, so Enter with no highlight is still the scan path and a wedge scanner is unchanged, and Enter on a
- * highlighted row adds exactly the row shown highlighted).
+ * W-852 + B1373: the till's live match list, the SAME list Create Order shows (`ProductSearchList`): the debounced
+ * `useProducts` server search grouped by `groupSearchRows` (a family is a header that opens its variants, never a line),
+ * the unit word and price on every row, an "already added" dim, and a last "Create new product" row. `useListboxNav`
+ * highlights nothing until an Arrow key, so Enter with no highlight is still the scan path and a wedge scanner is unchanged,
+ * and Enter on a highlighted row does what a click on it does.
  */
-export function useCounterLiveMatches({ text, enabled, onPick }: Options) {
+export function useCounterLiveMatches({ text, enabled, onPick, onCreate, addedIds }: Options) {
   const term = text.trim();
   // A 1-3 digit entry is a quantity for the next item, not a search.
   const searchable =
@@ -52,100 +55,95 @@ export function useCounterLiveMatches({ text, enabled, onPick }: Options) {
     },
     { enabled: debounced.length >= MIN_TERM_CHARS },
   );
+  const groups = React.useMemo(() => groupSearchRows<any>(data?.data ?? []), [data]);
   const rows = React.useMemo(
-    () => (debounced ? sellableFlat<any>(data?.data ?? []).slice(0, MAX_ROWS) : []),
-    [data, debounced],
+    () => (debounced ? groups.rows.slice(0, MAX_ROWS) : []),
+    [groups, debounced],
   );
+  // The family the clerk opened or closed by hand ("" = closed it); null = the search's own choice.
+  const [expandedParentId, setExpandedParentId] = React.useState<string | null>(null);
+  React.useEffect(() => setExpandedParentId(null), [term]);
 
   const [dismissed, setDismissed] = React.useState("");
   const settled = searchable && debounced === term && !isFetching && data !== undefined;
   const empty = settled && rows.length === 0 && dismissed !== term;
-  const open = searchable && rows.length > 0 && dismissed !== term;
-  const nav = useListboxNav<any>({
-    items: rows,
+  const open = searchable && (rows.length > 0 || empty) && dismissed !== term;
+  const index = productSearchNavRows(rows, expandedParentId, groups.expandedIds, !!onCreate);
+  const toggleGroup = (p: any, isExpanded: boolean) => setExpandedParentId(isExpanded ? "" : p.id);
+  const create = onCreate ? () => onCreate(term) : undefined;
+  // Opening or closing a family changes the row count (which resets the highlight): put it back on the header, as Create Order does.
+  const keepHighlightOnRow = React.useRef<number | null>(null);
+  const nav = useListboxNav<(typeof index.rows)[number]>({
+    items: index.rows,
     open,
-    onPick,
+    onPick: (row) => {
+      if (row.kind === "variant") return onPick(row.v);
+      if (row.kind === "create") return create?.();
+      if (row.p.variants?.length > 0) {
+        keepHighlightOnRow.current = index.productRowIndex.get(row.p.id) ?? null;
+        return toggleGroup(row.p, isGroupExpanded(expandedParentId, groups.expandedIds, row.p.id));
+      }
+      if (!isFamilyProduct(row.p)) onPick(row.p);
+    },
     onClose: () => setDismissed(term),
     resetKey: `${term}|${debounced}`,
     idPrefix: "counter-match",
   });
-  return { rows, open, empty, nav, term };
+  const setHighlight = nav.setHighlight;
+  React.useEffect(() => {
+    if (keepHighlightOnRow.current !== null) {
+      setHighlight(keepHighlightOnRow.current);
+      keepHighlightOnRow.current = null;
+    }
+  }, [expandedParentId, setHighlight]);
+  return {
+    rows,
+    open,
+    empty,
+    nav,
+    term,
+    index,
+    expandedParentId,
+    autoExpandedIds: groups.expandedIds,
+    toggleGroup,
+    create,
+    addedIds: addedIds ?? new Set<string>(),
+  };
 }
 
 /** The list under the scan field. Renders nothing while closed. */
 export function CounterLiveMatches({
   live,
   onPick,
-  onCreate,
 }: {
   live: ReturnType<typeof useCounterLiveMatches>;
   onPick: (product: any) => void;
-  /** W-1042: the typed text, offered as a new item. Absent when the clerk may not create one. */
-  onCreate?: (text: string) => void;
 }) {
-  const { rows, open, empty, nav, term } = live;
   const listRef = React.useRef<HTMLUListElement>(null);
   // On a phone the fixed payment bar covers the lower third: bring the list to the middle of the visible page.
   React.useEffect(() => {
-    if (open && window.innerWidth < 768) listRef.current?.scrollIntoView?.({ block: "center" });
-  }, [open]);
-  if (empty) {
-    return (
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-border bg-white px-3 py-2 shadow-dropdown">
-        <p role="status" className="text-sm text-navy/70">
-          No items match.
-        </p>
-        {onCreate ? (
-          <WriteButton
-            className="min-h-[44px]"
-            variant="secondary"
-            // mousedown keeps the focus in the scan field, as the rows above do
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onCreate(term)}
-          >
-            {`Create "${term}"`}
-          </WriteButton>
-        ) : null}
-      </div>
-    );
-  }
-  if (!open) return null;
+    if (live.open && window.innerWidth < 768)
+      listRef.current?.scrollIntoView?.({ block: "center" });
+  }, [live.open]);
+  if (!live.open) return null;
   return (
-    <ul
-      ref={listRef}
-      id={nav.listId}
-      role="listbox"
-      aria-label="Matching items"
+    <ProductSearchList
+      listRef={listRef}
+      products={live.rows}
+      index={live.index}
+      nav={live.nav}
+      expandedParentId={live.expandedParentId}
+      autoExpandedIds={live.autoExpandedIds}
+      isAdded={(id) => live.addedIds.has(id)}
+      onToggleGroup={live.toggleGroup}
+      onPick={onPick}
+      showEmpty={live.empty}
+      create={live.create ? { term: live.term, onCreate: live.create } : undefined}
+      ariaLabel="Matching items"
+      keepInputFocus
+      optionClassName="min-h-[44px]"
       className="max-h-72 overflow-auto rounded-lg border border-surface-border bg-white shadow-dropdown"
       data-testid="counter-live-matches"
-    >
-      {rows.map((p, i) => (
-        <li key={p.id} role="presentation">
-          <button
-            type="button"
-            role="option"
-            id={nav.optionId(i)}
-            aria-selected={i === nav.highlight}
-            tabIndex={-1}
-            // mousedown keeps the focus in the scan field (its blur would otherwise refocus and race the click)
-            onMouseDown={(e) => e.preventDefault()}
-            onMouseEnter={() => nav.setHighlight(i)}
-            onClick={() => onPick(p)}
-            className={cn(
-              "flex min-h-[44px] w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm text-navy hover:bg-surface-raised",
-              i === nav.highlight && "bg-surface-raised",
-            )}
-          >
-            <span className="min-w-0">
-              <span className="block truncate font-medium">{displayProductName(p)}</span>
-              {p.sku ? <span className="block truncate text-xs text-navy/70">{p.sku}</span> : null}
-            </span>
-            <span className="shrink-0 text-xs font-medium text-navy/70">
-              {formatMoney(p.pricePerUnit)}
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    />
   );
 }

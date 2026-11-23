@@ -11,6 +11,7 @@ import {
   canRecordAnyway,
   creditOverLimitSentence,
   COUNTER_COPY,
+  completedCopy,
 } from "@routeflow/types";
 import type {
   CounterSalePaymentMethod,
@@ -18,9 +19,21 @@ import type {
   ToCollectMethod,
 } from "@routeflow/types";
 import { usePickupComplete, usePickupInvoiceBalances } from "@/lib/api/counter-sale";
-import { useCounterDefaultTender } from "@/lib/api/counter-customer-credit";
+import {
+  useCounterCustomerCredit,
+  useCounterDefaultTender,
+} from "@/lib/api/counter-customer-credit";
 import { useOptionalAuth } from "@/lib/auth-context";
-import { tenderAmount } from "@/lib/counter-part-pay";
+import {
+  creditMayApply,
+  onAccountCopy,
+  onAccountLabel,
+  partPayCopy,
+  partPaySplit,
+  tenderAmount,
+  tenderIntent,
+  tenderTextProblem,
+} from "@/lib/counter-part-pay";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { duplicatePaymentRefMessage, retryCanHelp } from "@/lib/duplicate-payment-ref";
 import { usePrintInvoice } from "@/lib/use-print-invoice";
@@ -191,6 +204,23 @@ export function PickupCompleteDialog({
   }, [open, due]);
 
   const tenderedNum = tenderAmount(tendered);
+  // SA-1219: the one reading of the cash tender (shared with the counter sale): full, part, nothing (On account) or a walk-in short
+  const intent = tenderIntent({
+    method: resolveTender(method, checkNotReceived).method,
+    isWalkIn,
+    total: due ?? 0,
+    tendered: tenderedNum,
+  });
+  const putOnAccount =
+    method === "CASH" &&
+    due !== null &&
+    intent === "ON_ACCOUNT" &&
+    tenderTextProblem(tendered) === null;
+  const credit = useCounterCustomerCredit(open && !isWalkIn ? customerId : null);
+  const partSplit =
+    method === "CASH" && due !== null
+      ? partPaySplit({ method: "CASH", isWalkIn, total: due, tendered: tenderedNum })
+      : null;
   // W-778 (apple-ux): a refusal no retry can fix locks the controls; the run confirm is a warning the clerk can answer.
   const hardRefusal = errorCode !== undefined && COMPLETE_HARD_REFUSAL_CODES.has(errorCode);
   const onRunWarning = errorCode === API_ERROR_CODES.COUNTER_COMPLETE_ON_RUN;
@@ -252,14 +282,18 @@ export function PickupCompleteDialog({
   function confirm() {
     if (due === null) return;
     if (nothingToCollect) return void send({});
-    const tender = resolveTender(method, checkNotReceived);
+    const resolved = resolveTender(method, checkNotReceived);
+    // SA-1219: text that is not money is said so (never "Enter at least"); nothing tendered by a named customer is On account
+    const unreadable = resolved.method === "CASH" && !isWalkIn ? tenderTextProblem(tendered) : null;
+    if (unreadable) return setError(unreadable);
+    const tender: typeof resolved =
+      resolved.method === "CASH" && intent === "ON_ACCOUNT" ? { method: "ON_ACCOUNT" } : resolved;
     const problem = validatePayment({
       method: tender.method,
       total: due,
       tendered: tenderedNum,
       reference,
       isWalkIn,
-      fullTenderOnly: true, // SA-933 S4 opened part payment at the counter sale only; this dialog keeps the full-tender rule
     });
     if (problem) return setError(paymentProblemCopy(problem, due));
     void send({
@@ -277,7 +311,7 @@ export function PickupCompleteDialog({
     method === "CASH" &&
     due !== null &&
     tendered.trim() !== "" &&
-    roundMoney(tenderedNum) < roundMoney(due) &&
+    intent === "WALK_IN_SHORT" &&
     !(error && isTenderShortCopy(error));
   const unrecorded = outcome !== null && !outcome.paymentRecorded;
   // SA-1026 B: after the hand-over the invoices are issued and numbered, so Print invoice prints the final copies (every non-void invoice of the order, from the response)
@@ -416,13 +450,17 @@ export function PickupCompleteDialog({
                     loading={complete.isPending}
                     disabled={due === null}
                   >
-                    {completeMode
-                      ? COUNTER_COPY.completeConfirm
-                      : handOver
-                        ? "Hand over"
-                        : nothingToCollect
-                          ? "Confirm picked up"
-                          : "Picked up"}
+                    {putOnAccount
+                      ? onAccountLabel(
+                          completeMode ? "complete" : handOver ? "hand over" : undefined,
+                        )
+                      : completeMode
+                        ? COUNTER_COPY.completeConfirm
+                        : handOver
+                          ? "Hand over"
+                          : nothingToCollect
+                            ? "Confirm picked up"
+                            : "Picked up"}
                   </Button>
                 )}
               </>
@@ -444,9 +482,7 @@ export function PickupCompleteDialog({
             ) : (
               <p className="text-sm font-semibold text-navy">
                 {completeMode
-                  ? outcome.emailed
-                    ? COUNTER_COPY.completedEmailed
-                    : COUNTER_COPY.completed
+                  ? completedCopy(outcome)
                   : outcome.toCollect === "TO_COLLECT" && outcome.balanceDue > 0
                     ? `Picked up. To collect: ${money(outcome.balanceDue)}.`
                     : outcome.balanceDue > 0
@@ -457,6 +493,18 @@ export function PickupCompleteDialog({
                   : ""}
               </p>
             )}
+            {/* W-1286 (SA-1202 C28): no email on file: one step to the customer, where the address is added. */}
+            {!unrecorded &&
+              completeMode &&
+              outcome.emailOutcome === "NO_EMAIL_ON_FILE" &&
+              customerId && (
+                <Link
+                  href={`/customers/${customerId}`}
+                  className="text-sm font-semibold text-brand-600 underline"
+                >
+                  {COUNTER_COPY.addEmail}
+                </Link>
+              )}
             {unrecorded && (
               <p className="text-xs text-navy/70">
                 {duplicateMessage
@@ -548,7 +596,15 @@ export function PickupCompleteDialog({
                     }}
                   />
                 </label>
-                {hardRefusal ? null : shortLive ? (
+                {hardRefusal ? null : putOnAccount ? (
+                  <p className="text-sm font-medium text-navy" data-testid="pickup-on-account">
+                    {onAccountCopy(due, creditMayApply(credit.view.autoApplyCredit))}
+                  </p>
+                ) : partSplit ? (
+                  <p className="text-sm font-medium text-navy" data-testid="pickup-part-pay">
+                    {partPayCopy(partSplit, creditMayApply(credit.view.autoApplyCredit))}
+                  </p>
+                ) : shortLive ? (
                   <p className="text-sm font-medium text-navy" data-testid="pickup-short-hint">
                     {tenderShortCopy(due)}
                   </p>

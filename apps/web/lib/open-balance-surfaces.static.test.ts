@@ -58,11 +58,23 @@ const SURFACES: { file: string; label: string; figure: RegExp; tag?: string }[] 
     figure: /\{fmt\(statement\?\.outstandingAmount \?\? 0\)\}/g,
     tag: "BuyerOpenBalanceButton",
   },
+  {
+    // SA-1197 A3: the invoice page's account block; only the Open balance figure taps (the parts stay plain)
+    file: "app/(dashboard)/invoices/[id]/InvoiceTotalsSummary.tsx",
+    label: "invoice page account block Open balance",
+    figure: /\{node\}/g, // SA-1228 D5: the shared renderer hands the figure node to this wrapper
+  },
 ];
 
 /** Files that read the figure but do not print it for staff, with the reason. */
 const PLAIN_ON_PURPOSE: Record<string, string> = {
   "components/account-statement/AccountStatementSheet.tsx": "the statement view itself",
+  "app/(dashboard)/settings/_components/InvoiceLayoutPreview.tsx":
+    "settings preview: a fixed sample, no customer", // SA-1197 A3-2
+  "components/InvoiceAccountRows.tsx":
+    "the shared account-row renderer; the staff page wraps the tap through its figure prop (SA-1228 D5)",
+  "app/buyer/portal/[seller]/invoices/[id]/page.tsx":
+    "buyer portal: prints the server's rows, the buyer gets no staff statement tap (SA-1228 D5)",
 };
 
 /** True when `index` sits between an opening `<OpenBalanceButton` and its closing tag. */
@@ -81,7 +93,8 @@ describe("U21: the open-balance figure is only printed inside OpenBalanceButton"
 
   it("no other staff file reads the statement's open balance without being listed", () => {
     const files = execSync(
-      'git grep -l -E "outstandingAmount|openBalance" -- "*.tsx" ":!*.test.tsx"',
+      // SA-1197 A3-2: InvoiceAccountRow too (a screen printing the server's account rows); --untracked so a new file counts
+      'git grep -l --untracked -E "outstandingAmount|openBalance|InvoiceAccountRow" -- "*.tsx" ":!*.test.tsx"',
       // Under the pre-push hook git exports GIT_DIR, which makes cwd the work tree and the grep find nothing.
       { cwd: ROOT, encoding: "utf8", env: gitFreeEnv() },
     )
@@ -89,6 +102,15 @@ describe("U21: the open-balance figure is only printed inside OpenBalanceButton"
       .filter(Boolean);
     const known = new Set([...SURFACES.map((s) => s.file), ...Object.keys(PLAIN_ON_PURPOSE)]);
     expect(files.filter((f) => !known.has(f))).toEqual([]);
+  });
+});
+
+describe("SA-1197 A3: the invoice page hands the block its customer", () => {
+  // delta-2 L-a: without it the Open balance figure stays plain and every render test is still green
+  it("page.tsx passes invoice.customerId to InvoiceTotalsSummary", () => {
+    expect(read("app/(dashboard)/invoices/[id]/page.tsx")).toMatch(
+      /<InvoiceTotalsSummary\b[^>]*?\bcustomerId=\{invoice\.customerId\}/,
+    );
   });
 });
 

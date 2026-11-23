@@ -582,7 +582,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
         ([, tx]: any[]) => !!tx,
       );
       expect(inTx).toHaveLength(1);
-      expect(inTx[0][2]).toEqual({ lockRows: true });
+      expect(inTx[0][2]).toEqual({ lockRows: true, requireAck: true }); // B1372 N2: unconfirmed staff edit
     });
   });
 

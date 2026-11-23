@@ -209,11 +209,45 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
       expect(prisma.vendorBill.create).not.toHaveBeenCalled();
     });
 
+    // SA-1207 P2a: 5 boxes + 2 loose, pack 24, 5.00 a box. The PO stores 122 pcs, 0.2083 a piece, 25.42.
+    const f6Po = () =>
+      po({
+        items: [
+          {
+            id: "poi-1",
+            productId: "prod-1",
+            qtyOrdered: D(122),
+            unitCost: D("0.2083"),
+            totalCost: D("25.42"),
+          },
+        ],
+      });
+    const f6Lot = (o: Record<string, unknown> = {}) =>
+      billLine({ qty: 1, unitCost: 25.42, packSize: 122, ...o });
+
+    it("P2a: a lot at the PO's own stored total is accepted (create)", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(f6Po());
+      await service.create({ supplierId: "sup-1", purchaseOrderId: "po-1", items: [f6Lot()] });
+      expect(createdData().purchaseOrderId).toBe("po-1");
+    });
+
+    it("P2a: a lot two cents above both stored figures is still a hard 409 (create)", async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue(f6Po());
+      await expect(
+        service.create({
+          supplierId: "sup-1",
+          purchaseOrderId: "po-1",
+          items: [f6Lot({ unitCost: 25.44 })],
+        }),
+      ).rejects.toMatchObject({ response: { code: "BILL_EXCEEDS_PO" } });
+      expect(prisma.vendorBill.create).not.toHaveBeenCalled();
+    });
+
     it("refuses a PO that already has a bill (one bill per PO)", async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue(po());
       prisma.vendorBill.findFirst
-        .mockResolvedValueOnce(null) // nextBillNumber
-        .mockResolvedValueOnce({ billNumber: "BILL-2026-0007" });
+        .mockResolvedValueOnce({ billNumber: "BILL-2026-0007" }) // the PO already has a bill (read first, inside the tx)
+        .mockResolvedValueOnce(null); // nextBillNumber
       const err: any = await service
         .create({ supplierId: "sup-1", purchaseOrderId: "po-1", items: [billLine()] })
         .catch((e) => e);
@@ -361,6 +395,28 @@ describe("VendorBillsService — PO-linked bills (units/PO step 7)", () => {
         data: { items: { deleteMany: {} } },
       });
       expect(prisma.vendorBillItem.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("P2a: an edit to a lot at the PO's own stored total is accepted (update)", async () => {
+      prisma.vendorBill.findUnique.mockResolvedValue(bill({ purchaseOrderId: "po-1" }));
+      prisma.purchaseOrder.findUnique.mockResolvedValue(
+        po({
+          items: [
+            {
+              id: "poi-1",
+              productId: "prod-1",
+              qtyOrdered: D(122),
+              unitCost: D("0.2083"),
+              totalCost: D("25.42"),
+            },
+          ],
+        }),
+      );
+      prisma.vendorBill.update.mockResolvedValue({ id: "bill-1", supplierId: null });
+      await service.update("bill-1", {
+        items: [billLine({ qty: 1, unitCost: 25.42, packSize: 122 })],
+      });
+      expect(prisma.vendorBill.update).toHaveBeenCalled();
     });
 
     it("an unlinked bill's edit never consults a PO", async () => {

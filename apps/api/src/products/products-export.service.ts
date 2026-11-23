@@ -126,7 +126,7 @@ export class ProductsExportService {
     actor: { userId: string | null; ip?: string | null },
   ): AsyncGenerator<string> {
     const lowStockIds = needsLowStockIds(query) ? await lowStockProductIds(this.prisma) : undefined;
-    const base = buildProductListWhere(query, { lowStockIds });
+    const base = buildProductListWhere(query, { lowStockIds, tenantId });
     const issueWindow = this.facts.issueWindow(range.fromDay, range.toDay);
     let credits: Map<string, number> | null = null;
     let written = 0;

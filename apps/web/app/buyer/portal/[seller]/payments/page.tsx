@@ -27,7 +27,7 @@ import {
 } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
-import { checkBadgeFor } from "@/lib/check-badge";
+import { paymentRowBadge } from "@/lib/check-badge";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { BuyerOpenBalanceButton } from "@/components/account-statement/BuyerOpenBalanceButton";
 import { MakePaymentPanel } from "./_components/MakePaymentPanel";
@@ -125,6 +125,9 @@ function BuyerPaymentsPageInner() {
   const parsedAmount = amountParam ? Number(amountParam) : NaN;
   const defaultAmount =
     Number.isFinite(parsedAmount) && parsedAmount > 0 ? parsedAmount : undefined;
+
+  // SA-1148: the invoice the buyer chose to pay; the server pays it first.
+  const chosenInvoiceId = searchParams.get("invoiceId") || undefined;
 
   const [page, setPage] = React.useState(1);
   const { data: payments, isLoading, isError } = useBuyerPayments({ page, limit: 20 });
@@ -240,7 +243,7 @@ function BuyerPaymentsPageInner() {
       )}
 
       {/* Make a payment — the primary action, first block on the page */}
-      <MakePaymentPanel defaultAmount={defaultAmount} />
+      <MakePaymentPanel defaultAmount={defaultAmount} fromInvoiceId={chosenInvoiceId} />
 
       {/* Wallet row */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
@@ -349,7 +352,7 @@ function BuyerPaymentsPageInner() {
                   </thead>
                   <tbody className="divide-y divide-surface-border">
                     {rows.map((p) => {
-                      const badge = checkBadgeFor(p);
+                      const badge = paymentRowBadge(p);
                       const voided = p.status === "VOID";
                       return (
                         <tr key={p.id} className="hover:bg-surface-raised/50">

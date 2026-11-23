@@ -2,7 +2,7 @@
  * Locks the CHECK payment lifecycle badge decision table so it never drifts from the mobile
  * mirror (apps/mobile/lib/check-badge.ts, tested in apps/mobile/__tests__/check-badge.test.ts).
  */
-import { checkBadgeFor } from "./check-badge";
+import { checkBadgeFor, paymentRowBadge } from "./check-badge";
 
 describe("checkBadgeFor", () => {
   it("returns null for non-CHECK payment methods", () => {
@@ -62,5 +62,60 @@ describe("checkBadgeFor", () => {
       label: "Post-dated · pending",
       variant: "warning",
     });
+  });
+});
+
+// B1151: every buyer payment row reads a status, never an empty cell; credits are never cash words.
+describe("paymentRowBadge", () => {
+  it("keeps the check lifecycle badge when there is one", () => {
+    expect(paymentRowBadge({ method: "CHECK", status: "PAID", checkStatus: "CLEARED" })).toEqual({
+      label: "Cleared",
+      variant: "success",
+    });
+  });
+
+  it("maps a non-check row by its status", () => {
+    expect(paymentRowBadge({ method: "CASH", status: "PAID" })).toEqual({
+      label: "Received",
+      variant: "success",
+    });
+    expect(paymentRowBadge({ method: "CASH", status: "VOID" })).toEqual({
+      label: "Void",
+      variant: "danger",
+    });
+    expect(paymentRowBadge({ method: "CASH", status: "DRAFT" })).toEqual({
+      label: "Not confirmed",
+      variant: "neutral",
+    });
+    expect(paymentRowBadge({ method: "ZELLE", status: "PENDING" })).toEqual({
+      label: "Pending",
+      variant: "warning",
+    });
+  });
+
+  it("a credit note or advance application reads Applied, never Received", () => {
+    expect(paymentRowBadge({ method: "CREDIT_NOTE", status: "PAID" })?.label).toBe("Applied");
+    expect(paymentRowBadge({ method: "ADVANCE", status: "PAID" })?.label).toBe("Applied");
+  });
+
+  // SA-1240: a stored check always carries a checkStatus; the payment status decides the word.
+  it.each([
+    ["RECORDED", "VOID", "Void"],
+    ["CLEARED", "VOID", "Void"],
+    ["BOUNCED", "VOID", "Bounced"],
+    ["RECORDED", "DRAFT", "Not confirmed"],
+    ["RECORDED", "PENDING", "Post-dated · pending"],
+    ["CLEARED", "PAID", "Cleared"],
+  ] as const)("a CHECK %s row with status %s reads %s", (checkStatus, status, label) => {
+    expect(paymentRowBadge({ method: "CHECK", status, checkStatus })?.label).toBe(label);
+  });
+
+  it("a CASH PENDING row reads Pending; a legacy check with no status keeps Recorded", () => {
+    expect(paymentRowBadge({ method: "CASH", status: "PENDING" })?.label).toBe("Pending");
+    expect(paymentRowBadge({ method: "CHECK" })?.label).toBe("Recorded");
+  });
+
+  it("an unknown status on a non-check row reads nothing", () => {
+    expect(paymentRowBadge({ method: "CASH", status: "WEIRD" })).toBeNull();
   });
 });

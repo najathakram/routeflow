@@ -117,13 +117,13 @@ describe("R-1 M4: the host reads a current quote or nothing", () => {
     setQty("4");
     expect(handle.current?.getDraft()?.quoted).toBe(false);
     expect(lastCredit()).toBe(0);
-    expect(netOfReturn(10, lastCredit())).toEqual({ payTotal: 10, storeCredit: 0 }); // not the old $4 off
+    expect(netOfReturn(10, lastCredit())).toEqual({ payTotal: 10, storeCredit: 0, returned: 0 }); // not the old $4 off
 
     wait(DEBOUNCE);
     answer(8);
     expect(handle.current?.getDraft()?.quoted).toBe(true);
     expect(lastCredit()).toBe(8);
-    expect(netOfReturn(10, lastCredit())).toEqual({ payTotal: 2, storeCredit: 0 });
+    expect(netOfReturn(10, lastCredit())).toEqual({ payTotal: 2, storeCredit: 0, returned: 8 });
   });
 
   it("SA-1060 A-5: the draft also returns the box's own quote, and null while it is not current", async () => {

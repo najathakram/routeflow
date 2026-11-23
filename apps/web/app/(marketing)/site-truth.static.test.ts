@@ -42,12 +42,12 @@ describe("public site sentences the code backs", () => {
   });
 
   // SA-1080 (js/prices.js:5): plans differ by price and number of customers; seats are not enforced.
-  // The plan limits no staff or driver logins (SA-1175 R1 K7), so every page says customers only.
-  it("home, pricing, product: plans differ by customers only", () => {
+  // B1371 (SA-1175 R1 K7): no plan limits logins (entitlements caps.seats is null) and a downgrade never turns one off.
+  it("home, pricing, product: plans differ by customers only, never by logins", () => {
     for (const name of ["home", "pricing", "product"]) {
       const html = page(name);
       expect(html).toMatch(/The plans differ by how many customers they include\./);
-      expect(html).not.toMatch(/customers and logins/);
+      expect(html).not.toMatch(/customers and logins/i);
     }
   });
 

@@ -112,6 +112,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-operator-account-blast-radius.mjs": "read-only",
   "apps/api/scripts/report-portal-invite-census.mjs": "read-only", // row 633: SELECT only, default_transaction_read_only = on
   "apps/api/scripts/report-b1043-stale-tax-state.mjs": "read-only",
+  "apps/api/scripts/report-b1371-seat-counts.mjs": "read-only", // B1371 M1: SELECT only, default_transaction_read_only = on
   "apps/api/scripts/report-a4-credit-reversal-census.mjs": "read-only", // SA-1042 A-4 G5: SELECT only, default_transaction_read_only = on
   "apps/api/scripts/report-sa1091-order-bound-census.mjs": "read-only", // SA-1091 piece 1: counts only, default_transaction_read_only = on, ROLLBACK
   "apps/api/scripts/report-low-stock-digest.mjs": "read-only", // ops 545: counts only, default_transaction_read_only = on, ROLLBACK

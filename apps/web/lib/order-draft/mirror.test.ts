@@ -140,6 +140,7 @@ describe("order draft mirror (SA-817 A)", () => {
         [
           "customerId",
           "customerName",
+          "kind",
           "hash",
           "localId",
           "payload",

@@ -7,10 +7,16 @@ import { renderTill } from "@/test-utils/render-till";
 import { newProductPrefill } from "@/lib/product-prefill";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 
+/** B1373: a till line shows its quantity in the order row's number field (no "× N" text). */
+const qtyOf = (line: HTMLElement) =>
+  Number(
+    (within(line).getByRole("spinbutton", { name: /Set quantity of/ }) as HTMLInputElement).value,
+  );
+
 /**
  * W-1042 / SA-1062 A-2: which field a code goes to is decided by the DOOR, not the digits. The camera always reads a code
  * (SKU, whatever its characters). A miss from the scan box goes to SKU when it has no space and at least one digit, otherwise
- * Name. Create "<text>" from the live list is typed, so the helper's own rule (six or more digits) stands. Create Order's
+ * Name. Create new product: "<text>" from the live list is typed, so the helper's own rule (six or more digits) stands. Create Order's
  * typed row and unknown scan are not edited.
  */
 jest.mock("@/lib/auth-context", () => ({
@@ -125,7 +131,7 @@ describe("A-2: the scan box reads the shape", () => {
     fireEvent.submit(screen.getByRole("button", { name: /create product/i }).closest("form")!);
     await waitFor(() => expect(lines()).toHaveLength(1));
     submitScan("AB12345");
-    await waitFor(() => expect(lines()[0]).toHaveTextContent("× 2"));
+    await waitFor(() => expect(qtyOf(lines()[0])).toBe(2));
     expect(lines()).toHaveLength(1);
   });
 
@@ -162,16 +168,16 @@ describe("A-2: the camera always reads a code", () => {
 });
 
 describe("A-2: the live list is typing and keeps the helper's rule", () => {
-  it('R5g guard: Create "AB12345" goes to Name, Create "012345678" goes to SKU', async () => {
+  it('R5g guard: creating "AB12345" goes to Name, creating "012345678" goes to SKU', async () => {
     renderTill(<CounterSaleScreen />);
     fireEvent.change(field(), { target: { value: "AB12345" } });
-    fireEvent.click(await screen.findByRole("button", { name: 'Create "AB12345"' }));
+    fireEvent.click(await screen.findByRole("option", { name: 'Create new product: "AB12345"' }));
     await screen.findByRole("heading", { name: "New product" });
     expect(nameInput().value).toBe("AB12345");
     expect(skuInput().value).toBe("");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.change(field(), { target: { value: "012345678" } });
-    fireEvent.click(await screen.findByRole("button", { name: 'Create "012345678"' }));
+    fireEvent.click(await screen.findByRole("option", { name: 'Create new product: "012345678"' }));
     await screen.findByRole("heading", { name: "New product" });
     expect(skuInput().value).toBe("012345678");
     expect(nameInput().value).toBe("");

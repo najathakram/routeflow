@@ -73,17 +73,18 @@ describe("resolvePlanVersionId / inclusionCatalogFor: sub pin, else tenant pin, 
  * (both pins agree after the reconcile); it differs only when the tenant pin is missing and the subscription's is not.
  */
 describe("EntitlementsService.resolve reads the plan version through the resolver", () => {
-  const def = (planKey: string, seats: number) => ({
+  const def = (planKey: string, customers: number) => ({
     planKey,
     name: planKey,
-    seatsIncluded: seats,
+    seatsIncluded: null,
     routesConcurrent: null,
     scansIncluded: null,
     msgsIncluded: null,
-    customersIncluded: null,
+    customersIncluded: customers,
     featureFlags: [],
   });
-  // v11 is the pinned version (SCALE: 25 seats); the PUBLISHED one is v12 (SCALE: 99 seats)
+  // v11 is the pinned version (SCALE: 25 customers); the PUBLISHED one is v12 (SCALE: 99 customers).
+  // B1371: seats are never a cap, so the resolved version shows in the customer cap.
   const versions: Record<string, any> = {
     v11: { id: "v11", status: "SUPERSEDED", definitions: [def("SCALE", 25)], addonSkus: [] },
     v12: { id: "v12", status: "PUBLISHED", definitions: [def("SCALE", 99)], addonSkus: [] },
@@ -114,7 +115,7 @@ describe("EntitlementsService.resolve reads the plan version through the resolve
     const { svc, catalog } = service("v11", "v11");
     const e = await svc.resolve("t1");
     expect(e.planVersionId).toBe("v11");
-    expect(e.caps.seats).toBe(25);
+    expect(e.caps.customers).toBe(25);
     expect(catalog.getVersionForTenant).toHaveBeenCalledWith("v11");
   });
 
@@ -122,7 +123,7 @@ describe("EntitlementsService.resolve reads the plan version through the resolve
     const { svc, catalog } = service(null, "v11");
     const e = await svc.resolve("t1");
     expect(e.planVersionId).toBe("v11");
-    expect(e.caps.seats).toBe(25);
+    expect(e.caps.customers).toBe(25);
     expect(catalog.getVersionForTenant).toHaveBeenCalledWith("v11");
   });
 
@@ -139,14 +140,14 @@ describe("EntitlementsService.resolve reads the plan version through the resolve
  * what the old `getVersionForTenant(tenant.planVersionId)` saw.
  */
 describe("EntitlementsService: the three reconciled tenant shapes resolve exactly as before the switch", () => {
-  const plan = (planKey: string, flags: string[], seats: number | null) => ({
+  const plan = (planKey: string, flags: string[], customers: number | null) => ({
     planKey,
     name: planKey,
-    seatsIncluded: seats,
+    seatsIncluded: null,
     routesConcurrent: null,
     scansIncluded: null,
     msgsIncluded: null,
-    customersIncluded: null,
+    customersIncluded: customers,
     featureFlags: flags,
   });
   // v11 is PUBLISHED (no LITE definition); v7 is SUPERSEDED and DIFFERENT, so a wrong pick shows in the flags
@@ -227,7 +228,7 @@ describe("EntitlementsService: the three reconciled tenant shapes resolve exactl
     });
     expect(e.planVersionId).toBe("v11");
     expect([...e.flags].sort()).toEqual(["addon.ocr", "addon.regulated_items", "flag.api_sso"]);
-    expect(e.caps.seats).toBeNull(); // v7 would have said 50
+    expect(e.caps.customers).toBeNull(); // v7 would have said 50 (B1371: customers, seats are never a cap)
   });
 
   it("#3 a LITE tenant whose plan v11 does not define: unchanged (the STARTER fallback, planKey reported as the fallback)", async () => {

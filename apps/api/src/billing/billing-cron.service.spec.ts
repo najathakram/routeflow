@@ -698,7 +698,7 @@ describe("BillingCronService", () => {
     expect(prisma.$transaction.mock.calls.at(-1)[1]).toBe(opts);
   });
 
-  it("applyScheduledDowngrades switches plan, frees non-retained seats, emits events", async () => {
+  it("applyScheduledDowngrades switches plan and emits events, and never switches off a login (B1371)", async () => {
     const { svc, tx, events, entitlements } = make({
       downgrades: [
         {
@@ -724,18 +724,12 @@ describe("BillingCronService", () => {
       (c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED,
     );
     expect(planChanged[3].amountDelta).toBe(-290);
-    // Over the seat cap → deactivate active team users NOT on the retained list.
-    expect(tx.user.updateMany.mock.calls[0][0].where).toMatchObject({
-      status: "ACTIVE",
-      id: { notIn: ["u1"] },
-    });
-    // ...and burn exactly those accounts' live links in the same transaction (three statements: reset + verify +
-    // pending login-email change, B461).
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(3);
-    for (const call of tx.$executeRaw.mock.calls) expect(call.slice(1)).toEqual([["f1", "f2"]]);
-    expect(emitted(events)).toEqual(
-      expect.arrayContaining([BILLING_EVENTS.SEAT_FREED, BILLING_EVENTS.PLAN_CHANGED]),
-    );
+    // B1371: there is no seat limit. A team over the old plan's seat count keeps every login ACTIVE,
+    // no link is revoked, and no SEAT_FREED event is emitted.
+    expect(tx.user.updateMany).not.toHaveBeenCalled();
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(emitted(events)).toContain(BILLING_EVENTS.PLAN_CHANGED);
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SEAT_FREED);
     expect(entitlements.invalidate).toHaveBeenCalledWith("t1");
   });
 
@@ -1192,8 +1186,8 @@ describe("BillingCronService", () => {
     expect(billingNotification.notifyDowngradeApplied).toHaveBeenCalledTimes(2); // t2 still attempted
   });
 
-  it("downgrade with an EMPTY retained list still frees seats when over cap (keeps only admins)", async () => {
-    const { svc, tx } = make({
+  it("downgrade with an EMPTY retained list still leaves every login ACTIVE (B1371)", async () => {
+    const { svc, tx, events } = make({
       downgrades: [
         {
           tenantId: "t1",
@@ -1206,27 +1200,9 @@ describe("BillingCronService", () => {
       activeTeam: 5,
     });
     await svc.applyScheduledDowngrades();
-    // notIn [] matches all → deactivates every non-admin operator/driver.
-    expect(tx.user.updateMany).toHaveBeenCalled();
-    expect(tx.user.updateMany.mock.calls[0][0].where.id).toEqual({ notIn: [] });
-  });
-
-  it("downgrade WITHIN the new seat cap frees nobody", async () => {
-    const { svc, tx } = make({
-      downgrades: [
-        {
-          tenantId: "t1",
-          planKey: "BUSINESS",
-          planVersionId: "v7",
-          downgradeToPlanKey: "STARTER",
-          retainedUserIds: [],
-        },
-      ],
-      activeTeam: 1, // == STARTER cap
-    });
-    await svc.applyScheduledDowngrades();
     expect(tx.user.updateMany).not.toHaveBeenCalled();
     expect(tx.$executeRaw).not.toHaveBeenCalled();
+    expect(emitted(events)).not.toContain(BILLING_EVENTS.SEAT_FREED);
   });
 
   it("applyScheduledDowngrades only selects ACTIVE, non-deleted tenants (round 3, finding 8)", async () => {

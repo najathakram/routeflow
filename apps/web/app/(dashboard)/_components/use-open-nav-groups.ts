@@ -1,5 +1,6 @@
 import * as React from "react";
-import { defaultOpenGroup, type NavEntry, type NavGroup } from "./nav-config";
+import { defaultOpenGroup, type NavEntry } from "./nav-config";
+import { activeNavGroup } from "./nav-index";
 
 /**
  * Which sidebar groups are open (UX guide improvement 1).
@@ -51,11 +52,7 @@ export function useOpenNavGroups({
   mode: NavGroupMode;
 }): { isOpen: (label: string) => boolean; toggle: (label: string) => void } {
   const storageKey = mode === "multi" ? keyFor(userId) : null;
-  const activeGroupLabel =
-    nav.find(
-      (e): e is NavGroup =>
-        e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
-    )?.label ?? null;
+  const activeGroupLabel = activeNavGroup(nav, pathname)?.label ?? null;
 
   // multi: what the person opened by clicking (plus the first-load default while nothing is stored);
   // single: the one open group, which follows navigation.

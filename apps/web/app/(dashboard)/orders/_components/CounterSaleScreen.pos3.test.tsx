@@ -93,12 +93,29 @@ async function buildCart() {
   await scan("COLA");
   await scan("WATER");
   await waitFor(() => expect(screen.getByText(/Water/)).toBeInTheDocument());
-  for (let i = 0; i < 3; i++) click("Add a piece to Water");
+  // B1373: no one-tap piece stepper on a boxed line: open the loose-pieces field and type 3
+  fireEvent.click(within(lineOf("Water")).getByRole("button", { name: /^\+ .*: add extra / }));
+  fireEvent.change(piecesField("Water"), { target: { value: "3" } });
 }
 const itemNames = () =>
   within(screen.getByRole("list", { name: "Items" }))
     .getAllByRole("listitem")
     .map((li) => li.textContent ?? "");
+const lineOf = (name: string) =>
+  within(screen.getByRole("list", { name: "Items" }))
+    .getAllByRole("listitem")
+    .find((li) => li.textContent?.includes(name))!;
+/** B1373: a line's quantity / boxes / loose pieces are the order row's number fields (no "× N" or "1 box + 3 pcs" text). */
+const qtyOfLine = (name: string) =>
+  Number(
+    (within(lineOf(name)).getByRole("spinbutton", { name: /Set quantity of/ }) as HTMLInputElement)
+      .value,
+  );
+const boxesField = (name: string) =>
+  within(lineOf(name)).getByTitle(/^Number of whole /) as HTMLInputElement;
+const piecesField = (name: string) =>
+  within(lineOf(name)).getByRole("spinbutton", { name: /^Extra / }) as HTMLInputElement;
+const boxesPieces = (name: string) => [boxesField(name).value, piecesField(name).value];
 
 describe("POS-3 control inventory (nothing removed or hidden)", () => {
   it("keeps every counter control: customer, scan, steppers, remove, payment, tender, auto-print, complete", async () => {
@@ -108,10 +125,6 @@ describe("POS-3 control inventory (nothing removed or hidden)", () => {
       "Remove one Cola",
       "Add one Cola",
       "Remove Cola",
-      "Remove a box from Water",
-      "Add a box to Water",
-      "Remove a piece from Water",
-      "Add a piece to Water",
       "Remove Water",
       "Cash",
       "Card",
@@ -128,6 +141,9 @@ describe("POS-3 control inventory (nothing removed or hidden)", () => {
         screen.getByRole(TENDERS.test(name) ? "radio" : "button", { name }),
       ).toBeInTheDocument();
     }
+    // B1373: a boxed line is typed (whole boxes + loose pieces), not stepped
+    expect(boxesField("Water")).toBeInTheDocument();
+    expect(piecesField("Water")).toBeInTheDocument();
     for (const label of ["Find a customer", "Scan or search items", "Amount tendered"]) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
@@ -170,14 +186,17 @@ describe("POS-3 remove with Undo", () => {
     expect(screen.getByRole("status", { name: "Removed item" })).toBeEmptyDOMElement();
     const names = itemNames();
     expect(names).toHaveLength(2);
-    expect(names[0]).toMatch(/Cola · × 2/);
-    expect(names[1]).toMatch(/Water · 1 box \+ 3 pcs/);
+    expect(names[0]).toMatch(/^Cola/);
+    expect(qtyOfLine("Cola")).toBe(2);
+    expect(names[1]).toMatch(/^Water/);
+    expect(boxesPieces("Water")).toEqual(["1", "3"]);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$20.00");
 
     // a boxed line, removed from the END, comes back with its box/piece split intact
     click("Remove Water");
     click(UNDO);
-    expect(itemNames()[1]).toMatch(/Water · 1 box \+ 3 pcs/);
+    expect(itemNames()[1]).toMatch(/^Water/);
+    expect(boxesPieces("Water")).toEqual(["1", "3"]);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$20.00");
   });
 
@@ -310,6 +329,10 @@ describe("POS-3 remove with Undo", () => {
   });
 });
 
+/** The 44 px floor: the till's own min-h-[44px], or the order row's below-lg touch classes (B1373). */
+const TOUCH_H = /min-h-\[44px\]|max-lg:h-11|max-lg:min-h-11|\bmin-h-11\b/;
+const TOUCH_W = /min-w-\[44px\]|max-lg:w-11|max-lg:min-w-11|\bmin-w-11\b/;
+
 describe("POS-3 layout and touch targets", () => {
   it("is two columns from md (cart left, sticky payment right) and one column below it, with no fixed width", async () => {
     await buildCart();
@@ -359,17 +382,18 @@ describe("POS-3 layout and touch targets", () => {
     const root = screen.getByTestId("counter-sale-screen");
     const small: string[] = [];
     for (const b of within(root).getAllByRole("button")) {
-      if (!/min-h-\[44px\]/.test(b.className)) small.push(`button:${b.textContent}`);
+      if (!TOUCH_H.test(b.className)) small.push(`button:${b.textContent}`);
     }
     for (const i of within(root).getAllByRole("textbox")) {
-      if (!/min-h-\[44px\]/.test(i.className)) small.push(`input:${i.getAttribute("aria-label")}`);
+      if (!TOUCH_H.test(i.className)) small.push(`input:${i.getAttribute("aria-label")}`);
     }
     expect(small).toEqual([]);
     // compact controls (stepper, remove, Undo) are 44 wide as well, not just tall
-    for (const name of ["Add a box to Water", "Remove Water", UNDO, "Cash", "Exact"]) {
+    // (Cola was removed above: the boxed line's "Remove extra pieces" stands in for a compact line control)
+    for (const name of [/^Remove extra /, "Remove Water", UNDO, "Cash", "Exact"]) {
       expect(
         screen.getByRole(TENDERS.test(String(name)) ? "radio" : "button", { name }).className,
-      ).toMatch(/min-w-\[44px\]/);
+      ).toMatch(TOUCH_W);
     }
     const autoPrint = screen.getByLabelText("Print receipt automatically").closest("label")!;
     expect(autoPrint.className).toMatch(/min-h-\[44px\]/);
@@ -385,8 +409,8 @@ describe("POS-3 line notes", () => {
     fireEvent.change(noteBox("Cola"), { target: { value: "  no ice " } });
     expect(screen.getByRole("button", { name: "Edit the note on Cola" })).toBeInTheDocument();
     fireEvent.change(noteBox("Cola"), { target: { value: "extra cold" } }); // edit
-    click("Edit the note on Cola"); // collapse: the note shows as text
-    expect(screen.getByTestId("line-note")).toHaveTextContent("extra cold");
+    click("Edit the note on Cola"); // collapse: a line with a note keeps its field on show (the order row's way)
+    expect(noteBox("Cola")).toHaveValue("extra cold");
     click("Exact");
     click("Complete & show receipt");
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
@@ -395,12 +419,13 @@ describe("POS-3 line notes", () => {
     expect(dto.items[1]).not.toHaveProperty("note"); // a line with no note sends none
   });
 
-  it("Clear note removes it from the line and from the wire", async () => {
+  it("emptying the note removes it from the line and from the wire (there is no Clear note button)", async () => {
     await buildCart();
     click("Add a note to Cola");
     fireEvent.change(noteBox("Cola"), { target: { value: "no ice" } });
-    click("Clear the note on Cola");
-    expect(screen.queryByTestId("line-note")).toBeNull();
+    fireEvent.change(noteBox("Cola"), { target: { value: "" } });
+    click("Add a note to Cola"); // close the emptied field
+    expect(screen.queryByLabelText("Note for Cola")).toBeNull();
     expect(screen.getByRole("button", { name: "Add a note to Cola" })).toBeInTheDocument();
     click("Exact");
     click("Complete & show receipt");
@@ -420,7 +445,7 @@ describe("POS-3 line notes", () => {
     fireEvent.change(noteBox("Cola"), { target: { value: "no ice" } });
     click("Remove Cola");
     click(UNDO);
-    expect(screen.getByTestId("line-note")).toHaveTextContent("no ice");
+    expect(noteBox("Cola")).toHaveValue("no ice");
   });
 });
 
@@ -429,11 +454,11 @@ describe("POS-3 undo: merge, keyboard, one slot", () => {
     await buildCart();
     click("Remove Cola");
     await scan("COLA"); // a fresh Cola x1
-    expect(itemNames().some((n) => /Cola · × 1/.test(n))).toBe(true);
+    expect(qtyOfLine("Cola")).toBe(1);
     click(UNDO);
     const colas = itemNames().filter((n) => /Cola/.test(n));
     expect(colas).toHaveLength(1);
-    expect(colas[0]).toMatch(/Cola · × 3/);
+    expect(qtyOfLine("Cola")).toBe(3);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$22.50");
   });
 
@@ -447,7 +472,8 @@ describe("POS-3 undo: merge, keyboard, one slot", () => {
     fireEvent.change(field, { target: { value: "" } });
     fireEvent.keyDown(field, { key: "z", metaKey: true });
     expect(screen.queryByRole("button", { name: UNDO })).toBeNull();
-    expect(itemNames()[0]).toMatch(/Cola · × 2/);
+    expect(itemNames()[0]).toMatch(/^Cola/);
+    expect(qtyOfLine("Cola")).toBe(2);
   });
 
   it("Undo is a real button in the tab order, right after the cart", async () => {

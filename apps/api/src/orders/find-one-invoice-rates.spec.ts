@@ -29,7 +29,9 @@ describe("OrdersService.findOne invoice select", () => {
       lineItems: [],
     });
     const service = Object.assign(Object.create(OrdersService.prototype), {
-      prisma: { forTenant: () => ({ order: { findUnique } }) },
+      prisma: {
+        forTenant: () => ({ order: { findUnique }, invoice: { findMany: async () => [] } }),
+      },
     }) as OrdersService;
     await service.findOne("o-1", operator);
     const select = findUnique.mock.calls[0][0].include.invoices.select;

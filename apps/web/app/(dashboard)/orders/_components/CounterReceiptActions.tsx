@@ -13,7 +13,7 @@ import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { CounterReturnAction } from "./CounterReturnAction";
 import { CounterVoidSaleAction, CounterVoidSaleDialog } from "./CounterVoidSaleDialog";
 import { EmailReceiptButton, EmailReceiptRow } from "./EmailReceipt";
-import { METHOD_LABEL } from "./HandOverRows";
+import { counterMethodParts } from "@routeflow/pricing";
 import { useEmailReceipt } from "./useEmailReceipt";
 
 /** The receipt's own controls: a full 44 px target with a visible keyboard focus ring. */
@@ -64,7 +64,9 @@ export function CounterReceiptActions({
     methodsText ??
     (row
       ? row.methods.length > 0
-        ? row.methods.map((m) => METHOD_LABEL[m.method]).join(" + ")
+        ? counterMethodParts(row.methods)
+            .map((m) => m.label)
+            .join(" + ")
         : "On account"
       : undefined);
   // wait for the row (voided / returned / how it was paid) before offering Void; a failed read falls back to the order alone

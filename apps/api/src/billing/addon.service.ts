@@ -17,7 +17,8 @@ import {
   normalizePlanKey,
   planKeyFromEnum,
 } from "./plan-catalog.constants";
-import { inclusionOf } from "./addon-inclusion";
+import { addonBillingModeOf, inclusionOf } from "./addon-inclusion";
+import { writeManualInvoiceNotice } from "./manual-invoice-notice";
 import { inclusionCatalogFor, pricedAddonSku } from "./plan-version-pin";
 import {
   updateAddonRowTx,
@@ -51,6 +52,17 @@ import { roundMoney } from "@routeflow/pricing";
 export function isStripeResourceMissing(err: unknown): boolean {
   const e = err as { code?: string; statusCode?: number } | undefined;
   return e?.code === "resource_missing" || e?.statusCode === 404;
+}
+
+/**
+ * B1371 / SA-1175 K8: there is no seat limit on any plan, so SEAT_EXTRA grants nothing. Every entry point that could
+ * start billing it (`enableAddon` in every mode, `uncompAddon`, #4393 read A L-1) refuses it first, before any read,
+ * lock, Stripe call, price or row write.
+ */
+function refuseRetiredSeatExtra(addonKey: string): void {
+  if (addonCodeOf(addonKey) === "SEAT_EXTRA") {
+    throw new BadRequestException("Extra seats is retired: every plan includes unlimited users.");
+  }
 }
 
 /** SA-693: the explicit comp choice of an admin enable (see `enableAddon`). */
@@ -296,6 +308,7 @@ export class AddonService {
     // on purpose: no Stripe item even on a subscribed tenant (a price id that rides along is ignored),
     // price 0, nothing booked. `uncomp` is the internal re-entry of `uncompAddon`'s billed branch: it
     // may re-activate (bill) a row that is currently an ACTIVE comp, which a plain enable refuses.
+    refuseRetiredSeatExtra(addonKey); // B1371 K8: every mode (billed, comp, uncomp), first
     const comp = opts?.comp === true;
     const uncomp = opts?.uncomp === true;
     if (comp) stripePriceId = undefined;
@@ -661,6 +674,7 @@ export class AddonService {
    * takes no lock (see `disableAddon`).
    */
   async uncompAddon(tenantId: string, addonKey: string, stripePriceId?: string, actorId?: string) {
+    refuseRetiredSeatExtra(addonKey); // B1371 K8 (#4393 L-1): the MANUAL branch never reaches enableAddon
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
       select: { id: true, slug: true, name: true, planVersionId: true },
@@ -850,10 +864,35 @@ export class AddonService {
       throw new NotFoundException(`Add-on "${addonKey}" not found for tenant ${tenantId}`);
     }
 
+    const isSeatExtra = (addonSkuCode(addon) ?? addonCodeOf(addonKey)) === "SEAT_EXTRA";
+    // B1371 K12: a MANUAL tenant (owner invoices by hand) holding a priced SEAT_EXTRA needs a stop notice.
+    let manualStopName: string | null = null;
+    if (isSeatExtra && !addon.stripeItemId && Number(addon.priceSnapshot ?? 0) > 0) {
+      const sub = await this.prisma.tenantSubscription.findUnique({
+        where: { tenantId },
+        select: { stripeSubId: true, externalPayment: true, couponFull: true },
+      });
+      if (addonBillingModeOf(this.stripe.isConfigured, sub) === "MANUAL") {
+        const t = await this.prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { slug: true, name: true },
+        });
+        manualStopName = t?.name ?? t?.slug ?? tenantId;
+      }
+    }
+
     // Remove Stripe subscription item if exists
     if (addon.stripeItemId && this.stripe.isConfigured) {
       try {
-        await this.stripe.client.subscriptionItems.del(addon.stripeItemId);
+        // B1371 / SA-1175 K12: SEAT_EXTRA stops at the next renewal with no refund (no proration credit).
+        // Every other SKU keeps Stripe's default, exactly as before.
+        if (isSeatExtra) {
+          await this.stripe.client.subscriptionItems.del(addon.stripeItemId, {
+            proration_behavior: "none",
+          });
+        } else {
+          await this.stripe.client.subscriptionItems.del(addon.stripeItemId);
+        }
         this.logger.log(
           `Stripe subscription item ${addon.stripeItemId} removed for add-on "${addonKey}"`,
         );
@@ -915,6 +954,21 @@ export class AddonService {
         after: { priceSnapshot: 0, quantity: 0 },
         actorId,
       });
+      if (manualStopName) {
+        await writeManualInvoiceNotice(tx, {
+          tenantId,
+          actorId,
+          action: AdminAuditAction.ADDON_MANUAL_INVOICE_STOP,
+          sku: "SEAT_EXTRA",
+          quantity: current.quantity,
+          monthlyPrice: Number(current.priceSnapshot ?? 0),
+          kind: "stop",
+          addonName: "Extra seats",
+          fromQty: current.quantity,
+          toQty: 0,
+          message: `Add-on Extra seats turned off for ${manualStopName}: stop invoicing it from the next invoice. No refund.`,
+        });
+      }
       return row;
     });
 

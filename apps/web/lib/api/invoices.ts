@@ -1,10 +1,13 @@
 import type {
+  InvoiceAccountRow,
   InvoiceDisplayUnitView,
   InvoiceItemSystemKind,
   InvoiceStatus,
   LineComponentView,
   OverrideStampView,
+  PaymentListReceipt,
   PerBaseUnit,
+  ReceiptGroupView,
   RestrictionAck,
   ToCollectState,
 } from "@routeflow/types";
@@ -266,6 +269,8 @@ export interface Invoice {
   payments?: InvoicePayment[];
   /** Server-computed balance due — 0 for PAID/VOID/WRITTEN_OFF regardless of payment records */
   balanceDue?: number;
+  /** SA-1197: the server's account rows (open balance on the statement's basis); printed as given, never summed. */
+  accountBlock?: InvoiceAccountRow[];
   /**
    * Server-computed (SA-770): an open (SENT/VIEWED/PARTIAL/OVERDUE) invoice that still owes AND whose due day
    * has ended in the tenant's zone. The one overdue rule, so a client never re-derives it from `status`.
@@ -395,6 +400,10 @@ export interface AllPayment {
     customerId: string;
     customer?: { id: string; businessName: string };
   };
+  /** M1-03: LIST rows only. The check this row is one row of (server figures), null for any other payment. */
+  receiptGroup?: PaymentListReceipt | null;
+  /** M1-03: the ONE-payment read only. What this payment covered, built by the server. */
+  receipt?: ReceiptGroupView;
 }
 
 export function useInvoicePayments(params?: PaymentListParams) {
@@ -1104,6 +1113,8 @@ export interface InvoiceSettings {
   hideAmountPaid?: boolean;
   /** true = no Balance Due line on printed invoices. Absent/false = shown. */
   hideBalanceDue?: boolean;
+  /** SA-1197: true = an account customer's invoices print the open balance block. Absent/false = off. */
+  showAccountBalance?: boolean;
   /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
    *  a customer's own `defaultDepositPercent` still wins when set. */
   depositDefaultPercent?: number | null; // GET: null when never set; PATCH: a number (0 clears), never null

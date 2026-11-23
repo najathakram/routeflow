@@ -1,4 +1,5 @@
 import { BadRequestException, Logger } from "@nestjs/common";
+import { packFromOwnSplit } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -57,6 +58,29 @@ export function qtySplitMismatch(
   return { productId: line.productId ?? null, qty, boxes, pieces, unitsPerBox: upb };
 }
 
+/**
+ * SA-1170 K1 (B729): a split sent for a product with NO pack (live pack <= 1) must still agree with its own
+ * qty. Self-consistent when it carries boxes whose own pack is whole (`packFromOwnSplit`, the stale-cart shape
+ * that folds correctly), or pieces only and equal to qty; a zero / absent split is no split. Anything else is
+ * contradictory (a fold would bill it at the stored pack). Pure; enforce mode only (see checkQtySplitConsistency).
+ */
+export function unpackableSplitMismatch(
+  line: QtySplitLine,
+  unitsPerBox: number | null | undefined,
+): QtySplitMismatch | null {
+  const upb = Math.trunc(Number(unitsPerBox ?? 0));
+  if (upb > 1) return null;
+  const boxes = Math.trunc(Number(line.boxes ?? 0));
+  const pieces = Math.trunc(Number(line.pieces ?? 0));
+  if (!(boxes > 0 || pieces > 0)) return null;
+  if (line.qty == null || line.qty === "") return null;
+  const qty = Number(line.qty);
+  if (!Number.isFinite(qty)) return null;
+  if (boxes > 0 && packFromOwnSplit({ qty, boxes, pieces }) != null) return null;
+  if (!(boxes > 0) && pieces === qty) return null;
+  return { productId: line.productId ?? null, qty, boxes, pieces, unitsPerBox: upb };
+}
+
 export interface CheckQtySplitArgs {
   mode: QtySplitMode;
   /** Which writer this is, e.g. "buyer.createOrder" or "orders.create". Appears in the warn log. */
@@ -66,6 +90,13 @@ export interface CheckQtySplitArgs {
   upbFor: (line: QtySplitLine) => number | null | undefined;
   tenantId?: string | null;
   logger?: Logger;
+  /** SA-1173 K2: the error an `enforce` refusal throws. Default is the buyer 400; only the at-stop approver passes one. */
+  refuse?: (found: QtySplitMismatch[]) => Error;
+}
+
+/** SA-1173 K3: the one role-to-mode rule: a customer's request is enforced, staff and drivers warn (row 531). */
+export function splitModeFor(role: string | null | undefined): QtySplitMode {
+  return role === "CUSTOMER" ? "enforce" : "warn";
 }
 
 const fallbackLogger = new Logger("QtySplitConsistency");
@@ -77,11 +108,16 @@ const fallbackLogger = new Logger("QtySplitConsistency");
 export function checkQtySplitConsistency(args: CheckQtySplitArgs): QtySplitMismatch[] {
   const found: QtySplitMismatch[] = [];
   for (const line of args.items) {
-    const m = qtySplitMismatch(line, args.upbFor(line));
+    const upb = args.upbFor(line);
+    // enforce only, and only when the caller KNOWS the product (undefined = not found: the writer refuses it).
+    const m =
+      qtySplitMismatch(line, upb) ??
+      (args.mode === "enforce" && upb !== undefined ? unpackableSplitMismatch(line, upb) : null);
     if (m) found.push(m);
   }
   if (found.length === 0) return found;
   if (args.mode === "enforce") {
+    if (args.refuse) throw args.refuse(found);
     throw new BadRequestException({
       code: API_ERROR_CODES.QTY_SPLIT_MISMATCH,
       message: "The quantity and the box split of a line disagree. Review the cart and try again.",

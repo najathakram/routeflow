@@ -12,6 +12,13 @@ jest.mock("@/lib/api/platform-pricing", () => ({
   createTenantCheckout: (...a: unknown[]) => mockCheckout(...a),
 }));
 
+// SA-1206 R2: the ordinary Checkout shows only once the plan read says the business is not invoiced by hand.
+const mockFetchPlan = jest.fn();
+jest.mock("@/lib/api/platform-catchup", () => ({
+  ...jest.requireActual("@/lib/api/platform-catchup"),
+  fetchCatchupPlan: (id: string) => mockFetchPlan(id),
+}));
+
 const pricing = {
   resolvable: true,
   planKey: "GROWTH",
@@ -30,7 +37,10 @@ async function openAndSubmit() {
   fireEvent.click(await screen.findByRole("button", { name: "Create checkout session" }));
 }
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockFetchPlan.mockResolvedValue({ externalPayment: false, hasStripeSubscription: false });
+});
 
 describe("admin checkout refused with CHECKOUT_ANCHOR_WINDOW", () => {
   it("shows fixed 'reopens at <local time>' copy, never the server's message", async () => {

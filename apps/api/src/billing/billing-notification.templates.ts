@@ -104,8 +104,15 @@ export function downgradeScheduledTemplate(params: {
   fromPlanName: string;
   toPlanName: string;
   effectiveAt: string; // pre-formatted date string
+  /** B1371 K9: the lines that make the notice true, each pre-formatted (price, one per add-on that starts billing, the customer sentence). */
+  detailLines?: string[];
 }): BillingEmailTemplate {
   const manageUrl = billingSettingsUrl();
+  const lines = params.detailLines ?? [];
+  const linesHtml = lines
+    .map((l) => `<p style="margin:0 0 12px;font-size:15px;color:#374151;">${escapeHtml(l)}</p>`)
+    .join("");
+  const linesText = lines.length ? `${lines.join("\n")}\n\n` : "";
   const html = baseLayout({
     tagline: "Plan change scheduled",
     bodyHtml: `
@@ -116,13 +123,14 @@ export function downgradeScheduledTemplate(params: {
         <strong>${escapeHtml(params.toPlanName)}</strong>, effective ${escapeHtml(params.effectiveAt)}.
         Nothing changes until then.
       </p>
+      ${linesHtml}
       <p style="margin:0 0 16px;font-size:14px;color:#6b7280;">
         Changed your mind? You can cancel this scheduled downgrade any time before it takes effect.
       </p>
       ${ctaButtonHtml(manageUrl, "Manage your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nWe've scheduled a downgrade for ${params.businessName} from ${params.fromPlanName} to ${params.toPlanName}, effective ${params.effectiveAt}. Nothing changes until then.\n\nChanged your mind? You can cancel this scheduled downgrade any time before it takes effect.\n\nManage your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nWe've scheduled a downgrade for ${params.businessName} from ${params.fromPlanName} to ${params.toPlanName}, effective ${params.effectiveAt}. Nothing changes until then.\n\n${linesText}Changed your mind? You can cancel this scheduled downgrade any time before it takes effect.\n\nManage your plan: ${manageUrl}`;
   return {
     subject: `Downgrade scheduled — ${params.businessName}`,
     html,

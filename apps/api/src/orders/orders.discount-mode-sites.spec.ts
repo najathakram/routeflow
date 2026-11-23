@@ -62,7 +62,9 @@ describe("SA-1153 order rows 19 and 20 (cutover set)", () => {
         createdAt,
       });
       const service = Object.assign(Object.create(OrdersService.prototype), {
-        prisma: { forTenant: () => ({ order: { findUnique } }) },
+        prisma: {
+          forTenant: () => ({ order: { findUnique }, invoice: { findMany: async () => [] } }),
+        },
       }) as OrdersService;
       return ((await service.findOne("o-1", operator)) as unknown as { discountTaxBase: string })
         .discountTaxBase;

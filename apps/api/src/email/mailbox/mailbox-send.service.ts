@@ -52,6 +52,8 @@ export interface MailboxSendParams {
    * separate size handling is needed here for the Microsoft path.
    */
   attachments?: { filename: string; content: Buffer; contentType?: string }[];
+  /** W-1286 (SA-1202 C4'): extra MIME headers: the per-send `X-Delivery-Ref` of a recorded send. Absent = none. */
+  headers?: Record<string, string>;
 }
 
 export interface MailboxSendResult {
@@ -424,9 +426,11 @@ export class MailboxSendService {
     text?: string;
     replyTo?: string;
     attachments?: { filename: string; content: Buffer; contentType?: string }[];
+    headers?: Record<string, string>;
   }): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       const composer = new MailComposer({
+        ...(opts.headers ? { headers: opts.headers } : {}),
         from: opts.from,
         to: opts.to,
         subject: opts.subject,
@@ -493,6 +497,7 @@ export class MailboxSendService {
           text: params.text,
           replyTo: params.replyTo,
           attachments: params.attachments,
+          headers: params.headers,
         });
       } catch (err: any) {
         this.logger.error(

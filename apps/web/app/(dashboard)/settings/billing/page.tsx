@@ -544,6 +544,16 @@ export default function BillingSettingsPage() {
 
   const s = sub.data;
   const priceForCycle = s.cycle === "ANNUAL" ? s.annualPrice : s.monthlyPrice;
+  // B1371 K5: the scheduled plan's name, and the customer sentence only when the page can prove the
+  // workspace is over that plan's allowance (a null allowance is unlimited, so never over).
+  const downgradeTarget = plans.data?.plans?.find((p) => p.planKey === s.downgradeToPlanKey);
+  const downgradeTargetName = downgradeTarget?.name ?? s.downgradeToPlanKey;
+  const customersUsed = usage.data?.find((m) => m.meter === "CUSTOMERS")?.used;
+  const targetCap = downgradeTarget?.customersIncluded;
+  const overCustomerCap =
+    s.downgradeToPlanKey && customersUsed != null && targetCap != null && customersUsed > targetCap
+      ? { used: customersUsed, cap: targetCap }
+      : null;
   // À-la-carte add-ons the tenant can toggle (skip ones bundled into the plan).
   const addonCatalog = (plans.data?.addons ?? []).filter((a) => a.sku !== "SEAT_EXTRA");
   const catalogSkus = new Set(addonCatalog.map((a) => a.sku));
@@ -614,13 +624,17 @@ export default function BillingSettingsPage() {
       {s.downgradeToPlanKey && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
           <span>
-            Scheduled to change to{" "}
-            <strong>
-              {plans.data?.plans?.find((p) => p.planKey === s.downgradeToPlanKey)?.name ??
-                s.downgradeToPlanKey}
-            </strong>{" "}
-            on {s.downgradeEffectiveAt ? fmtDate(s.downgradeEffectiveAt) : "period end"}. Nothing is
-            deleted — over-cap data becomes read-only.
+            Changes to <strong>{downgradeTargetName}</strong> on{" "}
+            {s.downgradeEffectiveAt ? fmtDate(s.downgradeEffectiveAt) : "period end"}. Your team,
+            customers and data stay as they are.
+            {overCustomerCap != null && (
+              <>
+                {" "}
+                You have {overCustomerCap.used} customers and {downgradeTargetName} includes{" "}
+                {overCustomerCap.cap}. After 7 days over, new customers need a Customer pack or a
+                bigger plan.
+              </>
+            )}
           </span>
           {/* The only self-service undo: resume() clears downgradeToPlanKey without touching
               the plan or the period (re-subscribing would reset periodStart/periodEnd). */}

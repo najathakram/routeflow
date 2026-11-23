@@ -61,12 +61,13 @@ function isUniqueConstraintViolation(err: unknown): boolean {
  * Buyer-initiated payments (card via the tenant's connected Stripe account, or
  * a declared cash payment awaiting operator approval).
  *
- * ALLOCATION POLICY (owner decision 2026-08-21): every buyer payment is against
- * the ACCOUNT and settles the OLDEST invoices first (issueDate asc, then
+ * ALLOCATION POLICY (owner decision 2026-08-21, SA-1148): every buyer payment is
+ * against the ACCOUNT. When the buyer chose an invoice (the request's
+ * `invoiceId`) and it is still open, that invoice is paid first, up to its live
+ * balance; the rest settles the OLDEST invoices first (issueDate asc, then
  * createdAt asc, then invoiceNumber asc — numbers are minted in creation order;
  * the text tiebreak only decides split siblings), partially covering the last
- * invoice it reaches. The request may record which invoice screen it started
- * from, but allocation never honors it — the UI says so.
+ * invoice it reaches. One allocator, `buildAllocation`, serves every site.
  *
  * MONEY DISCIPLINE: a request row is NOT money. InvoicePayment rows are written
  * exclusively through InvoicesService.recordStandalonePayment — on operator
@@ -132,12 +133,19 @@ export class PaymentRequestsService {
   }
 
   /**
-   * Spread `amount` across the open invoices oldest-first. Returns the preview
-   * lines (with `applied` filled), the compact allocations for
-   * recordStandalonePayment, and whatever exceeds the account balance.
+   * Spread `amount` across the open invoices (SA-1148). `firstInvoiceId` is the invoice the buyer chose to pay
+   * (the request's own `invoiceId`, or null): when it is still open it takes the money first, up to its LIVE
+   * balance, and the remainder goes oldest first. A chosen invoice that is no longer open (paid, void, written
+   * off) is skipped, never refused: card money has already moved and cash was handed over, so `chosenSkipped`
+   * tells the caller to log it. The parameter is REQUIRED so the compiler finds every caller (case 13 pins five).
+   * Returns the preview lines (with `applied` filled), the compact allocations for recordStandalonePayment,
+   * and whatever exceeds the account balance.
    */
-  async buildOldestFirstAllocation(customerId: string, amount: number) {
-    const lines = await this.openInvoices(customerId);
+  async buildAllocation(customerId: string, amount: number, firstInvoiceId: string | null) {
+    const open = await this.openInvoices(customerId);
+    const chosen = firstInvoiceId ? open.findIndex((l) => l.invoiceId === firstInvoiceId) : -1;
+    const chosenSkipped = !!firstInvoiceId && chosen < 0;
+    const lines = chosen > 0 ? [open[chosen], ...open.filter((_, i) => i !== chosen)] : open;
     let remaining = roundMoney(amount);
     for (const line of lines) {
       if (remaining <= 0.001) break;
@@ -151,7 +159,15 @@ export class PaymentRequestsService {
         .map((l) => ({ invoiceId: l.invoiceId, amount: l.applied })),
       excess: Math.max(0, remaining),
       balanceDue: roundMoney(lines.reduce((s, l) => s + l.balanceDue, 0)),
+      chosenSkipped,
     };
+  }
+
+  /** SA-1148: the one log line when a request's chosen invoice closed before the money was placed. */
+  private logSkippedTarget(requestId: string, invoiceId: string | null) {
+    this.logger.warn(
+      `buyer payment request ${requestId}: chosen invoice ${invoiceId} is no longer open; the payment goes oldest first`,
+    );
   }
 
   // ─── Buyer side ─────────────────────────────────────────────────────────────
@@ -205,9 +221,13 @@ export class PaymentRequestsService {
   }
 
   /** Buyer preview: "paying $X settles these invoices". Read-only. */
-  async previewAllocation(customerId: string, amount: number) {
+  async previewAllocation(
+    customerId: string,
+    amount: number,
+    firstInvoiceId: string | null = null,
+  ) {
     this.assertAmount(amount);
-    const { lines, excess } = await this.buildOldestFirstAllocation(customerId, amount);
+    const { lines, excess } = await this.buildAllocation(customerId, amount, firstInvoiceId);
     return { lines: lines.filter((l) => l.applied > 0), excess };
   }
 
@@ -239,18 +259,25 @@ export class PaymentRequestsService {
   }
 
   /**
-   * `fromInvoiceId` is provenance-only (allocation is always oldest-first
-   * across the account, never against this invoice specifically) but it still
-   * becomes a real FK on the request row — verify it belongs to this
-   * (tenant, customer) before it is ever persisted.
+   * `fromInvoiceId` is the invoice the buyer chose to pay first (SA-1148): it becomes a real FK on the request
+   * row and is paid first at settlement. Verify it belongs to this (tenant, customer) and is still open before it
+   * is ever persisted; no money has moved yet, so a closed invoice is refused here (never later). Returns the
+   * chosen invoice's open line (null when none was chosen).
    */
-  private async assertInvoiceBelongsToCustomer(customerId: string, invoiceId?: string | null) {
-    if (!invoiceId) return;
+  private async assertInvoiceBelongsToCustomer(
+    customerId: string,
+    invoiceId?: string | null,
+  ): Promise<AllocationPreviewLine | null> {
+    if (!invoiceId) return null;
     const invoice = await this.prisma.forTenant().invoice.findFirst({
       where: { id: invoiceId, customerId },
       select: { id: true },
     });
     if (!invoice) throw new BadRequestException("That invoice could not be found.");
+    const open = await this.openInvoices(customerId);
+    const chosen = open.find((l) => l.invoiceId === invoiceId);
+    if (!chosen) throw new BadRequestException("That invoice is already paid.");
+    return chosen;
   }
 
   /**
@@ -269,13 +296,20 @@ export class PaymentRequestsService {
   }) {
     this.assertAmount(params.amount);
     await this.assertNoOpenRequest(params.tenantId, params.customerId);
-    await this.assertInvoiceBelongsToCustomer(params.customerId, params.fromInvoiceId);
+    const chosen = await this.assertInvoiceBelongsToCustomer(
+      params.customerId,
+      params.fromInvoiceId,
+    );
 
     const account = await this.connect.chargeableAccount(params.tenantId);
     if (!account) {
       throw new BadRequestException("This seller does not accept card payments yet.");
     }
-    const { balanceDue } = await this.buildOldestFirstAllocation(params.customerId, params.amount);
+    const { balanceDue } = await this.buildAllocation(
+      params.customerId,
+      params.amount,
+      params.fromInvoiceId ?? null,
+    );
     if (balanceDue <= 0.001) throw new BadRequestException("Nothing is currently owed.");
     const amount = roundMoney(Math.min(params.amount, balanceDue));
 
@@ -321,7 +355,9 @@ export class PaymentRequestsService {
         accountRef: account,
         amountDollars: amount,
         currency: config?.currency ?? "USD",
-        description: `Payment to ${sellerName} — applied to your oldest open invoices first`,
+        description: chosen
+          ? `Payment to ${sellerName} — applied to invoice ${chosen.invoiceNumber} first`
+          : `Payment to ${sellerName} — applied to your oldest open invoices first`,
         customerEmail: customer.email ?? undefined,
         successUrl: `${backTo}?payment=processing`,
         cancelUrl: `${backTo}?payment=cancelled`,
@@ -531,9 +567,9 @@ export class PaymentRequestsService {
         providerPaymentId: r.providerPaymentId,
         allocationPreview:
           r.status === "PENDING"
-            ? (await this.buildOldestFirstAllocation(r.customerId, Number(r.amount))).lines.filter(
-                (l) => l.applied > 0,
-              )
+            ? (
+                await this.buildAllocation(r.customerId, Number(r.amount), r.invoiceId ?? null)
+              ).lines.filter((l) => l.applied > 0)
             : undefined,
       })),
     );
@@ -565,10 +601,12 @@ export class PaymentRequestsService {
     // Friendly message only; the binding check is the CAS in the hook below.
     if (request.status !== "PENDING") throw new BadRequestException("Request already decided");
 
-    const { allocations } = await this.buildOldestFirstAllocation(
+    const { allocations, chosenSkipped } = await this.buildAllocation(
       request.customerId,
       Number(request.amount),
+      request.invoiceId ?? null,
     );
+    if (chosenSkipped) this.logSkippedTarget(request.id, request.invoiceId ?? null);
     try {
       const result = await this.invoices.recordStandalonePayment(
         {
@@ -801,7 +839,12 @@ export class PaymentRequestsService {
    * `priorStatus`.
    */
   private async settleWithoutClaim(
-    request: { id: string; customerId: string; amount: Prisma.Decimal | number },
+    request: {
+      id: string;
+      customerId: string;
+      amount: Prisma.Decimal | number;
+      invoiceId: string | null;
+    },
     evt: NormalizedPiSucceededEvent,
     priorStatus: BuyerPaymentRequestStatus,
     piId: string,
@@ -854,7 +897,12 @@ export class PaymentRequestsService {
    * `min(requestAmount, providerAmount)`.
    */
   private async writeSettlement(
-    request: { id: string; customerId: string; amount: Prisma.Decimal | number },
+    request: {
+      id: string;
+      customerId: string;
+      amount: Prisma.Decimal | number;
+      invoiceId: string | null;
+    },
     evt: NormalizedPiSucceededEvent,
     priorStatus: string,
     /** The status the final flip is conditional on — normally the SETTLING
@@ -873,10 +921,12 @@ export class PaymentRequestsService {
       );
     }
 
-    const { allocations } = await this.buildOldestFirstAllocation(
+    const { allocations, chosenSkipped } = await this.buildAllocation(
       request.customerId,
       amountToRecord,
+      request.invoiceId ?? null,
     );
+    if (chosenSkipped) this.logSkippedTarget(request.id, request.invoiceId ?? null);
     const method = evt.methodKind === "us_bank_account" ? "ACH" : "CREDIT_CARD";
     // Card clears immediately from the buyer's side (cash-basis reporting
     // falls back to paidAt); ACH settles at the moment Stripe confirms it.

@@ -146,6 +146,7 @@ describe("CounterSaleScreen: a new customer in the sale (W-1041)", () => {
     expect(kind()).toBe("customer");
     expect(screen.getByRole("button", { name: "Remove Cola" })).toBeInTheDocument();
     await waitFor(() => expect(releasePrices).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the button keeps its "Complete" name
     expect(completeBtn()).toBeDisabled(); // Pay waits for the re-price answer
     releasePrices!();
     await waitFor(() => expect(total()).toHaveTextContent("$2.00")); // tier 2

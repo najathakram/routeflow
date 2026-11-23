@@ -16,7 +16,12 @@ export async function completionEmailParts(
   storage: { download(key: string): Promise<Buffer> },
   logger: { warn(message: string): void },
   opts: SendEmailOpts | undefined,
-): Promise<{ completion?: { orderNumber: string }; extraAttachments?: InvoiceEmailAttachment[] }> {
+): Promise<{
+  completion?: { orderNumber: string };
+  extraAttachments?: InvoiceEmailAttachment[];
+  /** W-1286 (SA-1202 C6): the other invoices the email carries (left-out ones are not named), one delivery row each. */
+  alsoInvoiceIds?: string[];
+}> {
   if (opts?.kind !== "COUNTER_COMPLETE") return {};
   const order = opts.orderId
     ? await prisma
@@ -24,6 +29,7 @@ export async function completionEmailParts(
         .order.findFirst({ where: { id: opts.orderId }, select: { orderNumber: true } })
     : null;
   const extraAttachments: InvoiceEmailAttachment[] = [];
+  const alsoInvoiceIds: string[] = [];
   for (const id of opts.withInvoiceIds ?? []) {
     const row = await prisma
       .forTenant()
@@ -43,7 +49,14 @@ export async function completionEmailParts(
       id,
       row.invoiceNumber,
     );
-    if (attachment) extraAttachments.push(attachment);
+    if (attachment) {
+      extraAttachments.push(attachment);
+      alsoInvoiceIds.push(id);
+    }
   }
-  return { completion: { orderNumber: order?.orderNumber ?? "" }, extraAttachments };
+  return {
+    completion: { orderNumber: order?.orderNumber ?? "" },
+    extraAttachments,
+    alsoInvoiceIds,
+  };
 }

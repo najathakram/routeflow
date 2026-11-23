@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import type { UnitWords } from "@routeflow/pricing";
+import { cn } from "@routeflow/ui/web";
 
 /**
  * #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
@@ -54,6 +55,8 @@ export interface CasesPiecesInputProps {
   onSetPieces: (n: number) => void;
   /** Replaces the default field style (Edit Items gives its cases and plain quantity fields one look). */
   inputClassName?: string;
+  /** The counter till: the extra-pieces buttons are full 44 px targets below lg (default: the hit slop only). */
+  touchTargets?: boolean;
 }
 
 /**
@@ -76,6 +79,7 @@ export function CasesPiecesInput({
   onSetBoxes,
   onSetPieces,
   inputClassName = DEFAULT_INPUT,
+  touchTargets = false,
 }: CasesPiecesInputProps) {
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(pieces);
   const boxesField = useTypedNumber(boxes, onSetBoxes);
@@ -143,7 +147,11 @@ export function CasesPiecesInput({
                 closeLooseUnits();
               }}
               aria-label={`Remove extra ${w.base.lowerOther}`}
-              className="relative before:absolute before:-inset-2 before:content-[''] text-xs text-navy/50 hover:text-danger"
+              className={cn(
+                "relative before:absolute before:-inset-2 before:content-[''] text-xs text-navy/50 hover:text-danger",
+                touchTargets &&
+                  "max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center",
+              )}
             >
               ×
             </button>
@@ -161,7 +169,10 @@ export function CasesPiecesInput({
           // F11: say which unit this adds and how it relates to the pack.
           title={`Add extra ${w.base.lowerOther} (less than a full ${w.pack.lower} of ${unitsPerBox})`}
           // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
-          className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
+          className={cn(
+            "relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised",
+            touchTargets && "max-lg:min-h-11",
+          )}
         >
           + {w.base.lowerOther}
         </button>

@@ -49,8 +49,6 @@ import { dunningZone } from "./dunning-zone";
 import { formatInZone } from "./subscription-billing-extras";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { inclusionCatalogFor, pinPlanVersionTx } from "./plan-version-pin";
-import type { Prisma } from "@prisma/client";
-import { revokeUserLinkTokens } from "../auth/link-token-revocation";
 
 /** No mutation service wired (a bare unit build): billing a leaving add-on fails loudly into the notice path. */
 const MISSING_BILLER: LeavingBiller = {
@@ -294,8 +292,8 @@ export class BillingCronService {
     }
   }
 
-  /** Apply scheduled downgrades whose effective date has passed. Nothing is deleted;
-   *  non-retained team users are deactivated (freeing seats), over-cap data goes read-only. */
+  /** Apply scheduled downgrades whose effective date has passed. Nothing is deleted and no login is
+   *  switched off: there is no seat limit on any plan (B1371). */
   @LeaderCron("0 2 * * *", "billing-cron.applyScheduledDowngrades")
   async applyScheduledDowngrades(): Promise<void> {
     return this.prisma.forSystem("billing cron: apply scheduled plan downgrades", async () => {
@@ -402,7 +400,6 @@ export class BillingCronService {
           // the plan being left. A consistent override row therefore books Δ0.
           const override = priceOverrideOf(cur);
           const newBase = override ?? this.planMonthly(targetVersion, target);
-          const seatCap = targetDef.seatsIncluded ?? null;
 
           // SA-786: the date a MANUAL tenant's DUE notice names, in the tenant's zone (read outside the transaction).
           const dateLabel =
@@ -539,44 +536,6 @@ export class BillingCronService {
                   ),
               });
               leavingToBill = leaving.toBill;
-            }
-            // Free seats ONLY when over the new cap (deactivate non-retained OPERATOR/DRIVER;
-            // TENANT_ADMIN is never deactivated). An empty retained list = keep only admins.
-            if (seatCap != null) {
-              const activeTeam = await tx.user.count({
-                where: {
-                  tenantId: s.tenantId,
-                  role: { in: ["TENANT_ADMIN", "OPERATOR", "DRIVER"] },
-                  status: "ACTIVE",
-                  deletedAt: null,
-                },
-              });
-              if (activeTeam > seatCap) {
-                const freeWhere: Prisma.UserWhereInput = {
-                  tenantId: s.tenantId,
-                  role: { in: ["OPERATOR", "DRIVER"] },
-                  status: "ACTIVE",
-                  deletedAt: null,
-                  id: { notIn: cur.retainedUserIds },
-                };
-                const freedIds = (
-                  await tx.user.findMany({ where: freeWhere, select: { id: true } })
-                ).map((u: { id: string }) => u.id);
-                const freed = await tx.user.updateMany({
-                  where: freeWhere,
-                  data: { status: "INACTIVE" },
-                });
-                // F03 slice 2 (SA-1096): a seat-cap deactivation burns the freed accounts' live links, same tx.
-                await revokeUserLinkTokens(tx, freedIds);
-                if (freed.count > 0) {
-                  await this.events.emit(
-                    s.tenantId,
-                    BILLING_EVENTS.SEAT_FREED,
-                    { quantity: freed.count },
-                    { tx },
-                  );
-                }
-              }
             }
             await this.events.emit(
               s.tenantId,

@@ -16,6 +16,7 @@ import { creditOverLimitSentence } from "@routeflow/types/credit-over-limit-copy
 import {
   COMPLETE_MODE_ERROR_COPY,
   COUNTER_COPY,
+  completedCopy,
   counterCompleteRefusalCopy,
   onDriverRunCopy,
 } from "@routeflow/types/counter-copy";
@@ -660,7 +661,7 @@ function decidePickup(
 function completeOutcome(res: PickupCompleteResponse): string {
   if (!res.paymentRecorded)
     return "Completed at counter, but the payment wasn't recorded. Record it on the invoice.";
-  const done = res.emailed ? COUNTER_COPY.completedEmailed : COUNTER_COPY.completed;
+  const done = completedCopy(res);
   return (res.change ?? 0) > 0 ? `${done} Change ${fmtCurrency(res.change ?? 0)}` : done;
 }
 

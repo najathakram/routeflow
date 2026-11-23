@@ -167,3 +167,41 @@ describe("InvoiceLayoutCard", () => {
     await waitFor(() => expect(within(preview()).getByText("Amount Paid")).toBeInTheDocument());
   });
 });
+
+// SA-1197 (T12, C14): the one SHOW switch in the card. Absent = off, so its box starts unchecked; checking it sends
+// `showAccountBalance: true` (never the hide rows' inverse), and the preview shows the block under Balance Due.
+describe("InvoiceLayoutCard: Show open balance on invoices (SA-1197)", () => {
+  const NAME = "Show open balance on invoices";
+
+  it("T12: starts unchecked when the key was never written, and checking it PATCHes true", async () => {
+    mockPatch.mockImplementation(() => new Promise(() => {}));
+    renderWithProviders(<Harness />);
+    const box = screen.getByRole("checkbox", { name: NAME });
+    expect(box).not.toBeChecked();
+    expect(within(preview()).queryByText("Other unpaid invoices")).toBeNull();
+    await userEvent.click(box);
+    expect(mockPatch).toHaveBeenCalledWith("/settings/invoice", { showAccountBalance: true });
+    await waitFor(() =>
+      expect(within(preview()).getByText("Other unpaid invoices")).toBeInTheDocument(),
+    );
+    expect(box).toBeChecked();
+  });
+
+  it("T12: stored on reads checked, and unchecking PATCHes false; the hide rows keep their inverse", async () => {
+    mockPatch.mockImplementation(() => new Promise(() => {}));
+    renderWithProviders(<Harness stored={{ ...ON, showAccountBalance: true } as typeof ON} />);
+    const box = screen.getByRole("checkbox", { name: NAME });
+    expect(box).toBeChecked();
+    await userEvent.click(box);
+    expect(mockPatch).toHaveBeenCalledWith("/settings/invoice", { showAccountBalance: false });
+  });
+
+  it("T11 preview: Balance Due hidden prints only the 'Open balance on' line", () => {
+    renderWithProviders(
+      <Harness stored={{ ...ON, hideBalanceDue: true, showAccountBalance: true } as typeof ON} />,
+    );
+    expect(within(preview()).getByText(/^Open balance on /)).toBeInTheDocument();
+    expect(within(preview()).queryByText("Other unpaid invoices")).toBeNull();
+    expect(within(preview()).queryByText("This invoice")).toBeNull();
+  });
+});

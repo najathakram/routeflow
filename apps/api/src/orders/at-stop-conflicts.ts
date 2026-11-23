@@ -25,6 +25,9 @@ export const AT_STOP_CONFLICT_MESSAGES = {
   // SA-1144 D6: the order's invoice holds payments or is closed, so goods added at the door would be delivered unbilled.
   [API_ERROR_CODES.ORDER_EDIT_INVOICE_HAS_PAYMENTS]:
     "This order's invoice can't change at the door. The office can add these items on a new order.",
+  // SA-1173 K2: a customer's ADD_ITEM whose qty and box split disagree; the only exit is Decline (next delivery refuses it too).
+  [API_ERROR_CODES.CHANGE_REQUEST_SPLIT_MISMATCH]:
+    "This request's quantity and box count don't match, so it can't be applied: decline it.",
 } as const;
 
 export type AtStopConflict = keyof typeof AT_STOP_CONFLICT_MESSAGES;
