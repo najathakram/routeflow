@@ -229,6 +229,34 @@ export const KINDS = {
       note: [optStr(500), false],
     },
   },
+  // The lead takes a lane off the board (rf lane retire): it leaves the lane-silent alarm and the
+  // lanes list; its history stays. lane.unretire brings it back. Refused while the lane holds a claim.
+  "lane.retire": {
+    needsItem: "none",
+    noItem: true,
+    data: {
+      lane: [(v) => typeof v === "string" && LANE_RE.test(v), true],
+      note: [str(500), true],
+    },
+  },
+  "lane.unretire": {
+    needsItem: "none",
+    noItem: true,
+    data: {
+      lane: [(v) => typeof v === "string" && LANE_RE.test(v), true],
+      note: [optStr(500), false],
+    },
+  },
+  // The lead acknowledges one anomaly (rf anomaly ack): that anomaly stops alarming. eventId is the
+  // event the anomaly was raised on; a new anomaly of the same kind still alarms.
+  "anomaly.ack": {
+    needsItem: "none",
+    noItem: true,
+    data: {
+      eventId: [(v) => typeof v === "string" && EVENT_ID_RE.test(v), true],
+      note: [str(500), true],
+    },
+  },
   // Session heartbeat from a machine's status file (hooks -> `rf status-sync`). Never touches items.
   heartbeat: {
     needsItem: "none",
@@ -314,6 +342,7 @@ export function validateEvent(ev) {
   const hasItem = typeof ev.item === "string";
   if (!(ev.item === null || (hasItem && ITEM_ID_RE.test(ev.item)))) errors.push("invalid item id");
   if (spec.needsItem === "required" && !hasItem) errors.push(`${ev.kind} needs an item`);
+  if (spec.noItem && ev.item !== null) errors.push(`${ev.kind} takes no item`);
   if (spec.needsLane && !(typeof ev.lane === "string")) errors.push(`${ev.kind} needs a lane`);
   const data = ev.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) {

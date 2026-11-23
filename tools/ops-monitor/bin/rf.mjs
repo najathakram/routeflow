@@ -138,6 +138,8 @@ const USAGE = `usage: rf <command> [args]
   inbox [--all] [--keep] [--json]   comments and assignments for you (mentions, replies, your claimed items); marks them read
   inbox --wait [--timeout S] [--interval S]   waits (pulling every 45 s) and exits 0 when something arrives, 3 after --timeout (default 1800 s)
   assign <id> --to <member>|- [--note N]   hands the item to one member: first in their rf next, in their inbox
+  lane retire <lane> --note T | lane unretire <lane>   (lead) a lane off the board: no lane-silent alarm, not listed; history stays
+  anomaly ls [--all] | anomaly ack <eventId> --note T   (lead) list event anomalies; hide one from the alarms
   next [--lane L] [--role builder|tester|reviewer] [--claim] [--json]   (a member gets their role's work)
   item new --title T --type X [--priority P] [--status S] [--lane L] [--train R1] [--area A]
            [--parent ID] [--eta E] [--gate G] [--id ID] [--blocked-by ID,ID]  (rf item edit: - clears it)
@@ -735,6 +737,96 @@ async function cmdAssign(positional, flags, env) {
   return writeCmd(c, flags, [makeEvent(c, "assign", id, data, lane)], () =>
     to ? `assigned ${id} to ${to}${name ? ` (${name})` : ""}` : `unassigned ${id}`,
   );
+}
+
+/**
+ * A note the lead typed (rf lane retire, rf anomaly ack): required, and scrubbed like a comment
+ * before it is written. A broken mask list refuses rather than store unmasked text.
+ */
+function leadNote(flags, env, c, usage) {
+  if (typeof flags.note !== "string" || !flags.note.trim())
+    throw new UsageError(`${usage} (--note says why, for the history)`);
+  const { names, error } = loadClientNames({ env, home: c.home });
+  if (error) throw new UsageError(`${BRIEF_DISABLED_NOTE}; fix it before writing a note`);
+  return scrubCommentText(flags.note.trim(), names).slice(0, 500);
+}
+
+/**
+ * rf lane retire <lane> --note T | rf lane unretire <lane> [--note T]: the lead takes a lane off
+ * the board (out of the lane-silent alarm and the lanes list; its history stays) or brings it back.
+ * The store refuses a retire while the lane still holds a claim. A lane the config no longer lists
+ * is accepted when the events know it.
+ */
+async function cmdLane(positional, flags, env) {
+  const [sub, raw] = positional;
+  const usage = "rf lane retire <lane> --note T | rf lane unretire <lane> [--note T]";
+  if ((sub !== "retire" && sub !== "unretire") || !raw) throw new UsageError(usage);
+  if (sub === "retire" && (typeof flags.note !== "string" || !flags.note.trim()))
+    throw new UsageError(`rf lane retire ${raw} needs --note T (why, for the history)`);
+  const c = await prepare(ctxFor(env), flags, { sync: true });
+  const state = stateOf(c);
+  const low = String(raw).trim().toLowerCase();
+  const lane =
+    normalizeLane(raw, c.config) ??
+    (state.lanes.has(low) || state.retiredLanes.has(low) ? low : null);
+  if (!lane) throw new UsageError(`unknown lane "${raw}" (rf doctor lists the lanes)`);
+  const data = { lane };
+  if (sub === "retire" || flags.note !== undefined) data.note = leadNote(flags, env, c, usage);
+  const kind = sub === "retire" ? "lane.retire" : "lane.unretire";
+  const writer = defaultLane(c.config, c.env);
+  return writeCmd(c, flags, [makeEvent(c, kind, null, data, writer)], () =>
+    sub === "retire" ? `retired lane ${lane}` : `lane ${lane} is back`,
+  );
+}
+
+/**
+ * rf anomaly ls [--all] lists the event anomalies (unacknowledged ones; --all adds the rest).
+ * rf anomaly ack <eventId> --note T hides that one anomaly from the alarms; a new anomaly of the
+ * same kind still alarms. Claim conflicts are not listed: they clear when the loser releases.
+ */
+async function cmdAnomaly(positional, flags, env) {
+  const [sub, eventId] = positional;
+  const usage = "rf anomaly ls [--all] [--json] | rf anomaly ack <eventId> --note T";
+  if (sub === "ack") {
+    if (!eventId) throw new UsageError(usage);
+    if (typeof flags.note !== "string" || !flags.note.trim())
+      throw new UsageError(`rf anomaly ack ${eventId} needs --note T (why, for the history)`);
+    const c = await prepare(ctxFor(env), flags, { sync: true });
+    const data = { eventId, note: leadNote(flags, env, c, usage) };
+    const writer = defaultLane(c.config, c.env);
+    return writeCmd(
+      c,
+      flags,
+      [makeEvent(c, "anomaly.ack", null, data, writer)],
+      () => `acknowledged anomaly ${eventId}`,
+    );
+  }
+  if (sub !== "ls" && sub !== undefined) throw new UsageError(usage);
+  const c = await prepare(ctxFor(env), flags, { sync: false });
+  const { names: clientNames, error: namesError } = loadClientNames({ env, home: c.home });
+  const showText = (t) =>
+    namesError ? "[hidden: client-names.json unreadable]" : maskText(t ?? "", clientNames);
+  const rows = stateOf(c)
+    .anomalies.filter((a) => a.kind !== "claim-conflict" && (flags.all || !a.acked))
+    .map((a) => ({
+      ...a,
+      detail: showText(a.detail),
+      acked: a.acked ? { ...a.acked, note: showText(a.acked.note) } : null,
+    }));
+  const when = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 16) + "Z" : "-");
+  const text = rows.length
+    ? rows
+        .map(
+          (a) =>
+            `${a.eventId ?? "-"}  ${a.kind}  ${a.item ?? "-"}  ${when(a.ts)}  ${a.detail}` +
+            (a.acked ? `  (acknowledged by ${a.acked.by}: ${a.acked.note})` : ""),
+        )
+        .join("\n")
+    : flags.all
+      ? "no anomalies"
+      : "no unacknowledged anomalies (rf anomaly ls --all shows the rest)";
+  print(flags, { ok: true, anomalies: rows }, text);
+  return 0;
 }
 
 /** Seconds from a flag: a positive number, else the default. */
@@ -1642,6 +1734,12 @@ export async function main(argv, env = process.env) {
         break;
       case "assign":
         code = await cmdAssign(positional, flags, env);
+        break;
+      case "lane":
+        code = await cmdLane(positional, flags, env);
+        break;
+      case "anomaly":
+        code = await cmdAnomaly(positional, flags, env);
         break;
       case "triage":
         code = await cmdTriage(positional, flags, env);
