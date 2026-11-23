@@ -12,7 +12,6 @@ import * as path from "path";
  */
 const WEB_ROOT = path.resolve(__dirname, "..");
 const UI_ROOT = path.resolve(WEB_ROOT, "../../packages/ui");
-// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
 const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
   GENERATED_DIRS: readonly string[];
 };

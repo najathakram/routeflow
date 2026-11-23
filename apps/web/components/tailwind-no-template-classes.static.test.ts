@@ -81,7 +81,6 @@ const SCAN_DIRS = [
   path.join(WEB_ROOT, "components"),
   path.join(WEB_ROOT, "..", "..", "packages", "ui", "src", "web"),
 ];
-// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
 const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
   GENERATED_DIRS: readonly string[];
 };
