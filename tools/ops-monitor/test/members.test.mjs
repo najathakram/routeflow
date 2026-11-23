@@ -149,7 +149,7 @@ test("inbox: a member reads mentions of their id and comments on the item THEY c
   const s = fold([
     ev("item.new", "W-1", { title: "A", type: "feature" }, T0),
     ev("item.new", "W-2", { title: "B", type: "feature" }, T0),
-    ev("claim", "W-1", {}, at(1), { lane: "macmini", actor: "alex" }),
+    ev("claim", "W-1", { member: "alex" }, at(1), { lane: "macmini", actor: "alex" }),
     ev("claim", "W-2", {}, at(1), { lane: "macmini", actor: "macmini" }),
     ev("comment", "W-1", { text: "on alex's claim" }, at(2), { lane: "lead" }),
     ev("comment", "W-2", { text: "on the lane session's claim" }, at(3), { lane: "lead" }),
@@ -180,7 +180,7 @@ test("snapshot: items carry claimedByName from the members list; members are lis
           config: CONFIG,
           events: [
             ev("item.new", "W-1", { title: "A", type: "feature" }, T0),
-            ev("claim", "W-1", {}, at(1), { lane: "macmini", actor: "alex" }),
+            ev("claim", "W-1", { member: "alex" }, at(1), { lane: "macmini", actor: "alex" }),
           ],
         },
       },

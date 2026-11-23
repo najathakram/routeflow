@@ -82,7 +82,8 @@ function newItem(id, fields, ts) {
     answeredAt: null,
     children: [],
     claimedBy: null,
-    claimedActor: null, // who claimed it: a member id, or the lane itself for a lane session
+    claimedActor: null, // the name the claim was written under (a member, a lane, a hook)
+    claimedMember: null, // the member who holds it (claims are per member), or null for a lane session
     claimedAt: null,
     claimConflict: null,
     blocked: null,
@@ -92,6 +93,22 @@ function newItem(id, fields, ts) {
     overlay: false,
   };
 }
+
+/**
+ * True when (lane, member) holds the item's claim. Claims are held per member: two members on one
+ * lane are two holders, and a lane session (no member) is a holder of its own. Old claims carry no
+ * member, so they keep the lane rule.
+ */
+export function holdsClaim(it, lane, member) {
+  return (
+    Boolean(it?.claimedBy) &&
+    it.claimedBy === lane &&
+    (it.claimedMember ?? null) === (member ?? null)
+  );
+}
+
+/** "qa (alex)" for a member's claim, "qa" for a lane session's. */
+export const holderLabel = (lane, member) => (member ? `${lane} (${member})` : lane);
 
 export function fold(events, { bugs = new Map() } = {}) {
   const state = {
@@ -197,6 +214,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     if (DONE_STATUSES.includes(status)) {
       it.claimedBy = null;
       it.claimedActor = null;
+      it.claimedMember = null;
       it.claimedAt = null;
       it.claimConflict = null;
     }
@@ -314,18 +332,33 @@ export function fold(events, { bugs = new Map() } = {}) {
       case "claim": {
         it = resolve(ev.item, ev);
         if (!it) break;
-        if (it.claimedBy && it.claimedBy !== ev.lane && !d.steal) {
-          it.claimConflict = [it.claimedBy, ev.lane];
+        const member = d.member ?? null;
+        const mine = holdsClaim(it, ev.lane, member);
+        if (it.claimedBy && !mine && !d.steal) {
+          it.claimConflict = [
+            holderLabel(it.claimedBy, it.claimedMember),
+            holderLabel(ev.lane, member),
+          ];
           anomaly(
             "claim-conflict",
             ev.id,
             ev.item,
-            `${ev.lane} claimed ${ev.item} held by ${it.claimedBy}`,
+            `${holderLabel(ev.lane, member)} claimed ${ev.item} held by ${holderLabel(it.claimedBy, it.claimedMember)}`,
             ts,
           );
         } else {
+          // A steal between members leaves a trace; lane sessions stealing from each other do not.
+          if (it.claimedBy && !mine && (member || it.claimedMember))
+            anomaly(
+              "claim-steal",
+              ev.id,
+              ev.item,
+              `${member ?? ev.lane} took ${ev.item} from ${holderLabel(it.claimedBy, it.claimedMember)} (--steal)`,
+              ts,
+            );
           it.claimedBy = ev.lane;
           it.claimedActor = ev.actor;
+          it.claimedMember = member;
           it.claimedAt = ts;
           it.claimConflict = null;
           if (d.branch) mergeLinks(it.links, { branches: [d.branch] });
@@ -336,12 +369,16 @@ export function fold(events, { bugs = new Map() } = {}) {
       case "release": {
         it = resolve(ev.item, ev);
         if (!it) break;
-        if (it.claimedBy === ev.lane) {
+        if (holdsClaim(it, ev.lane, d.member ?? null)) {
           it.claimedBy = null;
           it.claimedActor = null;
+          it.claimedMember = null;
           it.claimedAt = null;
           it.claimConflict = null;
-        } else if (it.claimConflict && it.claimConflict[1] === ev.lane) {
+        } else if (
+          it.claimConflict &&
+          it.claimConflict[1] === holderLabel(ev.lane, d.member ?? null)
+        ) {
           it.claimConflict = null; // the loser backed off
         }
         touched = true;

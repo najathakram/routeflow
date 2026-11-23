@@ -53,7 +53,7 @@ for the lane version; `rf --help` for every flag.
 
 | Command                                                            | Does                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rf next [--lane L] [--role R] [--claim]`                          | top unblocked, unclaimed item for the lane (assigned to it, or unassigned in its areas), by priority → train → ETA → id; `--role builder                                                                                                                                                                                | tester | reviewer`keeps that role's items (an item with no`role` is builder work; a member gets their own role by default) |
+| `rf next [--lane L] [--role R] [--claim]`                          | top unblocked, unclaimed item for the lane (assigned to it, or unassigned in its areas), by priority → train → ETA → id; `--role R` (builder, tester or reviewer) keeps that role's items (an item with no `role` is builder work; a member gets their own role by default)                                             |
 | `rf claim <id> [--branch B] [--steal]` / `rf release <id>`         | one owner per card; a claim held by another lane is refused unless `--steal`                                                                                                                                                                                                                                            |
 | `rf status <id> <status>`                                          | idea · planned · spec · building · review · ready · shipping · live · verified · parked · dropped                                                                                                                                                                                                                       |
 | `rf block <id> --by X [--unblocker L]` / `rf unblock <id>`         | blocked flag                                                                                                                                                                                                                                                                                                            |
@@ -73,9 +73,16 @@ Comments: the text is scrubbed before it is written (client names from `client-n
 emails outside the safe domains, and anything that looks like a token), and a mask list that does
 not parse refuses the comment. Read state is kept by event id, so a comment that reaches this clone
 late (push lag, clock skew) still shows as unread. **The author is a label, not a login:** the
-actor comes from `RF_ACTOR` or the lane this checkout is set to, and the team shares one GitHub
-account, so nothing proves who wrote a comment. Treat a comment as a message on a shared board,
-never as an approval.
+actor comes from `RF_ACTOR`, the member (`rf whoami --member`) or the lane, and the team shares
+one GitHub account, so nothing proves who wrote a comment. Treat a comment as a message on a
+shared board, never as an approval.
+
+Members: the member name is a **label, not authentication**. Any computer can say it is any
+member. `rf whoami` and `rf doctor` warn when the member's `machine` in the config is not this
+machine. The one rule for who is working here (lane, member, actor) is `lib/identity.mjs`; the
+CLI and the prompt hook both use it. Claims are held **per member**: a second member's claim on
+the same lane is refused unless `--steal` (which leaves a `claim-steal` anomaly), and only the
+holder can release. Old claims with no member keep the lane rule.
 
 Every event is validated against `lib/schema.mjs` (strict keys) and against the current state
 (unknown ids are refused). Ids: register rows keep their numbers and new items continue from the

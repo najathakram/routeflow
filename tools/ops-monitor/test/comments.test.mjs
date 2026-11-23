@@ -14,6 +14,7 @@ import { validateAgainstState, readAllEvents } from "../lib/store.mjs";
 import { renderBrief } from "../lib/brief.mjs";
 import { commentsFor, isUnread, renderComment, threadOf } from "../lib/inbox.mjs";
 import * as inboxLib from "../lib/inbox.mjs";
+import * as identityLib from "../lib/identity.mjs";
 import * as config from "../lib/config.mjs";
 import * as lanes from "../lib/lanes-local.mjs";
 import * as brief from "../lib/brief.mjs";
@@ -255,6 +256,7 @@ const hookDeps = () => ({
   brief,
   turn,
   inbox: inboxLib,
+  identity: identityLib,
   machine: "testbox",
 });
 

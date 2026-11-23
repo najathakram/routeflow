@@ -3,7 +3,7 @@
 // Exit codes: 0 ok, 1 refused (validation) or error, 2 usage, 3 committed but not pushed.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   REPO_ROOT,
@@ -13,7 +13,6 @@ import {
   laneId,
   loadConfig,
   machineId,
-  memberId,
   memberName,
   memberProblems,
   membersOf,
@@ -33,11 +32,18 @@ import {
   needsBusinessStory,
 } from "../lib/schema.mjs";
 import { newEventId } from "../lib/ids.mjs";
+import {
+  actorFor as identityActor,
+  currentMember,
+  defaultLane,
+  memberMachineWarning,
+  whoIsHere,
+} from "../lib/identity.mjs";
 import { fold } from "../lib/fold.mjs";
 import { freedItems, laneNow, rankCandidates } from "../lib/next.mjs";
 import { linkMatches, readPrTitle } from "../lib/link-check.mjs";
 import { registerModeOf, runSync } from "../lib/sync.mjs";
-import { checkoutRoot, laneForCwd, setLane } from "../lib/lanes-local.mjs";
+import { checkoutRoot, setLane } from "../lib/lanes-local.mjs";
 import { runStatusSync } from "../lib/status-sync.mjs";
 import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/brief.mjs";
 import {
@@ -172,24 +178,6 @@ async function prepare(ctx, flags, { sync }) {
   return { ...ctx, config, machine: machineId(config, ctx.env) };
 }
 
-/** The member this computer works as (rf whoami --member / RF_MEMBER), when the config knows it. */
-function currentMember(config, env) {
-  return findMember(config, memberId(env));
-}
-
-/**
- * No --lane: RF_LANE, else the lane recorded for this directory (rf whoami --lane), else the
- * member's first lane, else null.
- */
-function defaultLane(config, env) {
-  return (
-    laneId(undefined, config, env) ??
-    laneForCwd(process.cwd(), env, { config, home: opsHome(env) }) ??
-    currentMember(config, env)?.lanes[0] ??
-    null
-  );
-}
-
 function resolveLane(raw, c, { required = false } = {}) {
   let lane;
   if (raw === undefined) lane = defaultLane(c.config, c.env);
@@ -202,28 +190,20 @@ function resolveLane(raw, c, { required = false } = {}) {
   return lane;
 }
 
-/**
- * The name events are written under: RF_ACTOR, else the member (rf whoami --member), else the
- * lane, else machine:folder. `c` needs { env, machine, config }.
- */
+/** The name events are written under: the one rule, in lib/identity.mjs. `c`: { env, machine, config }. */
 function actorFor(c, lane) {
-  const member = c.config ? currentMember(c.config, c.env)?.id : null;
-  return (c.env.RF_ACTOR || member || lane || `${c.machine}:${basename(process.cwd())}`).slice(
-    0,
-    80,
-  );
+  return identityActor({ env: c.env, machine: c.machine, config: c.config }, lane);
 }
 
-/** Who reads comments here: { lane, actor, member }. */
+/** Who reads comments here: { lane, actor, member } (lib/identity.mjs). */
 function meFor(c, lane) {
-  const member = c.config ? (currentMember(c.config, c.env)?.id ?? null) : null;
-  return { lane: lane ?? null, actor: actorFor(c, lane), member };
+  return whoIsHere({ env: c.env, machine: c.machine, config: c.config, lane: lane ?? null });
 }
 
 /** "macmini (Alex Rivera)" when a member holds the claim, else the lane. */
 function claimWords(it, config) {
   if (!it.claimedBy) return "-";
-  const name = memberName(config, it.claimedActor);
+  const name = memberName(config, it.claimedMember);
   return name ? `${it.claimedBy} (${name})` : it.claimedBy;
 }
 
@@ -239,6 +219,13 @@ function resolveMention(raw, config) {
   );
 }
 
+/** A claim or release carries this computer's member: claims are held per member. */
+function withClaimMember(c, kind, data) {
+  if (kind !== "claim" && kind !== "release") return data;
+  const member = currentMember(c.config, c.env)?.id;
+  return member && data?.member === undefined ? { ...data, member } : data;
+}
+
 function makeEvent(c, kind, item, data, lane) {
   const ts = Date.now();
   return {
@@ -250,7 +237,7 @@ function makeEvent(c, kind, item, data, lane) {
     lane: lane ?? null,
     kind,
     item,
-    data,
+    data: withClaimMember(c, kind, data),
   };
 }
 
@@ -807,6 +794,9 @@ async function cmdWhoami(flags, env) {
     info,
     `machine ${info.machine}\nmember ${member ? `${member.id} (${member.name}, ${member.role})` : "-"}\nlane ${info.lane ?? "-"}\nname ${info.actor} (events and comments are written under it)\nspecs ${info.specsDir}\nclone ${info.clone}`,
   );
+  // The member is a label, not a login (one shared GitHub account): say so when it looks wrong.
+  const warning = memberMachineWarning(config, env, machine);
+  if (warning) process.stderr.write(`${warning}\n`);
   return 0;
 }
 
@@ -1270,6 +1260,9 @@ async function cmdDoctor(flags, env) {
     "members",
     `${members.length} members (${byRole})${problems.length ? `; ignored: ${problems.join("; ")}` : ""}`,
   );
+  const machineWarning = memberMachineWarning(config, env, machineId(config, env));
+  const me = currentMember(config, env)?.id ?? "none set";
+  row(!machineWarning, "member", machineWarning ?? `${me} (a label, not a login)`);
   try {
     const bugs = await loadBugIds(env.RF_REPO_ROOT || REPO_ROOT);
     row(

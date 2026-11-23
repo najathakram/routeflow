@@ -572,7 +572,7 @@ export function buildSnapshot({
       harmEvidence: it.harm ? null : (derivedHarm.get(it.id) ?? null),
       domain: itemDomain(it, bugById),
       claimedBy: it.claimedBy,
-      claimedByName: memberName(cfg, it.claimedActor),
+      claimedByName: memberName(cfg, it.claimedMember),
       blocked: it.blocked
         ? {
             ...it.blocked,

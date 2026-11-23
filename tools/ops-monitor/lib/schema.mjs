@@ -165,9 +165,15 @@ export const KINDS = {
     data: {
       branch: [optStr(200), false],
       steal: [(v) => v === undefined || typeof v === "boolean", false],
+      // The member who claims (rf whoami --member); claims are held per member, not per lane.
+      member: [(v) => v === undefined || (typeof v === "string" && LANE_RE.test(v)), false],
     },
   },
-  release: { needsItem: "required", needsLane: true, data: {} },
+  release: {
+    needsItem: "required",
+    needsLane: true,
+    data: { member: [(v) => v === undefined || (typeof v === "string" && LANE_RE.test(v)), false] },
+  },
   status: {
     needsItem: "required",
     data: { status: [(v) => STATUSES.includes(v), true], note: [optStr(500), false] },

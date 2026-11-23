@@ -21,7 +21,7 @@ import {
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { BUG_ID_RE, validateEvent } from "./schema.mjs";
-import { fold } from "./fold.mjs";
+import { fold, holderLabel, holdsClaim } from "./fold.mjs";
 import { allocateItemId, utcDate } from "./ids.mjs";
 import { REPO_ROOT, loadConfig, opsHome, specsDir } from "./config.mjs";
 import { RegistryUnavailable, registryDir } from "./registry.mjs";
@@ -611,11 +611,19 @@ export function validateAgainstState(ev, state, { bugIds = new Set() } = {}) {
         else if (parent.item !== ev.item)
           errors.push(`comment ${ev.data.replyTo} is on ${parent.item}, not ${ev.item}`);
       }
-      if (ev.kind === "claim") {
-        const held = state.items.get(ev.item)?.claimedBy;
-        if (held && held !== ev.lane && !ev.data.steal) {
-          const since = new Date(state.items.get(ev.item).claimedAt).toISOString();
-          errors.push(`item ${ev.item} is held by ${held} since ${since}; pass --steal to take it`);
+      if (ev.kind === "claim" || ev.kind === "release") {
+        const it = state.items.get(ev.item);
+        const member = ev.data?.member ?? null;
+        if (it?.claimedBy && !holdsClaim(it, ev.lane, member)) {
+          const holder = holderLabel(it.claimedBy, it.claimedMember);
+          if (ev.kind === "release")
+            errors.push(`${ev.item} belongs to ${holder}; only that holder can release it`);
+          else if (!ev.data.steal) {
+            const since = new Date(it.claimedAt).toISOString();
+            errors.push(
+              `item ${ev.item} is held by ${holder} since ${since}; pass --steal to take it`,
+            );
+          }
         }
       }
     }

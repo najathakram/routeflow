@@ -63,13 +63,14 @@ export function commentsFor(state, me) {
 }
 
 /**
- * True when I hold the item's claim: the claimer's name is mine (a member, or a lane session whose
- * name is the lane); an old claim with no name falls back to the lane.
+ * True when I hold the item's claim: a member's claim is that member's; any other claim (a lane
+ * session, or a hook writing under RF_ACTOR on the lane) belongs to the lane, and is read by the
+ * lane session (a member reads only their own claims).
  */
 function claimedByMe(it, me) {
   if (!it?.claimedBy) return false;
-  if (it.claimedActor) return it.claimedActor === me.actor || it.claimedActor === me.member;
-  return Boolean(me.lane) && it.claimedBy === me.lane;
+  if (it.claimedMember) return it.claimedMember === me.member;
+  return !me.member && Boolean(me.lane) && it.claimedBy === me.lane;
 }
 
 /**
