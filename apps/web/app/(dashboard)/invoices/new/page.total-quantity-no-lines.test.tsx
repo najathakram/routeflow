@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 let mockTenantToday: string | undefined;
 jest.mock("@/lib/tenant-timezone", () => ({
   ...jest.requireActual("@/lib/tenant-timezone"),
@@ -110,5 +110,38 @@ describe("BF-9: Total quantity with no lines", () => {
     await user.click(screen.getByRole("button", { name: /new sale/i }));
     const dt = await screen.findByText("Total quantity");
     expect(dt.parentElement).toHaveTextContent(/^Total quantity0$/);
+  });
+
+  const openSale = async () => {
+    mockCustomers = [];
+    mockTenantToday = "2026-10-26";
+    const user = userEvent.setup();
+    renderWithProviders(<NewInvoicePage />);
+    await user.click(screen.getByRole("button", { name: /new sale/i }));
+    await screen.findByText("Total quantity");
+    return user;
+  };
+  const totalQuantity = () => screen.getByText("Total quantity").parentElement;
+
+  it("a row with only a description counts: qty 3 reads 3", async () => {
+    const user = await openSale();
+    await user.type(screen.getByPlaceholderText("Description / product…"), "Widget");
+    const qty = screen.getByLabelText("Qty");
+    await user.clear(qty);
+    await user.type(qty, "3");
+    expect(totalQuantity()).toHaveTextContent(/^Total quantity3$/);
+  });
+
+  it("a row with only a price above 0 counts: qty 1 reads 1", async () => {
+    const user = await openSale();
+    await user.type(screen.getByLabelText("Unit price"), "5");
+    expect(totalQuantity()).toHaveTextContent(/^Total quantity1$/);
+  });
+
+  it("a row with only a product (no description, price 0) counts: reads 1", async () => {
+    await openSale();
+    mockBarcodeProduct = { id: "prod-1", name: "", pricePerUnit: "0" };
+    capturedOnScan!("012345678905");
+    await waitFor(() => expect(totalQuantity()).toHaveTextContent(/^Total quantity1$/));
   });
 });

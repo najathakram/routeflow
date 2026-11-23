@@ -520,8 +520,6 @@ function LowStockPanel({
   failed?: boolean;
   onRetry?: () => void;
 }) {
-  // BF-5: count on the business's own calendar day (same helper as the invoices list); no day until the zone is known.
-  const tenantDay = useTenantToday();
   if (isLoading) {
     return (
       <div
