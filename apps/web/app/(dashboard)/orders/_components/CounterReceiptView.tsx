@@ -7,6 +7,8 @@ import {
   formatReceiptMoney as money,
   type CounterReceiptModel,
 } from "@/lib/counter-receipt";
+import { describeReturnReason } from "@/lib/reason-copy";
+import { returnedItemQtyText } from "@/lib/return-line-qty";
 import { ReadOnlyHint, WriteLink } from "@/lib/read-only-gate";
 
 /**
@@ -204,6 +206,17 @@ export function CounterReceiptView({
           <div className="flex justify-between" data-testid="receipt-returned">
             <dt>Returned</dt>
             <dd>−{money(m.returned)}</dd>
+          </div>
+        ) : null}
+        {m.returnItems?.length ? (
+          // SA-1211 A1.1: what came back and why (the server's stored return lines and sold-line snapshots; the credit is the lines below, once)
+          <div data-testid="receipt-return-items">
+            <dt>Returned items</dt>
+            {m.returnItems.map((item, n) => (
+              <dd key={n} data-testid="receipt-return-item">
+                {`${item.name} · ${returnedItemQtyText(item)} · ${describeReturnReason(item.reason ?? "")}`}
+              </dd>
+            ))}
           </div>
         ) : null}
         {m.refunded ? (

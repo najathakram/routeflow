@@ -237,7 +237,7 @@ describe("CounterSaleScreen: an inline return rides the sale (W-863)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enter return line" }));
     fireEvent.click(screen.getByRole("button", { name: "Return quote answers" }));
     expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $0.00");
-    expect(screen.getByTestId("return-store-credit")).toHaveTextContent("Store credit $2.00");
+    expect(screen.getByTestId("return-store-credit")).toHaveTextContent("Credit $2.00");
   });
 
   it("a sale with no return is unchanged: no inlineReturn on the request, no store credit line", async () => {

@@ -44,6 +44,11 @@ jest.mock("@/lib/api/inventory", () => ({
   useUpdatePurchaseOrder: () => ({ mutate: jest.fn(), isPending: false }),
 }));
 
+// Create PO's scan bar and full-name sort read the product catalog; nothing matches here.
+jest.mock("@/lib/api/products", () => ({
+  useProducts: () => ({ data: { data: [] }, isFetching: false }),
+}));
+
 const supplier = { id: "s1", name: "Acme Supply", isActive: true };
 const products = [
   { id: "p1", name: "Widget", sku: "W-1", unitsPerBox: null },

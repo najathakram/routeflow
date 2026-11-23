@@ -231,17 +231,11 @@ function countedHits(rel: string, text: string): Hit[] {
 
 // ── walk ─────────────────────────────────────────────────────────────────────────────────────────────
 
-const SKIP_DIRS = new Set([
-  "node_modules",
-  "dist",
-  ".next",
-  "coverage",
-  ".expo",
-  "__tests__",
-  "e2e",
-  ".git",
-  "local-assets",
-]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS, "__tests__", "e2e", ".git", "local-assets"]);
 
 function scanRoots(): string[] {
   const roots = ["apps/api/src", "apps/api/scripts", "apps/web", "apps/mobile", "scripts"];

@@ -35,6 +35,7 @@ export default function PurchaseOrdersPage() {
     name: displayProductName(p),
     sku: p.sku,
     unitsPerBox: p.unitsPerBox ?? null,
+    currentStock: p.currentStock ?? null,
   }));
 
   return (

@@ -2007,6 +2007,90 @@ describe("CounterSaleService.ring", () => {
       const posted = await service.ring(named({ method: "CASH", amount: 6 }) as never, staff, "k1");
       expect(posted).toMatchObject(expectedT1);
     });
+
+    // ── SA-1231: the returned-items list on the split ──
+    const byKeyOnT1 = async () => {
+      findReplayCandidateByKey.mockResolvedValue({
+        id: "ord-1",
+        orderNumber: "ORD-1",
+        fulfillPath: "PICKUP",
+        skipAutoMerge: true,
+        counterSale: true,
+        status: "DELIVERED",
+        customerId: "cust-1",
+      });
+      invoices = [inv("inv-1", 16, [{ ...cash6 }, { ...credit }])];
+      return service.byKey("k1");
+    };
+    const caseItem = {
+      qty: "24.000",
+      reason: "DAMAGED",
+      sourceOrderItemId: "oi-1",
+      product: { name: "Acme Case" },
+      return: { kind: "INLINE" },
+    };
+    const ownReturn = { ...olderReturn, id: "r-own", orderId: "ord-1" };
+    const seedOwn = () => {
+      prisma.return.findMany.mockImplementation(async ({ where }: any) =>
+        where.orderId === "ord-1" ? [ownReturn] : [],
+      );
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: "cn-1",
+          status: "APPLIED",
+          invoiceId: "inv-1",
+          invoicePayments: [{ amount: 10, invoiceId: "inv-1" }],
+        },
+      ]);
+      prisma.returnItem.findMany.mockResolvedValue([caseItem]);
+      prisma.orderItem.findMany.mockResolvedValue([
+        {
+          id: "oi-1",
+          productId: "p1",
+          qty: "1.000",
+          unitLabel: null,
+          unitsPerBox: 24,
+          boxes: 1,
+          pieces: 0,
+        },
+      ]);
+    };
+
+    it("SA-1231 M2: an OLDER return's credit applied as a tender lists none of that return's goods", async () => {
+      seedT1();
+      prisma.returnItem.findMany.mockResolvedValue([caseItem]);
+      const r = await byKeyOnT1();
+      expect(r).toMatchObject(expectedT1);
+      expect(r.returnItems).toBeUndefined();
+    });
+
+    it("SA-1231 pin: the return rung on THIS sale is listed, with its kind and the sold line's snapshot", async () => {
+      seedOwn();
+      const r = await byKeyOnT1();
+      expect(r.returnItems).toEqual([
+        {
+          name: "Acme Case",
+          qty: 24,
+          reason: "DAMAGED",
+          kind: "INLINE",
+          line: { unitLabel: null, unitsPerBox: 24, boxes: 1, pieces: 0, qty: 1 },
+        },
+      ]);
+    });
+
+    it("SA-1231 F15: a failed items read is a warning, and the money fields are still served", async () => {
+      seedOwn();
+      prisma.returnItem.findMany.mockRejectedValue(new Error("items down"));
+      const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+      const r = await byKeyOnT1();
+      expect(r.tenderPaid).toBe(16);
+      expect(r.tenderMethods).toBeDefined();
+      expect(r.returnLines).toBeDefined();
+      expect(r.returnItems).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("returned items not read (items down)"),
+      );
+    });
   });
 });
 

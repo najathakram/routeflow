@@ -48,7 +48,7 @@ import {
 } from "@/lib/payment-submit-key";
 import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
 import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
-import type { PaymentStatus } from "@routeflow/types";
+import { CREDIT_WORDS, type PaymentStatus } from "@routeflow/types";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -481,7 +481,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                 ) : (
                   excess > 0.001 && (
                     <div className="flex justify-between font-medium text-amber-600">
-                      <span>⚠ Unallocated (→ advance):</span>
+                      <span>⚠ {CREDIT_WORDS.kept}:</span>
                       <span>{fmt(excess)}</span>
                     </div>
                   )

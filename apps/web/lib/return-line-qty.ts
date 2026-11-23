@@ -125,10 +125,19 @@ export function orderedItemQtyText(line: ReturnLineSnapshot): string {
   return lineCountText(line, Number(line.qty));
 }
 
-/** A returned item's quantity: a line item by its line, a pooled item (no line) in pcs. */
+/**
+ * A returned item's quantity: a line item by its line, a pooled item (no line) in pcs. SA-1231: with `kind` the text also
+ * follows the writer. An INLINE item always stores pieces, so a legacy line or no line reads "N pcs", never a bare count;
+ * a STANDARD item with no line reads the bare number the invoice prints. Without `kind` the text is as it always was.
+ */
 export function returnedItemQtyText(item: {
   qty: number | string;
   line?: ReturnLineSnapshot | null;
+  kind?: "INLINE" | "STANDARD";
 }): string {
+  if (item.kind === "INLINE" && (!item.line || lineCountMode(item.line) === "legacy"))
+    return returnLineQtyText({ qty: item.qty });
+  if (item.kind === "STANDARD" && !item.line)
+    return invoiceLineQtyText({ qty: Number(item.qty), unitLabel: null });
   return item.line ? lineCountText(item.line, Number(item.qty)) : returnLineQtyText(item);
 }

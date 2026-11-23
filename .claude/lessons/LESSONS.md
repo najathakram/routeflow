@@ -63,6 +63,13 @@
 
 ## tooling
 
+### L-402 · 2026-11-22 · tooling · a gate that kills a long child on a time cap reports the timeout as a timeout, never as a genuine failure; the cap is overridable and sized for a loaded host (#4427)
+
+- **Symptom:** the forced `turbo run test --force` in `campaign-check` had a fixed 15-minute cap. On a loaded host the api suite ran longer, `spawnSync` returned `ETIMEDOUT`, and the gate printed "genuine failure"; two pushes were refused on 2026-11-22, each after a 40 to 60 minute verify.
+- **Root cause:** the gate read any non-success child result as a test failure. A killed child has no exit status of its own, so a slow run and a red suite looked the same.
+- **Lesson:** **When a gate runs a child under a time cap, branch on the timeout first and say so (`TIMED OUT after N min`, still a refusal); keep "genuine failure" for a real non-zero exit. Size the default to the loaded host and let one env var override it (a positive integer; anything else is ignored).**
+- **Guard:** `campaign-check-force-timeout.spec.ts` and `campaign-check-freshness.spec.ts` (#4427); `scripts/lib/campaign-force-run.cjs` holds the one parser.
+
 ### L-395 · 2026-11-19 · tooling · a guard that matches file names read from `+++ b/` diff headers decodes git's C-quoting (or takes names from `-z` output), and withholds any name git quoted (#4363)
 
 - **Symptom:** the push guard printed, or failed to match, a path whose name held unusual bytes: git writes such a name in double quotes with octal escapes, and the `b/` prefix then sits inside the quotes.
@@ -155,13 +162,6 @@
 - **Root cause:** the pin lived in a different branch from the migration, so neither branch's run held both the new column and the old assertion, and a diff review cannot see a spec that asserts a behavior the migration removed.
 - **Lesson:** **When a migration retires a known edge (a widen, a dropped clamp, a new constraint), grep the specs for the edge's bug id and its old literal values in the same train and update each pin to the new rule; the pin goes red only on the combined tree, so run it there before the push.**
 - **Guard:** none automatic; the train gate runs the full suite on the combined tree (cf. [[L-264]], [[L-323]]).
-
-### L-327 · 2026-10-20 · testing · a more specific refusal added ahead of an existing guard is grepped against every spec that pins the old generic code
-
-- **Symptom:** a new coded refusal (a bill with cash payments, BILL_HAS_PAYMENTS) was added ahead of the generic state guard; race and concurrency specs that pinned the old generic code then failed on the combined tree.
-- **Root cause:** those specs asserted the old error code as a stand-in for "the second writer lost"; the new guard fires first on the same input, so the invariant still held but the expected code was stale.
-- **Lesson:** **When a new guard or error code is inserted ahead of an existing one, grep the specs for the old code and update each; keep the invariant the spec proves (one writer wins, nothing written) and change only the expected code, never loosen the assertion to accept any error.**
-- **Guard:** none automatic; the train gate runs the full suite (cf. [[L-264]]).
 
 ### L-262 · 2026-10-05 · testing · a generated Prisma client is per install: a worktree that shares or hoists `node_modules` verifies against another tree's schema
 

@@ -8,6 +8,7 @@ import {
 import type {
   CounterSalePaymentMethod,
   CounterSaleResponse,
+  CounterTenderSplitFields,
   DuplicatePaymentRefExisting,
 } from "@routeflow/types";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
@@ -189,7 +190,7 @@ export function buildCounterSaleResponse(input: {
    * SA-1077 / W-1090: the sale's tender split from `counterReturnSplit` (the Today's row and the emailed receipt call the same
    * one), spread as it is. Nothing is worked out here; absent when the read failed, and the receipt then keeps its earlier words.
    */
-  split?: CounterReturnSplit;
+  split?: CounterReturnSplit & Pick<CounterTenderSplitFields, "returnItems">;
 }): CounterSaleResponse {
   const { payment, order, invoices, replayed, planError, duplicate } = input;
   const first = invoices[0];

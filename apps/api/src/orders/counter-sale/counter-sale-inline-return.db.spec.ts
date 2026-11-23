@@ -370,6 +370,10 @@ describeDb("W-863 — a counter sale with an inline return, the real chain on Po
       { method: "CASH", amount: 6 },
       { method: "STORE_CREDIT", amount: 4 },
     ]);
+    // SA-1211 A1.1 (VF-6): the receipt lists the returned item from the STORED return line (db.spec: run by CI, needs the local DB)
+    expect(res.returnItems).toHaveLength(1);
+    expect(res.returnItems?.[0].name).toContain("snack");
+    expect(res.returnItems?.[0].qty).toBeGreaterThan(0);
     const f = await footprint(key);
     expect(f.returns).toHaveLength(1);
     expect(f.orders).toHaveLength(1);

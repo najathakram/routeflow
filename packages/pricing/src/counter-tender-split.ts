@@ -9,12 +9,12 @@ import { settlementTotals, type ReturnSettlement } from "./return-settlement";
  * receipt). `Record<TodaysSaleMethod, string>` makes a new method a compile error here, in the one place (L-072).
  */
 export const COUNTER_METHOD_LABEL: Record<TodaysSaleMethod, string> = {
-  ADVANCE: "Advance",
+  ADVANCE: "Credit", // A1.7: a prepaid advance is credit on the customer's account, the one word
   CASH: "Cash",
   CARD: "Card",
   CHECK: "Check",
   OTHER: "Other",
-  STORE_CREDIT: "Store credit",
+  STORE_CREDIT: "Credit", // A1.4: CREDIT_WORDS.noun (pinned in apps/api/src/common/credit-words.spec.ts)
 };
 
 /**
@@ -27,17 +27,32 @@ export function counterMethodLine(
   tenders: ReadonlyArray<{ method: TodaysSaleMethod; amount: number }>,
   opts?: { checkReference?: string | null },
 ): string {
-  // W-713: the check's number sits right after the word "Check", on the CHECK leg only (the web reprint and the emailed receipt)
-  const checkRef = opts?.checkReference?.trim();
-  return tenders
-    .map((t) => {
-      const label =
-        t.method === "CHECK" && checkRef
-          ? `${COUNTER_METHOD_LABEL[t.method]} #${checkRef}`
-          : COUNTER_METHOD_LABEL[t.method];
-      return `${label} ${formatReceiptMoney(t.amount)}`;
-    })
+  return counterMethodParts(tenders, opts)
+    .map((p) => `${p.label} ${formatReceiptMoney(p.amount)}`)
     .join(" + ");
+}
+
+/**
+ * The display parts of a tender list (SA-1211 A1.7): methods that share a label read as ONE part with their amounts summed.
+ * Advance and Store credit are both "Credit", so a sale paid with both reads "Credit $x" once, never "Credit $a + Credit $b".
+ * W-713: the check's number sits right after the word "Check", on the CHECK leg only. Every figure goes through `roundMoney`.
+ */
+export function counterMethodParts(
+  tenders: ReadonlyArray<{ method: TodaysSaleMethod; amount: number }>,
+  opts?: { checkReference?: string | null },
+): Array<{ label: string; amount: number }> {
+  const checkRef = opts?.checkReference?.trim();
+  const parts: Array<{ label: string; amount: number }> = [];
+  for (const t of tenders) {
+    const label =
+      t.method === "CHECK" && checkRef
+        ? `${COUNTER_METHOD_LABEL[t.method]} #${checkRef}`
+        : COUNTER_METHOD_LABEL[t.method];
+    const hit = parts.find((p) => p.label === label);
+    if (hit) hit.amount = roundMoney(hit.amount + t.amount);
+    else parts.push({ label, amount: roundMoney(t.amount) });
+  }
+  return parts;
 }
 
 export interface CounterTenderPayment<M extends string = string> {
