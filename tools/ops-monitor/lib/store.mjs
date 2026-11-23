@@ -614,7 +614,9 @@ export function validateAgainstState(ev, state, { bugIds = new Set() } = {}) {
       if (ev.kind === "claim" || ev.kind === "release") {
         const it = state.items.get(ev.item);
         const member = ev.data?.member ?? null;
-        if (it?.claimedBy && !holdsClaim(it, ev.lane, member)) {
+        if (ev.kind === "claim" && state.retiredLanes?.has(ev.lane))
+          errors.push(`lane ${ev.lane} is retired; rf lane unretire ${ev.lane} first`);
+        else if (it?.claimedBy && !holdsClaim(it, ev.lane, member)) {
           const holder = holderLabel(it.claimedBy, it.claimedMember);
           if (ev.kind === "release")
             errors.push(`${ev.item} belongs to ${holder}; only that holder can release it`);
@@ -627,6 +629,29 @@ export function validateAgainstState(ev, state, { bugIds = new Set() } = {}) {
         }
       }
     }
+  }
+  if (ev.kind === "lane.retire") {
+    const lane = ev.data.lane;
+    const claims = state.lanes.get(lane)?.claims ?? [];
+    if (state.retiredLanes?.has(lane)) errors.push(`lane ${lane} is already retired`);
+    else if (claims.length > 0) {
+      const n = claims.length === 1 ? "1 claim" : `${claims.length} claims`;
+      errors.push(
+        `lane ${lane} still holds ${n} (${claims.join(", ")}); release ${claims.length === 1 ? "it" : "them"} first (rf release ${claims[0]} --lane ${lane})`,
+      );
+    }
+  } else if (ev.kind === "lane.unretire") {
+    if (!state.retiredLanes?.has(ev.data.lane)) errors.push(`lane ${ev.data.lane} is not retired`);
+  } else if (ev.kind === "anomaly.ack") {
+    const id = ev.data.eventId;
+    const found = (state.anomalies ?? []).filter((a) => a.eventId === id);
+    if (found.length === 0) errors.push(`no anomaly for event ${id} (rf anomaly ls lists them)`);
+    else if (found.every((a) => a.kind === "claim-conflict"))
+      errors.push(
+        `event ${id} is a claim conflict: it clears when the loser releases (rf release <id> --lane <loser>)`,
+      );
+    else if (found.every((a) => a.acked))
+      errors.push(`anomaly for event ${id} is already acknowledged`);
   }
   return errors;
 }

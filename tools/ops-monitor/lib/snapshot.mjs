@@ -965,8 +965,10 @@ export function buildSnapshot({
     group.get(row).add(id);
   }
   const laneShown = (row) => {
-    if (configured.has(row)) return true;
     const raws = group.get(row);
+    // rf lane retire takes a lane off the list; its events and items keep their history.
+    if ([row, ...raws].every((r) => state.retiredLanes?.has(r))) return false;
+    if (configured.has(row)) return true;
     if (stateItems.some((it) => !isDone(it) && (raws.has(it.claimedBy) || raws.has(it.lane))))
       return true;
     const last = Math.max(
