@@ -52,7 +52,12 @@ export function CreatePOModal({
   // Parent and kind per product (the stock list carries neither): one catalog read, for the full-name sort.
   // The Stock tab's exact params, so the two share one cached read. Until it arrives the modal fails
   // closed: no options (a bare variant name or a family must never be offered) and the bar is off.
-  const { data: catalog, isError: catalogError } = useProducts({ includeVariants: true, limit: 0 });
+  const {
+    data: catalog,
+    isError: catalogError,
+    isFetching: catalogFetching,
+    refetch: refetchCatalog,
+  } = useProducts({ includeVariants: true, limit: 0 });
   const catalogReady = catalog !== undefined;
   const options = React.useMemo(
     () => (catalogReady ? poSelectOptions(allProducts, catalogMetaById(catalog?.data ?? [])) : []),
@@ -198,10 +203,11 @@ export function CreatePOModal({
                 hint={
                   catalogReady
                     ? undefined
-                    : catalogError
-                      ? "Couldn't load products. Reopen this window to try again."
+                    : catalogError && !catalogFetching
+                      ? "Couldn't load products."
                       : "Loading products…"
                 }
+                onRetry={catalogError && !catalogFetching ? () => void refetchCatalog() : undefined}
                 onAdd={onScanAdd}
                 hasLine={(id) => lines.some((l) => l.productId === id)}
                 addedIds={new Set(lines.map((l) => l.productId).filter(Boolean))}
