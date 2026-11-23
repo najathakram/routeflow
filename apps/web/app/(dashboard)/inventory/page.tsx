@@ -44,6 +44,7 @@ import { useInventoryTab } from "./_components/use-inventory-tab";
 import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
 import type { Supplier } from "./_components/purchase-orders-shared";
 import { QuickRestockModal } from "./_components/QuickRestockModal";
+import { MODAL_BODY, MODAL_FOOTER, MODAL_FORM, MODAL_PANEL } from "./_components/modal-panel";
 import {
   InventoryCards,
   InventorySortControl,
@@ -537,172 +538,174 @@ function AdjustStockModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-md`}>
         <div className="border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Adjust stock</h2>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
-          <div>
-            <label className="mb-1 block text-xs text-navy">Product *</label>
-            <input
-              ref={barcodeInputRef}
-              type="text"
-              value={
-                selectedProduct && !productSearch
-                  ? `${selectedProduct.name}${selectedProduct.sku ? ` (${selectedProduct.sku})` : ""}`
-                  : productSearch
-              }
-              onChange={(e) => {
-                setProductSearch(e.target.value);
-                if (form.productId) setForm((f) => ({ ...f, productId: "" }));
-              }}
-              placeholder="Type name or SKU, or scan barcode…"
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            {productSearch && !form.productId && (
-              <div className="mt-1 max-h-48 overflow-y-auto rounded border border-surface-border bg-white shadow-sm">
-                {filteredProducts.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-navy/70">
-                    No products match &quot;{productSearch}&quot;
-                  </p>
-                ) : (
-                  filteredProducts.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => {
-                        setForm((f) => ({ ...f, productId: p.id }));
-                        setProductSearch("");
-                      }}
-                      className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-navy hover:bg-surface-raised"
-                    >
-                      {p.name}
-                      {p.sku ? <span className="text-navy/70"> ({p.sku})</span> : null}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-            {!form.productId && !productSearch && (
-              <p className="mt-1 text-xs text-navy/70">Type to search products</p>
-            )}
-            {selectedProduct && (
-              <p className="mt-1 text-xs text-navy/70">
-                {/* Stock is stored in PIECES — a boxed product must never be labelled
+        <form onSubmit={handleSubmit} className={MODAL_FORM}>
+          <div className={MODAL_BODY}>
+            <div>
+              <label className="mb-1 block text-xs text-navy">Product *</label>
+              <input
+                ref={barcodeInputRef}
+                type="text"
+                value={
+                  selectedProduct && !productSearch
+                    ? `${selectedProduct.name}${selectedProduct.sku ? ` (${selectedProduct.sku})` : ""}`
+                    : productSearch
+                }
+                onChange={(e) => {
+                  setProductSearch(e.target.value);
+                  if (form.productId) setForm((f) => ({ ...f, productId: "" }));
+                }}
+                placeholder="Type name or SKU, or scan barcode…"
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              {productSearch && !form.productId && (
+                <div className="mt-1 max-h-48 overflow-y-auto rounded border border-surface-border bg-white shadow-sm">
+                  {filteredProducts.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-navy/70">
+                      No products match &quot;{productSearch}&quot;
+                    </p>
+                  ) : (
+                    filteredProducts.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          setForm((f) => ({ ...f, productId: p.id }));
+                          setProductSearch("");
+                        }}
+                        className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-navy hover:bg-surface-raised"
+                      >
+                        {p.name}
+                        {p.sku ? <span className="text-navy/70"> ({p.sku})</span> : null}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+              {!form.productId && !productSearch && (
+                <p className="mt-1 text-xs text-navy/70">Type to search products</p>
+              )}
+              {selectedProduct && (
+                <p className="mt-1 text-xs text-navy/70">
+                  {/* Stock is stored in PIECES — a boxed product must never be labelled
                     with `product.unit` (the SELLING unit noun), or the operator adjusts
                     in cases; `unitsLabel` keeps that noun only for unboxed products. */}
-                Current stock:{" "}
-                {unitsLabel(
-                  selectedProduct.currentStock,
-                  selectedProduct.unitsPerBox,
-                  selectedProduct.unit,
-                )}
-                {form.quantity !== "" && !isNaN(qty) && (
-                  <>
-                    {" "}
-                    →{" "}
-                    <strong>
-                      {unitsLabel(
-                        Number((selectedProduct.currentStock + qty).toFixed(2)),
-                        selectedProduct.unitsPerBox,
-                        selectedProduct.unit,
-                      )}
-                    </strong>
-                  </>
-                )}
-                {" · "}
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={() => setForm((f) => ({ ...f, productId: "" }))}
-                >
-                  change
-                </button>
+                  Current stock:{" "}
+                  {unitsLabel(
+                    selectedProduct.currentStock,
+                    selectedProduct.unitsPerBox,
+                    selectedProduct.unit,
+                  )}
+                  {form.quantity !== "" && !isNaN(qty) && (
+                    <>
+                      {" "}
+                      →{" "}
+                      <strong>
+                        {unitsLabel(
+                          Number((selectedProduct.currentStock + qty).toFixed(2)),
+                          selectedProduct.unitsPerBox,
+                          selectedProduct.unit,
+                        )}
+                      </strong>
+                    </>
+                  )}
+                  {" · "}
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => setForm((f) => ({ ...f, productId: "" }))}
+                  >
+                    change
+                  </button>
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-navy">
+                Quantity change (positive to add, negative to remove) *
+              </label>
+              <input
+                required
+                type="number"
+                step={0.001}
+                value={form.quantity}
+                onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="adjust-reason" className="mb-1 block text-xs text-navy">
+                Reason *
+              </label>
+              <select
+                id="adjust-reason"
+                value={form.reason}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, reason: e.target.value as AdjustmentReason | "" }))
+                }
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Choose a reason</option>
+                {(Object.keys(ADJUSTMENT_REASON_LABELS) as AdjustmentReason[]).map((r) => (
+                  <option key={r} value={r}>
+                    {ADJUSTMENT_REASON_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-navy">Reference</label>
+              <input
+                type="text"
+                value={form.reference}
+                onChange={(e) => setForm((f) => ({ ...f, reference: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-navy">
+                Notes{form.reason === "OTHER" ? " *" : ""}
+              </label>
+              <textarea
+                rows={2}
+                maxLength={ADJUSTMENT_REASON_NOTE_MAX}
+                value={form.notes}
+                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-navy/70">
+              <input
+                type="checkbox"
+                checked={form.backdate}
+                onChange={(e) => setForm((f) => ({ ...f, backdate: e.target.checked }))}
+              />
+              Backdate this entry
+            </label>
+            {form.backdate && (
+              <input
+                type="date"
+                value={form.effectiveDate}
+                onChange={(e) => setForm((f) => ({ ...f, effectiveDate: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            )}
+
+            {reasonProblem && form.quantity.trim() !== "" && (
+              <p className="text-right text-xs text-navy/70" data-testid="adjust-save-hint">
+                {reasonProblem}
               </p>
             )}
           </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-navy">
-              Quantity change (positive to add, negative to remove) *
-            </label>
-            <input
-              required
-              type="number"
-              step={0.001}
-              value={form.quantity}
-              onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="adjust-reason" className="mb-1 block text-xs text-navy">
-              Reason *
-            </label>
-            <select
-              id="adjust-reason"
-              value={form.reason}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, reason: e.target.value as AdjustmentReason | "" }))
-              }
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              <option value="">Choose a reason</option>
-              {(Object.keys(ADJUSTMENT_REASON_LABELS) as AdjustmentReason[]).map((r) => (
-                <option key={r} value={r}>
-                  {ADJUSTMENT_REASON_LABELS[r]}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-navy">Reference</label>
-            <input
-              type="text"
-              value={form.reference}
-              onChange={(e) => setForm((f) => ({ ...f, reference: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-navy">
-              Notes{form.reason === "OTHER" ? " *" : ""}
-            </label>
-            <textarea
-              rows={2}
-              maxLength={ADJUSTMENT_REASON_NOTE_MAX}
-              value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-
-          <label className="flex items-center gap-2 text-sm text-navy/70">
-            <input
-              type="checkbox"
-              checked={form.backdate}
-              onChange={(e) => setForm((f) => ({ ...f, backdate: e.target.checked }))}
-            />
-            Backdate this entry
-          </label>
-          {form.backdate && (
-            <input
-              type="date"
-              value={form.effectiveDate}
-              onChange={(e) => setForm((f) => ({ ...f, effectiveDate: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          )}
-
-          {reasonProblem && form.quantity.trim() !== "" && (
-            <p className="text-right text-xs text-navy/70" data-testid="adjust-save-hint">
-              {reasonProblem}
-            </p>
-          )}
-          <div className="flex justify-end gap-2 pt-2">
+          <div className={MODAL_FOOTER}>
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>
@@ -748,38 +751,40 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-md`}>
         <div className="border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Add supplier</h2>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
-          {[
-            { key: "name", label: "Company Name *", required: true },
-            { key: "contactName", label: "Contact Name" },
-            { key: "phone", label: "Phone" },
-            { key: "email", label: "Email", type: "email" },
-          ].map(({ key, label, required, type }) => (
-            <div key={key}>
-              <label className="mb-1 block text-xs text-navy">{label}</label>
-              <input
-                required={required}
-                type={type ?? "text"}
-                value={(form as any)[key]}
-                onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+        <form onSubmit={handleSubmit} className={MODAL_FORM}>
+          <div className={MODAL_BODY}>
+            {[
+              { key: "name", label: "Company Name *", required: true },
+              { key: "contactName", label: "Contact Name" },
+              { key: "phone", label: "Phone" },
+              { key: "email", label: "Email", type: "email" },
+            ].map(({ key, label, required, type }) => (
+              <div key={key}>
+                <label className="mb-1 block text-xs text-navy">{label}</label>
+                <input
+                  required={required}
+                  type={type ?? "text"}
+                  value={(form as any)[key]}
+                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+            ))}
+            <div>
+              <label className="mb-1 block text-xs text-navy">Notes</label>
+              <textarea
+                rows={2}
+                value={form.notes}
+                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
             </div>
-          ))}
-          <div>
-            <label className="mb-1 block text-xs text-navy">Notes</label>
-            <textarea
-              rows={2}
-              value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
           </div>
-          <div className="flex justify-end gap-2 pt-2">
+          <div className={MODAL_FOOTER}>
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>
@@ -821,7 +826,7 @@ function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-sm`}>
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Reorder settings</h2>
           <button
@@ -831,33 +836,35 @@ function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: 
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
-          <p className="text-sm text-navy/70">{item.name}</p>
-          <div>
-            <label className="mb-1 block text-xs text-navy">Reorder Point (trigger qty)</label>
-            <input
-              required
-              type="number"
-              min={0}
-              step={0.001}
-              value={reorderPoint}
-              onChange={(e) => setReorderPoint(e.target.value)}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
+        <form onSubmit={handleSubmit} className={MODAL_FORM}>
+          <div className={MODAL_BODY}>
+            <p className="text-sm text-navy/70">{item.name}</p>
+            <div>
+              <label className="mb-1 block text-xs text-navy">Reorder Point (trigger qty)</label>
+              <input
+                required
+                type="number"
+                min={0}
+                step={0.001}
+                value={reorderPoint}
+                onChange={(e) => setReorderPoint(e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-navy">Reorder Qty (amount to order)</label>
+              <input
+                required
+                type="number"
+                min={0}
+                step={0.001}
+                value={reorderQty}
+                onChange={(e) => setReorderQty(e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-navy">Reorder Qty (amount to order)</label>
-            <input
-              required
-              type="number"
-              min={0}
-              step={0.001}
-              value={reorderQty}
-              onChange={(e) => setReorderQty(e.target.value)}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-          <div className="flex justify-end gap-2 pt-1">
+          <div className={MODAL_FOOTER}>
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>
