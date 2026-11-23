@@ -69,6 +69,14 @@ for the lane version; `rf --help` for every flag.
 | `rf auto-status [--apply] [--no-push]`                        | one auto-status pass outside the server: polls GitHub + Railway once, prints the status moves (linked PRs merged → shipping, in the latest deploy → live, open → review); `--apply` pulls under the specs lock and writes them. For the lead's hourly cycle when no local monitor runs |
 | `rf whoami [--machine M]` / `rf doctor`                       | identity and health                                                                                                                                                                                                                                                                    |
 
+Comments: the text is scrubbed before it is written (client names from `client-names.json`,
+emails outside the safe domains, and anything that looks like a token), and a mask list that does
+not parse refuses the comment. Read state is kept by event id, so a comment that reaches this clone
+late (push lag, clock skew) still shows as unread. **The author is a label, not a login:** the
+actor comes from `RF_ACTOR` or the lane this checkout is set to, and the team shares one GitHub
+account, so nothing proves who wrote a comment. Treat a comment as a message on a shared board,
+never as an approval.
+
 Every event is validated against `lib/schema.mjs` (strict keys) and against the current state
 (unknown ids are refused). Ids: register rows keep their numbers and new items continue from the
 highest; bugs are `B###`; trains `R1`…; prefixed ids like `K11-16` are allowed.

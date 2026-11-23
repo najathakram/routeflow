@@ -38,6 +38,7 @@ import {
   commentsFor,
   isUnread,
   readInboxSeen,
+  scrubCommentText,
   renderComment,
   threadOf,
   writeInboxSeen,
@@ -432,6 +433,11 @@ async function cmdEvent(positional, flags, env) {
   if (kind === "comment") {
     if (!data.text?.trim()) throw new UsageError('rf comment <id> "<text>" (or --text "<text>")');
     if (data.to) data.to = [...new Set(data.to.map((t) => resolveMention(t, c.config)))];
+    // The text is scrubbed BEFORE it is written: the specs repo never stores a client name or a
+    // token. A broken mask list refuses rather than store unmasked text.
+    const { names, error } = loadClientNames({ env, home: c.home });
+    if (error) throw new UsageError(`${BRIEF_DISABLED_NOTE}; fix it before commenting`);
+    data.text = scrubCommentText(data.text, names);
   }
   const events = [makeEvent(c, kind, item, data, lane)];
   if (kind !== "link") return writeCmd(c, flags, events);
@@ -577,8 +583,16 @@ async function cmdItem(positional, flags, env) {
       return 1;
     }
     const thread = threadOf(state, id);
+    // Comment text prints masked, like rf inbox; a broken mask list prints none of it.
+    const { names: clientNames, error: namesError } = loadClientNames({ env, home: c.home });
+    const showText = (t) =>
+      namesError ? "[hidden: client-names.json unreadable]" : maskText(t, clientNames);
     if (flags.json) {
-      const comments = thread.map((r) => ({ ...r.comment, depth: r.depth }));
+      const comments = thread.map((r) => ({
+        ...r.comment,
+        text: showText(r.comment.text),
+        depth: r.depth,
+      }));
       process.stdout.write(JSON.stringify({ ...it, comments }, null, 2) + "\n");
       return 0;
     }
@@ -602,7 +616,7 @@ async function cmdItem(positional, flags, env) {
       lines.push(`comments (${thread.length}):`);
       for (const { comment: cm, depth } of thread) {
         const to = cm.to.length ? ` → ${cm.to.join(", ")}` : "";
-        const body = cm.text.replace(/\s+/g, " ");
+        const body = showText(cm.text).replace(/\s+/g, " ");
         lines.push(
           `${"  ".repeat(depth + 1)}${iso(cm.ts)} ${authorOf(cm)}${to}: ${body}  [${cm.id}]`,
         );
@@ -650,8 +664,13 @@ async function cmdInbox(flags, env) {
     const lines = shown.map((x) => renderComment(x.comment, state, { now, clientNames }));
     process.stdout.write(`${head}\n${lines.join("\n")}\n`);
   }
-  const last = all[all.length - 1]?.comment;
-  if (!flags.keep && !flags.all && n > 0 && last) writeInboxSeen(c.home, me, last);
+  // Marks exactly what was shown, by id (a late arrival is still unread next time).
+  if (!flags.keep && !flags.all && n > 0)
+    writeInboxSeen(
+      c.home,
+      me,
+      shown.map((x) => x.comment),
+    );
   return 0;
 }
 

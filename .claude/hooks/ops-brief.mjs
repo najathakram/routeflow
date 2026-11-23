@@ -111,8 +111,24 @@ export function briefFor(payload, env, now, deps) {
     return { text: "", refresh: false };
   }
 
+  // Comments for me that are unread in the inbox (by id) and not yet printed in this session.
+  // By id, not by position in the log: a comment that reaches this clone late, with an older ts
+  // than the last one printed, is still new to this session.
+  const ANNOUNCED_KEEP = 500;
+  const unreadForMe = (state, inboxSeen, announced) =>
+    (deps.inbox?.commentsFor(state, me) ?? []).filter(
+      (x) => deps.inbox.isUnread(x.comment, inboxSeen) && !announced.has(x.comment.id),
+    );
+  const markerOf = (announced) => ({
+    lastEventId: newest,
+    ts: now,
+    count: events.length,
+    announced: [...announced].slice(-ANNOUNCED_KEEP),
+  });
+
   if (mode === "SessionStart") {
     const state = fold(events);
+    const inboxSeen = deps.inbox?.readInboxSeen?.(home, me) ?? null;
     const snapshot = readJson(join(home, "last-snapshot.json"));
     const text = brief.renderBrief(state, {
       lane,
@@ -124,9 +140,11 @@ export function briefFor(payload, env, now, deps) {
       maxLines: lane ? 25 : 8,
       utcOffsetMin: -new Date(now).getTimezoneOffset(),
       me,
-      inboxSeen: deps.inbox?.readInboxSeen?.(home, me) ?? null,
+      inboxSeen,
     });
-    writeJson(markerFile, { lastEventId: newest, ts: now });
+    // The brief just listed the unread comments, so the next prompt does not print them again.
+    const shown = unreadForMe(state, inboxSeen, new Set()).map((x) => x.comment.id);
+    writeJson(markerFile, markerOf(shown));
     return { text, refresh: true };
   }
 
@@ -135,14 +153,18 @@ export function briefFor(payload, env, now, deps) {
     if (lane !== "lead" && !marker) return { text: "", refresh: false };
     const refresh = refreshDue(home, now);
     if (!marker) {
-      writeJson(markerFile, { lastEventId: newest, ts: now });
+      writeJson(markerFile, markerOf([]));
       return { text: "", refresh };
     }
+    const announced = new Set(Array.isArray(marker.announced) ? marker.announced : []);
+    // Nothing arrived at all (same newest event, same count): quiet, without a fold.
+    if (newest === marker.lastEventId && events.length === marker.count)
+      return { text: "", refresh };
     const own = (e) => (lane ? e.lane === lane : e.actor === actor);
-    const { before, after, sorted } = brief.splitAtMarker(events, marker, own);
+    const { before, sorted } = brief.splitAtMarker(events, marker, own);
     let text = "";
+    const nowState = fold(sorted);
     if (before.length !== sorted.length) {
-      const nowState = fold(sorted);
       const line = brief.renderSince(fold(before), nowState, {
         lane,
         config,
@@ -151,21 +173,19 @@ export function briefFor(payload, env, now, deps) {
         utcOffsetMin: -new Date(now).getTimezoneOffset(),
       });
       if (line) text = `[ops monitor] ${line}`;
-      const fresh = new Set(after.map((e) => e.id));
-      const mine = (deps.inbox?.commentsFor(nowState, me) ?? []).filter((x) =>
-        fresh.has(x.comment.id),
-      );
-      if (mine.length) {
-        const n = mine.length;
-        const lines = mine
-          .slice(-3)
-          .map((x) => deps.inbox.renderComment(x.comment, nowState, { now, clientNames }));
-        const more = n > 3 ? [`  (${n - 3} more: rf inbox)`] : [];
-        const head = `[ops monitor] ${n} new comment${n === 1 ? "" : "s"} for you:`;
-        text = [text, head, ...lines, ...more].filter(Boolean).join("\n");
-      }
     }
-    if (newest !== marker.lastEventId) writeJson(markerFile, { lastEventId: newest, ts: now });
+    const mine = unreadForMe(nowState, deps.inbox?.readInboxSeen?.(home, me) ?? null, announced);
+    if (mine.length) {
+      const n = mine.length;
+      const lines = mine
+        .slice(-3)
+        .map((x) => deps.inbox.renderComment(x.comment, nowState, { now, clientNames }));
+      const more = n > 3 ? [`  (${n - 3} more: rf inbox)`] : [];
+      const head = `[ops monitor] ${n} new comment${n === 1 ? "" : "s"} for you:`;
+      text = [text, head, ...lines, ...more].filter(Boolean).join("\n");
+      for (const x of mine) announced.add(x.comment.id);
+    }
+    writeJson(markerFile, markerOf(announced));
     return { text, refresh };
   }
   return { text: "", refresh: false };
