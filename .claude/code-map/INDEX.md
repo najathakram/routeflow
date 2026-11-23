@@ -114,6 +114,11 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Generated-dirs list for cross-workspace scans | [`api`](api/landing-2026-11-23-w40.md) → `scripts/lib/generated-dirs.cjs` |
 | Create PO scan bar | [`web`](web/landing-2026-11-23-w40.md) → `inventory/_components/PurchaseOrderScanBar.tsx` |
 | Sidebar order and hidden (F-2) | [`web`](web/landing-2026-11-23-w40.md) → `_components/nav-layout.ts` |
+| PO lot lines in whole packs (create, edit, receive) | [`api`](api/landing-2026-11-23-w41.md) → `vendor-bills/bill-line-identity.ts` |
+| Available credit, one helper for every statement surface | [`api`](api/landing-2026-11-23-w41.md) → `customers/available-credit.ts` |
+| Buyer statement credit total and list | [`api`](api/landing-2026-11-23-w41.md) → `buyer/buyer-statement-view.ts` |
+| Counter tender intent and on-account button | [`web`](web/landing-2026-11-23-w41.md) → `lib/counter-part-pay.ts` |
+| Buyer portal credit tile | [`web`](web/landing-2026-11-23-w41.md) → `app/buyer/portal/[seller]/finances/page.tsx` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →

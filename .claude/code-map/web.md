@@ -110,3 +110,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-21-w38.md](web/landing-2026-11-21-w38.md) | Window 38: phone cards, command palette from the menu, pay-one-invoice, nav-index.ts, invoice layout card, sent-invoice confirm, counter lines, estimate form, import skip notice |
 | [web/landing-2026-11-23-w39.md](web/landing-2026-11-23-w39.md) | Window 39: pinned sidebar layout, sort memo, card payment link block, shared inventory modal panel, bill line unit editor, Family - Variant names |
 | [web/landing-2026-11-23-w40.md](web/landing-2026-11-23-w40.md) | Window 40: Create PO scan bar, PO line on hand, counter return line and Credit word, sidebar order and hidden |
+| [web/landing-2026-11-23-w41.md](web/landing-2026-11-23-w41.md) | Window 41: counter part or no payment (tenderIntent, on-account button), buyer credit tile, Credit column |
