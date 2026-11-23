@@ -1968,6 +1968,38 @@ check(
 }
 
 {
+  // Q10-Q13: the 120-minute age cap (SA-1230 M1 option A). Age comes from the ticket NAME ms, never the JSON field.
+  const NOW = 1_000_000_000_000;
+  const nm = (m) => ticketName(NOW - m * 60_000, 1, "aa");
+  const g = (order, myName, high) =>
+    nextGrant({ order, myName, freeSlots: 1, high, now: NOW }).grant;
+  const oldN = nm(121);
+  const hiNew = nm(1);
+  check(
+    "Q10 a normal ticket older than 120 min is granted ahead of a newer high ticket; the high one waits",
+    [g([oldN, hiNew], oldN, new Set([hiNew])), g([oldN, hiNew], hiNew, new Set([hiNew]))],
+    [true, false],
+  );
+  const youngN = nm(119);
+  check(
+    "Q11 a normal ticket at 119 min still defers to a high ticket",
+    [g([youngN, hiNew], youngN, new Set([hiNew])), g([youngN, hiNew], hiNew, new Set([hiNew]))],
+    [false, true],
+  );
+  const oldHigh = nm(130);
+  check(
+    "Q12 an aged normal ticket joins the high group in queue order: an older high ticket is never jumped",
+    [g([oldHigh, oldN], oldHigh, new Set([oldHigh])), g([oldHigh, oldN], oldN, new Set([oldHigh]))],
+    [true, false],
+  );
+  check(
+    "Q13 an aged normal ticket whose body is unreadable (mid-write, so not in the high set) is still promoted",
+    g([oldN, hiNew], oldN, new Set([hiNew])),
+    true,
+  );
+}
+
+{
   // R: a machine-wide <dir>/max-cpu file (percent 1..100) overrides every waiter's own RF_HEAVY_SLOT_MAX_CPU_PCT,
   // re-read on each check, like the slots file. Invalid or absent = ignored.
   const dir = mkTmp();

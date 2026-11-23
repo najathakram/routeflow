@@ -20,7 +20,7 @@
 //
 // Priority lane (owner 2026-11-22): `RF_HEAVY_SLOT_PRIORITY=high git push ...` (set in the env of the WAITING
 // process) writes `priority: "high"` on its ticket. Grant order is then: high tickets first (FIFO among themselves),
-// then normal tickets (FIFO); the capped and stale rules still apply. A ticket without the field is normal, so with no
+// then normal tickets (FIFO); a normal ticket queued over 120 min ago (PRIORITY_AGE_CAP_MS, fixed, from the ticket name) counts as high; the capped and stale rules still apply. A ticket without the field is normal, so with no
 // switch the order is exactly the old one. GRANT_RULE is NOT bumped: a waiter on older code ignores the field, sees plain
 // FIFO and may still take a free slot (the atomic `wx` lock picks one winner), so nobody is stranded; it just does not
 // defer to a high ticket that queued behind it. Priority is therefore guaranteed only against new-code waiters.
@@ -47,6 +47,7 @@ export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 120_000;
 export const DEFAULT_MAX_WAIT_MIN = 720;
 export const DEFAULT_MAX_HOLD_MIN = 90;
+export const PRIORITY_AGE_CAP_MS = 120 * 60_000; // a normal ticket older than this joins the high group (SA-1230)
 export const HOLD_GRACE_MS = 5 * 60_000; // waiters give up at cap + this, never at the cap itself
 export const HOLD_KILL_MS = 15_000; // after the cap's SIGTERM the holder releases the slot regardless of fn
 export const HOLD_CAP_EXIT_CODE = 76; // the job was ended at the hold cap
@@ -552,10 +553,14 @@ export function nextGrant({
   cappedMax = Infinity,
   stale,
   high,
+  now,
 }) {
   // `high` (names of priority tickets): they go first, FIFO among themselves, then the rest. Empty/absent = plain FIFO.
-  if (high?.size)
-    order = [...order.filter((n) => high.has(n)), ...order.filter((n) => !high.has(n))];
+  // A normal ticket older than PRIORITY_AGE_CAP_MS (age from the NAME's queuedAt ms, never the JSON) joins the high group
+  // in queue order, so a high ticket never starves it and an older high ticket is never jumped.
+  const up = (n) =>
+    high.has(n) || (now !== undefined && now - Number(n.slice(0, 15)) > PRIORITY_AGE_CAP_MS);
+  if (high?.size) order = [...order.filter(up), ...order.filter((n) => !up(n))];
   const idx = order.indexOf(myName);
   const atCap = cappedHeld >= cappedMax;
   // A ticket written under an older grant rule (or none) is not first in line: its waiter does not apply this rule, so
@@ -935,6 +940,7 @@ async function acquire(cfg, state) {
         cappedMax: cfg.cappedMax,
         stale: new Set(snap.tickets.filter((t) => ticketStale(t.entry)).map((t) => t.name)),
         high,
+        now,
       });
       // Owner cap: first in line with a free slot, but the machine is too busy -> keep waiting. Sampled only
       // here (sampling takes ~3 s), so a job queued behind another holder costs nothing. A sampler that
