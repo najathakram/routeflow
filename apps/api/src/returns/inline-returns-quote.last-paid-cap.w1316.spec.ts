@@ -201,4 +201,25 @@ describe("W-1316 PR-1: an old sale's return credit is capped at its last paid pr
     expect(priced.total).toBe(q.total);
     expect(priced.chunks[0].subtotal).toBe(10);
   });
+
+  // SA-1244 A1: a $0.00 last paid price CAPS the credit at $0.00; it is never read as "no paid price".
+  it("E1: the last sale was 1 piece at $0.00 outside the window, today $12: the credit is $0.00, SOURCE_INVOICE", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(lastSale({ subtotal: 0 }));
+    const q = await quote(1);
+    expect(q.chunks[0]).toMatchObject({
+      subtotal: 0,
+      unitPrice: 0,
+      taxAmount: 0,
+      priceSource: "SOURCE_INVOICE",
+    });
+    expect(q.total).toBe(0);
+  });
+
+  it("E1-pin (green on master): the same $0.00 line inside the window credits $0.00", async () => {
+    await setup();
+    db.invoice.findMany.mockResolvedValue([windowInvoice(0)]);
+    const q = await quote(1);
+    expect(q.chunks[0]).toMatchObject({ sourceOrderId: "ord-1", subtotal: 0 });
+  });
 });
