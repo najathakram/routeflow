@@ -31,7 +31,7 @@ describe("Quick Edit pieces-per-box goes through quickPackEdit on save, undo and
 
   it("a click on the pack cell stops at the cell: the row click would open the product, and the first-pack question lives on this page", () => {
     expect(list).toMatch(
-      /<div onClick=\{\(e\) => e\.stopPropagation\(\)\}>\s*<QuickEditCell\s*productId=\{p\.id\}\s*productName=\{p\.name\}\s*field="unitsPerBox"/,
+      /<div onClick=\{\(e\) => e\.stopPropagation\(\)\}>\s*<QuickEditCell\s*productId=\{p\.id\}\s*productName=\{displayProductName\(p\)\}\s*field="unitsPerBox"/,
     );
   });
 

@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsBoolean,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -19,6 +20,8 @@ import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
  * of forwarding a free-form `any` straight into Prisma (F4-003).
  */
 export class VendorBillItemDto {
+  /** The stored line this row edits, echoed by the web edit; the server pairs rows by it (SA-1207 S2b). */
+  @IsOptional() @IsString() id?: string;
   @IsOptional() @IsString() productId?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() name?: string;
@@ -43,6 +46,12 @@ export class VendorBillItemDto {
   /** Units per box/case, only when the line explicitly printed one. */
   @IsOptional() @IsNumber() @Min(0) packSize?: number;
   @IsOptionalNotNull() @IsNumber() lineTotal?: number;
+  /** Create only: the line states its own unit (a lot, "5 Boxes + 2 Pieces"). Edits carry the stored label. */
+  @IsOptional() @IsString() @MaxLength(80) unitLabel?: string;
+  /** Create only: the family a split child came from; needs `familyGroup`. */
+  @IsOptional() @IsString() familyProductId?: string;
+  /** Create only: a per-bill ordinal; lines sharing one are one supplier line. The server mints the group id. */
+  @IsOptional() @IsInt() @Min(0) familyGroup?: number;
 }
 
 /**

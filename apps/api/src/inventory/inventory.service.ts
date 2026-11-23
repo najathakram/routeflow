@@ -111,7 +111,7 @@ import { readStockCountProgress } from "./stock-count-progress";
 import { assertNotDurableCountId, assertStockReferenceFree } from "./reserved-reference";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
-import { writeFamilyAssigned } from "../products/product-parent";
+import { tenantSafeParentView, writeFamilyAssigned } from "../products/product-parent";
 
 /**
  * Interactive-tx options of a count add / amend (SA-767 r-note 5 SA-3). The product-lock helper bounds its
@@ -270,7 +270,17 @@ export class InventoryService {
         take: limit,
         orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         include: {
-          product: { select: { id: true, name: true, sku: true, unit: true } },
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              unit: true,
+              variantName: true,
+              parentProductId: true,
+              parent: { select: { name: true, tenantId: true } },
+            },
+          },
           supplier: { select: { id: true, name: true } },
           performedBy: { select: { id: true, username: true } },
         },
@@ -278,7 +288,26 @@ export class InventoryService {
       this.prisma.forTenant().stockMovement.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    return {
+      data: data.map((row) => this.withTenantSafeParent(row)),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
+   * A row's product keeps its family name only when that parent belongs to the caller's tenant (B1211, the
+   * read-side rule `tenantSafeParentView` carries); a parent from another tenant is ignored, so the row
+   * shows the bare variant name.
+   */
+  private withTenantSafeParent<
+    R extends { product: { parent?: { name: string; tenantId?: string | null } | null } | null },
+  >(row: R): R {
+    if (!row.product) return row;
+    const tenantId = this.prisma.getTenantId();
+    return {
+      ...row,
+      product: { ...row.product, parent: tenantSafeParentView(row.product.parent, tenantId) },
+    };
   }
 
   async recordPurchase(dto: RecordPurchaseDto, performedById: string) {
@@ -1431,6 +1460,10 @@ export class InventoryService {
         totalCost?: number;
         sku?: string | null;
         packSize?: number | null;
+        /** SA-1207 S2b: the bill line's own unit and family, carried to the PO twin. */
+        unitLabel?: string | null;
+        familyProductId?: string | null;
+        familyGroupId?: string | null;
       }[];
     },
   ) {
@@ -1473,6 +1506,9 @@ export class InventoryService {
           : roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
       sku: l.sku ?? null,
       packSize: l.packSize ?? null,
+      unitLabel: l.unitLabel ?? null,
+      familyProductId: l.familyProductId ?? null,
+      familyGroupId: l.familyGroupId ?? null,
     }));
     return tx.purchaseOrder.create({
       data: {
@@ -2795,6 +2831,9 @@ export class InventoryService {
         select: {
           id: true,
           name: true,
+          variantName: true,
+          parentProductId: true,
+          parent: { select: { name: true, tenantId: true } },
           sku: true,
           unit: true,
           unitsPerBox: true,
@@ -2943,7 +2982,11 @@ export class InventoryService {
       },
     });
     if (!session) throw new NotFoundException("Stock count session not found");
-    return { ...session, commit: await this.commitProgressOf(session) };
+    return {
+      ...session,
+      lines: session.lines.map((line) => this.withTenantSafeParent(line)),
+      commit: await this.commitProgressOf(session),
+    };
   }
 
   /** Row 562 S1: the pure-read poll behind a long seed or commit (stock-count-progress.ts). */
@@ -3024,7 +3067,7 @@ export class InventoryService {
     dto: UpsertStockCountLineDto,
     user: { sub: string },
   ) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    const line = await this.prisma.tenantTransaction(async (tx) => {
       // The shared `stock-count` lock, then the status / movements checks (SA-767 L-2.4 B).
       await this.enterSessionEdit(tx, sessionId);
 
@@ -3109,6 +3152,7 @@ export class InventoryService {
       // 15 s, not Prisma's 5 s default: the product-lock helper bounds its wait with a 5 s lock_timeout, and a
       // tx budget equal to it would expire first as an unmapped P2028 500 instead of 55P03 -> the 503.
     }, COUNT_ADD_TX_OPTIONS);
+    return this.withTenantSafeParent(line);
   }
 
   async removeStockCountLine(sessionId: string, productId: string) {
