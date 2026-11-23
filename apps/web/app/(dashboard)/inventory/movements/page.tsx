@@ -10,6 +10,7 @@ import type { MovementType } from "@routeflow/types";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useStockMovements } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 
 /** W-785: order flows write a system marker in a movement's notes ("CREATE", "EDIT"…); show words, keep free text as is. */
@@ -173,7 +174,7 @@ export default function MovementsPage() {
           <option value="">All products</option>
           {products.map((p: any) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {displayProductName(p)}
             </option>
           ))}
         </select>
@@ -262,10 +263,12 @@ export default function MovementsPage() {
                           href={`/products/${m.product.id}`}
                           className="font-medium text-navy hover:text-brand-500 hover:underline"
                         >
-                          {m.product.name}
+                          {displayProductName(m.product)}
                         </Link>
                       ) : (
-                        <p className="font-medium text-navy">{m.product?.name ?? "—"}</p>
+                        <p className="font-medium text-navy">
+                          {m.product ? displayProductName(m.product) : "—"}
+                        </p>
                       )}
                       {m.product?.sku && (
                         <p className="font-mono text-xs text-navy/70">{m.product.sku}</p>

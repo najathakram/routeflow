@@ -30,6 +30,7 @@ import {
   type RecomputeCostsResult,
 } from "@/lib/api/inventory";
 import { useProducts, type CostingMethod } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
@@ -96,6 +97,10 @@ interface ForecastItem {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** SA-1216: the full "<Family> - <Variant>" name for a product id, for the panels whose own read carries
+ *  only the stored name (forecast, reorder settings, missing costs, recompute); falls back to it. */
+type FullName = (id: string, stored: string) => string;
 
 function daysRemainingBadge(days: number | null) {
   if (days === null) return <span className="text-navy/70 text-xs">N/A</span>;
@@ -800,7 +805,15 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
 
 // ─── Reorder Settings Modal ───────────────────────────────────────────────────
 
-function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: () => void }) {
+function ReorderSettingsModal({
+  item,
+  fullName,
+  onClose,
+}: {
+  item: ForecastItem;
+  fullName: FullName;
+  onClose: () => void;
+}) {
   const updateSettings = useUpdateReorderSettings();
   const { toast } = useToast();
   const [reorderPoint, setReorderPoint] = React.useState(String(item.reorderPoint ?? ""));
@@ -838,7 +851,7 @@ function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: 
         </div>
         <form onSubmit={handleSubmit} className={MODAL_FORM}>
           <div className={MODAL_BODY}>
-            <p className="text-sm text-navy/70">{item.name}</p>
+            <p className="text-sm text-navy/70">{fullName(item.productId, item.name)}</p>
             <div>
               <label className="mb-1 block text-xs text-navy">Reorder Point (trigger qty)</label>
               <input
@@ -943,9 +956,11 @@ function InlineNumberEdit({
 function ForecastingTab({
   suppliers,
   products,
+  fullName,
 }: {
   suppliers: Supplier[];
   products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
+  fullName: FullName;
 }) {
   const { data: forecastData, isLoading } = useForecasting();
   const updateSettings = useUpdateReorderSettings();
@@ -1019,7 +1034,9 @@ function ForecastingTab({
                     item.needsReorder && "bg-red-50/60",
                   )}
                 >
-                  <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
+                  <td className="px-4 py-3 font-medium text-navy">
+                    {fullName(item.productId, item.name)}
+                  </td>
                   <td className="px-4 py-3 text-navy/70">{Number(item.currentStock).toFixed(2)}</td>
                   <td className="px-4 py-3 text-navy/70">
                     {item.avgDailySales != null ? Number(item.avgDailySales).toFixed(2) : "—"}
@@ -1089,9 +1106,11 @@ function ForecastingTab({
 
 function BulkSetCostModal({
   products,
+  fullName,
   onClose,
 }: {
   products: { id: string; name: string }[];
+  fullName: FullName;
   onClose: () => void;
 }) {
   const bulkSet = useBulkSetCostBasis();
@@ -1138,8 +1157,11 @@ function BulkSetCostModal({
         <div className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
           {products.map((p) => (
             <div key={p.id} className="flex items-center justify-between gap-3">
-              <span className="min-w-0 flex-1 truncate text-sm text-navy" title={p.name}>
-                {p.name}
+              <span
+                className="min-w-0 flex-1 truncate text-sm text-navy"
+                title={fullName(p.id, p.name)}
+              >
+                {fullName(p.id, p.name)}
               </span>
               <div className="relative w-32 shrink-0">
                 <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-navy/50">
@@ -1185,7 +1207,7 @@ function BulkSetCostModal({
 // InventoryController.recomputeCosts). The component and its state are left in
 // place, unreachable from the UI, until B562's root cause is fixed.
 
-function RecomputeModal({ onClose }: { onClose: () => void }) {
+function RecomputeModal({ fullName, onClose }: { fullName: FullName; onClose: () => void }) {
   const recompute = useRecomputeCosts();
   const { toast } = useToast();
   const [preview, setPreview] = React.useState<RecomputeCostsResult | null>(null);
@@ -1278,8 +1300,11 @@ function RecomputeModal({ onClose }: { onClose: () => void }) {
                 <tbody className="divide-y divide-surface-border">
                   {changed.map((r) => (
                     <tr key={r.productId}>
-                      <td className="max-w-[180px] truncate px-3 py-1.5 text-navy" title={r.name}>
-                        {r.name}
+                      <td
+                        className="max-w-[180px] truncate px-3 py-1.5 text-navy"
+                        title={fullName(r.productId, r.name)}
+                      >
+                        {fullName(r.productId, r.name)}
                       </td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-navy/70">
                         {r.oldAvgCost != null ? `$${r.oldAvgCost.toFixed(4)}` : "—"}
@@ -1320,7 +1345,37 @@ export default function InventoryPage() {
   // once on mount; StockCountTab strips `amend` from the URL itself once it's consumed it.
   const { activeTab, selectTab } = useInventoryTab();
 
-  const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
+  const { data: rawStockItems = [], isLoading: stockLoading } = useStockOverview();
+  const [showRestockModal, setShowPurchaseModal] = React.useState(false);
+  const [showAdjustModal, setShowAdjustModal] = React.useState(false);
+  // Whole-catalog read (`limit: 0`): the Stock tab's "Assign to variants" gate and the full product
+  // names (SA-1216) both need every product's parent. Enabled on the Stock tab, or while a picker that
+  // lists products is open from another tab.
+  const { data: variantProductsData } = useProducts(
+    { includeVariants: true, limit: 0 },
+    { enabled: activeTab === "stock" || showAdjustModal || showRestockModal },
+  );
+  // SA-1216: a family variant is stored as just its flavor, so every row reads "<Family> - <Variant>"
+  // (the one rule, `displayProductName`) composed from this catalog. `name` is the full name from here
+  // on, so the table, the search, the pickers and the modals agree. Until the catalog arrives a row keeps
+  // its stored name.
+  const stockItems = React.useMemo(() => {
+    const catalog: any[] = variantProductsData?.data ?? [];
+    if (catalog.length === 0) return rawStockItems as StockItem[];
+    const byId = new Map<string, any>(catalog.map((c) => [c.id, c]));
+    return (rawStockItems as StockItem[]).map((i) => {
+      const c = byId.get(i.id);
+      if (!c) return i;
+      const like = {
+        name: i.name,
+        variantName: c.variantName,
+        parentProductId: c.parentProductId,
+        parent: c.parent,
+      };
+      return { ...i, name: displayProductName(like, catalog) };
+    });
+  }, [rawStockItems, variantProductsData]);
+  const fullName: FullName = (id, stored) => stockItems.find((i) => i.id === id)?.name ?? stored;
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
   // The pickers (Adjust Stock, Quick Restock, Create PO) list the active products. The stock
   // overview above already carries every field they read (id, name, sku, unit, currentStock,
@@ -1339,10 +1394,6 @@ export default function InventoryPage() {
   // no family filter on GET /products, and /inventory/overview selects neither parentProductId nor
   // the variants), and the Stock table shows every row, so the answer is needed for any of them.
   // It is only consumed by the Stock tab, so it is enabled only while that tab is showing.
-  const { data: variantProductsData } = useProducts(
-    { includeVariants: true, limit: 0 },
-    { enabled: activeTab === "stock" },
-  );
   const variantInfoById = React.useMemo(() => {
     const map = new Map<string, VariantInfo>();
     for (const p of variantProductsData?.data ?? []) {
@@ -1354,8 +1405,6 @@ export default function InventoryPage() {
     return map;
   }, [variantProductsData]);
 
-  const [showRestockModal, setShowPurchaseModal] = React.useState(false);
-  const [showAdjustModal, setShowAdjustModal] = React.useState(false);
   // When set, the next AdjustStockModal opens with this product pre-selected.
   // Cleared after the modal closes so the next "Adjust Stock" header click
   // opens with no pre-selection.
@@ -1986,6 +2035,7 @@ export default function InventoryPage() {
         {/* ── Forecasting tab ── */}
         <Tabs.Content value="forecasting" className="pt-4">
           <ForecastingTab
+            fullName={fullName}
             suppliers={suppliers as Supplier[]}
             products={products.map((p: any) => ({
               id: p.id,
@@ -2059,11 +2109,14 @@ export default function InventoryPage() {
       )}
       {showBulkCostModal && (
         <BulkSetCostModal
+          fullName={fullName}
           products={valuation?.missingCostProducts ?? []}
           onClose={() => setShowBulkCostModal(false)}
         />
       )}
-      {showRecomputeModal && <RecomputeModal onClose={() => setShowRecomputeModal(false)} />}
+      {showRecomputeModal && (
+        <RecomputeModal fullName={fullName} onClose={() => setShowRecomputeModal(false)} />
+      )}
     </div>
   );
 }
