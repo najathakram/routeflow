@@ -1451,3 +1451,75 @@ describe("PickupCompleteDialog — SA-1219: a named customer pays any amount, th
     expect(post).not.toHaveBeenCalled();
   });
 });
+
+describe("PickupCompleteDialog — SA-1232: one on-account label, a hedged line, named garbled text", () => {
+  const stub = (autoApplyCredit: number) =>
+    get.mockImplementation((url: string) =>
+      /\/statement$/.test(url)
+        ? Promise.resolve({
+            data: { outstandingAmount: 0, overdueAmount: 0, availableCredit: 0, autoApplyCredit },
+          })
+        : Promise.resolve({ data: { id: "i1", status: "SENT", total: 56, balanceDue: 56 } }),
+    );
+  const open = async (
+    props: Partial<React.ComponentProps<typeof PickupCompleteDialog>> = {},
+    credit = 0,
+  ) => {
+    stub(credit);
+    mount({ total: 56, customerId: "c1", isWalkIn: false, ...props });
+    fireEvent.click(await screen.findByRole("button", { name: "Cash" }));
+    return screen.getByLabelText("Amount tendered");
+  };
+
+  it("L1c: a hand-over with the tender cleared reads 'Put on account & hand over' and sends ON_ACCOUNT", async () => {
+    const field = await open({ handOver: true });
+    expect(screen.getByRole("button", { name: "Hand over" })).toBeInTheDocument();
+    fireEvent.change(field, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Put on account & hand over" }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "ON_ACCOUNT" } });
+  });
+
+  it("L1d: complete mode with the tender cleared reads 'Put on account & complete'", async () => {
+    const field = await open({ completeMode: true });
+    expect(screen.getByRole("button", { name: "Complete" })).toBeInTheDocument();
+    fireEvent.change(field, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Put on account & complete" })).toBeInTheDocument();
+  });
+
+  it("the plain branch keeps 'Put on account'; a typed tender takes the old labels back", async () => {
+    const field = await open();
+    fireEvent.change(field, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Put on account" })).toBeInTheDocument();
+    fireEvent.change(field, { target: { value: "50" } });
+    expect(screen.getByRole("button", { name: "Picked up" })).toBeInTheDocument();
+  });
+
+  it("the line hedges when credit may apply, and keeps the figure at credit 0", async () => {
+    const field = await open({}, 10);
+    fireEvent.change(field, { target: { value: "" } });
+    expect(
+      await screen.findByText(
+        "Nothing paid now · the total goes on account, less any credit applied",
+      ),
+    ).toBeVisible();
+  });
+
+  it("L3: a named customer typing 10.005 or 10.4011 gets the numbers copy and nothing posts", async () => {
+    const field = await open();
+    for (const text of ["10.005", "10.4011"]) {
+      fireEvent.change(field, { target: { value: text } });
+      fireEvent.click(screen.getByRole("button", { name: /^picked up$/i }));
+      expect(await screen.findByText("Enter the amount in numbers, like 50.00.")).toBeVisible();
+    }
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("L3: a named customer's plain 60.50 over 56 posts its own cents", async () => {
+    const field = await open();
+    fireEvent.change(field, { target: { value: "60.50" } });
+    fireEvent.click(screen.getByRole("button", { name: /^picked up$/i }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).toEqual({ payment: { method: "CASH", amount: 60.5 } });
+  });
+});

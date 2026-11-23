@@ -182,6 +182,8 @@ import {
   PART_PAY_FULL_COPY,
   TENDER_NOT_NUMBERS_COPY,
   onAccountCopy,
+  onAccountLabel,
+  ON_ACCOUNT_ARM_COPY,
   tenderAmount,
   tenderIntent,
   tenderTextProblem,
@@ -896,7 +898,9 @@ export function CounterSaleScreen() {
   const tenderEnter = useArmedEnter(tenderKey); // any change of method, figure or total ends the arm (A-2)
   const onTenderEnter = () =>
     tenderEnter.press(
-      tenderNeedsSecondEnter(payTotal, tenderedNum),
+      // SA-1232: an empty tender that would go on account needs the deliberate second Enter too (a habitual double Enter
+      // must not book cash already taken as owed)
+      tenderNeedsSecondEnter(payTotal, tenderedNum) || putOnAccount,
       () => void completeSale(false),
     );
   // The ONE place the payment area takes focus (Enter in an empty scan box, and the tender radiogroup's arrow keys).
@@ -2249,9 +2253,11 @@ export function CounterSaleScreen() {
                       setTendered(e.target.value);
                       clearUnderpaidError();
                     }}
+                    onBlur={tenderEnter.disarm}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
+                        if (e.repeat) return; // a held Enter is not a second press
                         onTenderEnter();
                       }
                     }}
@@ -2304,7 +2310,7 @@ export function CounterSaleScreen() {
 
             {tenderEnter.armed ? (
               <p role="status" className="text-sm font-medium text-navy">
-                Press Enter again to complete the sale.
+                {putOnAccount ? ON_ACCOUNT_ARM_COPY : "Press Enter again to complete the sale."}
               </p>
             ) : null}
           </section>
@@ -2509,7 +2515,7 @@ export function CounterSaleScreen() {
 
             {putOnAccount ? (
               <p className="text-sm font-medium text-navy" data-testid="counter-on-account">
-                {onAccountCopy(payTotal)}
+                {onAccountCopy(payTotal, creditMayApply(creditView.autoApplyCredit))}
               </p>
             ) : null}
             {partSplit ? (
@@ -2569,7 +2575,7 @@ export function CounterSaleScreen() {
                   parkBusy
                 }
               >
-                Complete &amp; show receipt
+                {putOnAccount ? onAccountLabel("show receipt") : "Complete & show receipt"}
               </Button>
               <Button
                 className="min-h-[44px]"
@@ -2587,7 +2593,7 @@ export function CounterSaleScreen() {
                   parkBusy
                 }
               >
-                Complete &amp; next sale
+                {putOnAccount ? onAccountLabel("next sale") : "Complete & next sale"}
               </Button>
             </div>
           </div>

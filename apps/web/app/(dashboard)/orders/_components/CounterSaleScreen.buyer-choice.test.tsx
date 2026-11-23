@@ -186,6 +186,7 @@ describe("S5: the choice enables Complete", () => {
     renderWithProviders(<CounterSaleScreen />);
     await scanCola();
     pick("acme", "Acme Cafe");
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the buttons keep their "Complete" names
     await waitFor(() => expect(completeShow()).toBeEnabled());
     expect(completeNext()).toBeEnabled();
     expect(screen.queryByTestId("counter-buyer-reason")).toBeNull();
@@ -224,6 +225,7 @@ describe("S5: changing the buyer mid-cart", () => {
     renderWithProviders(<CounterSaleScreen />);
     await scanCola();
     pick("acme", "Acme Cafe");
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the button keeps its "Complete" name
     await waitFor(() => expect(completeShow()).toBeEnabled());
     pick("bolt", "Bolt Deli");
     expect(screen.getByTestId("counter-buyer-choice")).toHaveTextContent("Bolt Deli");
@@ -258,6 +260,7 @@ describe("S5: park / resume and refresh keep the choice", () => {
     renderWithProviders(<CounterSaleScreen />);
     await scanCola();
     pick("acme", "Acme Cafe");
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the tender is parked with the cart, so the button keeps its "Complete" name on resume
     await waitFor(() => expect(completeShow()).toBeEnabled());
     await park();
     await resumeLatest();

@@ -27,6 +27,7 @@ import { useOptionalAuth } from "@/lib/auth-context";
 import {
   creditMayApply,
   onAccountCopy,
+  onAccountLabel,
   partPayCopy,
   partPaySplit,
   tenderAmount,
@@ -449,14 +450,16 @@ export function PickupCompleteDialog({
                     loading={complete.isPending}
                     disabled={due === null}
                   >
-                    {completeMode
-                      ? COUNTER_COPY.completeConfirm
-                      : handOver
-                        ? "Hand over"
-                        : nothingToCollect
-                          ? "Confirm picked up"
-                          : putOnAccount
-                            ? "Put on account"
+                    {putOnAccount
+                      ? onAccountLabel(
+                          completeMode ? "complete" : handOver ? "hand over" : undefined,
+                        )
+                      : completeMode
+                        ? COUNTER_COPY.completeConfirm
+                        : handOver
+                          ? "Hand over"
+                          : nothingToCollect
+                            ? "Confirm picked up"
                             : "Picked up"}
                   </Button>
                 )}
@@ -595,7 +598,7 @@ export function PickupCompleteDialog({
                 </label>
                 {hardRefusal ? null : putOnAccount ? (
                   <p className="text-sm font-medium text-navy" data-testid="pickup-on-account">
-                    {onAccountCopy(due)}
+                    {onAccountCopy(due, creditMayApply(credit.view.autoApplyCredit))}
                   </p>
                 ) : partSplit ? (
                   <p className="text-sm font-medium text-navy" data-testid="pickup-part-pay">

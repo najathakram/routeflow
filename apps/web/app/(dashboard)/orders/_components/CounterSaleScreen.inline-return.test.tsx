@@ -1,5 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils/render";
+import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { RETURN_SAVE_BLOCKED } from "./use-order-inline-return-save";
 
@@ -179,6 +180,7 @@ describe("CounterSaleScreen: an inline return rides the sale (W-863)", () => {
     await scan("BIG");
     pickAcme();
     fireEvent.click(screen.getByRole("button", { name: "Enter return line" }));
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the button keeps its "Complete" name
     complete();
     expect(await screen.findByRole("alert")).toHaveTextContent(RETURN_SAVE_BLOCKED["needs-quote"]);
     expect(mutateAsync).not.toHaveBeenCalled();
@@ -267,5 +269,37 @@ describe("CounterSaleScreen: an inline return rides the sale (W-863)", () => {
     const second = mutateAsync.mock.calls[1][0];
     expect(second.idempotencyKey).toBe(first.idempotencyKey);
     expect(second.dto.inlineReturn.returnKey).toBe(first.dto.inlineReturn.returnKey);
+  });
+});
+
+describe("SA-1232: an empty tender with a netted inline return goes on account for the net", () => {
+  it("sale $10.00, return $4.00, tender empty: the net on account, the label, the arm, and the return rides the dto", async () => {
+    quoteAmount = 4;
+    // the statement read says no credit applies, so the line states the figure
+    (apiClient.get as jest.Mock).mockImplementation((url: string) =>
+      Promise.resolve({
+        data: url.endsWith("/statement")
+          ? { outstandingAmount: 0, overdueAmount: 0, availableCredit: 0, autoApplyCredit: 0 }
+          : { taxRate: 0 },
+      }),
+    );
+    renderWithProviders(<CounterSaleScreen />);
+    await scan("BIG");
+    pickAcme();
+    fireEvent.click(screen.getByRole("button", { name: "Enter return line" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return quote answers" }));
+    expect(await screen.findByText("Nothing paid now · $6.00 goes on account")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Put on account & show receipt" }),
+    ).toBeInTheDocument();
+    const tender = screen.getByLabelText("Amount tendered");
+    fireEvent.keyDown(tender, { key: "Enter" });
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByText("Press Enter again to put this sale on account.")).toBeInTheDocument();
+    fireEvent.keyDown(tender, { key: "Enter" });
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const { dto } = mutateAsync.mock.calls[0][0];
+    expect(dto.payment).toEqual({ method: "ON_ACCOUNT" });
+    expect(dto.inlineReturn).toBeDefined();
   });
 });

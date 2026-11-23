@@ -15,6 +15,8 @@ import {
   partPaySplit,
   tenderAmount,
   tenderIntent,
+  onAccountLabel,
+  onAccountCopy,
   tenderTextProblem,
 } from "./counter-part-pay";
 import { resolveCounterDefaultTender } from "./counter-default-tender";
@@ -399,5 +401,28 @@ describe("SA-1219: tenderTextProblem", () => {
     expect(tenderTextProblem("  ")).toBeNull();
     expect(tenderTextProblem("$50")).toBeNull();
     expect(tenderTextProblem("0")).toBeNull();
+  });
+});
+
+describe("SA-1232: one on-account label, a hedged line, one tender-text reader", () => {
+  it("onAccountLabel names the action and never carries a figure", () => {
+    expect(onAccountLabel()).toBe("Put on account");
+    expect(onAccountLabel("show receipt")).toBe("Put on account & show receipt");
+    expect(onAccountLabel("hand over")).toBe("Put on account & hand over");
+  });
+  it("onAccountCopy states the figure, and hedges when credit may apply", () => {
+    expect(onAccountCopy(56)).toBe("Nothing paid now · $56.00 goes on account");
+    expect(onAccountCopy(56, false)).toBe("Nothing paid now · $56.00 goes on account");
+    expect(onAccountCopy(56, true)).toBe(
+      "Nothing paid now · the total goes on account, less any credit applied",
+    );
+  });
+  it("partPayAmountProblem reads one leading $ like tenderAmount; the rest stays refused", () => {
+    const card = { method: "CARD" as const, isWalkIn: false, total: 12.5 };
+    expect(partPayAmountProblem({ ...card, tendered: "$5" })).toBeNull();
+    expect(partPayAmountProblem({ ...card, tendered: " $5.25 " })).toBeNull();
+    for (const bad of ["abc", "1e3", "-5", "$", "$$5", "5,00"])
+      expect(partPayAmountProblem({ ...card, tendered: bad })).toBe(PART_PAY_AMOUNT_COPY);
+    expect(partPayAmountProblem({ ...card, tendered: "" })).toBeNull();
   });
 });

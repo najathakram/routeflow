@@ -525,9 +525,56 @@ describe("SA-1219: what a named customer types in Amount tendered", () => {
   it.each(["", "0"])("R4d: cash %j puts the sale on account (ON_ACCOUNT sent)", async (text) => {
     await named(text);
     expect(screen.getByText("Nothing paid now · $12.50 goes on account")).toBeInTheDocument();
-    complete();
+    // SA-1232: the commit button names the action (the empty-tender, named-customer path)
+    fireEvent.click(screen.getByRole("button", { name: "Put on account & show receipt" }));
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
     expect(sentPayment()).toEqual({ method: "ON_ACCOUNT" });
     expect(screen.queryByText(/Enter at least/)).toBeNull();
+  });
+});
+
+describe("SA-1232: the on-account line hedges when credit may apply; Card and Check read one $", () => {
+  it("credit that may apply: the line states no figure", async () => {
+    autoApplyCredit = 10;
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    expect(
+      await screen.findByText(
+        "Nothing paid now · the total goes on account, less any credit applied",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing paid now · $12.50 goes on account")).toBeNull();
+  });
+
+  it("credit ready and 0: the line keeps the figure", async () => {
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    expect(
+      await screen.findByText("Nothing paid now · $12.50 goes on account"),
+    ).toBeInTheDocument();
+  });
+
+  it("CARD with Amount paying now '$5' sends 5", async () => {
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.change(screen.getByLabelText("Amount paying now"), { target: { value: "$5" } });
+    complete();
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(sentPayment()).toEqual({ method: "CARD", amount: 5 });
+  });
+
+  it.each(["abc", "1e3", "-5"])("CARD with Amount paying now %j is still refused", async (text) => {
+    renderTill(<CounterSaleScreen />);
+    pickPlain();
+    await scanCase();
+    fireEvent.click(screen.getByRole("radio", { name: "Card" }));
+    fireEvent.change(screen.getByLabelText("Amount paying now"), { target: { value: text } });
+    complete();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
   });
 });

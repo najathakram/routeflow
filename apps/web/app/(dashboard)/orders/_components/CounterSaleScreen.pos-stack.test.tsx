@@ -159,9 +159,9 @@ describe("POS stack: re-price x line row x Undo x checkout", () => {
     await scan("COLA");
     pickAcme();
     await waitFor(() => expect(screen.getByTestId("counter-reprice-busy")).toBeInTheDocument());
+    click("Exact"); // a paid sale: the buttons keep their "Complete" names (an empty tender reads "Put on account")
     expect(completeBtn()).toBeDisabled();
     expect(nextBtn()).toBeDisabled();
-    click("Exact");
     fireEvent.click(completeBtn());
     expect(mutateAsync).not.toHaveBeenCalled();
     release({ data: [] });

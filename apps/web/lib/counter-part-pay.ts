@@ -53,9 +53,21 @@ export function tenderIntent(input: PartPayInput): TenderIntent {
   return paid > 0 ? "PAY_PART" : "ON_ACCOUNT";
 }
 
-/** The line under the total when nothing is paid now: "Nothing paid now · $56.00 goes on account". */
-export const onAccountCopy = (total: number): string =>
-  `Nothing paid now · ${formatReceiptMoney(total)} goes on account`;
+/**
+ * The line under the total when nothing is paid now: "Nothing paid now · $56.00 goes on account". With credit that may apply
+ * the server sweeps it first, so the figure is not stated (as `partPayCopy`).
+ */
+export const onAccountCopy = (total: number, creditMayApply = false): string =>
+  creditMayApply
+    ? "Nothing paid now · the total goes on account, less any credit applied"
+    : `Nothing paid now · ${formatReceiptMoney(total)} goes on account`;
+
+/** SA-1232: the name of every button that commits an empty tender as On account ("Put on account & next sale"); no figure. */
+export const onAccountLabel = (then?: string): string =>
+  then ? `Put on account & ${then}` : "Put on account";
+
+/** The status line while Enter waits for its second press on an empty tender that would go on account. */
+export const ON_ACCOUNT_ARM_COPY = "Press Enter again to put this sale on account.";
 
 /** True when `tendered` is a real part payment of `total`: more than a cent's worth of nothing, and less than all of it. */
 function isPart(total: number, tendered: number): boolean {
@@ -164,8 +176,9 @@ export function partPayAmountProblem(input: {
   autoApplyCredit?: number | null | "failed";
 }): string | null {
   if (input.isWalkIn || (input.method !== "CHECK" && input.method !== "CARD")) return null;
-  const raw = input.tendered.trim();
-  if (raw === "") return null;
+  const typed = input.tendered.trim();
+  if (typed === "") return null;
+  const raw = withoutDollar(typed); // the one reader of tender text (a lone "$" is not blank: it is refused)
   const plain = PLAIN_MONEY.test(raw);
   if (!plain || !(Number(raw) > 0)) return PART_PAY_AMOUNT_COPY;
   if (input.total !== undefined && roundMoney(Number(raw)) > roundMoney(input.total)) {
