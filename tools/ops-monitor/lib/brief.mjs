@@ -8,6 +8,7 @@ import { DONE_STATUSES } from "./schema.mjs";
 import { parseEta } from "./ids.mjs";
 import { deepMasker, maskText } from "./mask.mjs";
 import { laneNow, pickNext } from "./next.mjs";
+import { commentsFor, isUnread, renderComment } from "./inbox.mjs";
 
 // Same owner-facing words as snapshot.mjs STATUS_WORDS (not imported: the hooks must load fast).
 const STATUS_WORDS = {
@@ -245,6 +246,18 @@ function maskInputs(inputs, names) {
   };
 }
 
+/** Unread comments for `me` (newest 5 shown), as the brief's first section. */
+function inboxLines(state, me, seen, now, clientNames) {
+  if (!me) return { total: 0, lines: [] };
+  const unread = commentsFor(state, me).filter((x) => isUnread(x.comment, seen));
+  return {
+    total: unread.length,
+    lines: unread
+      .slice(-5)
+      .map((x) => renderComment(x.comment, state, { now, clientNames, replyHint: false })),
+  };
+}
+
 // ── brief ───────────────────────────────────────────────────────────────────
 
 /**
@@ -263,6 +276,8 @@ export function renderBrief(
     maxLines = 25,
     short = false,
     utcOffsetMin = 0,
+    me = null,
+    inboxSeen = null,
   } = {},
 ) {
   // Mask every input text BEFORE a line is built, clipped or cut: a client name must never
@@ -273,6 +288,8 @@ export function renderBrief(
     if (part.lines.length === 0) return;
     sections.push({ key, title, total: part.total, lines: part.lines });
   };
+  const inbox = inboxLines(state, me, inboxSeen, now, clientNames);
+  add("inbox", `${plural(inbox.total, "new comment", "new comments")} for you (rf inbox)`, inbox);
   add("hurting", "Hurting now", hurtingNow(state, snapshot));
   add("owner", "Waiting on the owner", waitingOnOwner(state, snapshot));
   if (!short) {
@@ -287,7 +304,7 @@ export function renderBrief(
 
   // Trim to fit: take lines from the lowest-priority section that still has more than one line,
   // then drop whole sections from the bottom.
-  const priority = ["hurting", "owner", "queue", "shipping", "lanes"];
+  const priority = ["inbox", "hurting", "owner", "queue", "shipping", "lanes"];
   const rank = (s) => priority.indexOf(s.key);
   const size = () => 1 + footer.length + sections.reduce((n, s) => n + 1 + s.lines.length, 0);
   while (size() > maxLines && sections.length > 0) {
@@ -300,7 +317,7 @@ export function renderBrief(
   for (const s of sections.sort((a, b) => order(a.key) - order(b.key))) {
     const shown = s.lines.filter((l) => !l.startsWith("    ")).length;
     const count =
-      s.total > shown && s.key !== "queue" && s.key !== "shipping"
+      s.total > shown && !["queue", "shipping", "inbox"].includes(s.key)
         ? ` (showing ${shown} of ${s.total})`
         : "";
     out.push(`${s.title}${count}:`, ...s.lines);
@@ -310,7 +327,7 @@ export function renderBrief(
 }
 
 // Display order (differs from trim priority: shipping reads before the owner's list).
-const DISPLAY = ["hurting", "queue", "shipping", "owner", "lanes"];
+const DISPLAY = ["inbox", "hurting", "queue", "shipping", "owner", "lanes"];
 const order = (k) => DISPLAY.indexOf(k);
 
 // ── since ───────────────────────────────────────────────────────────────────

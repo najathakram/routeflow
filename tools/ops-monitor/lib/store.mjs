@@ -605,6 +605,12 @@ export function validateAgainstState(ev, state, { bugIds = new Set() } = {}) {
         else if (known(to))
           errors.push(`cannot rename ${ev.item} to ${to}: item ${to} already exists`);
       }
+      if (ev.kind === "comment" && ev.data?.replyTo) {
+        const parent = (state.comments ?? []).find((c) => c.id === ev.data.replyTo);
+        if (!parent) errors.push(`no comment ${ev.data.replyTo} to reply to`);
+        else if (parent.item !== ev.item)
+          errors.push(`comment ${ev.data.replyTo} is on ${parent.item}, not ${ev.item}`);
+      }
       if (ev.kind === "claim") {
         const held = state.items.get(ev.item)?.claimedBy;
         if (held && held !== ev.lane && !ev.data.steal) {
