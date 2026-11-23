@@ -31,7 +31,8 @@ import {
   lockFamilyRow,
   readFamilyPriceMode,
 } from "../products/family-price";
-import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { billLineUnit, linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { editedLinePack, assertWholeLotReceive } from "../vendor-bills/bill-line-identity";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { bareVariantLabel } from "../products/product-variant-name";
@@ -1789,6 +1790,15 @@ export class InventoryService {
         const outstanding = item.qtyOrdered.minus(item.qtyReceived);
         const actualQty = receivedQty;
         if (actualQty <= 0) continue;
+        // SA-1227 MEDIUM-2: a lot line is received in whole packs (pieces here, packs in the check).
+        assertWholeLotReceive(
+          {
+            description: prod?.name ?? item.productId,
+            packSize: item.packSize,
+            unitLabel: item.unitLabel,
+          },
+          new Prisma.Decimal(String(actualQty)).div(billLineUnit(item).factor),
+        );
         if (outstanding.lt(actualQty)) {
           throw new BadRequestException(
             `Cannot receive ${actualQty} of "${prod?.name ?? item.productId}" — only ${outstanding} ` +
@@ -2386,6 +2396,18 @@ export class InventoryService {
       for (const line of items) {
         if (!productIds.has(line.productId))
           throw new NotFoundException(`Product ${line.productId} not found`);
+      }
+      // SA-1238 A2/A3: a labelled line carries its stored pack; only a changed line is judged.
+      for (const line of items) {
+        const ex = line.id ? existingById.get(line.id) : undefined;
+        if (!ex) continue;
+        const description = products.find((p) => p.id === line.productId)?.name ?? line.productId;
+        line.packSize = editedLinePack(ex, {
+          productId: line.productId,
+          packSize: line.packSize,
+          qty: line.qtyOrdered,
+          description,
+        }) as typeof line.packSize;
       }
       const removed = po.items.filter((i) => !keptIds.has(i.id));
 

@@ -441,4 +441,160 @@ describe("SA-1224 MED-1 and MED-2", () => {
     const { res } = await edit([one], [echo(one, { packSize: undefined, unitCost: 9 })]);
     expect(res).toBeNull();
   });
+
+  describe("SA-1227: one whole-lot check on every edit row", () => {
+    const piece = { ...PLAIN, id: "it-pc", unitLabel: "1 Piece", packSize: null };
+    const NOT_WHOLE = { status: 400, code: "LOT_QTY_NOT_WHOLE" };
+
+    it("R1: a stated 1 Piece row re-packed to a labelled 6 at qty 0.5 is 400, writes nothing", async () => {
+      const { res, prisma } = await edit(
+        [piece],
+        [echo(piece, { packSize: 6, qty: 0.5, unitLabel: "6 Pieces" })],
+      );
+      expect(res).toEqual(NOT_WHOLE);
+      expect(prisma.vendorBill.update).not.toHaveBeenCalled();
+    });
+
+    it("a new no-id row with pack 6, label and qty 0.5 is 400", async () => {
+      const { res } = await edit(
+        [piece],
+        [
+          echo(piece),
+          { description: "x", qty: 0.5, unitCost: 3, packSize: 6, unitLabel: "6 Pieces" },
+        ],
+      );
+      expect(res).toEqual(NOT_WHOLE);
+    });
+
+    it("green: qty 2 saves; a price-only 1 Piece edit saves", async () => {
+      expect((await edit([piece], [echo(piece, { packSize: 6, qty: 2 })])).res).toBeNull();
+      expect((await edit([piece], [echo(piece, { unitCost: 9 })])).res).toBeNull();
+    });
+  });
+
+  describe("SA-1227 follow-up: relabel on re-pack, locked lines, one dup helper", () => {
+    const piece = { ...PLAIN, id: "it-pc", unitLabel: "1 Piece", packSize: null };
+
+    it("R2: the web shape (no label) re-packed to 6 at 0.5 stores an unlabelled case", async () => {
+      const { res, prisma } = await edit([piece], [echo(piece, { packSize: 6, qty: 0.5 })]);
+      expect(res).toBeNull();
+      expect(updateRows(prisma)[0]).toMatchObject({ packSize: 6, unitLabel: null });
+    });
+
+    it("R3: a labelled re-pack at qty 2 is stored as 6 Pieces, not 1 Piece", async () => {
+      const { res, prisma } = await edit(
+        [piece],
+        [echo(piece, { packSize: 6, qty: 2, unitLabel: "6 Pieces" })],
+      );
+      expect(res).toBeNull();
+      expect(updateRows(prisma)[0]).toMatchObject({ packSize: 6, unitLabel: "6 Pieces" });
+    });
+
+    it("M3 control: a price-only edit keeps the stored label", async () => {
+      const { prisma } = await edit([piece], [echo(piece, { unitCost: 9 })]);
+      expect(updateRows(prisma)[0]).toMatchObject({ unitLabel: "1 Piece" });
+    });
+
+    it.each([
+      ["description", { description: "Other" }],
+      ["sku", { sku: "NEW-1" }],
+      ["lineTotal", { lineTotal: 99 }],
+    ])(
+      "a locked line may change its price only: %s is 409 and nothing is written",
+      async (_n, over) => {
+        const { res, prisma } = await edit([LOT, CHILD2], [echo(LOT, over), echo(CHILD2)]);
+        expect(res).toEqual({ status: 409, code: "SPLIT_LINE_LOCKED" });
+        expect(prisma.vendorBill.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it("green: a locked line's price edit that echoes description, sku and lineTotal saves", async () => {
+      const stored = { ...LOT, sku: "S-1", lineTotal: D(7.5) };
+      const { res } = await edit(
+        [stored, CHILD2],
+        [echo(stored, { sku: "S-1", lineTotal: 7.5, unitCost: 8 }), echo(CHILD2)],
+      );
+      expect(res).toBeNull();
+    });
+
+    it("R8: a lone part lot passes save 1 (add the new lot) and save 2 (drop it)", async () => {
+      const part = {
+        ...LOT,
+        id: "it-part",
+        packSize: 6,
+        unitLabel: "6 Pieces",
+        qty: D(0.5),
+        familyGroupId: null,
+        familyProductId: null,
+      };
+      const fresh = {
+        description: "Soda",
+        productId: "p-1",
+        qty: 1,
+        unitCost: 3,
+        packSize: 6,
+        unitLabel: "6 Pieces",
+      };
+      expect((await edit([part], [echo(part), fresh])).res).toBeNull();
+      const saved = { ...part, id: "it-new", qty: D(1) };
+      expect((await edit([part, saved], [echo(saved)])).res).toBeNull();
+    });
+
+    it("R8 receive leg: a full receive before save 2 is 400 with the can't-be-received text", async () => {
+      const { service, prisma } = await make();
+      const part = { ...LOT, packSize: 6, unitLabel: "6 Pieces", qty: D(0.5), familyGroupId: null };
+      const item = { ...part, product: { id: "p-1", name: "Soda", currentStock: D(0) } };
+      prisma.vendorBill.findUnique.mockResolvedValue({ ...draft([item]), billDate: new Date() });
+      const e: any = await service.receive("bill-1", {}, "u1").then(
+        () => null,
+        (x) => x,
+      );
+      expect(e.getResponse()).toMatchObject({
+        code: "RECEIVE_PARTIAL_UNIT",
+        message:
+          '"Soda lot" is one unit of 6 pieces and can\'t be received in part. Add it again as a new line in whole packs, save, then remove this line.',
+      });
+    });
+
+    it("P0: create with a 1 Piece label and no pack stores 1 Piece with a null pack", async () => {
+      const { service, prisma } = await make();
+      prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1" }]);
+      prisma.vendorBill.findFirst.mockResolvedValue(null);
+      prisma.vendorBill.create.mockResolvedValue({ id: "b", items: [] });
+      await service.create({
+        supplierId: "sup-1",
+        items: [{ description: "x", qty: 1, unitCost: 3, unitLabel: "1 Piece" }],
+      } as any);
+      const rows = prisma.vendorBill.create.mock.calls[0][0].data.items.createMany.data;
+      expect(rows[0]).toMatchObject({ unitLabel: "1 Piece", packSize: null });
+    });
+
+    it("R7: update() reads description, sku and lineTotal of the stored lines", async () => {
+      const { prisma } = await edit([PLAIN], [echo(PLAIN)]);
+      expect(prisma.vendorBill.findUnique.mock.calls[0][0].include.items.select).toMatchObject({
+        description: true,
+        sku: true,
+        lineTotal: true,
+      });
+    });
+
+    it("L4 (LOW b): a lone re-sent lot with no id is 409 and never stored unlabelled", async () => {
+      const { res } = await edit([LOT], [{ description: "x", qty: 1, unitCost: 1, packSize: 7 }]);
+      expect(res).toEqual({ status: 409, code: "SPLIT_LINE_LOCKED" });
+    });
+
+    it("R4: the identity file uses the shared duplicate helper, no inline copy", () => {
+      const src = require("fs").readFileSync(
+        require("path").join(__dirname, "bill-line-identity.ts"),
+        "utf8",
+      );
+      expect(src).toContain("assertNoDuplicateLineIds(");
+      expect(src).not.toContain("appears twice");
+    });
+
+    it("L1: the same unlocked id twice is the shared helper's DUPLICATE_LINE_ID", async () => {
+      const { res } = await edit([PLAIN], [echo(PLAIN), echo(PLAIN)]);
+      expect(res).toEqual({ status: 400, code: "DUPLICATE_LINE_ID" });
+    });
+  });
 });
