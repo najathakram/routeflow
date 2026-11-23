@@ -102,6 +102,13 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Order drafts: autosave, local mirror, resume | [`api`](api/codemap-refresh-2026-11-22.md#order-drafts) → `drafts/drafts.service.ts`; web `lib/order-draft/engine.ts` |
 | Payment receipts: idempotency key, ref dedupe, edit | [`api`](api/codemap-refresh-2026-11-22.md#payment-receipts) → `invoices/payment-idempotency.ts`, `payment-ref-dedupe.ts` |
 | Billing catch-up: claim, plan, checkout | [`api`](api/codemap-refresh-2026-11-22.md#billing-catchup) → `billing/catchup-claim.ts`, `catchup-plan.ts`, `catchup-checkout.service.ts` |
+| PO bill line judged in its own unit (check X) | [`api`](api/landing-2026-11-23-w39.md) → `vendor-bills/po-bill-match.ts` |
+| Bill-line unit and identity (lot, split child) | [`api`](api/landing-2026-11-23-w39.md) → `vendor-bills/bill-line-identity.ts`, `bill-item-data.ts` |
+| Per-tenant sidebar layout (pinned) | [`api`](api/landing-2026-11-23-w39.md) → `system-config/nav-layout-settings.ts` |
+| Buyer portal spend (invoices less credit notes) | [`api`](api/landing-2026-11-23-w39.md) → `buyer/buyer-spend.ts` |
+| Product display name (Family - Variant) | [`api`](api/landing-2026-11-23-w39.md) → `packages/types/api/product-name.ts` |
+| Inventory dialog panel (scroll, keep Save in view) | [`web`](web/landing-2026-11-23-w39.md) → `inventory/_components/modal-panel.ts` |
+| Heavy-slot priority, max-cpu file; campaign-check timeout | [`api`](api/landing-2026-11-23-w39.md) → `scripts/lib/heavy-slot.mjs`, `campaign-force-run.cjs` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →
