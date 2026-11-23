@@ -1,6 +1,7 @@
 import { cn } from "@routeflow/ui/web";
 import type { InvoiceAccountRow } from "@routeflow/types";
 import { fmt } from "@/lib/formatting";
+import { InvoiceAccountRows } from "@/components/InvoiceAccountRows";
 import { OpenBalanceButton } from "@/components/account-statement/OpenBalanceButton";
 
 export interface InvoiceTotalsSummaryProps {
@@ -129,32 +130,19 @@ export function InvoiceTotalsSummary({
         <span className="money">{fmt(balanceDue)}</span>
       </div>
       {/* SA-1197: the customer's open balance, smaller and neutral so Balance due stays the one big figure. */}
-      {accountBlock.length > 0 && (
-        <div data-testid="invoice-account-block" className="mt-2 space-y-0.5 text-xs text-navy/70">
-          {accountBlock.map((row) => {
-            if (row.amount == null)
-              return (
-                <p key={row.kind} className="pt-1 font-semibold">
-                  {row.label}
-                </p>
-              );
-            const balanceFigure = <span className="money">{fmt(row.amount)}</span>;
-            return (
-              <div key={row.kind} className="flex items-center justify-between">
-                <span>{row.label}</span>
-                {TAPS.has(row.kind) ? (
-                  // A DRAFT's block is a forecast the statement does not hold yet (C15): plain, never a tap to other cents.
-                  <OpenBalanceButton customerId={customerId} unavailable={isDraft} chevron>
-                    {balanceFigure}
-                  </OpenBalanceButton>
-                ) : (
-                  <span className="money">{fmt(row.amount)}</span>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <InvoiceAccountRows
+        rows={accountBlock}
+        figure={(row, node) =>
+          TAPS.has(row.kind) ? (
+            // A DRAFT's block is a forecast the statement does not hold yet (C15): plain, never a tap to other cents.
+            <OpenBalanceButton customerId={customerId} unavailable={isDraft} chevron>
+              {node}
+            </OpenBalanceButton>
+          ) : (
+            node
+          )
+        }
+      />
     </div>
   );
 }

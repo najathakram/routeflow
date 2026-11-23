@@ -33,6 +33,7 @@ import { invoiceStatusVariant } from "@/lib/buyer-invoice-status";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { isPaymentTermsText } from "@/lib/invoice-sale-terms";
+import { InvoiceAccountRows } from "@/components/InvoiceAccountRows";
 import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
 
@@ -337,6 +338,13 @@ export default function BuyerInvoiceDetailPage() {
           </div>
         ))}
       </div>
+
+      {/* SA-1228 D5: the account rows the server built (the business's switch), printed as given; no staff tap. */}
+      {invoice.accountBlock?.length ? (
+        <div className="mb-6 rounded-xl border border-surface-border bg-white p-4 md:ml-auto md:max-w-sm">
+          <InvoiceAccountRows rows={invoice.accountBlock} className="" />
+        </div>
+      ) : null}
 
       {/* Line items */}
       <div className="rounded-xl border border-surface-border bg-white overflow-hidden mb-6">

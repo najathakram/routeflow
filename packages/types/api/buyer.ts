@@ -21,6 +21,7 @@ import type {
 import type { LineComponentView } from "./orders";
 import type { InvoiceDisplayUnitView, PerBaseUnit } from "./invoices";
 import type { DecimalWire } from "./decimal";
+import type { InvoiceAccountRow } from "./invoice-account";
 
 export interface LockedCategory {
   id: string;
@@ -436,6 +437,11 @@ export interface BuyerInvoiceListItem {
   revisedAt?: string | null;
   isOverdue: boolean;
   customer: { id: string; businessName: string };
+}
+
+/** SA-1228 D5: GET /buyer/invoices/:id only; the server's rows, printed as given (L-119). */
+export interface BuyerInvoiceDetailAccount {
+  accountBlock?: InvoiceAccountRow[];
 }
 
 // ─── Invoice detail lines + payments (#2703, SA-562/562a: server truth) ─────────

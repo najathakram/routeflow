@@ -1,4 +1,5 @@
 import type {
+  BuyerInvoiceDetailAccount,
   BuyerInvoiceItem,
   BuyerInvoiceListItem,
   BuyerInvoicePayment,
@@ -203,9 +204,16 @@ const INVOICE_LIST = {
   customer: { plan: CUSTOMER },
 } satisfies Record<keyof BuyerInvoiceListItem, Plan>;
 
+// SA-1228 D5: the detail read's account rows ride the detail response only.
+const INVOICE_DETAIL_ACCOUNT = { accountBlock: "keep" } satisfies Record<
+  keyof BuyerInvoiceDetailAccount,
+  Leaf
+>;
+
 // The detail response is the list row plus its lines and payments.
 const INVOICE: Record<string, Plan> = {
   ...INVOICE_LIST,
+  ...INVOICE_DETAIL_ACCOUNT,
   items: { plan: INVOICE_ITEM, many: true },
   payments: { plan: PAYMENT, many: true },
 };
