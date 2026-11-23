@@ -66,7 +66,12 @@
   // U3: the long panels start collapsed, with a count line so the size is still visible.
   const COLLAPSED_BY_DEFAULT = new Set(["alarms", "map", "tree"]);
   const panelCollapsedByDefault = (key) => COLLAPSED_BY_DEFAULT.has(key);
-  const PANEL_TITLE = { alarms: "Drift & problems", map: "System map", tree: "Item tree" };
+  const PANEL_TITLE = {
+    alarms: "Drift & problems",
+    map: "System map",
+    tree: "Item tree",
+    triage: "Triage",
+  };
   function panelCountLine(key, s) {
     const title = PANEL_TITLE[key];
     if (!title) return null;
@@ -75,8 +80,28 @@
       const errs = alarms.filter((a) => a.severity === "error").length;
       return `${title} (${alarms.length})` + (errs ? ` · ${plural(errs, "error")}` : "");
     }
+    if (key === "triage") return `${title} (${plural(triageRows(s?.items).length, "draft")})`;
     if (key === "map") return `${title} (${plural((s?.map?.domains ?? []).length, "area")})`;
     return `${title} (${plural((s?.items ?? []).length, "item")})`;
+  }
+
+  // Tester drafts waiting for the lead (rf triage), oldest first, with who reported each.
+  function triageRows(items) {
+    return (Array.isArray(items) ? items : [])
+      .filter((it) => it?.status === "draft")
+      .sort(
+        (a, b) =>
+          (Date.parse(a.createdAt ?? "") || 0) - (Date.parse(b.createdAt ?? "") || 0) ||
+          (a.id < b.id ? -1 : 1),
+      )
+      .map((it) => ({
+        id: it.id,
+        title: it.title,
+        who: it.reportedByName ?? it.reportedBy ?? "someone",
+        at: it.createdAt ?? null,
+        screen: it.screen ?? null,
+        evidence: it.evidence ?? null,
+      }));
   }
 
   // U4: alarms grouped by kind, worst first.
@@ -178,6 +203,7 @@
     panelCountLine,
     announceText,
     announceDue,
+    triageRows,
   };
   // Under node (the unit tests) there is no document: hand the pure functions out and stop.
   if (typeof document === "undefined") {
@@ -187,6 +213,7 @@
 
   // ---------- plain-language labels (business layer) ----------
   const STATUS_WORD = {
+    draft: "Waiting for triage",
     idea: "Idea",
     planned: "Planned",
     spec: "Being specified",
@@ -441,6 +468,14 @@
     "What each release delivers and how far along it is",
   );
   makePanel("owner", "Owner queue", "", ["specs"], "Owner", "Waiting on a decision");
+  makePanel(
+    "triage",
+    "Triage",
+    "",
+    ["specs"],
+    "Triage",
+    "Tester bug reports waiting for the lead to file or answer",
+  );
   makePanel(
     "prs",
     "PRs & branches",
@@ -1490,6 +1525,42 @@
     if (!rows.length) body.append(el("div", { class: "empty", text: "No sessions reported yet." }));
   }
 
+  function renderTriage() {
+    const body = clear(panels.triage.body);
+    const rows = triageRows(snap.items);
+    if (!rows.length) {
+      body.append(el("div", { class: "empty", text: "No tester reports waiting." }));
+      return;
+    }
+    for (const r of rows) {
+      body.append(
+        el(
+          "div",
+          { class: "alarm" },
+          pill("Waiting for triage", "info"),
+          el(
+            "div",
+            { class: "msg" },
+            openerBtn(r.id, r.title),
+            el("div", {
+              class: "muted",
+              "data-at": r.at ?? undefined,
+              text: `From ${r.who}${r.at ? `, ${agoIso(r.at)}` : ""}${r.screen ? ` · ${r.screen}` : ""}`,
+            }),
+            r.evidence && /^https?:\/\//.test(r.evidence)
+              ? el("a", {
+                  href: r.evidence,
+                  target: "_blank",
+                  rel: "noopener noreferrer",
+                  text: "Evidence",
+                })
+              : null,
+          ),
+        ),
+      );
+    }
+  }
+
   function renderOwner() {
     const body = clear(panels.owner.body);
     const q = snap.ownerQueue ?? [];
@@ -2499,6 +2570,38 @@
         section("How we're solving it", it.solution ? para(it.solution) : unwritten()),
       );
     }
+    // A tester's report: how to see it, where, and the link to their screenshot or recording.
+    if (it.steps || it.screen || it.evidence) {
+      sheetBody.append(
+        section(
+          "How to see it",
+          el(
+            "div",
+            null,
+            it.steps ? el("p", { class: "steps", text: it.steps }) : null,
+            it.screen ? el("p", { class: "muted", text: `Screen: ${it.screen}` }) : null,
+            it.evidence && /^https?:\/\//.test(it.evidence)
+              ? el(
+                  "p",
+                  null,
+                  el("a", {
+                    href: it.evidence,
+                    target: "_blank",
+                    rel: "noopener noreferrer",
+                    text: "Evidence",
+                  }),
+                )
+              : null,
+            it.reportedByName || it.reportedBy
+              ? el("p", {
+                  class: "muted",
+                  text: `Reported by ${it.reportedByName ?? it.reportedBy}`,
+                })
+              : null,
+          ),
+        ),
+      );
+    }
     if (bug) {
       const pl = prLink(bug);
       const links = (bug.items ?? []).filter((x) => x !== id);
@@ -2665,6 +2768,7 @@
     renderMap();
     renderReleases();
     renderOwner();
+    renderTriage();
     renderPrs();
     const key =
       JSON.stringify([...new Set(snap.items.map((i) => i.lane))].sort()) + snap.items.length;

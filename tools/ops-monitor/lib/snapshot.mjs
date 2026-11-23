@@ -41,6 +41,7 @@ export const STATUS_WORDS = {
   shipping: "Shipping",
   planned: "Planned",
   idea: "Idea",
+  draft: "Waiting for triage",
   parked: "Parked",
   dropped: "Dropped",
 };
@@ -51,6 +52,8 @@ export function statusLabelFor(item, { booked = false, answered = false } = {}) 
     if (answered || item.status === "live" || item.status === "verified") return "Answered";
     if (booked) return "Booked";
   }
+  // A tester draft the lead filed in the bug registry: closed here, tracked under its B-id.
+  if (item.status === "dropped" && (item.tags ?? []).includes("promoted")) return "Promoted";
   return STATUS_WORDS[item.status] ?? item.status;
 }
 
@@ -573,6 +576,7 @@ export function buildSnapshot({
       domain: itemDomain(it, bugById),
       claimedBy: it.claimedBy,
       claimedByName: memberName(cfg, it.claimedMember),
+      reportedByName: memberName(cfg, it.reportedBy),
       blocked: it.blocked
         ? {
             ...it.blocked,
