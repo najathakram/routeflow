@@ -31,7 +31,8 @@ import {
   lockFamilyRow,
   readFamilyPriceMode,
 } from "../products/family-price";
-import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { billLineUnit, linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { assertWholeLotReceive } from "../vendor-bills/bill-line-identity";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { bareVariantLabel } from "../products/product-variant-name";
@@ -1736,6 +1737,15 @@ export class InventoryService {
         const outstanding = item.qtyOrdered.minus(item.qtyReceived);
         const actualQty = receivedQty;
         if (actualQty <= 0) continue;
+        // SA-1227 MEDIUM-2: a lot line is received in whole packs (pieces here, packs in the check).
+        assertWholeLotReceive(
+          {
+            description: prod?.name ?? item.productId,
+            packSize: item.packSize,
+            unitLabel: item.unitLabel,
+          },
+          new Prisma.Decimal(String(actualQty)).div(billLineUnit(item).factor),
+        );
         if (outstanding.lt(actualQty)) {
           throw new BadRequestException(
             `Cannot receive ${actualQty} of "${prod?.name ?? item.productId}" — only ${outstanding} ` +
