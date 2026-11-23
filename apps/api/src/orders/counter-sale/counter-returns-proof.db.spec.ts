@@ -359,7 +359,7 @@ describeDb("D8 - the counter return money on Postgres", () => {
   const lines = (productId: string, qty = 1): Item[] => [{ productId, qty } as Item];
   const returnOf = (productId: string, rk: string, boxes = 0, pieces = 1): InlineReturn => ({
     returnKey: rk,
-    items: [{ productId, qty: 1, boxes, pieces, restock: true }],
+    items: [{ productId, qty: 1, boxes, pieces }],
   });
 
   /** What a sale left behind, by its Idempotency-Key. */
@@ -408,6 +408,10 @@ describeDb("D8 - the counter return money on Postgres", () => {
       cancel: rows.filter((m) => String(m.reference).startsWith("RET-CANCEL-")),
     };
   }
+
+  /** The restock movements one return booked, by its own reference (never by product). */
+  const movementsOf = (returnId: string) =>
+    raw.stockMovement.findMany({ where: { reference: `RET-${returnId.slice(0, 8)}` } });
 
   /** The $100 sale with a $40 inline return, the demo's till sale. */
   async function demoSale(env: Env, payment: Pay) {
@@ -507,6 +511,7 @@ describeDb("D8 - the counter return money on Postgres", () => {
       cashTendered: res.cashTendered,
     });
     expect(res.balanceDue).toBeCloseTo(0, 2);
+    expect(res.cashTendered).toBeUndefined(); // no cash changed hands, so none is served
     expect(ofMethod(f.live, ...TENDER)).toHaveLength(0);
     const cn = await raw.creditNote.findUniqueOrThrow({
       where: { id: f.returns[0].creditNoteId! },
@@ -547,6 +552,7 @@ describeDb("D8 - the counter return money on Postgres", () => {
       cash: sum(ofMethod(f.live, "CASH")),
       served: { cashTendered: res.cashTendered, balanceDue: res.balanceDue },
     });
+    expect(invoiceTotal).toBeCloseTo(108.25, 2);
     expect(Number(item.subtotal)).toBeCloseTo(40, 2);
     expect(Number(item.taxAmount)).toBeCloseTo(3.3, 2);
     expect(Number(ret.creditTax)).toBeCloseTo(3.3, 2);
@@ -556,20 +562,21 @@ describeDb("D8 - the counter return money on Postgres", () => {
     expect(Number(cn.amount)).toBeCloseTo(expected, 2);
     expect(Number(cn.amount)).toBeCloseTo(43.3, 2);
     expect(sum(ofMethod(f.live, "CASH"))).toBeCloseTo(roundMoney(invoiceTotal - 43.3), 2);
+    expect(sum(ofMethod(f.live, "CASH"))).toBeCloseTo(64.95, 2);
+    expect(res.cashTendered).toBeCloseTo(64.95, 2);
     expect(confirmedRemaining(invoiceTotal, f.payments)).toBeCloseTo(0, 2);
     expect(res.balanceDue).toBeCloseTo(0, 2);
   }, 60_000);
 
-  it("R5) a returned box: stored 24 pieces and one 24-piece restock, the credit is the box's subtotal, the served item carries its line", async () => {
+  /** A source sale of one box of `case24`, then a $100 sale ringing that box back through the till's request. */
+  async function boxReturn(reason?: string) {
     const case24 = await mkProduct(plain, "case24", "48.00", 24);
     const customerId = await mkCustomer(plain);
     const source = await ring(
       plain,
       customerId,
       [{ productId: case24, boxes: 1, pieces: 0 } as Item],
-      {
-        method: "ON_ACCOUNT",
-      },
+      { method: "ON_ACCOUNT" },
     );
     const sourceLine = await raw.orderItem.findFirstOrThrow({ where: { orderId: source.orderId } });
     const key = randomUUID();
@@ -580,7 +587,7 @@ describeDb("D8 - the counter return money on Postgres", () => {
       { method: "CASH" },
       {
         key,
-        inlineReturn: { ...returnOf(case24, `rk-${key}`, 1, 0), reason: "DAMAGED" },
+        inlineReturn: { ...returnOf(case24, `rk-${key}`, 1, 0), ...(reason ? { reason } : {}) },
       },
     );
     const f = await footprint(plain, key);
@@ -588,23 +595,20 @@ describeDb("D8 - the counter return money on Postgres", () => {
     const cn = await raw.creditNote.findUniqueOrThrow({
       where: { id: f.returns[0].creditNoteId! },
     });
-    const mv = await movements(case24);
-    obs("R5", {
-      sourceLine: {
-        unitPrice: Number(sourceLine.unitPrice),
-        subtotal: Number(sourceLine.subtotal),
-        qty: Number(sourceLine.qty),
-        boxes: sourceLine.boxes,
-        pieces: sourceLine.pieces,
-        unitsPerBox: sourceLine.unitsPerBox,
-      },
-      stored: { qty: Number(item.qty), subtotal: Number(item.subtotal), credit: Number(cn.amount) },
-      movements: mv.ret.map((m) => ({ ref: m.reference, qty: Number(m.quantity) })),
+    const mv = await movementsOf(f.returns[0].id);
+    return { res, sourceLine, item, cn, mv };
+  }
+
+  it("R5a) a DAMAGED box at the till (no restock flag): stored 24 pieces, no restock movement, the served item carries its line", async () => {
+    const { res, sourceLine, item, cn, mv } = await boxReturn("DAMAGED");
+    obs("R5a", {
+      sourceSubtotal: Number(sourceLine.subtotal),
+      stored: { qty: Number(item.qty), restock: item.restock, credit: Number(cn.amount) },
+      movements: mv.map((m) => ({ ref: m.reference, qty: Number(m.quantity) })),
       served: res.returnItems,
     });
     expect(Number(item.qty)).toBe(24);
-    expect(mv.ret).toHaveLength(1);
-    expect(Number(mv.ret[0].quantity)).toBe(24);
+    expect(mv).toHaveLength(0);
     expect(Number(cn.amount)).toBeCloseTo(Number(sourceLine.subtotal), 2);
     expect(res.returnItems).toHaveLength(1);
     expect(res.returnItems?.[0]).toMatchObject({
@@ -614,6 +618,17 @@ describeDb("D8 - the counter return money on Postgres", () => {
       reason: "DAMAGED",
       line: { unitsPerBox: 24, boxes: 1, pieces: 0 },
     });
+  }, 60_000);
+
+  it("R5b) a box back with no reason and no flag: stored 24 pieces and one 24-piece restock under this return's own reference", async () => {
+    const { item, mv } = await boxReturn();
+    obs("R5b", {
+      stored: { qty: Number(item.qty), restock: item.restock },
+      movements: mv.map((m) => ({ ref: m.reference, qty: Number(m.quantity) })),
+    });
+    expect(Number(item.qty)).toBe(24);
+    expect(mv).toHaveLength(1);
+    expect(Number(mv[0].quantity)).toBe(24);
   }, 60_000);
 
   it("R6a) a refused ring writes nothing, and the retry (same Idempotency-Key, fresh returnKey) books one order, one return, one credit note, one restock", async () => {
@@ -843,12 +858,10 @@ describeDb("D8 - the counter return money on Postgres", () => {
     });
     expect(ret.items).toHaveLength(1);
     const mv = await movements(widget);
-    if (ret.items[0].restock) {
-      expect(mv.ret).toHaveLength(1);
-      expect(Number(mv.ret[0].quantity)).toBe(4);
-    } else {
-      expect(mv.ret).toHaveLength(0);
-    }
+    expect(ret.status).toBe("REFUNDED");
+    expect(ret.items[0].restock).toBe(true);
+    expect(mv.ret).toHaveLength(1);
+    expect(Number(mv.ret[0].quantity)).toBe(4);
     obs("T1 return", {
       status: ret.status,
       restock: ret.items[0].restock,
