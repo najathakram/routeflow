@@ -51,14 +51,22 @@ export function freedItems(state) {
   return out;
 }
 
-/** Ranked list of `{ item, reason }` the lane may take, best first. */
-export function rankCandidates(state, laneId, config, { now = Date.now() } = {}) {
+/**
+ * Ranked list of `{ item, reason }` the lane may take, best first. `role` (builder | tester |
+ * reviewer) keeps only items for that role; an item with no role is builder work. An item handed
+ * to a member (rf assign) goes to that member alone: first in their list, whatever its lane or
+ * role, and never in anyone else's.
+ */
+export function rankCandidates(state, laneId, config, { now = Date.now(), role, member } = {}) {
   const lane = config?.lanes?.find((l) => l.id === laneId);
   const areas = lane?.areas ?? [];
   const out = [];
   for (const item of state.items.values()) {
     if (!PICKABLE_STATUSES.includes(item.status)) continue;
     if (item.type === "release" || item.type === "epic") continue;
+    const mine = Boolean(member) && item.assignee === member;
+    if (item.assignee && !mine) continue;
+    if (!mine && role && (item.role ?? "builder") !== role) continue;
     if (item.blocked || item.claimedBy || openBlockers(item, state.items).length > 0) continue;
     const openChild = item.children.some((c) => {
       const ch = state.items.get(c);
@@ -66,16 +74,22 @@ export function rankCandidates(state, laneId, config, { now = Date.now() } = {})
     });
     if (openChild) continue;
     const assigned = item.lane === laneId;
-    if (!assigned && !(item.lane === null && areaMatches(item, areas))) continue;
+    if (!mine && !assigned && !(item.lane === null && areaMatches(item, areas))) continue;
     out.push({
       item,
+      mine,
       eta: parseEta(item.eta, now),
-      reason: [item.priority, item.train, assigned ? `assigned to ${laneId}` : "area match"]
+      reason: [
+        item.priority,
+        item.train,
+        mine ? "assigned to you" : assigned ? `assigned to ${laneId}` : "area match",
+      ]
         .filter(Boolean)
         .join(" · "),
     });
   }
   out.sort((a, b) => {
+    if (a.mine !== b.mine) return a.mine ? -1 : 1;
     const p = (PRIORITY_RANK[a.item.priority] ?? 9) - (PRIORITY_RANK[b.item.priority] ?? 9);
     if (p) return p;
     const t = trainRank(a.item.train) - trainRank(b.item.train);

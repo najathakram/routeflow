@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { fold } from "../lib/fold.mjs";
 import { readAllEvents } from "../lib/store.mjs";
 import * as inbox from "../lib/inbox.mjs";
+import * as identity from "../lib/identity.mjs";
 import * as config from "../lib/config.mjs";
 import * as lanes from "../lib/lanes-local.mjs";
 import * as brief from "../lib/brief.mjs";
@@ -133,6 +134,7 @@ const hookDeps = () => ({
   brief,
   turn,
   inbox,
+  identity,
   machine: "testbox",
 });
 

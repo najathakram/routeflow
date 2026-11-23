@@ -16,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as identity from "../lib/identity.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "..", "..", "..");
@@ -306,6 +307,7 @@ function loadDeps(machine = "testbox") {
     lanes,
     brief,
     turn,
+    identity,
     machine,
   };
 }

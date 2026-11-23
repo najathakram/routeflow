@@ -5,6 +5,8 @@
 export const SCHEMA_VERSION = 1;
 
 export const STATUSES = [
+  // A tester's bug report before the lead or coordinator triages it (rf triage): never handed out.
+  "draft",
   "idea",
   "planned",
   "spec",
@@ -39,6 +41,10 @@ export const TYPES = [
 export const HARMS = ["live", "latent", "none"];
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PR_ACTIONS = ["create", "ready", "merge", "close", "edit"];
+/** Team member roles (specs ops/config.json `members[].role`, item `role`, `rf next --role`). */
+export const ROLES = ["builder", "tester", "reviewer"];
+/** Longest tester repro steps on a draft bug (rf item new --steps). */
+export const STEPS_MAX = 2000;
 /** Longest comment body (a comment is a message on the item, not a spec: link a file for more). */
 export const COMMENT_TEXT_MAX = 2000;
 
@@ -65,6 +71,8 @@ const ITEM_FIELDS = {
   // customer harmed, "none" = not harmful, null = not judged (derived from census items).
   harm: (v) => v === null || HARMS.includes(v),
   lane: (v) => v === null || (typeof v === "string" && LANE_RE.test(v)),
+  // Who picks it up: builder (the default when unset), tester or reviewer (`rf next --role`).
+  role: (v) => v === null || ROLES.includes(v),
   train: (v) => v === null || (typeof v === "string" && /^[RT]\d{1,2}[a-z]?$/.test(v)),
   area: (v) => v === null || (typeof v === "string" && v.length <= 80),
   parent: (v) => v === null || (typeof v === "string" && ITEM_ID_RE.test(v)),
@@ -98,6 +106,12 @@ const ITEM_FIELDS = {
   solution: (v) => v === null || (typeof v === "string" && v.length <= 800), // how we solve it
   ownerAsk: (v) => v === null || (typeof v === "string" && v.length <= 600), // what we need from the owner
   summaryDraft: (v) => typeof v === "boolean", // true = drafted from the register, not yet confirmed
+  // Tester intake (rf item new --type bug --status draft): how to see it, where, and a link to proof.
+  steps: (v) => v === null || (typeof v === "string" && v.length <= STEPS_MAX),
+  screen: (v) => v === null || (typeof v === "string" && v.length <= 200),
+  // A link to a hosted screenshot or recording; never a local path (no binaries in git).
+  evidence: (v) =>
+    v === null || (typeof v === "string" && v.length <= 500 && /^https?:\/\/\S+$/.test(v)),
 };
 
 /** Types and priorities whose NEW items must carry problem + impact (owner 2026-10-19). */
@@ -161,9 +175,15 @@ export const KINDS = {
     data: {
       branch: [optStr(200), false],
       steal: [(v) => v === undefined || typeof v === "boolean", false],
+      // The member who claims (rf whoami --member); claims are held per member, not per lane.
+      member: [(v) => v === undefined || (typeof v === "string" && LANE_RE.test(v)), false],
     },
   },
-  release: { needsItem: "required", needsLane: true, data: {} },
+  release: {
+    needsItem: "required",
+    needsLane: true,
+    data: { member: [(v) => v === undefined || (typeof v === "string" && LANE_RE.test(v)), false] },
+  },
   status: {
     needsItem: "required",
     data: { status: [(v) => STATUSES.includes(v), true], note: [optStr(500), false] },
@@ -198,6 +218,43 @@ export const KINDS = {
         false,
       ],
       replyTo: [(v) => typeof v === "string" && EVENT_ID_RE.test(v), false],
+    },
+  },
+  // Hands an item to one team member (rf assign): it tops their rf next and lands in their inbox.
+  // to: a member id, or null to clear. The CLI checks the id against the members list.
+  assign: {
+    needsItem: "required",
+    data: {
+      to: [(v) => v === null || (typeof v === "string" && LANE_RE.test(v)), true],
+      note: [optStr(500), false],
+    },
+  },
+  // The lead takes a lane off the board (rf lane retire): it leaves the lane-silent alarm and the
+  // lanes list; its history stays. lane.unretire brings it back. Refused while the lane holds a claim.
+  "lane.retire": {
+    needsItem: "none",
+    noItem: true,
+    data: {
+      lane: [(v) => typeof v === "string" && LANE_RE.test(v), true],
+      note: [str(500), true],
+    },
+  },
+  "lane.unretire": {
+    needsItem: "none",
+    noItem: true,
+    data: {
+      lane: [(v) => typeof v === "string" && LANE_RE.test(v), true],
+      note: [optStr(500), false],
+    },
+  },
+  // The lead acknowledges one anomaly (rf anomaly ack): that anomaly stops alarming. eventId is the
+  // event the anomaly was raised on; a new anomaly of the same kind still alarms.
+  "anomaly.ack": {
+    needsItem: "none",
+    noItem: true,
+    data: {
+      eventId: [(v) => typeof v === "string" && EVENT_ID_RE.test(v), true],
+      note: [str(500), true],
     },
   },
   // Session heartbeat from a machine's status file (hooks -> `rf status-sync`). Never touches items.
@@ -285,6 +342,7 @@ export function validateEvent(ev) {
   const hasItem = typeof ev.item === "string";
   if (!(ev.item === null || (hasItem && ITEM_ID_RE.test(ev.item)))) errors.push("invalid item id");
   if (spec.needsItem === "required" && !hasItem) errors.push(`${ev.kind} needs an item`);
+  if (spec.noItem && ev.item !== null) errors.push(`${ev.kind} takes no item`);
   if (spec.needsLane && !(typeof ev.lane === "string")) errors.push(`${ev.kind} needs a lane`);
   const data = ev.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) {
