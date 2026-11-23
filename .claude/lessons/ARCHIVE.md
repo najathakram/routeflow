@@ -4890,3 +4890,12 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** those specs asserted the old error code as a stand-in for "the second writer lost"; the new guard fires first on the same input, so the invariant still held but the expected code was stale.
 - **Lesson:** **When a new guard or error code is inserted ahead of an existing one, grep the specs for the old code and update each; keep the invariant the spec proves (one writer wins, nothing written) and change only the expected code, never loosen the assertion to accept any error.**
 - **Guard:** none automatic; the train gate runs the full suite (cf. [[L-264]]).
+
+## Archived 2026-11-23 — guard owed and never built, no outside citations; headroom for L-403 (bookkeeping for window 41)
+
+### L-379 · 2026-11-12 · process · a hold or fix order is issued only after the reviewer's verdict and browser evidence are posted; the order carries their board comment ids (#4302)
+
+- **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
+- **Root cause:** the order was written from a partial read; nothing required it to name the evidence it rested on.
+- **Lesson:** **An order that holds a PR or tells a lane what to fix names the board comment ids of the verdict and of the browser evidence it rests on, and is not sent until both are posted. A fix scoped from an interim read is re-scoped when the evidence lands.**
+- **Guard:** owed, NOT BUILT YET: a required field in the lead's order template holding the board comment ids of the verdict and of its evidence. No file in the repo carries it today.

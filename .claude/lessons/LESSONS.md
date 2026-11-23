@@ -40,12 +40,12 @@
 - **Lesson:** **A close check compares the health commit to the last merge that touched `apps/api` or `packages/`, and reads the other merges by their own service statuses.**
 - **Guard:** none in the repo (lead tooling); the window close script carries the rule.
 
-### L-379 · 2026-11-12 · process · a hold or fix order is issued only after the reviewer's verdict and browser evidence are posted; the order carries their board comment ids (#4302)
+### L-403 · 2026-11-23 · process · two failed fold rounds on one criterion mean the criterion gets a new spec before a third patch (#4441)
 
-- **Symptom:** a hold and a one-case fix order for #4302 went out from an interim reading, before the reader's FAIL (board 6819958479) and the browser evidence (6819958939, which found more than the reader's MUST) were posted. It cost a round.
-- **Root cause:** the order was written from a partial read; nothing required it to name the evidence it rested on.
-- **Lesson:** **An order that holds a PR or tells a lane what to fix names the board comment ids of the verdict and of the browser evidence it rests on, and is not sent until both are posted. A fix scoped from an interim read is re-scoped when the evidence lands.**
-- **Guard:** owed, NOT BUILT YET: a required field in the lead's order template holding the board comment ids of the verdict and of its evidence. No file in the repo carries it today.
+- **Symptom:** the purchase-order lot-line edit rule (a labelled line stays in whole packs on edit) took five fold rounds on #4441: whole-lot check, relabel on re-pack, exact remainder, stored pack carried on edit, product change refused. Each round fixed the case the reviewer named and the next read found a sibling path.
+- **Root cause:** the criterion was patched one case at a time. No one wrote the whole table of edit paths (create, echo, re-pack, qty change, product change, receive) with the expected result of each, so every round tested only its own row.
+- **Lesson:** **When a reviewer reports a second failed round on the same criterion, stop patching: write the full case table for the criterion (every writer and every path to the row, with the expected result) as a new spec, red on the current code, and fix to it in one round.**
+- **Guard:** none automatic; the case table lives in `inventory.po-edit-whole-lot.spec.ts` (R-rows) and `inventory.po-receive-whole-lot.spec.ts`. Cf. [[L-377]].
 
 ### L-337 · 2026-10-22 · process · merge only through a gate that lists EVERY check run at the exact head sha, required or not
 
