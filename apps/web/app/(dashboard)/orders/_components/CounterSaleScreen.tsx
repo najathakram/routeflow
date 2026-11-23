@@ -21,7 +21,7 @@ import type {
   CounterSalePaymentMethod,
   CounterSaleResponse,
 } from "@routeflow/types";
-import { API_ERROR_CODES, staffMay } from "@routeflow/types";
+import { API_ERROR_CODES, CREDIT_WORDS, staffMay } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
 import {
@@ -2468,6 +2468,8 @@ export function CounterSaleScreen() {
               total={totals.total}
               cash={method === "CASH"}
               due={amountDue(payTotal, tenderedNum)}
+              returned={ret.returned}
+              payTotal={payTotal}
             />
 
             {method === "CASH" ? (
@@ -2479,7 +2481,7 @@ export function CounterSaleScreen() {
             ) : null}
             {ret.storeCredit > 0 ? (
               <p className="text-sm font-semibold text-navy" data-testid="return-store-credit">
-                Store credit {money(ret.storeCredit)}
+                {CREDIT_WORDS.noun} {money(ret.storeCredit)}
               </p>
             ) : null}
 

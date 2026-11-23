@@ -26,6 +26,7 @@ import {
 } from "@/lib/payment-submit-key";
 import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
 import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
+import { CREDIT_WORDS } from "@routeflow/types";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 import { clampAllocationInput } from "@/lib/payment-allocation";
 import {
@@ -447,7 +448,7 @@ export function CustomerRecordPaymentModal({
               ) : (
                 totals.excess > 0.001 && (
                   <div className="flex justify-between font-medium text-amber-600">
-                    <span>⚠ Unallocated (→ advance):</span>
+                    <span>⚠ {CREDIT_WORDS.kept}:</span>
                     <span>{fmt(totals.excess)}</span>
                   </div>
                 )

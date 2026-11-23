@@ -127,7 +127,7 @@ describe("buildReceiptModel (stored rows -> the shared ReceiptModel)", () => {
       BRANDING,
       ZONE,
     );
-    expect(m.methodLabel).toBe("Other $20.00 + Store credit $8.62");
+    expect(m.methodLabel).toBe("Other $20.00 + Credit $8.62");
   });
 
   it("names a variant by its parent, and falls back to 'Item' for a line with no name at all", () => {
