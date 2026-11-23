@@ -178,7 +178,7 @@ const API_NAME = "@routeflow/api";
  *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
  *    api itself is excluded. `note` is set when no call is left at all.
  */
-export function planTurboCalls({
+function planAll({
   scope,
   excluded = [],
   splitJest,
@@ -233,6 +233,27 @@ export function planTurboCalls({
       ? null
       : `nothing left to verify after the exclusions (${excluded.join(", ")}) — no turbo calls`,
   };
+}
+
+/**
+ * SA-1250 `RF_VERIFY_LANE`: one pure input. Unset or empty = the plan above, byte-identical. "static" (the `chain`
+ * CI lane) keeps only the tsc/eslint calls: no jest, pin or fs-read call, and the test tasks leave a bundled call.
+ * The jest lanes are scripts/ci-lanes.mjs's; its parity job proves together they cover the single run.
+ */
+export function planTurboCalls(opts) {
+  const lane = opts.lane ?? "";
+  if (lane === "") return planAll(opts);
+  if (lane !== "static") {
+    throw new Error(`RF_VERIFY_LANE must be unset or "static" (got "${lane}")`);
+  }
+  const plan = planAll(opts);
+  const calls = [];
+  for (const c of plan.calls) {
+    if (c.jest || c.pins || c.fsRead) continue;
+    const args = c.args.filter((a) => a !== "test" && a !== "test:repo-truth");
+    if (args.some((a) => !a.startsWith("--"))) calls.push({ ...c, args });
+  }
+  return { ...plan, calls, note: calls.length ? null : plan.note };
 }
 
 /**
@@ -658,6 +679,7 @@ export async function main() {
     scope,
     excluded,
     splitJest: Boolean(JEST_MAX_WORKERS),
+    lane: process.env.RF_VERIFY_LANE || "",
     fast: runMode.fast,
     pins,
     fsRead,

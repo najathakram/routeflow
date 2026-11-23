@@ -155,7 +155,10 @@ function main() {
   const freshnessOnly = args.includes("--freshness-only");
   // FAST VERIFY switch (see the header): explicit env only, never inferred from the reports. Landing
   // mode is the gate before a register push and is never fast, whatever the environment says.
-  const fastVerify = !landing && isFastMode(process.env);
+  // SA-1250: the `chain` CI lane (RF_VERIFY_LANE=static) runs no jest, so it has no reports to check; the jest lanes
+  // run in their own jobs. Report-dependent enforcement is deferred exactly as in a fast verify.
+  const staticLane = process.env.RF_VERIFY_LANE === "static";
+  const fastVerify = !landing && (isFastMode(process.env) || staticLane);
   if (process.env.RF_VERIFY_MODE === "fast" && !fastVerify) {
     console.error(
       landing
@@ -169,7 +172,9 @@ function main() {
       `campaign-check: landing mode on, code root ${codeRoot}; ledger freshness skipped`,
     );
   }
-  const REPORT_COVERAGE_DEFERRED = "campaign-check: report coverage deferred to CI (fast verify)";
+  const REPORT_COVERAGE_DEFERRED = staticLane
+    ? "campaign-check: report coverage deferred (static lane: jest runs in the lanes job)"
+    : "campaign-check: report coverage deferred to CI (fast verify)";
   // Overridable via CAMPAIGN_CHECK_STATUS_DIR (mirrors bugs.mjs's BUGS_ROOT
   // seam) so a self-test can drive this REAL command against a throwaway
   // fixture ledger instead of the register's own status/ directory. The default comes from

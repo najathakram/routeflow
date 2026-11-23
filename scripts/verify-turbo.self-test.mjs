@@ -2783,5 +2783,50 @@ check(
     rmSync(fk, { recursive: true, force: true });
   }
 }
+// SA-1250 RF_VERIFY_LANE: one pure planner input. Unset = byte-identical to master (T6, P5);
+// "static" = check-types + lint only (the `chain` lane), never a jest, pin or fs-read call.
+{
+  const base = { scope: FULL, excluded: [CONTROL], splitJest: true };
+  check(
+    "LN1 T6/P5: lane unset or empty plans byte-identically to the pre-lane planner",
+    [
+      JSON.stringify(planTurboCalls({ ...base, lane: undefined })),
+      JSON.stringify(planTurboCalls({ ...base, lane: "" })),
+    ],
+    [JSON.stringify(planTurboCalls(base)), JSON.stringify(planTurboCalls(base))],
+  );
+  check(
+    "LN2 static, FULL split: only the check-types + lint call, negative filter kept",
+    planTurboCalls({ ...base, lane: "static" }).calls,
+    [{ jest: false, args: ["check-types", "lint", NEG] }],
+  );
+  check(
+    "LN3 static, FULL unsplit: the bundled call loses its test tasks",
+    planTurboCalls({ ...base, splitJest: false, lane: "static" }).calls,
+    [{ jest: false, args: ["check-types", "lint", NEG] }],
+  );
+  const aff = {
+    scope: { mode: "scoped", workspaces: ["@routeflow/api"], changed: [] },
+    excluded: [],
+    splitJest: true,
+  };
+  check(
+    "LN4 static, AFFECTED: no jest call and no repo-truth tripwire",
+    planTurboCalls({ ...aff, lane: "static" }).calls,
+    [{ jest: false, args: ["check-types", "lint", "--filter=@routeflow/api"] }],
+  );
+  check(
+    "LN5 an unknown lane name is refused, never silently planned as full",
+    (() => {
+      try {
+        planTurboCalls({ ...base, lane: "bogus" });
+        return "no throw";
+      } catch (e) {
+        return /RF_VERIFY_LANE/.test(String(e.message));
+      }
+    })(),
+    true,
+  );
+}
 console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
