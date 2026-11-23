@@ -16,12 +16,13 @@ import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { paidInAdvance } from "@/lib/invoice-pending-mirror";
-import type {
-  ReceiptApplication,
-  ReceiptGroupView,
-  ReceiptHeader,
-  ReceiptTender,
+import {
+  receiptStatusText,
+  type ReceiptGroupView,
+  type ReceiptHeader,
+  type ReceiptTender,
 } from "@routeflow/types";
+import { roundMoney } from "@routeflow/pricing";
 
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
@@ -33,12 +34,38 @@ function receiptTenderHint(h: ReceiptHeader): string | null {
   return method ? `(${method})` : null;
 }
 
-/** A tender's state from the statuses of its own rows: bare when all PAID, never read as confirmed money otherwise. */
-function tenderState(t: ReceiptTender, apps: ReceiptApplication[]): string | null {
-  if (t.voided) return "Voided";
-  const st = apps.filter((a) => t.paymentIds.includes(a.paymentId)).map((a) => a.status);
-  if (st.length === 0 || st.every((x) => x === "PAID")) return null;
-  return st.some((x) => x === "PAID") ? "Includes pending" : "Pending";
+/** One line (an invoice row or a tender): the server's status word, never read as money received unless PAID (L-119). */
+function ReceiptLine({ status, amount }: { status: string; amount: number }) {
+  const text = receiptStatusText(status);
+  return (
+    <span className="flex items-center gap-2">
+      {text && (
+        <span className={cn("text-xs", status === "VOID" ? "text-navy/70" : "text-warning")}>
+          {text}
+        </span>
+      )}
+      <span
+        className={cn(
+          "money",
+          status === "VOID" ? "text-navy/40 line-through" : text ? "text-navy/50" : "text-navy",
+        )}
+      >
+        {fmt(amount)}
+      </span>
+    </span>
+  );
+}
+
+/** "· 1 draft ($1,000.00) not counted": what sits outside the total, summed from the server's tender amounts. */
+function notCounted(tenders: ReceiptTender[]): string {
+  return (["DRAFT", "PENDING"] as const)
+    .map((s) => ({ s, ts: tenders.filter((t) => t.status === s) }))
+    .filter(({ ts }) => ts.length > 0)
+    .map(({ s, ts }) => {
+      const sum = fmt(roundMoney(ts.reduce((n, t) => n + t.amount, 0)));
+      return `· ${ts.length} ${s.toLowerCase()} (${sum}) not counted`;
+    })
+    .join(" ");
 }
 
 /** The invoices one check covered and what it was paid with: the server's figures, printed as given. */
@@ -66,20 +93,7 @@ function ReceiptGroupBody({ view }: { view: ReceiptGroupView }) {
               >
                 {a.invoiceNumber}
               </Link>
-              <span className="flex items-center gap-2">
-                {a.status === "VOID" && <span className="text-xs text-navy/70">Voided</span>}
-                {a.status !== "VOID" && a.status !== "PAID" && (
-                  <span className="text-xs text-warning">Pending</span>
-                )}
-                <span
-                  className={cn(
-                    "money",
-                    a.status === "VOID" ? "text-navy/40 line-through" : "text-navy",
-                  )}
-                >
-                  {fmt(a.amount)}
-                </span>
-              </span>
+              <ReceiptLine status={a.status} amount={a.amount} />
             </li>
           ))}
         </ul>
@@ -87,37 +101,18 @@ function ReceiptGroupBody({ view }: { view: ReceiptGroupView }) {
       <div>
         <p className="eyebrow-label mb-1">Paid with</p>
         <ul aria-label="Tenders on this receipt" className="divide-y divide-surface-border">
-          {view.tenders.map((t) => {
-            const state = tenderState(t, view.applications);
-            return (
-              <li
-                key={t.paymentIds.join("-")}
-                className="flex items-center justify-between gap-3 py-2 text-[13px]"
-              >
-                <span className="text-navy">
-                  {paymentMethodLabel(t.method)}
-                  {t.reference ? ` #${t.reference}` : ""}
-                </span>
-                <span className="flex items-center gap-2">
-                  {state && (
-                    <span
-                      className={cn(
-                        "text-xs",
-                        state === "Voided" ? "text-navy/70" : "text-warning",
-                      )}
-                    >
-                      {state}
-                    </span>
-                  )}
-                  <span
-                    className={cn("money", t.voided ? "text-navy/40 line-through" : "text-navy")}
-                  >
-                    {fmt(t.amount)}
-                  </span>
-                </span>
-              </li>
-            );
-          })}
+          {view.tenders.map((t) => (
+            <li
+              key={t.paymentIds.join("-")}
+              className="flex items-center justify-between gap-3 py-2 text-[13px]"
+            >
+              <span className="text-navy">
+                {paymentMethodLabel(t.method)}
+                {t.reference ? ` #${t.reference}` : ""}
+              </span>
+              <ReceiptLine status={t.status} amount={t.amount} />
+            </li>
+          ))}
         </ul>
       </div>
     </div>
@@ -203,6 +198,7 @@ export default function PaymentDetailPage() {
   const rc = payment.receipt;
   const group =
     rc?.header && (rc.kind === "OFFICE_GROUP" || rc.kind === "PICKUP_TENDERS") ? rc : null;
+  const rcNumber = group?.header?.number ?? payment.paymentNumber;
   const hasBankCharges = !group && payment.bankCharges != null && payment.bankCharges > 0;
 
   return (
@@ -252,7 +248,7 @@ export default function PaymentDetailPage() {
           <div className="mb-6">
             <h2 className="display text-[26px]">Payment Receipt</h2>
             <p className="mono mt-1 text-[12.5px] text-navy/70">
-              {payment.paymentNumber ? `${payment.paymentNumber} · ` : ""}
+              {rcNumber ? `${rcNumber} · ` : ""}
               {date}
             </p>
           </div>
@@ -282,13 +278,15 @@ export default function PaymentDetailPage() {
             <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
               <span className="text-navy/70">Payment method</span>
               <span className="text-right font-medium text-navy">
-                {paymentMethodLabel(payment.method)}
+                {paymentMethodLabel(group?.header?.method ?? payment.method)}
               </span>
             </div>
-            {payment.reference && (
+            {(group?.header?.reference ?? payment.reference) && (
               <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
                 <span className="text-navy/70">Reference</span>
-                <span className="mono text-right font-medium text-navy">{payment.reference}</span>
+                <span className="mono text-right font-medium text-navy">
+                  {group?.header?.reference ?? payment.reference}
+                </span>
               </div>
             )}
             {!group && (
@@ -325,6 +323,9 @@ export default function PaymentDetailPage() {
                         {receiptTenderHint(group.header)}
                       </span>
                     )}
+                    <span className="ml-1 text-[12.5px] font-normal text-navy/70">
+                      {notCounted(group.tenders)}
+                    </span>
                   </span>
                   {group.header.confirmed ? (
                     <span className="money">{fmt(group.header.total)}</span>

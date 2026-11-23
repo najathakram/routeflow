@@ -53,6 +53,13 @@ export interface ReceiptTender {
   paymentIds: string[];
 }
 
+/** SA-1220 item 7: the one word for a receipt line that is not confirmed money (PAID reads bare, null). */
+export function receiptStatusText(status: string): string | null {
+  if (status === "PAID") return null;
+  if (status === "VOID") return "Voided";
+  return status === "DRAFT" ? "Draft, not in total" : "Pending, not in total";
+}
+
 /** One row's application to an invoice. */
 export interface ReceiptApplication {
   paymentId: string;

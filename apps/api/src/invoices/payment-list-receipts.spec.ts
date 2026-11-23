@@ -107,6 +107,25 @@ describe("listAllPayments: one receipt tag per office check", () => {
     expect((res.data as Row[]).map((r) => r.receiptGroup)).toEqual([null, null]);
   });
 
+  it("never has more than 8 receipt reads in flight, however many checks are on the page", async () => {
+    const rows = Array.from({ length: 30 }, (_, i) =>
+      pay({ amount: 10, paymentGroupId: `g-${i}` }),
+    );
+    const { deps, db } = list(rows);
+    const find = db.invoicePayment.findUnique.getMockImplementation()!;
+    let active = 0;
+    let peak = 0;
+    db.invoicePayment.findUnique.mockImplementation(async (args: any) => {
+      peak = Math.max(peak, ++active);
+      await new Promise((r) => setTimeout(r, 1));
+      active--;
+      return find(args);
+    });
+    await listAllPayments(deps, {});
+    expect(db.invoicePayment.findUnique).toHaveBeenCalledTimes(30);
+    expect(peak).toBeLessThanOrEqual(8);
+  });
+
   it("reads each group once, however many of its rows are on the page", async () => {
     const rows = [1, 2, 3].map(() => pay({ amount: 10, paymentGroupId: "g-3" }));
     const { deps, db } = list(rows);

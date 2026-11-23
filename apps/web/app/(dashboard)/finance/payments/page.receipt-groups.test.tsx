@@ -151,6 +151,25 @@ describe("Payments list: one row per check", () => {
     expect(mockPush).toHaveBeenCalledWith("/finance/payments/pay-a");
   });
 
+  it("keeps two customers that share a group id on separate rows (the collapse key has the customer)", () => {
+    const other = makePayment({
+      id: "pay-x",
+      paymentNumber: "PAY-0009",
+      amount: 777,
+      paymentGroupId: "grp-1",
+      receiptGroup: { ...RECEIPT_GROUP, total: 777 },
+      invoice: {
+        id: "inv-x",
+        invoiceNumber: "INV-ACME-X",
+        customerId: "cust-2",
+        customer: { id: "cust-2", businessName: "Acme Bakery" },
+      },
+    });
+    show([CHECK_A, other]);
+    const { container } = renderWithProviders(<FinancePaymentsPage />);
+    expect(bodyRows(container)).toHaveLength(2);
+  });
+
   it("does not offer a one-row Void on the $4,000 row (void is per row, on the receipt)", () => {
     const { container } = renderWithProviders(<FinancePaymentsPage />);
     expect(within(bodyRows(container)[0]).queryByRole("button", { name: "Void" })).toBeNull();

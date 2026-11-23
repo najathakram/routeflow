@@ -270,9 +270,15 @@ export async function readListReceipts(
   const anchors = new Map<string, string>();
   for (const r of eligible) if (!anchors.has(tagKey(r))) anchors.set(tagKey(r), r.id);
   const tags = new Map<string, PaymentListReceipt>();
+  const list = [...anchors];
+  const views: Awaited<ReturnType<typeof readReceiptGroup>>[] = [];
+  for (let i = 0; i < list.length; i += 8) {
+    const chunk = list.slice(i, i + 8); // at most 8 receipt reads in flight (a page may hold 1,000 rows)
+    views.push(...(await Promise.all(chunk.map(([, id]) => readReceiptGroup(prisma, id)))));
+  }
   await Promise.all(
-    [...anchors].map(async ([k, anchorId]) => {
-      const view = await readReceiptGroup(prisma, anchorId);
+    list.map(([k], i) => {
+      const view = views[i];
       if (view.kind !== "OFFICE_GROUP" || !view.header?.confirmed) return;
       const seen = new Set<string>();
       const invoices = view.applications

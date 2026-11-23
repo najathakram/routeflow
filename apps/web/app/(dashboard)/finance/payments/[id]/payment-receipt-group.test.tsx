@@ -1,6 +1,6 @@
 import * as React from "react";
 import { renderWithProviders, screen, within } from "@/test-utils/render";
-import type { ReceiptGroupView } from "@routeflow/types";
+import { receiptStatusText, type ReceiptGroupView } from "@routeflow/types";
 import PaymentDetailPage from "./page";
 
 /**
@@ -118,6 +118,20 @@ describe("receipt page: one check, one receipt", () => {
     expect(screen.queryByText("Amount received")).not.toBeInTheDocument();
   });
 
+  it("an all-PAID receipt stays bare: no status words, no not-counted note", () => {
+    renderWithProviders(<PaymentDetailPage />);
+    expect(screen.queryByText(/not in total|not counted|Voided|Pending/)).not.toBeInTheDocument();
+  });
+
+  it("opened from the 2nd row, the document card carries the receipt number, method and reference, not the row's", () => {
+    show(payment({ method: "CASH", reference: "row-ref" }));
+    renderWithProviders(<PaymentDetailPage />);
+    expect(screen.getByText(/^PAY-0001 · /)).toBeInTheDocument(); // the heading number
+    expect(screen.queryByText(/PAY-0002/)).not.toBeInTheDocument();
+    expect(screen.queryByText("row-ref")).not.toBeInTheDocument();
+    expect(screen.getByText("Check")).toBeInTheDocument();
+  });
+
   it("never calls it a check amount (the reference rides beside the figure)", () => {
     renderWithProviders(<PaymentDetailPage />);
     expect(screen.queryByText(/check amount/i)).not.toBeInTheDocument();
@@ -170,7 +184,7 @@ describe("receipt page: nothing unconfirmed reads as money received", () => {
               reference: null,
               amount: 1000,
               voided: false,
-              status: "PAID",
+              status: "DRAFT",
               paymentIds: ["pay-b"],
             },
           ],
@@ -191,12 +205,19 @@ describe("receipt page: nothing unconfirmed reads as money received", () => {
     renderWithProviders(<PaymentDetailPage />);
     const tenders = screen.getByRole("list", { name: "Tenders on this receipt" });
     const [check, cash] = within(tenders).getAllByRole("listitem");
-    expect(within(check).queryByText(/pending/i)).not.toBeInTheDocument();
-    expect(within(cash).getByText("Pending")).toBeInTheDocument();
-    expect(within(cash).getByText("$1,000.00")).toBeInTheDocument();
+    expect(within(check).queryByText(/not in total/i)).not.toBeInTheDocument();
+    expect(within(cash).getByText("Draft, not in total")).toBeInTheDocument();
+    expect(within(cash).queryByText("Pending")).not.toBeInTheDocument();
+    expect(within(cash).getByText("$1,000.00")).toHaveClass("text-navy/50"); // grey, never struck
+    expect(within(cash).getByText("$1,000.00")).not.toHaveClass("line-through");
+    // R3: the header says how much is outside the total
+    expect(screen.getByText("· 1 draft ($1,000.00) not counted")).toBeInTheDocument();
+    // R4: the application row reads the same words
+    const invoices = screen.getByRole("list", { name: "Invoices on this receipt" });
+    expect(within(invoices).getByText("Draft, not in total")).toBeInTheDocument();
   });
 
-  it("says a tender mixing confirmed and unconfirmed rows includes pending money", () => {
+  it("says a PENDING tender is not in the total", () => {
     show(
       payment({
         receipt: receipt({
@@ -204,29 +225,20 @@ describe("receipt page: nothing unconfirmed reads as money received", () => {
             {
               method: "CHECK",
               reference: "1001",
-              amount: 4000,
+              amount: 1000,
               voided: false,
-              status: "PAID",
-              paymentIds: ["pay-a", "pay-b"],
+              status: "PENDING",
+              paymentIds: ["pay-b"],
             },
           ],
-          applications: [
-            row(),
-            row({
-              paymentId: "pay-b",
-              invoiceId: "inv-b",
-              invoiceNumber: "INV-ACME-B",
-              amount: 1000,
-              status: "DRAFT",
-            }),
-          ],
-          header: { ...receipt().header!, total: 3000 },
+          applications: [row({ status: "PENDING" })],
+          header: { ...receipt().header!, total: 0, confirmed: false },
         }),
       }),
     );
     renderWithProviders(<PaymentDetailPage />);
     const tenders = screen.getByRole("list", { name: "Tenders on this receipt" });
-    expect(within(tenders).getByText("Includes pending")).toBeInTheDocument();
+    expect(within(tenders).getByText("Pending, not in total")).toBeInTheDocument();
   });
 
   it("reads 'Not confirmed' instead of a $0.00 total when no row is confirmed", () => {
@@ -240,7 +252,7 @@ describe("receipt page: nothing unconfirmed reads as money received", () => {
               reference: "1001",
               amount: 4000,
               voided: false,
-              status: "PAID",
+              status: "DRAFT",
               paymentIds: ["pay-a", "pay-b"],
             },
           ],
@@ -331,5 +343,14 @@ describe("receipt page: credit kept from the check", () => {
   it("prints no credit line when the server recorded none (never $0)", () => {
     renderWithProviders(<PaymentDetailPage />);
     expect(screen.queryByText(/Kept as credit/)).not.toBeInTheDocument();
+  });
+});
+
+describe("receiptStatusText: one word per status, from the server's status", () => {
+  it("reads PAID bare and the other three as ruled (SA-1220 item 7)", () => {
+    expect(receiptStatusText("PAID")).toBeNull();
+    expect(receiptStatusText("DRAFT")).toBe("Draft, not in total");
+    expect(receiptStatusText("PENDING")).toBe("Pending, not in total");
+    expect(receiptStatusText("VOID")).toBe("Voided");
   });
 });
