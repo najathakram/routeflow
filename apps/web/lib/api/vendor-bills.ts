@@ -41,6 +41,10 @@ export interface VendorBillItem {
   /** Units per box/case — when set (>1) `unitCost` is the CASE cost. */
   packSize?: number | null;
   lineTotal?: number | null;
+  /** The line states its own unit (a lot); never read `packSize` as the catalog box. */
+  unitLabel?: string | null;
+  familyProductId?: string | null;
+  familyGroupId?: string | null;
   /** Cumulative quantity received so far (bill denomination). Null on bills
    *  received before per-line tracking — those were fully received. */
   qtyReceived?: number | string | null;
@@ -201,6 +205,8 @@ export function useProductMappings(supplierName: string) {
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 export interface CreateVendorBillItem {
+  /** Edit only: the stored line this row is, so the server pairs rows by id. */
+  id?: string;
   productId?: string;
   description: string;
   qty: number;

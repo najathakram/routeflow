@@ -57,6 +57,23 @@ export function assertCheckoutAcceptable(params: {
   }
 }
 
+/** The recurring lines the session bills every month: the plan, then the add-ons. The ONE builder for both the session and the plan JSON. */
+export function catchupRecurringLines(
+  i: Pick<CatchupSessionInput, "planPriceData" | "addonLines">,
+) {
+  return [{ price_data: i.planPriceData, quantity: 1 }, ...i.addonLines];
+}
+
+/** What those lines bill each month, in whole cents (Stripe's own `unit_amount` x `quantity`). */
+export function catchupRecurringCents(
+  i: Pick<CatchupSessionInput, "planPriceData" | "addonLines">,
+): number {
+  return catchupRecurringLines(i).reduce(
+    (sum, l) => sum + Number(l.price_data?.unit_amount ?? 0) * Number(l.quantity ?? 0),
+    0,
+  );
+}
+
 function common(i: CatchupSessionInput) {
   const subMetaBase = {
     tenantId: i.tenantId,
@@ -77,7 +94,7 @@ function common(i: CatchupSessionInput) {
       interval: "month",
       ...(i.addonSkus.length ? { addonSkus: i.addonSkus.join(",") } : {}),
     },
-    recurring: [{ price_data: i.planPriceData, quantity: 1 }, ...i.addonLines],
+    recurring: catchupRecurringLines(i),
   };
 }
 

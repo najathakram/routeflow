@@ -13,6 +13,7 @@ import { useRecordPurchase, usePurchaseOrders } from "@/lib/api/inventory";
 import { useVendorBills } from "@/lib/api/vendor-bills";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import type { Supplier } from "./purchase-orders-shared";
+import { MODAL_BODY, MODAL_FOOTER, MODAL_FORM, MODAL_PANEL } from "./modal-panel";
 
 const DECIMAL_UNITS = ["kg", "g", "liter", "litre", "l", "oz", "lb", "pound", "ml"];
 function isDecimalUnit(unit: string) {
@@ -177,7 +178,7 @@ export function QuickRestockModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-md`}>
         <div className="border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Quick restock</h2>
           <p className="mt-0.5 text-xs text-navy/70">
@@ -193,229 +194,230 @@ export function QuickRestockModal({
             </a>
           </p>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
-          <div>
-            <label className="mb-1 block text-xs text-navy">Supplier</label>
-            <SupplierSelect
-              value={form.supplierId}
-              onChange={(id) => setForm((f) => ({ ...f, supplierId: id }))}
-              suppliers={suppliers.filter((s) => s.isActive)}
-              placeholder="No supplier"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-navy">Product *</label>
-            <div className="flex items-stretch gap-2">
-              <SearchableProductPicker
-                value={form.productId}
-                onChange={(id) => setForm((f) => ({ ...f, productId: id }))}
-                products={products}
-                placeholder="Type a name or SKU, or scan…"
-                className="flex-1"
-                inputRef={pickerInputRef}
-              />
-              <BarcodeScannerButton
-                onScan={(code) => void handleScan(code)}
-                inputRef={pickerInputRef}
-                title="Scan a barcode to pick the product (USB scanner: focus the search box and scan)"
+        <form onSubmit={handleSubmit} className={MODAL_FORM}>
+          <div className={MODAL_BODY}>
+            <div>
+              <label className="mb-1 block text-xs text-navy">Supplier</label>
+              <SupplierSelect
+                value={form.supplierId}
+                onChange={(id) => setForm((f) => ({ ...f, supplierId: id }))}
+                suppliers={suppliers.filter((s) => s.isActive)}
+                placeholder="No supplier"
               />
             </div>
-            {scanLoading && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
-            {scanMatches.length > 0 && (
-              <div className="mt-2">
-                <DidYouMeanPicker
-                  matches={scanMatches}
-                  confirmLabel="Apply"
-                  onConfirm={(product) => {
-                    setScanMatches([]);
-                    setForm((f) => ({ ...f, productId: product.id }));
-                    qtyInputRef.current?.focus();
-                  }}
-                  onCancel={() => setScanMatches([])}
-                />
-              </div>
-            )}
-            {selectedProduct && (
-              <p className="mt-1 text-xs text-navy/70">
-                Current stock:{" "}
-                {unitsLabel(
-                  Number(selectedProduct.currentStock),
-                  unitsPerBox,
-                  selectedProduct.unit,
-                )}
-                {!decimalQty && !isBoxed && (
-                  <span className="ml-2 text-navy/70">(whole numbers only)</span>
-                )}
-              </p>
-            )}
-          </div>
 
-          {isBoxed ? (
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-navy">Boxes *</label>
-                <input
-                  required={!form.pieces}
-                  ref={qtyInputRef}
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={form.boxes}
-                  onChange={(e) => setForm((f) => ({ ...f, boxes: e.target.value }))}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  placeholder="0"
+            <div>
+              <label className="mb-1 block text-xs text-navy">Product *</label>
+              <div className="flex items-stretch gap-2">
+                <SearchableProductPicker
+                  value={form.productId}
+                  onChange={(id) => setForm((f) => ({ ...f, productId: id }))}
+                  products={products}
+                  placeholder="Type a name or SKU, or scan…"
+                  className="flex-1"
+                  inputRef={pickerInputRef}
+                />
+                <BarcodeScannerButton
+                  onScan={(code) => void handleScan(code)}
+                  inputRef={pickerInputRef}
+                  title="Scan a barcode to pick the product (USB scanner: focus the search box and scan)"
                 />
               </div>
-              <div>
-                <label className="mb-1 block text-xs text-navy">+ Pieces</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={unitsPerBox - 1}
-                  step={1}
-                  value={form.pieces}
-                  onChange={(e) => setForm((f) => ({ ...f, pieces: e.target.value }))}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  placeholder="0"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-navy">Cost per box ($) *</label>
-                <input
-                  required
-                  type="number"
-                  min={0}
-                  step={0.0001}
-                  value={form.unitCost}
-                  onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-              <p className="col-span-3 -mt-1 text-[11px] text-navy/50">
-                1 box = {unitsPerBox} {selectedProduct?.unit ?? "units"}
-                {(Number(form.boxes) > 0 || Number(form.pieces) > 0) && (
-                  <>
-                    {" "}
-                    ·{" "}
-                    <span className="font-medium text-navy/70">
-                      {
-                        normalizeBoxesPieces({
-                          boxes: Number(form.boxes) || 0,
-                          pieces: Number(form.pieces) || 0,
-                          unitsPerBox,
-                        }).qty
-                      }{" "}
-                      pcs total
-                    </span>
-                  </>
-                )}
-              </p>
+              {scanLoading && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
+              {scanMatches.length > 0 && (
+                <div className="mt-2">
+                  <DidYouMeanPicker
+                    matches={scanMatches}
+                    confirmLabel="Apply"
+                    onConfirm={(product) => {
+                      setScanMatches([]);
+                      setForm((f) => ({ ...f, productId: product.id }));
+                      qtyInputRef.current?.focus();
+                    }}
+                    onCancel={() => setScanMatches([])}
+                  />
+                </div>
+              )}
+              {selectedProduct && (
+                <p className="mt-1 text-xs text-navy/70">
+                  Current stock:{" "}
+                  {unitsLabel(
+                    Number(selectedProduct.currentStock),
+                    unitsPerBox,
+                    selectedProduct.unit,
+                  )}
+                  {!decimalQty && !isBoxed && (
+                    <span className="ml-2 text-navy/70">(whole numbers only)</span>
+                  )}
+                </p>
+              )}
             </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-navy">
-                  Quantity ({selectedProduct?.unit ?? "units"}) *
-                </label>
-                <input
-                  required
-                  ref={qtyInputRef}
-                  type="number"
-                  min={decimalQty ? 0.001 : 1}
-                  step={decimalQty ? 0.001 : 1}
-                  inputMode={decimalQty ? "decimal" : "numeric"}
-                  value={form.quantity}
-                  onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  placeholder={decimalQty ? "0.000" : "0"}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-navy">Unit cost ($) *</label>
-                <input
-                  required
-                  type="number"
-                  min={0}
-                  step={0.0001}
-                  value={form.unitCost}
-                  onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
-                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-              </div>
-            </div>
-          )}
 
-          {/* Reference combobox */}
-          <div ref={refContainerRef} className="relative">
-            <label className="mb-1 block text-xs text-navy">PO / invoice reference</label>
-            <input
-              type="text"
-              value={form.reference}
-              onChange={(e) => {
-                setForm((f) => ({ ...f, reference: e.target.value }));
-                setRefSearch(e.target.value);
-              }}
-              onFocus={() => setRefOpen(true)}
-              placeholder="Select or type reference…"
-              autoComplete="off"
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            {refOpen && refOptions.length > 0 && (
-              <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-dropdown">
-                <ul className="max-h-40 overflow-y-auto py-1">
-                  {refOptions.map((opt) => (
-                    <li key={opt.value}>
-                      <button
-                        type="button"
-                        onMouseDown={() => {
-                          setForm((f) => ({
-                            ...f,
-                            reference: opt.value,
-                            supplierId: opt.supplierId || f.supplierId,
-                          }));
-                          setRefSearch(opt.value);
-                          setRefOpen(false);
-                        }}
-                        className="w-full px-3 py-2 text-left text-xs hover:bg-brand-50 text-navy"
-                      >
-                        {opt.label}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+            {isBoxed ? (
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs text-navy">Boxes *</label>
+                  <input
+                    required={!form.pieces}
+                    ref={qtyInputRef}
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={form.boxes}
+                    onChange={(e) => setForm((f) => ({ ...f, boxes: e.target.value }))}
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-navy">+ Pieces</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={unitsPerBox - 1}
+                    step={1}
+                    value={form.pieces}
+                    onChange={(e) => setForm((f) => ({ ...f, pieces: e.target.value }))}
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-navy">Cost per box ($) *</label>
+                  <input
+                    required
+                    type="number"
+                    min={0}
+                    step={0.0001}
+                    value={form.unitCost}
+                    onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+                <p className="col-span-3 -mt-1 text-[11px] text-navy/50">
+                  1 box = {unitsPerBox} {selectedProduct?.unit ?? "units"}
+                  {(Number(form.boxes) > 0 || Number(form.pieces) > 0) && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <span className="font-medium text-navy/70">
+                        {
+                          normalizeBoxesPieces({
+                            boxes: Number(form.boxes) || 0,
+                            pieces: Number(form.pieces) || 0,
+                            unitsPerBox,
+                          }).qty
+                        }{" "}
+                        pcs total
+                      </span>
+                    </>
+                  )}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs text-navy">
+                    Quantity ({selectedProduct?.unit ?? "units"}) *
+                  </label>
+                  <input
+                    required
+                    ref={qtyInputRef}
+                    type="number"
+                    min={decimalQty ? 0.001 : 1}
+                    step={decimalQty ? 0.001 : 1}
+                    inputMode={decimalQty ? "decimal" : "numeric"}
+                    value={form.quantity}
+                    onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    placeholder={decimalQty ? "0.000" : "0"}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-navy">Unit cost ($) *</label>
+                  <input
+                    required
+                    type="number"
+                    min={0}
+                    step={0.0001}
+                    value={form.unitCost}
+                    onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
+                    className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
               </div>
             )}
+
+            {/* Reference combobox */}
+            <div ref={refContainerRef} className="relative">
+              <label className="mb-1 block text-xs text-navy">PO / invoice reference</label>
+              <input
+                type="text"
+                value={form.reference}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, reference: e.target.value }));
+                  setRefSearch(e.target.value);
+                }}
+                onFocus={() => setRefOpen(true)}
+                placeholder="Select or type reference…"
+                autoComplete="off"
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              {refOpen && refOptions.length > 0 && (
+                <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-dropdown">
+                  <ul className="max-h-40 overflow-y-auto py-1">
+                    {refOptions.map((opt) => (
+                      <li key={opt.value}>
+                        <button
+                          type="button"
+                          onMouseDown={() => {
+                            setForm((f) => ({
+                              ...f,
+                              reference: opt.value,
+                              supplierId: opt.supplierId || f.supplierId,
+                            }));
+                            setRefSearch(opt.value);
+                            setRefOpen(false);
+                          }}
+                          className="w-full px-3 py-2 text-left text-xs hover:bg-brand-50 text-navy"
+                        >
+                          {opt.label}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-navy">Notes</label>
+              <textarea
+                rows={2}
+                value={form.notes}
+                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-navy/70">
+              <input
+                type="checkbox"
+                checked={form.backdate}
+                onChange={(e) => setForm((f) => ({ ...f, backdate: e.target.checked }))}
+              />
+              Backdate this entry
+            </label>
+            {form.backdate && (
+              <input
+                type="date"
+                value={form.effectiveDate}
+                onChange={(e) => setForm((f) => ({ ...f, effectiveDate: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            )}
           </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-navy">Notes</label>
-            <textarea
-              rows={2}
-              value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-
-          <label className="flex items-center gap-2 text-sm text-navy/70">
-            <input
-              type="checkbox"
-              checked={form.backdate}
-              onChange={(e) => setForm((f) => ({ ...f, backdate: e.target.checked }))}
-            />
-            Backdate this entry
-          </label>
-          {form.backdate && (
-            <input
-              type="date"
-              value={form.effectiveDate}
-              onChange={(e) => setForm((f) => ({ ...f, effectiveDate: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          )}
-
-          <div className="flex justify-end gap-2 pt-2">
+          <div className={MODAL_FOOTER}>
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>

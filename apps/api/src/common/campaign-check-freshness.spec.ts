@@ -1018,6 +1018,38 @@ describe("campaign-check freshness guard (spec T1–T17)", () => {
     }
   });
 
+  it("T21a: a forced run that TIMES OUT still refuses, but says so and never calls it a test failure", () => {
+    const dir = mkFixtureDir();
+    try {
+      initFixtureRepo(dir);
+      writeApiSpecCommit(dir, T0);
+      writeLedgerCommit(dir, T0 + 600, [B1_DONE_ROW]);
+      const runsDir = path.join(dir, ".campaign", "runs");
+      writeReport(runsDir, "api", { generatedAt: iso(T0 + 1000), tokens: [] });
+      const dryRunFile = writeTurboDryRunFile(dir, "HIT", "@routeflow/mobile");
+
+      const res = runCampaignCheck({
+        fixtureDir: dir,
+        runsDir,
+        args: ["--freshness-only"],
+        env: {
+          CAMPAIGN_CHECK_TURBO_DRY_RUN: dryRunFile,
+          CAMPAIGN_CHECK_FORCE_RUN: "TIMEOUT",
+          RF_CAMPAIGN_FORCE_TIMEOUT_MIN: "7",
+          JEST_WORKER_ID: "1",
+        },
+      });
+      const out = combined(res);
+
+      expect(out).toContain("forced run for @routeflow/mobile TIMED OUT after 7 min (host load?)");
+      expect(out).toContain("not a test failure");
+      expect(out).not.toContain("genuine failure");
+      expect(res.status).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("T21b: full mode refuses a forced run that fails, and the report it left is gone", () => {
     const dir = mkFixtureDir();
     try {
