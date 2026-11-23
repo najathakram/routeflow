@@ -234,9 +234,26 @@ function driftLines(snapshot, state, now) {
   ];
 }
 
-/** The brief's inputs with every string masked (a copy; no names -> the inputs themselves). */
-function maskInputs(inputs, names) {
-  const deep = deepMasker(names);
+/** Deep copy with `fn` applied to every string value (keys untouched), the shape deepMasker walks. */
+const deepStrings = (fn) => {
+  const walk = (v) =>
+    typeof v === "string"
+      ? fn(v)
+      : Array.isArray(v)
+        ? v.map(walk)
+        : v && typeof v === "object"
+          ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]))
+          : v;
+  return walk;
+};
+
+/**
+ * The brief's inputs with every string masked (a copy; no names -> the inputs themselves), then
+ * `cleanText` on every string when given (the session hook's control-byte strip, SA-1237 A1).
+ */
+function maskInputs(inputs, names, cleanText = null) {
+  const masker = deepMasker(names);
+  const deep = cleanText ? (v) => deepStrings(cleanText)(masker(v)) : masker;
   const { state, snapshot, config } = inputs;
   const items = new Map();
   for (const [k, v] of state.items) items.set(k, deep(v));
@@ -282,11 +299,12 @@ export function renderBrief(
     me = null,
     inboxSeen = null,
     frameComment = null, // (line, comment) => line: the session hook frames comments (SA-1237)
+    cleanText = null, // (string) => string on every input text: the hook's strip (SA-1237 A1)
   } = {},
 ) {
   // Mask every input text BEFORE a line is built, clipped or cut: a client name must never
   // survive as a fragment. (The final maskText below stays as a belt-and-braces pass.)
-  ({ state, snapshot, config } = maskInputs({ state, snapshot, config }, clientNames));
+  ({ state, snapshot, config } = maskInputs({ state, snapshot, config }, clientNames, cleanText));
   const sections = [];
   const add = (key, title, part) => {
     if (part.lines.length === 0) return;
@@ -346,11 +364,18 @@ const ids4 = (ids) =>
 export function renderSince(
   before,
   now,
-  { lane = null, nowMs = Date.now(), utcOffsetMin = 0, config = null, clientNames = [] } = {},
+  {
+    lane = null,
+    nowMs = Date.now(),
+    utcOffsetMin = 0,
+    config = null,
+    clientNames = [],
+    cleanText = null,
+  } = {},
 ) {
   // Mask the item texts BEFORE any clip (a trainLabel is cut at 40 characters).
-  ({ state: before } = maskInputs({ state: before }, clientNames));
-  ({ state: now } = maskInputs({ state: now }, clientNames));
+  ({ state: before } = maskInputs({ state: before }, clientNames, cleanText));
+  ({ state: now } = maskInputs({ state: now }, clientNames, cleanText));
   const done = [];
   const created = [];
   const blocked = [];

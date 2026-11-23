@@ -40,7 +40,7 @@ export function myKeys(me = {}) {
 }
 
 /** The author's name as the board shows it: the actor (a member id or a lane). */
-export const authorOf = (c) => c.actor || c.lane || c.machine;
+export const authorOf = (c) => c.actor || c.lane || c.machine || "unknown member";
 
 /** An assignment as an inbox entry (kind "assign"), so one list, marker and renderer serve both. */
 const assignEntry = (a) => ({
