@@ -43,11 +43,9 @@ export function checkBadgeFor(p: {
  * row reads its own status so no cell is empty. A credit note or advance is an application, never cash (B421).
  * The five words are the owner's (2026-11-23); renaming one is a one-entry change here.
  */
-export function paymentRowBadge(p: {
-  method: string;
-  status?: string;
-  checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
-}): ReturnType<typeof checkBadgeFor> {
+export function paymentRowBadge(
+  p: Parameters<typeof checkBadgeFor>[0],
+): ReturnType<typeof checkBadgeFor> {
   const check = checkBadgeFor(p);
   if (check) return check;
   switch (p.status) {

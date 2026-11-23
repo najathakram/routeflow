@@ -62,7 +62,7 @@ const SURFACES: { file: string; label: string; figure: RegExp; tag?: string }[] 
     // SA-1197 A3: the invoice page's account block; only the Open balance figure taps (the parts stay plain)
     file: "app/(dashboard)/invoices/[id]/InvoiceTotalsSummary.tsx",
     label: "invoice page account block Open balance",
-    figure: /\{balanceFigure\}/g,
+    figure: /\{node\}/g, // SA-1228 D5: the shared renderer hands the figure node to this wrapper
   },
 ];
 
@@ -71,6 +71,10 @@ const PLAIN_ON_PURPOSE: Record<string, string> = {
   "components/account-statement/AccountStatementSheet.tsx": "the statement view itself",
   "app/(dashboard)/settings/_components/InvoiceLayoutPreview.tsx":
     "settings preview: a fixed sample, no customer", // SA-1197 A3-2
+  "components/InvoiceAccountRows.tsx":
+    "the shared account-row renderer; the staff page wraps the tap through its figure prop (SA-1228 D5)",
+  "app/buyer/portal/[seller]/invoices/[id]/page.tsx":
+    "buyer portal: prints the server's rows, the buyer gets no staff statement tap (SA-1228 D5)",
 };
 
 /** True when `index` sits between an opening `<OpenBalanceButton` and its closing tag. */
