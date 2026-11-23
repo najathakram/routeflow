@@ -5,9 +5,10 @@
  *     `paymentId`, never by group, never by an `in` list, never by an id read off a group sibling (M1 of #4406).
  *     A third file that sets a payment VOID fails the inventory until its grain is ruled.
  *  4. Two routes put a payment in front of a person (M2 of #4406): the staff receipt read (payment-list-query.ts, the
- *     only reader importer) and the buyer list (buyer/buyer.controller.ts). The buyer route is a NAMED, DATED
- *     exception, not a silent gap: it reads the rows itself, shows no receipt, and is owned by M1-04 (demo window
- *     by 2026-11-25). A new controller that reads `invoicePayment` directly fails until it is named here.
+ *     only reader importer) and the buyer list (buyer/buyer.controller.ts). The buyer route is a NAMED exception,
+ *     not a silent gap: it reads the rows itself, shows no receipt, and is owned by M1-04. The exception exists IF
+ *     AND ONLY IF the controller still reads `invoicePayment` rows directly (SA-1228 A: structural, no clock, no
+ *     date). A new controller that reads `invoicePayment` directly fails until it is named here.
  *  3. The SA-749r2 split-leg namespace is not on this base. When `COUNTER_TENDER_NS` lands, this fails until
  *     `isSplitLegGroup` knows it and the grain is ruled (so no backfill freezes the wrong grain).
  * Comments are blanked, each detector has a self-test, and an empty scan fails.
@@ -54,16 +55,15 @@ export function addressedByOwnId(call: { args: string; scope: string }): boolean
 export const controllerReadsPayments = (text: string): boolean =>
   /\binvoicePayment\s*\.\s*(findMany|findFirst|findUnique|count)\s*\(/.test(codeOnly(text));
 
-/** The one named, dated exception to "the staff receipt read is the only route": the buyer list. */
-export const BUYER_ROUTE_EXCEPTION = {
+/**
+ * The one named exception to "the staff receipt read is the only route": the buyer list. It exists if and only if the
+ * buyer controller still reads `invoicePayment` rows itself; set it to null once M1-04 routes the buyer through the reader.
+ */
+export const BUYER_ROUTE_EXCEPTION: { file: string; owner: string; reason: string } | null = {
   file: "buyer/buyer.controller.ts",
   owner: "M1-04",
-  expires: "2026-11-25",
   reason: "buyer list reads rows itself and shows no receipt; the buyer receipt is M1-04",
 };
-/** True once the named exception's date has passed: the pin goes red then if M1-04 slipped (deliberate, SA-1220). */
-export const exceptionExpired = (e: { expires: string }, now: Date): boolean =>
-  now.getTime() > new Date(`${e.expires}T23:59:59Z`).getTime();
 
 /** A till predicate in the receipt file: membership is `receiptKeyOf` alone (SA-1220). */
 export const usesTillPredicate = (text: string): boolean =>
@@ -174,16 +174,26 @@ ${body}
   });
 
   it("two routes put a payment in front of a person: the staff receipt read and the named buyer exception", () => {
-    expect(BUYER_ROUTE_EXCEPTION.owner).toBe("M1-04");
     const importers = files.filter((f) => importsReceiptReader(f.text)).map((f) => f.file);
     expect(importers).toEqual(["invoices/payment-list-query.ts"]);
     const controllers = files
       .filter((f) => f.file.endsWith(".controller.ts") && controllerReadsPayments(f.text))
       .map((f) => f.file)
       .sort();
-    expect(controllers).toEqual([BUYER_ROUTE_EXCEPTION.file, FILE_AUTH_READ].sort());
+    expect(controllers).toEqual(
+      [...(BUYER_ROUTE_EXCEPTION ? [BUYER_ROUTE_EXCEPTION.file] : []), FILE_AUTH_READ].sort(),
+    );
+  });
+
+  it("R11. the buyer exception exists if and only if the buyer controller still reads payment rows (no clock)", () => {
+    const buyer = files.find((f) => f.file === "buyer/buyer.controller.ts")!;
+    expect(buyer).toBeDefined();
+    expect(controllerReadsPayments(buyer.text)).toBe(BUYER_ROUTE_EXCEPTION !== null);
+    if (BUYER_ROUTE_EXCEPTION) {
+      expect(BUYER_ROUTE_EXCEPTION.owner).toBe("M1-04");
+      expect(BUYER_ROUTE_EXCEPTION.file).toBe(buyer.file);
+    }
     // the exception cannot quietly become a second reader: once the buyer route imports the reader, delete the exception
-    const buyer = files.find((f) => f.file === BUYER_ROUTE_EXCEPTION.file)!;
     expect(importsReceiptReader(buyer.text)).toBe(false);
   });
 
@@ -192,14 +202,6 @@ ${body}
     expect(usesTillPredicate("// isCounterTenderGroup")).toBe(false);
     const reader = files.find((f) => f.file === "invoices/payment-receipt-group.ts")!;
     expect(usesTillPredicate(reader.text)).toBe(false);
-  });
-
-  it("R11. the buyer exception has not expired (red after 2026-11-25 if M1-04 slips)", () => {
-    expect(exceptionExpired({ expires: "2020-01-01" }, new Date("2026-11-22T00:00:00Z"))).toBe(
-      true,
-    );
-    expect(exceptionExpired(BUYER_ROUTE_EXCEPTION, new Date("2026-11-25T12:00:00Z"))).toBe(false);
-    expect(exceptionExpired(BUYER_ROUTE_EXCEPTION, new Date())).toBe(false);
   });
 
   it("the controller detector flags a planted direct read and ignores a comment", () => {
