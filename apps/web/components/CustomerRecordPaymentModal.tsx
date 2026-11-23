@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { useAuth } from "@/lib/auth-context";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
@@ -82,6 +83,7 @@ export function CustomerRecordPaymentModal({
   focusInvoiceId,
 }: CustomerRecordPaymentModalProps) {
   const { toast } = useToast();
+  const router = useRouter();
   const { user } = useAuth();
   const record = useRecordPaymentStandalone();
   const keyScope = paymentKeyScope.standalone(customerId);
@@ -219,13 +221,23 @@ export function CustomerRecordPaymentModal({
     try {
       const res = await record.mutateAsync({ ...dto, submitKey: paymentKey });
       forgetPaymentProof(keyScope);
-      toast({
-        title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
-        variant: "success",
-      });
       // Best-effort: the payment already succeeded — an image-upload failure
       // must never look like the payment itself failed.
       const createdPaymentId = res.payments[0]?.id;
+      toast({
+        title: `Payment ${status === "DRAFT" ? "saved as draft" : "recorded"}`,
+        variant: "success",
+        // M1-03: "what did it pay for?" is one click: the receipt of the payment just written.
+        ...(createdPaymentId
+          ? {
+              duration: 8000,
+              action: {
+                label: "View receipt",
+                onClick: () => router.push(`/finance/payments/${createdPaymentId}`),
+              },
+            }
+          : {}),
+      });
       if (file && createdPaymentId) {
         try {
           await uploadPaymentImage.mutateAsync({ paymentId: createdPaymentId, file });

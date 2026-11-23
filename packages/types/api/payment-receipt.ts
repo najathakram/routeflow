@@ -53,6 +53,13 @@ export interface ReceiptTender {
   paymentIds: string[];
 }
 
+/** SA-1220 item 7: the one word for a receipt line that is not confirmed money (PAID reads bare, null). */
+export function receiptStatusText(status: string): string | null {
+  if (status === "PAID") return null;
+  if (status === "VOID") return "Voided";
+  return status === "DRAFT" ? "Draft, not in total" : "Pending, not in total";
+}
+
 /** One row's application to an invoice. */
 export interface ReceiptApplication {
   paymentId: string;
@@ -80,4 +87,17 @@ export interface ReceiptGroupView {
   tenders: ReceiptTender[];
   applications: ReceiptApplication[];
   unapplied: ReceiptUnapplied;
+}
+
+/**
+ * M1-03 (SA-1211 BF-6): the tag a staff payments-LIST row carries when it is one row of an office check. The server reads it
+ * from the one receipt reader, so the list prints `total` and never adds rows up. Null on every other row.
+ */
+export interface PaymentListReceipt {
+  key: string;
+  number: string | null;
+  /** The check's confirmed total (header.total). */
+  total: number;
+  /** Every invoice the confirmed rows of this check were applied to, in receipt order. */
+  invoices: { id: string; invoiceNumber: string }[];
 }
