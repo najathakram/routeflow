@@ -540,6 +540,35 @@ describe("SA-1224 MED-1 and MED-2", () => {
       expect((await edit([part, saved], [echo(saved)])).res).toBeNull();
     });
 
+    it("R8 receive leg: a full receive before save 2 is 400 with the can't-be-received text", async () => {
+      const { service, prisma } = await make();
+      const part = { ...LOT, packSize: 6, unitLabel: "6 Pieces", qty: D(0.5), familyGroupId: null };
+      const item = { ...part, product: { id: "p-1", name: "Soda", currentStock: D(0) } };
+      prisma.vendorBill.findUnique.mockResolvedValue({ ...draft([item]), billDate: new Date() });
+      const e: any = await service.receive("bill-1", {}, "u1").then(
+        () => null,
+        (x) => x,
+      );
+      expect(e.getResponse()).toMatchObject({
+        code: "RECEIVE_PARTIAL_UNIT",
+        message:
+          '"Soda lot" is one unit of 6 pieces and can\'t be received in part. Add it again as a new line in whole packs, save, then remove this line.',
+      });
+    });
+
+    it("P0: create with a 1 Piece label and no pack stores 1 Piece with a null pack", async () => {
+      const { service, prisma } = await make();
+      prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1" }]);
+      prisma.vendorBill.findFirst.mockResolvedValue(null);
+      prisma.vendorBill.create.mockResolvedValue({ id: "b", items: [] });
+      await service.create({
+        supplierId: "sup-1",
+        items: [{ description: "x", qty: 1, unitCost: 3, unitLabel: "1 Piece" }],
+      } as any);
+      const rows = prisma.vendorBill.create.mock.calls[0][0].data.items.createMany.data;
+      expect(rows[0]).toMatchObject({ unitLabel: "1 Piece", packSize: null });
+    });
+
     it("R7: update() reads description, sku and lineTotal of the stored lines", async () => {
       const { prisma } = await edit([PLAIN], [echo(PLAIN)]);
       expect(prisma.vendorBill.findUnique.mock.calls[0][0].include.items.select).toMatchObject({

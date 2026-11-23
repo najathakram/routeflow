@@ -64,6 +64,7 @@ async function receive(item: any, recv: any) {
   return {
     status: e?.getStatus?.(),
     code: e?.getResponse?.()?.code,
+    message: e?.getResponse?.()?.message,
     lots: prisma.stockLot.create.mock.calls.length,
     itemUpdates: prisma.purchaseOrderItem.update.mock.calls.length,
   };
@@ -71,13 +72,17 @@ async function receive(item: any, recv: any) {
 
 describe("receivePurchaseOrder: a lot line is received in whole packs (SA-1227 MEDIUM-2)", () => {
   it("3 pieces of a 6-piece lot is 400 RECEIVE_PARTIAL_UNIT and posts no stock", async () => {
-    expect(await receive(line(), { receivedQty: 3 })).toEqual({
+    const r = await receive(line(), { receivedQty: 3 });
+    expect(r).toMatchObject({ status: 400, code: "RECEIVE_PARTIAL_UNIT", lots: 0, itemUpdates: 0 });
+    expect(r.message).toBe(
+      '"Soda" is one unit of 6 pieces and can\'t be received in part. Add it again as a new line in whole packs, save, then remove this line.',
+    );
+    expect(await receive(line(), { boxes: 1, pieces: 3 })).toMatchObject({
       status: 400,
       code: "RECEIVE_PARTIAL_UNIT",
       lots: 0,
       itemUpdates: 0,
     });
-    expect((await receive(line(), { boxes: 1, pieces: 3 })).code).toBe("RECEIVE_PARTIAL_UNIT");
   });
 
   it("green: 6 pieces (one whole pack) and 12 pieces receive", async () => {

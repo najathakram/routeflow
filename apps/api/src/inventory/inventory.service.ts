@@ -32,7 +32,7 @@ import {
   readFamilyPriceMode,
 } from "../products/family-price";
 import { billLineUnit, linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
-import { assertWholeLotReceive } from "../vendor-bills/bill-line-identity";
+import { assertLotLineEdit, assertWholeLotReceive } from "../vendor-bills/bill-line-identity";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { bareVariantLabel } from "../products/product-variant-name";
@@ -2334,6 +2334,11 @@ export class InventoryService {
         if (keptIds.has(line.id))
           throw new BadRequestException(`Line ${line.id} appears more than once`);
         keptIds.add(line.id);
+        // SA-1238 M1: a labelled lot line keeps its pack and stays in whole packs (the bill's one rule).
+        assertLotLineEdit(existingById.get(line.id)!, {
+          packSize: line.packSize,
+          qty: line.qtyOrdered,
+        });
       }
       const products = await tx.product.findMany({
         where: { id: { in: [...new Set(items.map((l) => l.productId))] } },

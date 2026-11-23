@@ -13,6 +13,8 @@ import {
   type StoredBillItemIdentity,
 } from "./bill-item-data";
 
+/** SA-1207 S2b spec 6-7: CREATE mints the group id and proves each group; EDIT carries identity from the STORED row. */
+
 export async function resolveCreateIdentities(
   prisma: PrismaService,
   items: any[] | undefined | null,
@@ -76,6 +78,7 @@ interface StoredLine extends StoredBillItemIdentity {
   lineTotal?: Prisma.Decimal | number | string | null;
 }
 
+/** SA-1223 M2: a lot is counted in whole units. One rule for create, edit and every receive plan. */
 const isLotLine = (item: { packSize?: unknown; unitLabel?: string | null }) =>
   billLineUnit({ packSize: billItemPack(item), unitLabel: item.unitLabel }).kind === "lot";
 
@@ -92,6 +95,7 @@ export function assertWholeLotQty(item: {
   }
 }
 
+/** Every planned receive pair (per-line and full-receive plans alike) passes through here. */
 export function assertWholeLotReceive(
   item: { description: string; packSize: number | null; unitLabel: string | null },
   receiveQty: Prisma.Decimal,
@@ -110,6 +114,24 @@ const unitFactor = (x: { packSize?: unknown }) =>
 const locked = (message: string) =>
   new ConflictException({ code: API_ERROR_CODES.SPLIT_LINE_LOCKED, message });
 
+/** SA-1238 M1: a stored lot line (a PO line) keeps its pack; its quantity, in pieces, is whole packs. */
+export function assertLotLineEdit(
+  stored: { packSize?: unknown; unitLabel?: string | null },
+  next: { packSize?: unknown; qty: Prisma.Decimal.Value },
+) {
+  if (!isLotLine(stored)) return;
+  if (unitFactor({ packSize: next.packSize ?? stored.packSize }) !== unitFactor(stored)) {
+    throw locked(
+      "A pack line's pack size can't change. Remove the line and add it again in whole packs.",
+    );
+  }
+  // Exact remainder on Decimal (pieces mod pack), never a float quotient.
+  if (!new Prisma.Decimal(next.qty).mod(unitFactor(stored)).isZero()) {
+    throw wholeLot(API_ERROR_CODES.LOT_QTY_NOT_WHOLE, "A pack line needs a whole number of packs.");
+  }
+}
+
+/** An edit's identities: stored rows carry theirs; a NEW row gets the create rule's, never none (SA-1224 MED-1). */
 export async function resolveEditIdentities(
   prisma: PrismaService,
   stored: StoredLine[],
@@ -129,6 +151,7 @@ export async function resolveEditIdentities(
   return out;
 }
 
+/** Pair an edit's rows with the stored lines by id; one identity per incoming row, from the stored row. */
 export function carryStoredIdentities(
   stored: StoredLine[],
   incoming: any[],
