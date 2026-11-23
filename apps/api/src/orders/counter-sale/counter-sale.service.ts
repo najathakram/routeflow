@@ -714,11 +714,16 @@ export class CounterSaleService {
         carriedReturns: read.returnData.carriedReturns,
         creditNotes: read.returnData.creditNotes,
       });
-      // SA-1211 A1.1: the returned items, from the stored return lines of the same returns the split read
-      const returnItems = await readReturnItems(tenantId, db, [
-        ...read.returnData.returns,
-        ...(read.returnData.carriedReturns ?? []),
-      ]);
+      // SA-1211 A1.1 / SA-1231: the goods of the returns rung on THIS sale (never an older credit applied as a tender); its
+      // own try, so a failed list never drops the money fields above
+      let returnItems: Awaited<ReturnType<typeof readReturnItems>>;
+      try {
+        returnItems = await readReturnItems(tenantId, db, read.returnData.returns);
+      } catch (e) {
+        this.logger.warn(
+          `counter sale ${orderId}: returned items not read (${(e as Error).message})`,
+        );
+      }
       return returnItems ? { ...split, returnItems } : split;
     } catch (e) {
       this.logger.warn(`counter sale ${orderId}: tender split not read (${(e as Error).message})`);

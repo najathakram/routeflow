@@ -1,6 +1,9 @@
 import type { CounterReturnItem } from "@routeflow/types";
 import type { ReceiptPaymentInput, ReceiptReturnData } from "../../documents/receipt-model";
 import type { PrismaService } from "../../prisma/prisma.service";
+import { lineOfItem } from "../../returns/return-line-items";
+import { DEAD_RETURN_STATUSES } from "../../returns/return-statuses";
+import type { OrderLineForPieces } from "../../returns/returns-pieces.util";
 import {
   carriedReturnSelect,
   carriedReturnWhere,
@@ -60,9 +63,6 @@ export async function readReturnData(
   };
 }
 
-/** A return that was refused or cancelled took nothing back: its lines are not "returned items". */
-const DEAD_RETURN_STATUSES: readonly string[] = ["REJECTED", "CANCELLED"];
-
 /**
  * SA-1211 A1.1 (VF-6): the items a counter sale's returns took back, from the STORED return lines (name, quantity, reason code;
  * served as given, never re-derived), for the receipt's "returned items" list. The returns are the ones `readReturnData` named
@@ -77,21 +77,52 @@ export async function readReturnItems(
   const ids = [
     ...new Set(
       returns
-        .filter((r) => !DEAD_RETURN_STATUSES.includes(r.status ?? ""))
+        .filter((r) => !(DEAD_RETURN_STATUSES as readonly string[]).includes(r.status ?? ""))
         .flatMap((r) => (r.id ? [r.id] : [])),
     ),
   ];
   if (ids.length === 0) return undefined;
-  const rows: Array<{ qty: unknown; reason: string | null; product: { name: string } | null }> =
-    await db.returnItem.findMany({
-      where: { tenantId, returnId: { in: ids } },
-      select: { qty: true, reason: true, product: { select: { name: true } } },
-      orderBy: { id: "asc" },
-    });
+  const rows: Array<{
+    qty: unknown;
+    reason: string | null;
+    sourceOrderItemId: string | null;
+    product: { name: string } | null;
+    return: { kind: "INLINE" | "STANDARD" } | null;
+  }> = await db.returnItem.findMany({
+    where: { tenantId, returnId: { in: ids } },
+    select: {
+      qty: true,
+      reason: true,
+      sourceOrderItemId: true,
+      product: { select: { name: true } },
+      return: { select: { kind: true } },
+    },
+    orderBy: { id: "asc" },
+  });
   if (rows.length === 0) return undefined;
+  // SA-1231: each item names the sold line it came off; ONE batched read of those lines (a snapshot, never the live product)
+  const lineIds = [
+    ...new Set(rows.flatMap((r) => (r.sourceOrderItemId ? [r.sourceOrderItemId] : []))),
+  ];
+  const lineItems: OrderLineForPieces[] = lineIds.length
+    ? await db.orderItem.findMany({
+        where: { tenantId, id: { in: lineIds } },
+        select: {
+          id: true,
+          productId: true,
+          qty: true,
+          unitLabel: true,
+          unitsPerBox: true,
+          boxes: true,
+          pieces: true,
+        },
+      })
+    : [];
   return rows.map((r) => ({
     name: r.product?.name ?? "Item",
     qty: Number(r.qty),
     reason: r.reason?.trim() ? r.reason : null,
+    ...(r.return ? { kind: r.return.kind } : {}),
+    line: lineOfItem(r, { lineItems }),
   }));
 }

@@ -2,13 +2,13 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { CREDIT_WORDS } from "@routeflow/types";
 import {
   adjustmentLabel,
   formatReceiptMoney as money,
   type CounterReceiptModel,
 } from "@/lib/counter-receipt";
 import { describeReturnReason } from "@/lib/reason-copy";
+import { returnedItemQtyText } from "@/lib/return-line-qty";
 import { ReadOnlyHint, WriteLink } from "@/lib/read-only-gate";
 
 /**
@@ -209,20 +209,14 @@ export function CounterReceiptView({
           </div>
         ) : null}
         {m.returnItems?.length ? (
-          // SA-1211 A1.1: what came back and why (the server's stored return lines), with the credit it made
+          // SA-1211 A1.1: what came back and why (the server's stored return lines and sold-line snapshots; the credit is the lines below, once)
           <div data-testid="receipt-return-items">
             <dt>Returned items</dt>
             {m.returnItems.map((item, n) => (
               <dd key={n} data-testid="receipt-return-item">
-                {`${item.name} × ${item.qty} · ${describeReturnReason(item.reason ?? "")}`}
+                {`${item.name} · ${returnedItemQtyText(item)} · ${describeReturnReason(item.reason ?? "")}`}
               </dd>
             ))}
-            {m.creditKept ? (
-              // credit kept on the account only: a credit applied to the sale is the Returned row, a tender is the Payment method line
-              <dd className="font-semibold" data-testid="receipt-return-credit">
-                {CREDIT_WORDS.balance.replace("{amount}", money(m.creditKept))}
-              </dd>
-            ) : null}
           </div>
         ) : null}
         {m.refunded ? (

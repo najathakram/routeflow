@@ -125,11 +125,21 @@ export interface CounterTenderSplitFields {
   returnItems?: CounterReturnItem[];
 }
 
-/** One returned item as the server stored it: the product's name, the quantity returned (pieces) and the reason code. */
+/** One returned item as the server stored it: the product's name, the quantity as stored, and the reason code. */
 export interface CounterReturnItem {
   name: string;
   qty: number;
   reason: string | null;
+  /** SA-1231: the return's kind: an INLINE item stores pieces, a STANDARD item the sold line's own axis. Absent from an older server. */
+  kind?: "INLINE" | "STANDARD";
+  /** SA-1231: a snapshot of the sold line the item names (never the live product), null when none or it no longer exists. */
+  line?: {
+    unitLabel: string | null;
+    unitsPerBox: number | null;
+    boxes: number | null;
+    pieces: number | null;
+    qty: number;
+  } | null;
 }
 
 export interface CounterSaleResponse extends CounterTenderSplitFields {

@@ -9,6 +9,7 @@ import { formatReceiptMoney as money, roundMoney } from "@routeflow/pricing";
  * SA-1066 F7: small above cash's big Amount due; on other methods it IS the big bottom figure.
  * SA-1211 A1.1 (VF-6): with a return on the sale, EVERY tender (On account included) reads one line, "Total $100.00 · Return
  * −$40.00 · Amount due $60.00". The three figures are the counter's own (`netOfReturn`): nothing is subtracted here.
+ * SA-1231: on Cash the big `change-due` line below is the only "Amount due", so this line stops at "Return −$40.00".
  */
 export function CounterRunningTotal({
   total,
@@ -33,7 +34,7 @@ export function CounterRunningTotal({
           className={cash ? "text-lg font-semibold" : "text-xl font-bold"}
           data-testid="running-total"
         >
-          {`Total ${money(total)} · Return −${money(returned)} · Amount due ${money(payTotal)}`}
+          {`Total ${money(total)} · Return −${money(returned)}${cash ? "" : ` · Amount due ${money(payTotal)}`}`}
         </p>
       </div>
     );

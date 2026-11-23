@@ -88,6 +88,9 @@ beforeEach(() => {
 });
 
 const LINE = "Total $100.00 · Return −$40.00 · Amount due $60.00";
+// SA-1231: on Cash the big "Amount due" line is the only Amount due, so the small line stops at the Return
+const CASH_LINE = "Total $100.00 · Return −$40.00";
+const amountDues = () => document.body.textContent?.match(/Amount due/g) ?? [];
 const ready = async () => {
   renderWithProviders(<CounterSaleScreen />);
   const field = screen.getByLabelText("Scan or search items");
@@ -110,8 +113,27 @@ describe("the counter return line (SA-1211 A1.1, VF-6)", () => {
   it("Cash: the same sale reads the same line", async () => {
     await ready();
     fireEvent.click(screen.getByRole("radio", { name: "Cash" }));
-    expect(screen.getByTestId("running-total")).toHaveTextContent(LINE);
+    expect(screen.getByTestId("running-total").textContent).toBe(CASH_LINE);
     expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $60.00");
+    expect(amountDues()).toHaveLength(1); // SA-1231: one Amount due, never two figures
+  });
+
+  it("Cash with $20 typed: one Amount due, the big line's $40.00 (the small line no longer says $60.00)", async () => {
+    await ready();
+    fireEvent.click(screen.getByRole("radio", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "20" } });
+    expect(screen.getByTestId("running-total").textContent).toBe(CASH_LINE);
+    expect(amountDues()).toHaveLength(1);
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $40.00");
+  });
+
+  it("Cash with $60 typed: one figure, nothing more due", async () => {
+    await ready();
+    fireEvent.click(screen.getByRole("radio", { name: "Cash" }));
+    fireEvent.change(screen.getByLabelText("Amount tendered"), { target: { value: "60" } });
+    expect(screen.getByTestId("running-total").textContent).toBe(CASH_LINE);
+    expect(amountDues().length).toBeLessThanOrEqual(1);
+    expect(screen.getByTestId("change-due")).toHaveTextContent("Amount due $0.00");
   });
 
   it("Card: the same sale reads the same line", async () => {
