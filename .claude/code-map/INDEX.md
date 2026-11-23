@@ -109,6 +109,11 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Product display name (Family - Variant) | [`api`](api/landing-2026-11-23-w39.md) → `packages/types/api/product-name.ts` |
 | Inventory dialog panel (scroll, keep Save in view) | [`web`](web/landing-2026-11-23-w39.md) → `inventory/_components/modal-panel.ts` |
 | Heavy-slot priority, max-cpu file; campaign-check timeout | [`api`](api/landing-2026-11-23-w39.md) → `scripts/lib/heavy-slot.mjs`, `campaign-force-run.cjs` |
+| Receipt group (what one payment covered, read-only) | [`api`](api/landing-2026-11-23-w40.md) → `invoices/payment-receipt-group.ts` |
+| Returned items and one word for credit (counter) | [`api`](api/landing-2026-11-23-w40.md) → `orders/counter-sale/counter-return-read.ts`, `common/credit-words.ts` |
+| Generated-dirs list for cross-workspace scans | [`api`](api/landing-2026-11-23-w40.md) → `scripts/lib/generated-dirs.cjs` |
+| Create PO scan bar | [`web`](web/landing-2026-11-23-w40.md) → `inventory/_components/PurchaseOrderScanBar.tsx` |
+| Sidebar order and hidden (F-2) | [`web`](web/landing-2026-11-23-w40.md) → `_components/nav-layout.ts` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →
