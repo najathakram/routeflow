@@ -208,6 +208,7 @@ export * from "./api/counter-drawer-event";
 export * from "./api/counter-sale";
 export * from "./api/receipt";
 export * from "./api/counter-quick-keys";
+export * from "./api/nav-layout";
 export * from "./api/import";
 export * from "./api/analytics-insights";
 export * from "./api/fulfilment-methods";

@@ -7,6 +7,7 @@ import { linePack, normalizeBoxesPieces } from "@routeflow/pricing";
 import { unitsLabel } from "@/lib/stock-label";
 import { useReceivePurchaseOrder } from "@/lib/api/inventory";
 import type { POItem, PurchaseOrder } from "./purchase-orders-shared";
+import { MODAL_BODY, MODAL_FOOTER, MODAL_FORM, MODAL_PANEL } from "./modal-panel";
 
 export function ReceivePOModal({
   po,
@@ -91,7 +92,7 @@ export function ReceivePOModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-lg`}>
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Receive — {po.poNumber}</h2>
           <button
@@ -101,93 +102,95 @@ export function ReceivePOModal({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          <p className="text-xs text-navy/70">
-            Enter the quantity actually received for each item.
-          </p>
-          <div className="rounded-lg border border-surface-border overflow-x-auto">
-            <table className="min-w-[360px] w-full text-sm">
-              <thead className="bg-surface-raised text-xs text-navy/70">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Product</th>
-                  <th className="px-3 py-2 text-center font-medium w-24">Ordered</th>
-                  <th className="px-3 py-2 text-center font-medium w-28">Received qty</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-border">
-                {po.items.map((item) => {
-                  const upb = unitsPerBoxFor(item);
-                  const isBoxed = upb > 1;
-                  const split = receivedSplits[item.id] ?? { boxes: "0", pieces: "0" };
-                  const ordered = Number(item.qtyOrdered ?? 0);
-                  const outstanding = outstandingOf(item);
-                  return (
-                    <tr key={item.id}>
-                      <td className="px-3 py-2 font-medium text-navy">
-                        {item.product?.name ?? catalogById.get(item.productId)?.name ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-center text-navy">
-                        {isBoxed ? unitsLabel(ordered, upb) : ordered}
-                        {outstanding !== ordered && (
-                          <span className="block text-[11px] text-navy/50">
-                            {isBoxed ? unitsLabel(outstanding, upb) : outstanding} left
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {isBoxed ? (
-                          <div className="flex items-center justify-center gap-1">
+        <form onSubmit={handleSubmit} className={MODAL_FORM}>
+          <div className={MODAL_BODY}>
+            <p className="text-xs text-navy/70">
+              Enter the quantity actually received for each item.
+            </p>
+            <div className="rounded-lg border border-surface-border overflow-x-auto">
+              <table className="min-w-[360px] w-full text-sm">
+                <thead className="bg-surface-raised text-xs text-navy/70">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Product</th>
+                    <th className="px-3 py-2 text-center font-medium w-24">Ordered</th>
+                    <th className="px-3 py-2 text-center font-medium w-28">Received qty</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-border">
+                  {po.items.map((item) => {
+                    const upb = unitsPerBoxFor(item);
+                    const isBoxed = upb > 1;
+                    const split = receivedSplits[item.id] ?? { boxes: "0", pieces: "0" };
+                    const ordered = Number(item.qtyOrdered ?? 0);
+                    const outstanding = outstandingOf(item);
+                    return (
+                      <tr key={item.id}>
+                        <td className="px-3 py-2 font-medium text-navy">
+                          {item.product?.name ?? catalogById.get(item.productId)?.name ?? "—"}
+                        </td>
+                        <td className="px-3 py-2 text-center text-navy">
+                          {isBoxed ? unitsLabel(ordered, upb) : ordered}
+                          {outstanding !== ordered && (
+                            <span className="block text-[11px] text-navy/50">
+                              {isBoxed ? unitsLabel(outstanding, upb) : outstanding} left
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          {isBoxed ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step={1}
+                                title="Boxes"
+                                value={split.boxes}
+                                onChange={(e) =>
+                                  setReceivedSplits((prev) => ({
+                                    ...prev,
+                                    [item.id]: { ...split, boxes: e.target.value },
+                                  }))
+                                }
+                                className="w-14 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                              />
+                              <span className="text-navy/30">+</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={upb - 1}
+                                step={1}
+                                title="Extra pieces"
+                                value={split.pieces}
+                                onChange={(e) =>
+                                  setReceivedSplits((prev) => ({
+                                    ...prev,
+                                    [item.id]: { ...split, pieces: e.target.value },
+                                  }))
+                                }
+                                className="w-14 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                              />
+                            </div>
+                          ) : (
                             <input
                               type="number"
                               min={0}
-                              step={1}
-                              title="Boxes"
-                              value={split.boxes}
+                              step={0.001}
+                              value={receivedQtys[item.id] ?? ""}
                               onChange={(e) =>
-                                setReceivedSplits((prev) => ({
-                                  ...prev,
-                                  [item.id]: { ...split, boxes: e.target.value },
-                                }))
+                                setReceivedQtys((prev) => ({ ...prev, [item.id]: e.target.value }))
                               }
-                              className="w-14 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
+                              className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
                             />
-                            <span className="text-navy/30">+</span>
-                            <input
-                              type="number"
-                              min={0}
-                              max={upb - 1}
-                              step={1}
-                              title="Extra pieces"
-                              value={split.pieces}
-                              onChange={(e) =>
-                                setReceivedSplits((prev) => ({
-                                  ...prev,
-                                  [item.id]: { ...split, pieces: e.target.value },
-                                }))
-                              }
-                              className="w-14 rounded border border-surface-border px-1.5 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
-                            />
-                          </div>
-                        ) : (
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.001}
-                            value={receivedQtys[item.id] ?? ""}
-                            onChange={(e) =>
-                              setReceivedQtys((prev) => ({ ...prev, [item.id]: e.target.value }))
-                            }
-                            className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          />
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div className="flex justify-end gap-2 pt-1">
+          <div className={MODAL_FOOTER}>
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>
