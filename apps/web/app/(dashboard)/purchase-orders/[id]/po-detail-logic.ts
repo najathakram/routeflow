@@ -31,7 +31,8 @@ export function createBillAction(
   po: { id: string; status: POStatus; vendorBill?: { status?: string } | null },
   billsVisible: boolean,
 ): CreateBillAction | null {
-  const billable = po.status === "SENT" || po.status === "PARTIAL" || po.status === "RECEIVED";
+  // The same ordered-and-not-closed set `poActions` already names (no second hand-typed status list).
+  const billable = poActions(po.status).close;
   const liveBill = !!po.vendorBill && po.vendorBill.status !== "VOID";
   if (!billsVisible || !billable || liveBill) return null;
   return {
