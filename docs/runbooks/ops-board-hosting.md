@@ -28,8 +28,9 @@ it (below).
 ## Phase A: read-only board online (recommended now)
 
 Members see everything the PC board shows: items, claims (with member names), statuses, drift,
-the triage list, comments. They act with the `rf` CLI from their own checkout (they are GitHub
-collaborators on routeflow-specs, see `team-member-onboarding.md`). No new secret can write
+the triage list, comments. They act with the `rf` CLI from their own checkout (everyone signs in to the
+same GitHub account; who did what comes from `rf whoami --member`, see
+`team-member-onboarding.md`). No new secret can write
 anything, and nothing in phase A touches the RouteFlow app's Railway project.
 
 ### Owner steps (Railway dashboard)
@@ -102,8 +103,9 @@ What it costs: one small always-on container (no database, no volume).
 
 ## Phase B: comment, claim and status from the hosted board (needs an owner ruling)
 
-The ask includes acting on the board (comment, claim, release, status) for members with no repo
-or production access. That means the service must **write** events, which the 10-19 ruling
+The ask includes acting on the board (comment, claim, release, status) from a browser, for a
+person with no checkout at hand. Members with a checkout already do all of this with `rf`
+(including `rf assign` and `rf inbox --wait`), so phase B is a convenience, not a blocker. That means the service must **write** events, which the 10-19 ruling
 forbids. Proposed amendment for the owner to accept or refuse:
 
 > The online ops monitor may append events to routeflow-specs `events/cloud/<day>.jsonl` only,

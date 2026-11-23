@@ -49,6 +49,7 @@ import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/bri
 import {
   authorOf,
   commentsFor,
+  inboxHeadline,
   isUnread,
   readInboxSeen,
   scrubCommentText,
@@ -95,6 +96,7 @@ const BOOLEAN_FLAGS = new Set([
   "refresh",
   "all",
   "keep",
+  "wait",
 ]);
 const MULTI_FLAGS = new Set(["pr", "branch", "url"]);
 
@@ -133,7 +135,9 @@ const USAGE = `usage: rf <command> [args]
   claim <id> [--lane L] [--branch B] [--steal]     release <id> [--lane L]
   status <id> <status> [--note T]                  block <id> --by X [--unblocker Y]   unblock <id>
   comment <id> "<text>" [--to lane|member,...] [--reply-to <eventId>]   talk on the item (the only channel)
-  inbox [--all] [--keep] [--json]   comments for you (mentions, replies, your claimed items); marks them read
+  inbox [--all] [--keep] [--json]   comments and assignments for you (mentions, replies, your claimed items); marks them read
+  inbox --wait [--timeout S] [--interval S]   waits (pulling every 45 s) and exits 0 when something arrives, 3 after --timeout (default 1800 s)
+  assign <id> --to <member>|- [--note N]   hands the item to one member: first in their rf next, in their inbox
   next [--lane L] [--role builder|tester|reviewer] [--claim] [--json]   (a member gets their role's work)
   item new --title T --type X [--priority P] [--status S] [--lane L] [--train R1] [--area A]
            [--parent ID] [--eta E] [--gate G] [--id ID] [--blocked-by ID,ID]  (rf item edit: - clears it)
@@ -544,7 +548,8 @@ async function cmdNext(flags, env) {
   // A member gets work for their role unless --role says otherwise; a lane session sees every role.
   const role = flags.role ?? currentMember(c.config, c.env)?.role;
   const state = stateOf(c);
-  const ranked = rankCandidates(state, lane, c.config, { now: Date.now(), role });
+  const member = currentMember(c.config, c.env)?.id ?? null;
+  const ranked = rankCandidates(state, lane, c.config, { now: Date.now(), role, member });
   const top = ranked[0] ?? null;
   const runnersUp = ranked.slice(1, 5);
   const now = laneNow(state, lane);
@@ -670,6 +675,7 @@ async function cmdItem(positional, flags, env) {
       `${it.id}  ${it.title}`,
       `type ${it.type}  priority ${it.priority}  status ${it.status}  lane ${it.lane ?? "-"}  train ${it.train ?? "-"}`,
       `area ${it.area ?? "-"}  parent ${it.parent ?? "-"}  eta ${it.eta ?? "-"}  gate ${it.gate ?? "-"}`,
+      `assigned to ${it.assignee ? `${it.assignee}${memberName(c.config, it.assignee) ? ` (${memberName(c.config, it.assignee)})` : ""} by ${it.assignedBy ?? "-"}` : "-"}`,
       `claimed by ${claimWords(it, c.config)}${it.claimedAt ? ` since ${iso(it.claimedAt)}` : ""}${it.blocked ? `  BLOCKED by ${it.blocked.by}` : ""}`,
       `links  prs ${it.links.prs.join(",") || "-"}  branches ${it.links.branches.join(",") || "-"}`,
       `children ${it.children.join(",") || "-"}  blocked by ${it.blockedBy.join(",") || "-"}  updated ${iso(it.updatedAt)}`,
@@ -697,8 +703,83 @@ async function cmdItem(positional, flags, env) {
   throw new UsageError("rf item <new|edit|show>");
 }
 
-/** Comments for you: the unread ones (then marked read), or the last 20 with --all. */
+/**
+ * `rf assign <id> --to <member> [--note N]`: hands the item to one team member. It tops their
+ * `rf next` (whatever its lane or role), nobody else is handed it, and it lands in their inbox.
+ * `--to -` clears it. Lanes take work through `rf item edit <id> --lane`, not here.
+ */
+async function cmdAssign(positional, flags, env) {
+  const id = positional[0];
+  if (!id) throw new UsageError("rf assign <id> --to <member> [--note N]");
+  if (typeof flags.to !== "string" || !flags.to.trim())
+    throw new UsageError("rf assign needs --to <member id> (or --to - to clear)");
+  const c = await prepare(ctxFor(env), flags, { sync: true });
+  const raw = flags.to.trim();
+  let to = null;
+  if (!CLEAR_WORDS.has(raw)) {
+    const m = findMember(c.config, raw);
+    if (!m) {
+      const lane = (c.config.lanes ?? []).some((l) => l.id === raw.toLowerCase());
+      throw new UsageError(
+        lane
+          ? `"${raw}" is a lane: hand work to a lane with rf item edit ${id} --lane ${raw}`
+          : `unknown member "${raw}" (members live in the specs ops/config.json)`,
+      );
+    }
+    to = m.id;
+  }
+  const note = typeof flags.note === "string" && flags.note.trim() ? flags.note.trim() : undefined;
+  const lane = defaultLane(c.config, c.env);
+  const data = { to, ...(note ? { note } : {}) };
+  const name = to ? memberName(c.config, to) : null;
+  return writeCmd(c, flags, [makeEvent(c, "assign", id, data, lane)], () =>
+    to ? `assigned ${id} to ${to}${name ? ` (${name})` : ""}` : `unassigned ${id}`,
+  );
+}
+
+/** Seconds from a flag: a positive number, else the default. */
+function secondsFlag(flags, name, dflt) {
+  if (flags[name] === undefined) return dflt;
+  const n = Number(flags[name]);
+  if (!Number.isFinite(n) || n <= 0) throw new UsageError(`--${name} must be a number of seconds`);
+  return n;
+}
+
+export const INBOX_WAIT_TIMEOUT_EXIT = 3;
+
+/**
+ * Comments and assignments for you: the unread ones (then marked read), or the last 20 with --all.
+ * --wait [--timeout S] [--interval S]: pull the specs repo every --interval seconds (default 45)
+ * and EXIT as soon as something unread is there (exit 0), or after --timeout (default 1800; exit
+ * 3). An idle agent runs it as one background command: the exit is what wakes it.
+ */
 async function cmdInbox(flags, env) {
+  if (flags.wait) {
+    if (flags.all) throw new UsageError("--wait and --all do not mix");
+    const timeoutMs = secondsFlag(flags, "timeout", 1800) * 1000;
+    const pollMs =
+      Number(env.RF_INBOX_POLL_MS) > 0
+        ? Number(env.RF_INBOX_POLL_MS) // tests only
+        : secondsFlag(flags, "interval", 45) * 1000;
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      const code = await inboxOnce(flags, env, { quietWhenEmpty: true });
+      if (code !== null) return code;
+      const left = until - Date.now();
+      if (left <= 0) break;
+      await new Promise((ok) => setTimeout(ok, Math.min(pollMs, left)));
+    }
+    const mins = Math.round(timeoutMs / 60000);
+    process.stdout.write(
+      `no new messages for you in ${mins >= 1 ? `${mins} min` : `${Math.round(timeoutMs / 1000)} s`}; run rf inbox --wait again\n`,
+    );
+    return INBOX_WAIT_TIMEOUT_EXIT;
+  }
+  return (await inboxOnce(flags, env, { quietWhenEmpty: false })) ?? 0;
+}
+
+/** One inbox read. Returns the exit code, or null when empty and quietWhenEmpty (keep waiting). */
+async function inboxOnce(flags, env, { quietWhenEmpty }) {
   const c = await prepare(ctxFor(env), flags, { sync: true });
   const lane = resolveLane(flags.lane, c);
   const me = meFor(c, lane);
@@ -712,6 +793,7 @@ async function cmdInbox(flags, env) {
   const all = commentsFor(state, me);
   const seen = readInboxSeen(c.home, me);
   const shown = flags.all ? all.slice(-20) : all.filter((x) => isUnread(x.comment, seen));
+  if (shown.length === 0 && quietWhenEmpty) return null;
   const now = Date.now();
   const n = shown.length;
   const s = n === 1 ? "" : "s";
@@ -724,12 +806,12 @@ async function cmdInbox(flags, env) {
     process.stdout.write(JSON.stringify({ me, comments }, null, 2) + "\n");
   } else if (n === 0) {
     process.stdout.write(
-      `no new comments for you (${me.actor}); rf inbox --all shows the last 20\n`,
+      `no new messages for you (${me.actor}); rf inbox --all shows the last 20\n`,
     );
   } else {
     const head = flags.all
       ? `last ${n} comment${s} for you (${me.actor}):`
-      : `${n} new comment${s} for you (${me.actor}):`;
+      : `${inboxHeadline(shown)} for you (${me.actor}):`;
     const lines = shown.map((x) => renderComment(x.comment, state, { now, clientNames }));
     process.stdout.write(`${head}\n${lines.join("\n")}\n`);
   }
@@ -1557,6 +1639,9 @@ export async function main(argv, env = process.env) {
         break;
       case "inbox":
         code = await cmdInbox(flags, env);
+        break;
+      case "assign":
+        code = await cmdAssign(positional, flags, env);
         break;
       case "triage":
         code = await cmdTriage(positional, flags, env);

@@ -181,7 +181,8 @@ export function briefFor(payload, env, now, deps) {
         .slice(-3)
         .map((x) => deps.inbox.renderComment(x.comment, nowState, { now, clientNames }));
       const more = n > 3 ? [`  (${n - 3} more: rf inbox)`] : [];
-      const head = `[ops monitor] ${n} new comment${n === 1 ? "" : "s"} for you:`;
+      const words = deps.inbox.inboxHeadline?.(mine) ?? `${n} new comment${n === 1 ? "" : "s"}`;
+      const head = `[ops monitor] ${words} for you:`;
       text = [text, head, ...lines, ...more].filter(Boolean).join("\n");
       for (const x of mine) announced.add(x.comment.id);
     }

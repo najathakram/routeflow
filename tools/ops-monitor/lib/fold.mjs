@@ -87,6 +87,9 @@ function newItem(id, fields, ts) {
     answeredAt: null,
     children: [],
     claimedBy: null,
+    assignee: null, // the member it was handed to (rf assign), else null
+    assignedBy: null,
+    assignedAt: null,
     claimedActor: null, // the name the claim was written under (a member, a lane, a hook)
     claimedMember: null, // the member who holds it (claims are per member), or null for a lane session
     claimedAt: null,
@@ -123,6 +126,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     rulings: [],
     notes: [],
     comments: [], // { id, ts, item, text, to, replyTo, actor, lane, machine }, fold order
+    assignments: [], // { id, ts, item, to, note, actor, lane, machine }, fold order (rf assign)
     pushes: [],
     prEvents: [],
     anomalies: [],
@@ -254,6 +258,7 @@ export function fold(events, { bugs = new Map() } = {}) {
       state.notes,
       state.decisions,
       state.comments,
+      state.assignments,
     ])
       for (const rec of list) if (rec.item === from) rec.item = to;
   };
@@ -503,6 +508,26 @@ export function fold(events, { bugs = new Map() } = {}) {
           lane: ev.lane,
           machine: ev.machine,
         });
+        touched = true;
+        break;
+      }
+      case "assign": {
+        it = resolve(ev.item, ev);
+        if (!it) break;
+        it.assignee = d.to ?? null;
+        it.assignedBy = d.to ? ev.actor : null;
+        it.assignedAt = d.to ? ts : null;
+        if (d.to)
+          state.assignments.push({
+            id: ev.id,
+            ts,
+            item: it.id,
+            to: d.to,
+            note: d.note ?? null,
+            actor: ev.actor,
+            lane: ev.lane,
+            machine: ev.machine,
+          });
         touched = true;
         break;
       }
