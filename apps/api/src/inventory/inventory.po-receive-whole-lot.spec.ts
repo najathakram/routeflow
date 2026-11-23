@@ -32,7 +32,9 @@ async function receive(item: any, recv: any) {
     status: "SENT",
     items: [item],
   };
-  prisma.purchaseOrder.findUnique.mockResolvedValue(po);
+  // The post-receive re-read (status roll-up) sees the received quantity.
+  const after = { ...po, items: [{ ...item, qtyReceived: D(recv.receivedQty ?? 0) }] };
+  prisma.purchaseOrder.findUnique.mockResolvedValueOnce(po).mockResolvedValue(after);
   prisma.purchaseOrder.update.mockResolvedValue({ id: "po-1", status: "PARTIAL" });
   prisma.purchaseOrderItem.update.mockResolvedValue({});
   prisma.product.findUnique.mockResolvedValue({
@@ -67,6 +69,7 @@ async function receive(item: any, recv: any) {
     message: e?.getResponse?.()?.message,
     lots: prisma.stockLot.create.mock.calls.length,
     itemUpdates: prisma.purchaseOrderItem.update.mock.calls.length,
+    poStatus: prisma.purchaseOrder.update.mock.calls.at(-1)?.[0]?.data?.status,
   };
 }
 
@@ -88,6 +91,11 @@ describe("receivePurchaseOrder: a lot line is received in whole packs (SA-1227 M
   it("green: 6 pieces (one whole pack) and 12 pieces receive", async () => {
     expect((await receive(line(), { receivedQty: 6 })).status).toBeUndefined();
     expect((await receive(line(), { receivedQty: 12 })).status).toBeUndefined();
+  });
+
+  it("R3 leg: a line edited 12 to 18 pieces receives 18 and the PO is RECEIVED", async () => {
+    const r = await receive(line({ qtyOrdered: D(18) }), { receivedQty: 18 });
+    expect(r).toMatchObject({ status: undefined, poStatus: "RECEIVED" });
   });
 
   it("green: a case line (pack, no label) still takes any piece qty", async () => {

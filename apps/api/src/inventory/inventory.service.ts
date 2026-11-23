@@ -32,7 +32,7 @@ import {
   readFamilyPriceMode,
 } from "../products/family-price";
 import { billLineUnit, linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
-import { assertLotLineEdit, assertWholeLotReceive } from "../vendor-bills/bill-line-identity";
+import { editedLinePack, assertWholeLotReceive } from "../vendor-bills/bill-line-identity";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { bareVariantLabel } from "../products/product-variant-name";
@@ -2334,11 +2334,6 @@ export class InventoryService {
         if (keptIds.has(line.id))
           throw new BadRequestException(`Line ${line.id} appears more than once`);
         keptIds.add(line.id);
-        // SA-1238 M1: a labelled lot line keeps its pack and stays in whole packs (the bill's one rule).
-        assertLotLineEdit(existingById.get(line.id)!, {
-          packSize: line.packSize,
-          qty: line.qtyOrdered,
-        });
       }
       const products = await tx.product.findMany({
         where: { id: { in: [...new Set(items.map((l) => l.productId))] } },
@@ -2348,6 +2343,17 @@ export class InventoryService {
       for (const line of items) {
         if (!productIds.has(line.productId))
           throw new NotFoundException(`Product ${line.productId} not found`);
+      }
+      // SA-1238 A2/A3: a labelled line carries its stored pack; only a changed line is judged.
+      for (const line of items) {
+        const ex = line.id ? existingById.get(line.id) : undefined;
+        if (!ex) continue;
+        const description = products.find((p) => p.id === line.productId)?.name ?? line.productId;
+        line.packSize = editedLinePack(ex, {
+          packSize: line.packSize,
+          qty: line.qtyOrdered,
+          description,
+        }) as typeof line.packSize;
       }
       const removed = po.items.filter((i) => !keptIds.has(i.id));
 

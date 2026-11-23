@@ -26,7 +26,7 @@ const stored = (over: any = {}) => ({
   ...over,
 });
 
-async function edit(line: any, patch: any) {
+async function edit(line: any, patch: any, more?: { line: any; patch: any }) {
   const prisma = createMockPrisma();
   wireStockHelper(prisma);
   prisma.purchaseOrder.findUnique.mockResolvedValue({
@@ -34,7 +34,7 @@ async function edit(line: any, patch: any) {
     poNumber: "PO-2026-0001",
     supplierId: "sup-1",
     status: "SENT",
-    items: [line],
+    items: more ? [line, more.line] : [line],
   });
   prisma.vendorBill.findFirst.mockResolvedValue(null); // the linked bill is void
   prisma.purchaseOrder.update.mockResolvedValue({});
@@ -54,7 +54,12 @@ async function edit(line: any, patch: any) {
     .get(InventoryService)
     .updatePurchaseOrder(
       "po-1",
-      { items: [{ id: "poi-1", productId: "prod-1", unitCost: 3, ...patch }] } as any,
+      {
+        items: [
+          { id: "poi-1", productId: "prod-1", unitCost: 3, ...patch },
+          ...(more ? [{ id: more.line.id, productId: "prod-1", unitCost: 3, ...more.patch }] : []),
+        ],
+      } as any,
       "u1",
     )
     .then(
@@ -73,17 +78,52 @@ describe("updatePurchaseOrder: a labelled lot line (SA-1238 M1)", () => {
   it("R1: 12 to 9 pieces of a 6-piece lot is 400 LOT_QTY_NOT_WHOLE and writes nothing", async () => {
     const r = await edit(stored(), { qtyOrdered: 9 });
     expect(r).toMatchObject({ status: 400, code: "LOT_QTY_NOT_WHOLE", update: undefined });
+    expect(r.message).toBe(
+      '"Soda" comes in packs of 6. Use a whole number of packs, or remove the line and add it again.',
+    ); // the one shared text, pinned
   });
 
-  it("R2: re-packing the labelled line 6 to 4 is refused like a bill re-pack (409)", async () => {
+  it("R2': a labelled line sent pack 4 keeps its stored pack 6 (SA-1238 A2)", async () => {
     const r = await edit(stored(), { qtyOrdered: 12, packSize: 4 });
-    expect(r).toEqual({
-      status: 409,
-      code: "SPLIT_LINE_LOCKED",
-      message:
-        "A pack line's pack size can't change. Remove the line and add it again in whole packs.",
-      update: undefined,
-    });
+    expect(r.status).toBeUndefined();
+    expect(r.update).toMatchObject({ packSize: 6, qtyOrdered: 12 });
+  });
+
+  it("R6: a '1 Piece' line with no pack, sent pack 6 and qty 9, keeps its null pack", async () => {
+    const piece = stored({ unitLabel: "1 Piece", packSize: null });
+    const r = await edit(piece, { qtyOrdered: 9, packSize: 6 });
+    expect(r.status).toBeUndefined();
+    expect(r.update).toMatchObject({ packSize: null, qtyOrdered: 9 });
+  });
+
+  it("R7: an explicit null pack on a labelled 6-piece line keeps pack 6", async () => {
+    const r = await edit(stored(), { qtyOrdered: 12, packSize: null });
+    expect(r.status).toBeUndefined();
+    expect(r.update.packSize).toBe(6);
+    // the next edit, from the stored result: 7 pieces of a 6-piece lot is still refused
+    const next = await edit(stored({ packSize: r.update.packSize }), { qtyOrdered: 7 });
+    expect(next).toMatchObject({ status: 400, code: "LOT_QTY_NOT_WHOLE" });
+  });
+
+  it("R9: an untouched legacy part lot does not block the other lines; only a change is judged", async () => {
+    const legacy = stored({ qtyOrdered: D(9) });
+    const other = stored({ id: "poi-2", unitLabel: null, packSize: null, qtyOrdered: D(10) });
+    const keep = { qtyOrdered: 9 };
+    expect(
+      (await edit(legacy, keep, { line: other, patch: { qtyOrdered: 11 } })).status,
+    ).toBeUndefined();
+    expect(
+      (await edit(legacy, { qtyOrdered: 12 }, { line: other, patch: { qtyOrdered: 10 } })).status,
+    ).toBeUndefined();
+    expect(
+      (await edit(legacy, { qtyOrdered: 10 }, { line: other, patch: { qtyOrdered: 10 } })).code,
+    ).toBe("LOT_QTY_NOT_WHOLE");
+  });
+
+  it("R8': an unlabelled line is no lot, so null to 6 takes qty 9 and 12 alike (observed)", async () => {
+    const plain = stored({ unitLabel: null, packSize: null });
+    expect((await edit(plain, { qtyOrdered: 9, packSize: 6 })).update.packSize).toBe(6);
+    expect((await edit(plain, { qtyOrdered: 12, packSize: 6 })).status).toBeUndefined();
   });
 
   it("R3: 12 to 18 pieces (3 whole packs) is accepted and written", async () => {

@@ -82,16 +82,22 @@ interface StoredLine extends StoredBillItemIdentity {
 const isLotLine = (item: { packSize?: unknown; unitLabel?: string | null }) =>
   billLineUnit({ packSize: billItemPack(item), unitLabel: item.unitLabel }).kind === "lot";
 
+/** The one refusal text for a part lot: names the product and the pack, and a way out. */
+export const wholeLotQtyMessage = (description: string, factor: number) =>
+  `"${description}" comes in packs of ${factor}. Use a whole number of packs, or remove the line and add it again.`;
+
 const wholeLot = (code: string, message: string) => new BadRequestException({ code, message });
 
 /** A lot is counted in whole units: the ONE check for create and every edit row (the RESULTING row). */
 export function assertWholeLotQty(item: {
+  description?: string | null;
   packSize?: unknown;
   unitLabel?: string | null;
   qty?: unknown;
 }) {
   if (isLotLine(item) && !Number.isInteger(Number(item.qty || 1))) {
-    throw wholeLot(API_ERROR_CODES.LOT_QTY_NOT_WHOLE, "A pack line needs a whole number of packs.");
+    const name = item.description || "This line";
+    throw wholeLot(API_ERROR_CODES.LOT_QTY_NOT_WHOLE, wholeLotQtyMessage(name, unitFactor(item)));
   }
 }
 
@@ -114,21 +120,28 @@ const unitFactor = (x: { packSize?: unknown }) =>
 const locked = (message: string) =>
   new ConflictException({ code: API_ERROR_CODES.SPLIT_LINE_LOCKED, message });
 
-/** SA-1238 M1: a stored lot line (a PO line) keeps its pack; its quantity, in pieces, is whole packs. */
-export function assertLotLineEdit(
-  stored: { packSize?: unknown; unitLabel?: string | null },
-  next: { packSize?: unknown; qty: Prisma.Decimal.Value },
+/**
+ * SA-1238 A2/A3: the pack the edit of a stored PO line writes. A labelled line carries its STORED pack (part of
+ * its identity); an unlabelled line takes the incoming one. Only a CHANGED line is judged (an untouched legacy
+ * part lot is left to the receive check): qty (pieces) must be whole packs by an exact Decimal remainder.
+ */
+export function editedLinePack(
+  stored: { packSize?: unknown; unitLabel?: string | null; qtyOrdered: Prisma.Decimal.Value },
+  next: { packSize?: unknown; qty: Prisma.Decimal.Value; description: string },
 ) {
-  if (!isLotLine(stored)) return;
-  if (unitFactor({ packSize: next.packSize ?? stored.packSize }) !== unitFactor(stored)) {
-    throw locked(
-      "A pack line's pack size can't change. Remove the line and add it again in whole packs.",
+  const labelled = billLineUnit({ unitLabel: stored.unitLabel }).stated;
+  const pack = labelled ? stored.packSize : next.packSize;
+  const row = { packSize: pack, unitLabel: stored.unitLabel };
+  const changed =
+    !new Prisma.Decimal(next.qty).eq(stored.qtyOrdered) ||
+    (!labelled && next.packSize !== undefined && next.packSize !== stored.packSize);
+  if (changed && isLotLine(row) && !new Prisma.Decimal(next.qty).mod(unitFactor(row)).isZero()) {
+    throw wholeLot(
+      API_ERROR_CODES.LOT_QTY_NOT_WHOLE,
+      wholeLotQtyMessage(next.description, unitFactor(row)),
     );
   }
-  // Exact remainder on Decimal (pieces mod pack), never a float quotient.
-  if (!new Prisma.Decimal(next.qty).mod(unitFactor(stored)).isZero()) {
-    throw wholeLot(API_ERROR_CODES.LOT_QTY_NOT_WHOLE, "A pack line needs a whole number of packs.");
-  }
+  return pack;
 }
 
 /** An edit's identities: stored rows carry theirs; a NEW row gets the create rule's, never none (SA-1224 MED-1). */
