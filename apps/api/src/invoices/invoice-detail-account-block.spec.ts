@@ -1,3 +1,4 @@
+import { ForbiddenException } from "@nestjs/common";
 import { InvoicesService } from "./invoices.service";
 
 /**
@@ -34,7 +35,11 @@ const stored = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const makeService = (config: Record<string, string>, over: Record<string, unknown> = {}) => {
+const makeService = (
+  config: Record<string, string>,
+  over: Record<string, unknown> = {},
+  buyerCustomerId = "cust-1",
+) => {
   const findMany = jest
     .fn()
     .mockResolvedValue([
@@ -48,7 +53,7 @@ const makeService = (config: Record<string, string>, over: Record<string, unknow
       getTenantId: () => null,
       forTenant: () => ({
         invoice: { findUnique: jest.fn().mockResolvedValue(stored(over)), findMany },
-        customer: { findFirst: jest.fn().mockResolvedValue({ id: "cust-1" }) },
+        customer: { findFirst: jest.fn().mockResolvedValue({ id: buyerCustomerId }) },
         auditLog: {
           groupBy: jest.fn().mockResolvedValue([]),
           findFirst: jest.fn().mockResolvedValue(null),
@@ -107,9 +112,39 @@ describe("findOne: the account block on the invoice detail (SA-1197)", () => {
     expect(findMany).not.toHaveBeenCalled();
   });
 
-  it("PR-1: the buyer's projection does not carry the field yet (allowlist default; PR-2 adds it)", async () => {
-    const { service } = makeService(ON);
+  it("D5: the buyer's projection carries the staff rows unchanged", async () => {
+    jest.useFakeTimers({ now: new Date("2026-11-20T15:00:00Z") });
+    try {
+      const staff = makeService(ON);
+      const staffOut: any = await staff.service.findOne("inv-1");
+      const buyer = makeService(ON);
+      const out: any = await buyer.service.findOne("inv-1", BUYER as any);
+      expect(out.accountBlock).toEqual(staffOut.accountBlock);
+      expect(out.accountBlock.map((r: any) => [r.kind, r.amount])).toEqual([
+        ["heading", null],
+        ["others", 30],
+        ["thisInvoice", 150],
+        ["openBalance", 180],
+      ]);
+      expect(out.accountBlock.find((r: any) => r.kind === "thisInvoice").amount).toBe(
+        out.balanceDue,
+      );
+      expect(buyer.findMany).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("D5: switch off, the buyer gets [] and no open-set read", async () => {
+    const { service, findMany } = makeService({});
     const out: any = await service.findOne("inv-1", BUYER as any);
-    expect(out).not.toHaveProperty("accountBlock");
+    expect(out.accountBlock).toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
+  });
+
+  it("D5: another customer's buyer is refused before any open-set read", async () => {
+    const { service, findMany } = makeService(ON, {}, "cust-other");
+    await expect(service.findOne("inv-1", BUYER as any)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(findMany).not.toHaveBeenCalled();
   });
 });

@@ -28,11 +28,12 @@ import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
-import { checkBadgeFor } from "@/lib/check-badge";
+import { paymentRowBadge } from "@/lib/check-badge";
 import { invoiceStatusVariant } from "@/lib/buyer-invoice-status";
 import { fmtCalendarDate } from "@/lib/formatting";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { isPaymentTermsText } from "@/lib/invoice-sale-terms";
+import { InvoiceAccountRows } from "@/components/InvoiceAccountRows";
 import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
 
@@ -338,6 +339,13 @@ export default function BuyerInvoiceDetailPage() {
         ))}
       </div>
 
+      {/* SA-1228 D5: the account rows the server built (the business's switch), printed as given; no staff tap. */}
+      {invoice.accountBlock?.length ? (
+        <div className="mb-6 rounded-xl border border-surface-border bg-white p-4 md:ml-auto md:max-w-sm">
+          <InvoiceAccountRows rows={invoice.accountBlock} className="" />
+        </div>
+      ) : null}
+
       {/* Line items */}
       <div className="rounded-xl border border-surface-border bg-white overflow-hidden mb-6">
         <div className="border-b border-surface-border bg-surface-raised px-4 py-3">
@@ -484,7 +492,7 @@ export default function BuyerInvoiceDetailPage() {
             </thead>
             <tbody className="divide-y divide-surface-border">
               {invoice.payments.map((p) => {
-                const badge = checkBadgeFor(p);
+                const badge = paymentRowBadge(p);
                 const voided = p.status === "VOID";
                 return (
                   <tr key={p.id} className="hover:bg-surface-raised/50">

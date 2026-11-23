@@ -15,7 +15,7 @@ const COST_PER_PIECE = `Cost per ${UW.base.lower}`;
 
 const products: CatalogProduct[] = [
   { id: "p-each", name: "Napkins", sku: "NAP", unitsPerBox: 1 },
-  { id: "p-box", name: "Cola", unitsPerBox: 24 },
+  { id: "p-box", name: "Cola", unitsPerBox: 24, currentStock: 50 },
 ];
 
 /** Holds the lines like the modal does, and mirrors the latest value out for assertions. */
@@ -164,5 +164,19 @@ describe("PurchaseOrderLinesTable", () => {
     expect(screen.getByRole("columnheader", { name: /Cost per box/ })).toBeInTheDocument();
     expect(screen.queryByText("Unit cost ($)")).toBeNull();
     expect(screen.queryByText("Cost ($)")).toBeNull();
+  });
+
+  it("P1b: shows the stock on hand under the product and the line amount", () => {
+    const seen = { lines: [] as EditLine[] };
+    render(
+      <Harness
+        initial={[line({ productId: "p-box", boxes: "1000", pieces: "0", unitCost: "11" })]}
+        seen={seen}
+      />,
+    );
+    // 50 pieces on a 24-pack = 2 boxes + 2 pcs
+    expect(screen.getByTestId("po-line-on-hand").textContent).toContain("50 pcs (2 boxes + 2 pcs)");
+    // 1,000 cases at $11.00 is $11,000.00 (qty x the rounded per-piece cost gives $11,000.40)
+    expect(screen.getAllByText("$11,000.00").length).toBeGreaterThan(0);
   });
 });

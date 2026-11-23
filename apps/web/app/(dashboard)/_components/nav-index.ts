@@ -1,6 +1,7 @@
 import { Plus, Route as RouteIcon, Store, type LucideIcon } from "lucide-react";
 import { activeLeafHref } from "./nav-active";
 import type { NavEntry, NavGroup, NavLeaf } from "./nav-config";
+import { PINNED_GROUP_LABEL } from "./nav-layout";
 
 /**
  * The one map of the staff shell (UXG-R8, C1). The menu is built once (`buildOperatorNav`); everything else that
@@ -10,9 +11,12 @@ import type { NavEntry, NavGroup, NavLeaf } from "./nav-config";
 
 /** Every leaf of the menu in menu order. Skeleton rows hold a place for an entry that is still loading; they are not pages. */
 export function navLeaves(nav: readonly NavEntry[]): NavLeaf[] {
-  return nav.flatMap((e): NavLeaf[] =>
+  const all = nav.flatMap((e): NavLeaf[] =>
     e.kind === "leaf" ? [e] : e.kind === "group" ? e.children : [],
   );
+  // A pinned page is listed once (SA-1228); the de-duplication stays as a guard so it is one page everywhere.
+  const seen = new Set<string>();
+  return all.filter((l) => !seen.has(l.href) && !!seen.add(l.href));
 }
 
 /**
@@ -31,7 +35,10 @@ export function activeNavGroup(nav: readonly NavEntry[], pathname: string): NavG
   if (!leaf) return null;
   return (
     nav.find(
-      (e): e is NavGroup => e.kind === "group" && e.children.some((c) => c.href === leaf.href),
+      (e): e is NavGroup =>
+        e.kind === "group" &&
+        e.label !== PINNED_GROUP_LABEL && // the page's own group opens, not the pin copy
+        e.children.some((c) => c.href === leaf.href),
     ) ?? null
   );
 }

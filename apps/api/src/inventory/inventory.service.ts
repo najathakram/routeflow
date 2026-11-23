@@ -31,7 +31,8 @@ import {
   lockFamilyRow,
   readFamilyPriceMode,
 } from "../products/family-price";
-import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { billLineUnit, linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { editedLinePack, assertWholeLotReceive } from "../vendor-bills/bill-line-identity";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { bareVariantLabel } from "../products/product-variant-name";
@@ -109,7 +110,7 @@ import { readStockCountProgress } from "./stock-count-progress";
 import { assertNotDurableCountId, assertStockReferenceFree } from "./reserved-reference";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
-import { writeFamilyAssigned } from "../products/product-parent";
+import { tenantSafeParentView, writeFamilyAssigned } from "../products/product-parent";
 
 /**
  * Interactive-tx options of a count add / amend (SA-767 r-note 5 SA-3). The product-lock helper bounds its
@@ -266,7 +267,17 @@ export class InventoryService {
         take: limit,
         orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
         include: {
-          product: { select: { id: true, name: true, sku: true, unit: true } },
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              unit: true,
+              variantName: true,
+              parentProductId: true,
+              parent: { select: { name: true, tenantId: true } },
+            },
+          },
           supplier: { select: { id: true, name: true } },
           performedBy: { select: { id: true, username: true } },
         },
@@ -274,7 +285,26 @@ export class InventoryService {
       this.prisma.forTenant().stockMovement.count({ where }),
     ]);
 
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    return {
+      data: data.map((row) => this.withTenantSafeParent(row)),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
+   * A row's product keeps its family name only when that parent belongs to the caller's tenant (B1211, the
+   * read-side rule `tenantSafeParentView` carries); a parent from another tenant is ignored, so the row
+   * shows the bare variant name.
+   */
+  private withTenantSafeParent<
+    R extends { product: { parent?: { name: string; tenantId?: string | null } | null } | null },
+  >(row: R): R {
+    if (!row.product) return row;
+    const tenantId = this.prisma.getTenantId();
+    return {
+      ...row,
+      product: { ...row.product, parent: tenantSafeParentView(row.product.parent, tenantId) },
+    };
   }
 
   async recordPurchase(dto: RecordPurchaseDto, performedById: string) {
@@ -1427,6 +1457,10 @@ export class InventoryService {
         totalCost?: number;
         sku?: string | null;
         packSize?: number | null;
+        /** SA-1207 S2b: the bill line's own unit and family, carried to the PO twin. */
+        unitLabel?: string | null;
+        familyProductId?: string | null;
+        familyGroupId?: string | null;
       }[];
     },
   ) {
@@ -1469,6 +1503,9 @@ export class InventoryService {
           : roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
       sku: l.sku ?? null,
       packSize: l.packSize ?? null,
+      unitLabel: l.unitLabel ?? null,
+      familyProductId: l.familyProductId ?? null,
+      familyGroupId: l.familyGroupId ?? null,
     }));
     return tx.purchaseOrder.create({
       data: {
@@ -1567,7 +1604,21 @@ export class InventoryService {
       include: {
         supplier: true,
         items: {
-          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                unit: true,
+                unitsPerBox: true,
+                currentStock: true,
+                parentProductId: true,
+                variantName: true,
+                // tenantId is selected only for tenantSafeParentView's comparison, then removed.
+                parent: { select: { tenantId: true, name: true } },
+              },
+            },
+          },
         },
         vendorBill: { select: { id: true, billNumber: true, status: true } },
       },
@@ -1653,7 +1704,17 @@ export class InventoryService {
         });
       }
     }
-    return { ...po, receipts };
+    // A parent row from another tenant is never followed on a read (B1211's read-side twin).
+    const tenantId = this.prisma.getTenantId();
+    const items = po.items.map((i) =>
+      i.product
+        ? {
+            ...i,
+            product: { ...i.product, parent: tenantSafeParentView(i.product.parent, tenantId) },
+          }
+        : i,
+    );
+    return { ...po, items, receipts };
   }
 
   async sendPurchaseOrder(id: string) {
@@ -1729,6 +1790,15 @@ export class InventoryService {
         const outstanding = item.qtyOrdered.minus(item.qtyReceived);
         const actualQty = receivedQty;
         if (actualQty <= 0) continue;
+        // SA-1227 MEDIUM-2: a lot line is received in whole packs (pieces here, packs in the check).
+        assertWholeLotReceive(
+          {
+            description: prod?.name ?? item.productId,
+            packSize: item.packSize,
+            unitLabel: item.unitLabel,
+          },
+          new Prisma.Decimal(String(actualQty)).div(billLineUnit(item).factor),
+        );
         if (outstanding.lt(actualQty)) {
           throw new BadRequestException(
             `Cannot receive ${actualQty} of "${prod?.name ?? item.productId}" — only ${outstanding} ` +
@@ -2327,6 +2397,18 @@ export class InventoryService {
         if (!productIds.has(line.productId))
           throw new NotFoundException(`Product ${line.productId} not found`);
       }
+      // SA-1238 A2/A3: a labelled line carries its stored pack; only a changed line is judged.
+      for (const line of items) {
+        const ex = line.id ? existingById.get(line.id) : undefined;
+        if (!ex) continue;
+        const description = products.find((p) => p.id === line.productId)?.name ?? line.productId;
+        line.packSize = editedLinePack(ex, {
+          productId: line.productId,
+          packSize: line.packSize,
+          qty: line.qtyOrdered,
+          description,
+        }) as typeof line.packSize;
+      }
       const removed = po.items.filter((i) => !keptIds.has(i.id));
 
       // ── Guards on a received PO (re-apply AND document-only) ──
@@ -2769,6 +2851,9 @@ export class InventoryService {
         select: {
           id: true,
           name: true,
+          variantName: true,
+          parentProductId: true,
+          parent: { select: { name: true, tenantId: true } },
           sku: true,
           unit: true,
           unitsPerBox: true,
@@ -2917,7 +3002,11 @@ export class InventoryService {
       },
     });
     if (!session) throw new NotFoundException("Stock count session not found");
-    return { ...session, commit: await this.commitProgressOf(session) };
+    return {
+      ...session,
+      lines: session.lines.map((line) => this.withTenantSafeParent(line)),
+      commit: await this.commitProgressOf(session),
+    };
   }
 
   /** Row 562 S1: the pure-read poll behind a long seed or commit (stock-count-progress.ts). */
@@ -2998,7 +3087,7 @@ export class InventoryService {
     dto: UpsertStockCountLineDto,
     user: { sub: string },
   ) {
-    return this.prisma.tenantTransaction(async (tx) => {
+    const line = await this.prisma.tenantTransaction(async (tx) => {
       // The shared `stock-count` lock, then the status / movements checks (SA-767 L-2.4 B).
       await this.enterSessionEdit(tx, sessionId);
 
@@ -3083,6 +3172,7 @@ export class InventoryService {
       // 15 s, not Prisma's 5 s default: the product-lock helper bounds its wait with a 5 s lock_timeout, and a
       // tx budget equal to it would expire first as an unmapped P2028 500 instead of 55P03 -> the 503.
     }, COUNT_ADD_TX_OPTIONS);
+    return this.withTenantSafeParent(line);
   }
 
   async removeStockCountLine(sessionId: string, productId: string) {

@@ -2941,6 +2941,14 @@ export default function InvoiceDetailPage() {
                           {pmt.reference && (
                             <span className="text-xs text-navy/70">· {pmt.reference}</span>
                           )}
+                          {pmt.method !== "CREDIT_NOTE" && pmt.method !== "ADVANCE" && (
+                            <Link
+                              href={`/finance/payments/${pmt.id}`}
+                              className="text-xs font-medium text-brand-600 hover:underline"
+                            >
+                              View receipt
+                            </Link>
+                          )}
                         </div>
                         {pmt.noLongerFits && !isVoided && (
                           <p className="mt-1 text-xs font-medium text-warning">
@@ -2955,7 +2963,7 @@ export default function InvoiceDetailPage() {
                             className="mt-1 flex items-center gap-1 text-xs font-medium text-brand-600 hover:underline"
                           >
                             <Paperclip className="h-3 w-3" />
-                            View receipt
+                            View image
                           </button>
                         )}
                         {pmt.method === "CREDIT_NOTE" &&

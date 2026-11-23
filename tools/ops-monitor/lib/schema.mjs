@@ -39,6 +39,8 @@ export const TYPES = [
 export const HARMS = ["live", "latent", "none"];
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PR_ACTIONS = ["create", "ready", "merge", "close", "edit"];
+/** Longest comment body (a comment is a message on the item, not a spec: link a file for more). */
+export const COMMENT_TEXT_MAX = 2000;
 
 // Numeric register rows (525), registry bugs (B1234), trains (R1), prefixed ids (K11-16, OQ-N1).
 export const ITEM_ID_RE =
@@ -181,6 +183,23 @@ export const KINDS = {
     },
   },
   note: { needsItem: "optional", data: { text: [str(1000), true] } },
+  // Team board conversation on an item: `to` names lanes or members (mentions), `replyTo` the
+  // comment event this answers (same item; checked against the state by the store).
+  comment: {
+    needsItem: "required",
+    data: {
+      text: [str(COMMENT_TEXT_MAX), true],
+      to: [
+        (v) =>
+          Array.isArray(v) &&
+          v.length > 0 &&
+          v.length <= 10 &&
+          v.every((t) => typeof t === "string" && LANE_RE.test(t)),
+        false,
+      ],
+      replyTo: [(v) => typeof v === "string" && EVENT_ID_RE.test(v), false],
+    },
+  },
   // Session heartbeat from a machine's status file (hooks -> `rf status-sync`). Never touches items.
   heartbeat: {
     needsItem: "none",

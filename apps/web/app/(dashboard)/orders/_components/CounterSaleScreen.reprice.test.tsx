@@ -168,6 +168,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     await scanBoth();
     pickAcme();
     await waitFor(() => expect(screen.getByTestId("counter-reprice-busy")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the buttons keep their "Complete" names (an empty tender reads "Put on account")
     expect(completeBtn()).toBeDisabled();
     expect(screen.getByRole("button", { name: /Complete & next sale/ })).toBeDisabled();
     expect(total()).toHaveTextContent("$14.50"); // old prices until the lookup answers
@@ -186,6 +187,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     expect(alert).toHaveTextContent("Couldn't update prices");
     expect(alert.textContent).not.toMatch(/boom/); // fixed copy, never the raw error
     expect(total()).toHaveTextContent("$14.50");
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the button keeps its "Complete" name
     expect(completeBtn()).toBeDisabled();
     pricesFor = async () => ({ data: [] });
     fireEvent.click(screen.getByRole("button", { name: "Retry price update" }));
@@ -215,6 +217,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     await waitFor(() => expect(total()).toHaveTextContent("$14.50"));
     expect(screen.getByText("Acme Cafe")).toBeInTheDocument(); // still the customer on the sale
     expect(screen.queryByTestId("counter-reprice-note")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the button keeps its "Complete" name
     expect(completeBtn()).not.toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
     await waitFor(() => expect(screen.getByText("Walk-in customer")).toBeInTheDocument());
@@ -267,6 +270,7 @@ describe("SA-1071 C3: changing the buyer to Walk-in can be undone", () => {
     await waitFor(() => expect(total()).toHaveTextContent("$11.00"));
     expect(seen()).toEqual({ buyer: "Acme Cafe", walkInLines: [] });
     expect(screen.getByTestId("counter-buyer-choice")).toHaveAttribute("data-kind", "customer");
+    fireEvent.click(screen.getByRole("button", { name: "Exact" })); // a paid sale: the button keeps its "Complete" name
     expect(completeBtn()).not.toBeDisabled();
   });
 

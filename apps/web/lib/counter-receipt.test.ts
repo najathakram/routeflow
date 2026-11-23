@@ -404,20 +404,20 @@ describe("reprint after a return (SA-838a): the server's tender split and return
       ],
       returnLines: { ...none, refunded: 2.5 },
     });
-    expect(m.methodLabel).toBe("Advance $5.00 + Cash $7.50");
+    expect(m.methodLabel).toBe("Credit $5.00 + Cash $7.50");
     expect(m.paid).toBe(12.5);
     expect(m.returned).toBeNull();
     expect(m.refunded).toBe(2.5);
   });
 
-  it("(c) paid fully from an advance, $3.00 returned and kept: Advance $12.50, Paid, Credit kept", () => {
+  it("(c) paid fully from an advance, $3.00 returned and kept: Credit $12.50, Paid, Credit kept", () => {
     const m = reprint({
       methods: [{ method: "ADVANCE", amount: 12.5 }],
       tenderPaid: 12.5,
       tenderMethods: [{ method: "ADVANCE", amount: 12.5 }],
       returnLines: { ...none, kept: 3 },
     });
-    expect(m.methodLabel).toBe("Advance $12.50");
+    expect(m.methodLabel).toBe("Credit $12.50");
     expect(m.paid).toBe(12.5);
     expect(m.creditKept).toBe(3);
     expect(m.returned).toBeNull();
@@ -460,7 +460,7 @@ describe("reprint after a return (SA-838a): the server's tender split and return
     });
     expect([m.returned, m.refunded, m.creditKept]).toEqual([null, null, null]);
     expect(m.returnPending).toBe(false);
-    expect(m.methodLabel).toBe("Cash $7.00 + Store credit $5.50");
+    expect(m.methodLabel).toBe("Cash $7.00 + Credit $5.50");
     expect(m.paid).toBe(12.5);
     expect(m.balanceDue).toBe(0);
   });
@@ -472,7 +472,7 @@ describe("reprint after a return (SA-838a): the server's tender split and return
       tenderMethods: [{ method: "STORE_CREDIT", amount: 12.5 }],
       returnLines: none,
     });
-    expect(m.methodLabel).toBe("Store credit $12.50");
+    expect(m.methodLabel).toBe("Credit $12.50");
     expect(m.paid).toBe(12.5);
     expect(m.returned).toBeNull();
   });
@@ -500,7 +500,7 @@ describe("reprint after a return (SA-838a): the server's tender split and return
       balanceDue: 6.25,
       methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
     });
-    expect(m.methodLabel).toBe("Store credit");
+    expect(m.methodLabel).toBe("Credit");
     expect(m.paid).toBe(6.25);
     expect(m.showPaid).toBe(true);
     expect(m.onAccount).toBe(false);

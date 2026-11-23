@@ -33,8 +33,18 @@ import { registerModeOf, runSync } from "../lib/sync.mjs";
 import { checkoutRoot, laneForCwd, setLane } from "../lib/lanes-local.mjs";
 import { runStatusSync } from "../lib/status-sync.mjs";
 import { lastEventId, renderBrief, renderSince, splitAtMarker } from "../lib/brief.mjs";
+import {
+  authorOf,
+  commentsFor,
+  isUnread,
+  readInboxSeen,
+  scrubCommentText,
+  renderComment,
+  threadOf,
+  writeInboxSeen,
+} from "../lib/inbox.mjs";
 import { registerHook } from "../lib/views.mjs";
-import { BRIEF_DISABLED_NOTE, loadClientNames } from "../lib/mask.mjs";
+import { BRIEF_DISABLED_NOTE, loadClientNames, maskText } from "../lib/mask.mjs";
 import {
   appendEvents,
   ensureClone,
@@ -62,6 +72,8 @@ const BOOLEAN_FLAGS = new Set([
   "no-sync",
   "quiet",
   "refresh",
+  "all",
+  "keep",
 ]);
 const MULTI_FLAGS = new Set(["pr", "branch", "url"]);
 
@@ -99,6 +111,8 @@ const USAGE = `usage: rf <command> [args]
         link refuses an unknown item, or a PR whose title shares no word with the item's: [--force]
   claim <id> [--lane L] [--branch B] [--steal]     release <id> [--lane L]
   status <id> <status> [--note T]                  block <id> --by X [--unblocker Y]   unblock <id>
+  comment <id> "<text>" [--to lane|member,...] [--reply-to <eventId>]   talk on the item (the only channel)
+  inbox [--all] [--keep] [--json]   comments for you (mentions, replies, your claimed items); marks them read
   next [--lane L] [--claim] [--json]
   item new --title T --type X [--priority P] [--status S] [--lane L] [--train R1] [--area A]
            [--parent ID] [--eta E] [--gate G] [--id ID] [--blocked-by ID,ID]  (rf item edit: - clears it)
@@ -169,6 +183,28 @@ function resolveLane(raw, c, { required = false } = {}) {
   return lane;
 }
 
+/** The name events are written under: RF_ACTOR, else the lane, else machine:folder. */
+function actorFor(c, lane) {
+  return (c.env.RF_ACTOR || lane || `${c.machine}:${basename(process.cwd())}`).slice(0, 80);
+}
+
+/** Who reads comments here: { lane, actor }. */
+function meFor(c, lane) {
+  return { lane: lane ?? null, actor: actorFor(c, lane) };
+}
+
+/** A --to value -> a lane id or a member id; an unknown name is a usage error (nothing written). */
+function resolveMention(raw, config) {
+  const t = String(raw).trim();
+  const member = (config.members ?? []).find((m) => m.id === t.toLowerCase());
+  if (member) return member.id;
+  const lane = normalizeLane(t, config);
+  if (lane) return lane;
+  throw new UsageError(
+    `unknown lane or member "${t}" (lanes and members live in the specs ops/config.json)`,
+  );
+}
+
 function makeEvent(c, kind, item, data, lane) {
   const ts = Date.now();
   return {
@@ -176,7 +212,7 @@ function makeEvent(c, kind, item, data, lane) {
     id: newEventId(c.machine, ts),
     ts: new Date(ts).toISOString(),
     machine: c.machine,
-    actor: (c.env.RF_ACTOR || lane || `${c.machine}:${basename(process.cwd())}`).slice(0, 80),
+    actor: actorFor(c, lane),
     lane: lane ?? null,
     kind,
     item,
@@ -335,6 +371,12 @@ function buildEventData(kind, flags) {
       });
     case "note":
       return drop({ text: flags.text });
+    case "comment":
+      return drop({
+        text: typeof flags.text === "string" ? flags.text : undefined,
+        to: flags.to !== undefined ? list(flags.to) : undefined,
+        replyTo: typeof flags["reply-to"] === "string" ? flags["reply-to"] : undefined,
+      });
     case "link":
       return drop({
         prs: flags.pr?.map((n) => num(n, "pr")),
@@ -367,7 +409,15 @@ function buildEventData(kind, flags) {
 }
 
 const KIND_ALIASES = { block: "blocked", unblock: "unblocked", decision: "owner-decision" };
-const NEEDS_ITEM = new Set(["claim", "release", "status", "blocked", "unblocked", "link"]);
+const NEEDS_ITEM = new Set([
+  "claim",
+  "release",
+  "status",
+  "blocked",
+  "unblocked",
+  "link",
+  "comment",
+]);
 
 async function cmdEvent(positional, flags, env) {
   const kindRaw = positional[0];
@@ -375,10 +425,20 @@ async function cmdEvent(positional, flags, env) {
   const kind = KIND_ALIASES[kindRaw] ?? kindRaw;
   const item = positional[1] ?? null;
   if (NEEDS_ITEM.has(kind) && !item) throw new UsageError(`rf event ${kind} needs an item id`);
-  // A link reads the item's title, so it needs the items as they stand now.
-  const c = await prepare(ctxFor(env), flags, { sync: kind === "link" });
+  // A link reads the item's title, and a comment may answer one written on another machine, so
+  // both need the items as they stand now.
+  const c = await prepare(ctxFor(env), flags, { sync: kind === "link" || kind === "comment" });
   const lane = resolveLane(flags.lane, c, { required: kind === "claim" || kind === "release" });
   const data = buildEventData(kind, flags);
+  if (kind === "comment") {
+    if (!data.text?.trim()) throw new UsageError('rf comment <id> "<text>" (or --text "<text>")');
+    if (data.to) data.to = [...new Set(data.to.map((t) => resolveMention(t, c.config)))];
+    // The text is scrubbed BEFORE it is written: the specs repo never stores a client name or a
+    // token. A broken mask list refuses rather than store unmasked text.
+    const { names, error } = loadClientNames({ env, home: c.home });
+    if (error) throw new UsageError(`${BRIEF_DISABLED_NOTE}; fix it before commenting`);
+    data.text = scrubCommentText(data.text, names);
+  }
   const events = [makeEvent(c, kind, item, data, lane)];
   if (kind !== "link") return writeCmd(c, flags, events);
   const linked = stateOf(c).items.get(item);
@@ -417,6 +477,11 @@ async function cmdSimple(kind, positional, flags, env) {
   if (kind === "status") {
     if (!positional[1]) throw new UsageError("rf status <id> <status>");
     flags.status = positional[1];
+  }
+  if (kind === "comment" && positional.length > 1) {
+    if (flags.text !== undefined)
+      throw new UsageError("give the comment text once (positional or --text)");
+    flags.text = positional.slice(1).join(" ");
   }
   return cmdEvent(rest, flags, env);
 }
@@ -511,13 +576,24 @@ async function cmdItem(positional, flags, env) {
     const id = positional[1];
     if (!id) throw new UsageError("rf item show <id>");
     const c = await prepare(ctxFor(env), flags, { sync: true });
-    const it = stateOf(c).items.get(id);
+    const state = stateOf(c);
+    const it = state.items.get(id);
     if (!it) {
       process.stderr.write(`unknown item ${id}\n`);
       return 1;
     }
+    const thread = threadOf(state, id);
+    // Comment text prints masked, like rf inbox; a broken mask list prints none of it.
+    const { names: clientNames, error: namesError } = loadClientNames({ env, home: c.home });
+    const showText = (t) =>
+      namesError ? "[hidden: client-names.json unreadable]" : maskText(t, clientNames);
     if (flags.json) {
-      process.stdout.write(JSON.stringify(it, null, 2) + "\n");
+      const comments = thread.map((r) => ({
+        ...r.comment,
+        text: showText(r.comment.text),
+        depth: r.depth,
+      }));
+      process.stdout.write(JSON.stringify({ ...it, comments }, null, 2) + "\n");
       return 0;
     }
     const iso = (ms) => (ms ? new Date(ms).toISOString() : "-");
@@ -536,10 +612,66 @@ async function cmdItem(positional, flags, env) {
             `  ${iso(h.ts)} ${h.kind}${h.status ? ` ${h.status}` : ""} ${h.lane ?? ""} ${h.actor}`,
         ),
     ];
+    if (thread.length) {
+      lines.push(`comments (${thread.length}):`);
+      for (const { comment: cm, depth } of thread) {
+        const to = cm.to.length ? ` → ${cm.to.join(", ")}` : "";
+        const body = showText(cm.text).replace(/\s+/g, " ");
+        lines.push(
+          `${"  ".repeat(depth + 1)}${iso(cm.ts)} ${authorOf(cm)}${to}: ${body}  [${cm.id}]`,
+        );
+      }
+    }
     process.stdout.write(lines.join("\n") + "\n");
     return 0;
   }
   throw new UsageError("rf item <new|edit|show>");
+}
+
+/** Comments for you: the unread ones (then marked read), or the last 20 with --all. */
+async function cmdInbox(flags, env) {
+  const c = await prepare(ctxFor(env), flags, { sync: true });
+  const lane = resolveLane(flags.lane, c);
+  const me = meFor(c, lane);
+  const state = stateOf(c);
+  const { names: clientNames, error } = loadClientNames({ env, home: c.home });
+  if (error) {
+    // A broken mask list never prints comment text.
+    process.stdout.write(`${BRIEF_DISABLED_NOTE}\n`);
+    return 0;
+  }
+  const all = commentsFor(state, me);
+  const seen = readInboxSeen(c.home, me);
+  const shown = flags.all ? all.slice(-20) : all.filter((x) => isUnread(x.comment, seen));
+  const now = Date.now();
+  const n = shown.length;
+  const s = n === 1 ? "" : "s";
+  if (flags.json) {
+    const comments = shown.map((x) => ({
+      ...x.comment,
+      text: maskText(x.comment.text, clientNames),
+      reason: x.reason,
+    }));
+    process.stdout.write(JSON.stringify({ me, comments }, null, 2) + "\n");
+  } else if (n === 0) {
+    process.stdout.write(
+      `no new comments for you (${me.actor}); rf inbox --all shows the last 20\n`,
+    );
+  } else {
+    const head = flags.all
+      ? `last ${n} comment${s} for you (${me.actor}):`
+      : `${n} new comment${s} for you (${me.actor}):`;
+    const lines = shown.map((x) => renderComment(x.comment, state, { now, clientNames }));
+    process.stdout.write(`${head}\n${lines.join("\n")}\n`);
+  }
+  // Marks exactly what was shown, by id (a late arrival is still unread next time).
+  if (!flags.keep && !flags.all && n > 0)
+    writeInboxSeen(
+      c.home,
+      me,
+      shown.map((x) => x.comment),
+    );
+  return 0;
 }
 
 async function cmdLs(flags, env) {
@@ -589,16 +721,19 @@ async function cmdWhoami(flags, env) {
         : (checkoutRoot(process.cwd()) ?? process.cwd());
     setLane(ctx.home, root, lane);
   }
+  const machine = machineId(config, env);
+  const lane = defaultLane(config, env);
   const info = {
-    machine: machineId(config, env),
-    lane: defaultLane(config, env),
+    machine,
+    lane,
+    actor: actorFor({ env, machine }, lane),
     specsDir: ctx.dir,
     clone: existsSync(join(ctx.dir, ".git")) ? "present" : "missing",
   };
   print(
     flags,
     info,
-    `machine ${info.machine}\nlane ${info.lane ?? "-"}\nspecs ${info.specsDir}\nclone ${info.clone}`,
+    `machine ${info.machine}\nlane ${info.lane ?? "-"}\nname ${info.actor} (events and comments are written under it)\nspecs ${info.specsDir}\nclone ${info.clone}`,
   );
   return 0;
 }
@@ -948,7 +1083,17 @@ async function cmdBrief(flags, env) {
 `);
     return 0;
   }
-  const text = renderBrief(state, { lane, now, snapshot, config, clientNames, utcOffsetMin });
+  const me = meFor({ env, machine: machineId(config, env) }, lane);
+  const text = renderBrief(state, {
+    lane,
+    now,
+    snapshot,
+    config,
+    clientNames,
+    utcOffsetMin,
+    me,
+    inboxSeen: readInboxSeen(ctx.home, me),
+  });
   let since = "";
   if (typeof flags.since === "string") {
     const marker = /^\d{4}-\d\d-\d\d/.test(flags.since)
@@ -1094,6 +1239,12 @@ export async function main(argv, env = process.env) {
         break;
       case "unblock":
         code = await cmdSimple("unblocked", positional, flags, env);
+        break;
+      case "comment":
+        code = await cmdSimple("comment", positional, flags, env);
+        break;
+      case "inbox":
+        code = await cmdInbox(flags, env);
         break;
       case "next":
         code = await cmdNext(flags, env);

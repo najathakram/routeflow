@@ -91,6 +91,20 @@ describe("invoice account block sites (SA-1197)", () => {
         "_components",
         "InvoiceLayoutPreview.tsx",
       ),
+      // SA-1228 D5: the shared row renderer and the buyer portal invoice page print rows as given
+      path.join(REPO, "apps", "web", "components", "InvoiceAccountRows.tsx"),
+      path.join(
+        REPO,
+        "apps",
+        "web",
+        "app",
+        "buyer",
+        "portal",
+        "[seller]",
+        "invoices",
+        "[id]",
+        "page.tsx",
+      ),
     ];
     for (const f of renderers) {
       const src = strip(fs.readFileSync(f, "utf8"));

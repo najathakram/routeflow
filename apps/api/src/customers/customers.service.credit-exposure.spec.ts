@@ -109,6 +109,55 @@ describe("CustomersService — credit exposure (D6 / B462, option B)", () => {
       expect((result.data[0] as any).unusedCredits).toBe(0.3);
     });
 
+    // SA-1214 A1: the list and the CSV both say "Credit" and show the one total (notes + spendable advances).
+    const stubCredit = (advanceSource?: { id: string; status: string }) => {
+      prisma.customer.findMany.mockResolvedValue([MOCK_CUSTOMER]);
+      prisma.customer.count.mockResolvedValue(1);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: "cn-1",
+          customerId: "cust-1",
+          creditNoteNumber: "CN-1",
+          createdAt: new Date("2026-10-01T00:00:00.000Z"),
+          amount: 300,
+          amountUsed: 0,
+          status: "ISSUED",
+          expiresAt: null,
+        },
+      ]);
+      prisma.advancePayment.findMany.mockResolvedValue([
+        {
+          id: "adv-1",
+          customerId: "cust-1",
+          balance: 200,
+          receivedAt: new Date("2026-10-02T00:00:00.000Z"),
+          sourcePaymentId: advanceSource?.id ?? null,
+        },
+      ]);
+      prisma.invoicePayment.findMany.mockResolvedValue(advanceSource ? [advanceSource] : []);
+    };
+
+    it("findAll: $300 note + $200 advance reads Credit $500 (not the advances alone)", async () => {
+      stubCredit({ id: "p-1", status: "PAID" });
+      const result = await service.findAll({ page: 1, limit: 20 });
+      expect((result.data[0] as any).unusedCredits).toBe(500);
+    });
+
+    it("findAll: an advance whose source payment is VOID is not credit", async () => {
+      stubCredit({ id: "p-1", status: "VOID" });
+      const result = await service.findAll({ page: 1, limit: 20 });
+      expect((result.data[0] as any).unusedCredits).toBe(300);
+    });
+
+    it("exportCustomers: the CSV header is Credit and the cell is the same $500 total", async () => {
+      stubCredit({ id: "p-1", status: "PAID" });
+      const csv = await service.exportCustomers({} as any);
+      const [header, row] = csv.split("\n");
+      expect(header.endsWith(",Credit")).toBe(true);
+      expect(row.endsWith(",500.00")).toBe(true);
+    });
+
     describe("getStatementForOperator exposure figures", () => {
       const invoices = [
         {

@@ -42,6 +42,7 @@ import { assertOrdersUnchanged, releaseLiveOrderStockInTx } from "./customer-del
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
+import { loadAvailableCreditByCustomer } from "./available-credit";
 import {
   advancePaymentKey,
   keyedPayment,
@@ -306,26 +307,16 @@ export class CustomersService {
     // Open balance (SA-1078 PR-5: the statement's own figure) and unusedCredits for each customer
     const customerIds = data.map((c) => c.id);
 
-    const [openBalances, advancePayments] = await Promise.all([
+    // SA-1214 A1: "Credit" is the one available-credit total (notes + spendable advances), three bounded reads.
+    const [openBalances, creditByCustomer] = await Promise.all([
       openBalancesByCustomer(this.prisma, customerIds, new Date()),
-      this.prisma.forTenant().advancePayment.findMany({
-        where: {
-          customerId: { in: customerIds },
-          balance: { gt: 0 },
-        },
-        select: { customerId: true, balance: true },
-      }),
+      loadAvailableCreditByCustomer(this.prisma.forTenant(), customerIds),
     ]);
-
-    const creditsMap: Record<string, number> = {};
-    for (const ap of advancePayments) {
-      creditsMap[ap.customerId] = (creditsMap[ap.customerId] ?? 0) + Number(ap.balance);
-    }
 
     const enriched = data.map((c) => ({
       ...c,
       openBalance: roundMoney(openBalances.get(c.id) ?? 0),
-      unusedCredits: roundMoney(creditsMap[c.id] ?? 0),
+      unusedCredits: creditByCustomer.get(c.id)?.total ?? 0,
       regulatedCount: (c as any)._count?.authorizations ?? 0,
     }));
 
@@ -1543,10 +1534,6 @@ export class CustomersService {
       where,
       include: {
         user: { select: { status: true } },
-        advancePayments: {
-          where: { balance: { gt: 0 } },
-          select: { balance: true },
-        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -1557,6 +1544,11 @@ export class CustomersService {
       customers.map((c) => c.id),
       new Date(),
     );
+    // SA-1214 A1: the same "Credit" total as the list (one batch helper, never a per-customer read).
+    const credits = await loadAvailableCreditByCustomer(
+      this.prisma.forTenant(),
+      customers.map((c) => c.id),
+    );
     return buildCustomersCsv(
       customers.map((c) => ({
         businessName: c.businessName,
@@ -1566,7 +1558,7 @@ export class CustomersService {
         customerType: c.customerType,
         status: c.user?.status,
         openBalance: openBalances.get(c.id) ?? 0,
-        credits: c.advancePayments.reduce((s, a) => s + Number(a.balance), 0),
+        credits: credits.get(c.id)?.total ?? 0,
       })),
     );
   }

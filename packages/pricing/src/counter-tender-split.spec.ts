@@ -1,4 +1,9 @@
-import { counterMethodLine, counterTenderSplit } from "./counter-tender-split";
+import {
+  COUNTER_METHOD_LABEL,
+  counterMethodLine,
+  counterMethodParts,
+  counterTenderSplit,
+} from "./counter-tender-split";
 import type { ReturnSettlement } from "./return-settlement";
 
 /**
@@ -157,12 +162,12 @@ describe("counterMethodLine (the ONE Payment method line, email and reprint; SA-
         { method: "ADVANCE", amount: 5 },
         { method: "CASH", amount: 7.5 },
       ]),
-    ).toBe("Advance $5.00 + Cash $7.50");
+    ).toBe("Credit $5.00 + Cash $7.50");
   });
 
   it("a single tender carries its amount, whether or not it is the whole sale", () => {
     expect(counterMethodLine([{ method: "CASH", amount: 6.25 }])).toBe("Cash $6.25");
-    expect(counterMethodLine([{ method: "ADVANCE", amount: 12.5 }])).toBe("Advance $12.50");
+    expect(counterMethodLine([{ method: "ADVANCE", amount: 12.5 }])).toBe("Credit $12.50");
     expect(counterMethodLine([{ method: "CARD", amount: 0.1 + 0.2 }])).toBe("Card $0.30");
   });
 
@@ -189,5 +194,25 @@ describe("counterMethodLine (the ONE Payment method line, email and reprint; SA-
     expect(counterMethodLine([{ method: "CASH", amount: 25 }], { checkReference: "1042" })).toBe(
       "Cash $25.00",
     );
+  });
+});
+
+describe('counterMethodParts: Advance and Store credit are one "Credit" part (SA-1211 A1.7)', () => {
+  it("a sale paid with both reads Credit once, the amounts summed", () => {
+    const tenders = [
+      { method: "ADVANCE" as const, amount: 5 },
+      { method: "CASH" as const, amount: 7.5 },
+      { method: "STORE_CREDIT" as const, amount: 0.1 + 0.2 },
+    ];
+    expect(counterMethodParts(tenders)).toEqual([
+      { label: "Credit", amount: 5.3 },
+      { label: "Cash", amount: 7.5 },
+    ]);
+    expect(counterMethodLine(tenders)).toBe("Credit $5.30 + Cash $7.50");
+  });
+
+  it("the word is the same for both methods, and never Advance or Store credit", () => {
+    expect(COUNTER_METHOD_LABEL.ADVANCE).toBe("Credit");
+    expect(COUNTER_METHOD_LABEL.STORE_CREDIT).toBe("Credit");
   });
 });

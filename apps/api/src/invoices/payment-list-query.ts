@@ -4,6 +4,12 @@ import { NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { clampLimit } from "../common/pagination";
 import { RECEIVED_METHOD_FILTER } from "./payment-predicates";
+import {
+  RECEIPT_INVOICE_SELECT,
+  readListReceipts,
+  readReceiptGroup,
+  type ReceiptRow,
+} from "./payment-receipt-group";
 import { buildPaymentsCsv } from "./payments-csv";
 import { tenantCalendarDayEnd, tenantCalendarDayStart } from "./paid-window-bounds";
 
@@ -126,8 +132,11 @@ export async function listAllPayments(
   });
   const advanceBalance = advances.reduce((s, a) => s + Number(a.balance), 0);
 
+  // M1-03: an office check's rows carry that check's receipt figures (one read per check), so the list never adds rows up.
+  const receipts = await readListReceipts(deps.prisma, data);
+
   return {
-    data,
+    data: data.map((p) => ({ ...p, receiptGroup: receipts.get(p.id) ?? null })),
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     summary: { totalReceived, count: paidPayments.length, advanceBalance },
   };
@@ -139,16 +148,19 @@ export async function findPaymentById(prisma: PrismaService, paymentId: string) 
     include: {
       invoice: {
         select: {
-          id: true,
-          invoiceNumber: true,
-          customerId: true,
+          ...RECEIPT_INVOICE_SELECT.select, // id, invoiceNumber, customerId, orderId, order: the receipt reader's own fields
           customer: { select: { id: true, businessName: true } },
         },
       },
     },
   });
   if (!payment) throw new NotFoundException("Payment not found");
-  return payment;
+  // SA-1208 D1 (M1-02): the payment as before, plus what it covered, read through the one receipt reader. The row read
+  // above is handed in, so the whole call is at most 3 queries (this one, the group, the advances) (L2 of #4406).
+  return {
+    ...payment,
+    receipt: await readReceiptGroup(prisma, paymentId, payment as unknown as ReceiptRow),
+  };
 }
 
 export async function exportPayments(

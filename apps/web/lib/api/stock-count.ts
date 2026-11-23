@@ -115,6 +115,10 @@ export interface StockCountSessionSummary {
 export interface StockCountLineProduct {
   id: string;
   name: string;
+  /** SA-1216: the family variant's own label and its family, so the line reads "<Family> - <Variant>". */
+  variantName?: string | null;
+  parentProductId?: string | null;
+  parent?: { name: string } | null;
   sku?: string | null;
   unit: string;
   unitsPerBox?: number | null;

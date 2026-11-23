@@ -21,7 +21,7 @@ import type {
   CounterSalePaymentMethod,
   CounterSaleResponse,
 } from "@routeflow/types";
-import { API_ERROR_CODES, staffMay } from "@routeflow/types";
+import { API_ERROR_CODES, CREDIT_WORDS, staffMay } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 import { useOptionalAuth } from "@/lib/auth-context";
 import {
@@ -180,7 +180,13 @@ import {
   creditMayApply,
   isPartPayExceedsTotal,
   PART_PAY_FULL_COPY,
+  TENDER_NOT_NUMBERS_COPY,
+  onAccountCopy,
+  onAccountLabel,
+  ON_ACCOUNT_ARM_COPY,
   tenderAmount,
+  tenderIntent,
+  tenderTextProblem,
 } from "@/lib/counter-part-pay";
 import { ReadOnlyHint, WriteButton, useReadOnlyGate } from "@/lib/read-only-gate";
 import { isFamilyProduct } from "@/lib/product-search-groups";
@@ -359,7 +365,8 @@ export function CounterSaleScreen() {
     setError((e) => (isFinalSaleMessage(e) ? e : ""));
   }, [lines]);
   // Fixing the tender clears the "Enter at least $X" message and ONLY that one (never a server or final-sale error).
-  const clearUnderpaidError = () => setError((e) => (isTenderShortCopy(e) ? "" : e));
+  const clearUnderpaidError = () =>
+    setError((e) => (isTenderShortCopy(e) || e === TENDER_NOT_NUMBERS_COPY ? "" : e));
   const locked = outcomeUnknown; // every cart / payment control is disabled while the outcome is unknown
   const zoneRead = useTenantTimeZoneQuery();
   const { data: settings } = useQuery<ReceiptBusinessProfile>({
@@ -671,6 +678,16 @@ export function CounterSaleScreen() {
     total: payTotal,
     tendered: tenderedNum,
   }); // S4: "Pay $X now · $Y goes on account" while an identified customer's tender is short
+  // SA-1219: nothing tendered in cash by a named customer is On account (the shared intent), said under the total
+  const putOnAccount =
+    tenderIntent({
+      method: resolveTender(method, checkNotReceived).method,
+      isWalkIn: walkInBuyer,
+      total: payTotal,
+      tendered: tenderedNum,
+    }) === "ON_ACCOUNT" &&
+    resolveTender(method, checkNotReceived).method === "CASH" &&
+    tenderTextProblem(tendered) === null;
 
   const { data: customersData, isFetching: customersFetching } = useCustomers({
     search: customerSearch.trim() || undefined,
@@ -881,7 +898,9 @@ export function CounterSaleScreen() {
   const tenderEnter = useArmedEnter(tenderKey); // any change of method, figure or total ends the arm (A-2)
   const onTenderEnter = () =>
     tenderEnter.press(
-      tenderNeedsSecondEnter(payTotal, tenderedNum),
+      // SA-1232: an empty tender that would go on account needs the deliberate second Enter too (a habitual double Enter
+      // must not book cash already taken as owed)
+      tenderNeedsSecondEnter(payTotal, tenderedNum) || putOnAccount,
       () => void completeSale(false),
     );
   // The ONE place the payment area takes focus (Enter in an empty scan box, and the tender radiogroup's arrow keys).
@@ -1353,7 +1372,16 @@ export function CounterSaleScreen() {
     // W-863: the return is quoted BEFORE Complete (a blocked one says why); the key pair is minted here, once per attempt.
     const inlineReturn = customer ? ret.prepare(customer.id) : undefined;
     if (inlineReturn === null) return null;
-    const tender = resolveTender(method, checkNotReceived);
+    const resolved = resolveTender(method, checkNotReceived);
+    // SA-1219: text in Amount tendered that is not money says so, instead of "Enter at least $X"
+    const unreadable =
+      resolved.method === "CASH" && !walkInBuyer ? tenderTextProblem(tendered) : null;
+    if (unreadable) {
+      setError(unreadable);
+      setTenderFix((n) => n + 1);
+      return null;
+    }
+    const tender: typeof resolved = putOnAccount ? { method: "ON_ACCOUNT" } : resolved;
     const partPayProblem = partPayAmountProblem({
       method: tender.method,
       isWalkIn: walkInBuyer,
@@ -2225,9 +2253,11 @@ export function CounterSaleScreen() {
                       setTendered(e.target.value);
                       clearUnderpaidError();
                     }}
+                    onBlur={tenderEnter.disarm}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         e.preventDefault();
+                        if (e.repeat) return; // a held Enter is not a second press
                         onTenderEnter();
                       }
                     }}
@@ -2280,7 +2310,7 @@ export function CounterSaleScreen() {
 
             {tenderEnter.armed ? (
               <p role="status" className="text-sm font-medium text-navy">
-                Press Enter again to complete the sale.
+                {putOnAccount ? ON_ACCOUNT_ARM_COPY : "Press Enter again to complete the sale."}
               </p>
             ) : null}
           </section>
@@ -2468,6 +2498,8 @@ export function CounterSaleScreen() {
               total={totals.total}
               cash={method === "CASH"}
               due={amountDue(payTotal, tenderedNum)}
+              returned={ret.returned}
+              payTotal={payTotal}
             />
 
             {method === "CASH" ? (
@@ -2479,10 +2511,15 @@ export function CounterSaleScreen() {
             ) : null}
             {ret.storeCredit > 0 ? (
               <p className="text-sm font-semibold text-navy" data-testid="return-store-credit">
-                Store credit {money(ret.storeCredit)}
+                {CREDIT_WORDS.noun} {money(ret.storeCredit)}
               </p>
             ) : null}
 
+            {putOnAccount ? (
+              <p className="text-sm font-medium text-navy" data-testid="counter-on-account">
+                {onAccountCopy(payTotal, creditMayApply(creditView.autoApplyCredit))}
+              </p>
+            ) : null}
             {partSplit ? (
               <CounterPartPaySplit
                 split={partSplit}
@@ -2540,7 +2577,7 @@ export function CounterSaleScreen() {
                   parkBusy
                 }
               >
-                Complete &amp; show receipt
+                {putOnAccount ? onAccountLabel("show receipt") : "Complete & show receipt"}
               </Button>
               <Button
                 className="min-h-[44px]"
@@ -2558,7 +2595,7 @@ export function CounterSaleScreen() {
                   parkBusy
                 }
               >
-                Complete &amp; next sale
+                {putOnAccount ? onAccountLabel("next sale") : "Complete & next sale"}
               </Button>
             </div>
           </div>

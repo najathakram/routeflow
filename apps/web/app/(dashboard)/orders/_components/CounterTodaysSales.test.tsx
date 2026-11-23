@@ -715,7 +715,7 @@ describe("CounterTodaysSales", () => {
     expect(within(screen.getByTestId("today-row-o3")).getByText("Returned")).toBeInTheDocument();
   });
 
-  it("store credit on a row is labelled store credit, not a tender", async () => {
+  it("credit on a row is labelled Credit, not a tender", async () => {
     serve({
       1: page1([
         row({
@@ -728,7 +728,7 @@ describe("CounterTodaysSales", () => {
     });
     await open();
     const r = await screen.findByTestId("today-row-o1");
-    expect(r).toHaveTextContent("Cash + Store credit");
+    expect(r).toHaveTextContent("Cash + Credit");
   });
 
   it("formats times in the server's timezone", async () => {

@@ -1,3 +1,5 @@
+import { billLineUnit } from "./bill-line-unit";
+
 /**
  * Shared line-item subtotal calculation + money helpers.
  *
@@ -1372,8 +1374,11 @@ export function invoiceLineQtyText(item: UnitLineQtyInput): string {
  * rewrites an already-agreed line's display the moment the product is repacked
  * or un-boxed, the exact bug this function exists to prevent.
  */
-export function linePack(line: { packSize?: number | null }, livePack: number): number {
-  const stored = Number(line.packSize ?? 0);
+export function linePack(
+  line: { packSize?: number | null; unitLabel?: string | null },
+  livePack: number,
+): number {
+  const stored = billLineUnit(line).factor;
   return stored > 1 ? stored : livePack;
 }
 
