@@ -33,7 +33,7 @@ import {
   formatStatus,
   formatWaitLine,
   historyRecord,
-  nextGrant,
+  nextGrant as nextGrantRaw,
   parsePriority,
   isCappedLabel,
   parseCappedMax,
@@ -140,6 +140,8 @@ const deadPid = (() => {
   return r.pid;
 })();
 const NO_LOG = { log: () => {} };
+// nextGrant requires `now` (M2); the older cases do not use the age term, so they pass 0.
+const nextGrant = (a) => nextGrantRaw({ now: 0, ...a });
 const cleanEnv = () => {
   const env = { ...process.env };
   for (const k of ["CI", "RF_HEAVY_SLOT", "RF_HEAVY_SLOT_TOKEN", "RF_HEAVY_SLOTS"]) delete env[k];
@@ -1993,8 +1995,43 @@ check(
     [true, false],
   );
   check(
-    "Q13 an aged normal ticket whose body is unreadable (mid-write, so not in the high set) is still promoted",
-    g([oldN, hiNew], oldN, new Set([hiNew])),
+    "Q13 nextGrant without a finite `now` throws (the age term must never be silently dropped)",
+    [undefined, NaN, "5"].map((now) => {
+      try {
+        nextGrantRaw({ order: [oldN], myName: oldN, freeSlots: 1, now });
+        return "no throw";
+      } catch (e) {
+        return /nextGrant: `now` must be a finite number/.test(String(e.message));
+      }
+    }),
+    [true, true, true],
+  );
+  // Q14: on disk. An aged normal ticket whose JSON is truncated (mid-write) is still promoted by its NAME: a high
+  // waiter queued behind it sees position 2 of 2 (without the cap it would be 1 of 2).
+  const dirA = mkTmp();
+  ghost(dirA, {}, 0);
+  mkdirSync(path.join(dirA, "queue"), { recursive: true });
+  writeFileSync(
+    path.join(dirA, "queue", ticketName(Date.now() - 121 * 60_000, 1, "aa")),
+    '{"pid":1,"lab',
+  );
+  const logA = [];
+  await withHeavySlot(
+    {
+      label: "wt-db-1",
+      branch: "b",
+      dir: dirA,
+      env: { RF_HEAVY_SLOT_PRIORITY: "high" },
+      slots: 1,
+      maxWaitMs: 300,
+      ...FAST,
+      log: (m) => logA.push(m),
+    },
+    async () => {},
+  ).catch(() => {});
+  check(
+    "Q14 an aged ticket with an unreadable body still counts as promoted: the high waiter is position 2 of 2",
+    /position 2 of 2/.test(logA.find((l) => /position/.test(l)) ?? ""),
     true,
   );
 }

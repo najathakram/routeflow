@@ -558,8 +558,9 @@ export function nextGrant({
   // `high` (names of priority tickets): they go first, FIFO among themselves, then the rest. Empty/absent = plain FIFO.
   // A normal ticket older than PRIORITY_AGE_CAP_MS (age from the NAME's queuedAt ms, never the JSON) joins the high group
   // in queue order, so a high ticket never starves it and an older high ticket is never jumped.
-  const up = (n) =>
-    high.has(n) || (now !== undefined && now - Number(n.slice(0, 15)) > PRIORITY_AGE_CAP_MS);
+  if (typeof now !== "number" || !Number.isFinite(now))
+    throw new Error("nextGrant: `now` must be a finite number (the age cap needs it)");
+  const up = (n) => high?.has(n) || now - Number(n.slice(0, 15)) > PRIORITY_AGE_CAP_MS;
   if (high?.size) order = [...order.filter(up), ...order.filter((n) => !up(n))];
   const idx = order.indexOf(myName);
   const atCap = cappedHeld >= cappedMax;
