@@ -90,6 +90,18 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Tenant config snapshots (restore on re-upgrade) | [`api`](api/catchup-2026-09-21-src.md) → `billing/tenant-config-snapshot*.ts` → web admin `ConfigSnapshotsTab` |
 | Scanning engine (shared), verify-turbo, release-health | [`packages`](packages.md) → `scanning`; [`api`](api/catchup-2026-09-21-scripts-schema.md) → `scripts/` |
 | Marketing site print/motion, pin ledger, spec 85 | [`web`](web/landing-2026-11-13-bk-fixes.md) → `public/site/js/{home-up,site}.js`, `e2e/85-site-proof-pages.spec.ts` |
+| Staff menu, active entry, g shortcuts | [`web`](web/landing-2026-11-21-w38.md) → `app/(dashboard)/_components/nav-index.ts`, `lib/nav-shortcuts.ts` |
+| Invoice layout switches, open balance block | [`api`](api/landing-2026-11-21-w38.md) → `invoices/invoice-layout.ts`, `customers/invoice-account-balance.ts` |
+| Sent-invoice edit confirm (ackSentRevert) | [`api`](api/landing-2026-11-21-w38.md) → `invoices/order-edit-revert-set.ts`, `orders/orders.service.ts` |
+| Import skips a gated column | [`api`](api/landing-2026-11-21-w38.md) → `import/import-gated-columns.ts` |
+| One writer for the Driver row | [`api`](api/landing-2026-11-21-w38.md) → `drivers/drivers.service.ts` `ensureDriverRow` |
+| Email delivery route, ref token, bounce tables | [`api`](api/landing-2026-11-21-w38.md) → `email/email-delivery.service.ts`, `email/bounces/` |
+| Purchase orders: create, receive, edit, close | [`api`](api/codemap-refresh-2026-11-22.md#purchase-orders-inventory) → `inventory/inventory.service.ts` `receivePurchaseOrder` |
+| Vendor bills: create, receive, void, payments, PO gate | [`api`](api/codemap-refresh-2026-11-22.md#vendor-bills) → `vendor-bills/vendor-bills.service.ts`, `po-bill-match.ts` |
+| Counter sale, park, void, pickup, day close | [`api`](api/codemap-refresh-2026-11-22.md#counter-sale-pickup) → `orders/counter-sale/counter-sale.service.ts` `ring`; web `CounterSaleScreen.tsx` |
+| Order drafts: autosave, local mirror, resume | [`api`](api/codemap-refresh-2026-11-22.md#order-drafts) → `drafts/drafts.service.ts`; web `lib/order-draft/engine.ts` |
+| Payment receipts: idempotency key, ref dedupe, edit | [`api`](api/codemap-refresh-2026-11-22.md#payment-receipts) → `invoices/payment-idempotency.ts`, `payment-ref-dedupe.ts` |
+| Billing catch-up: claim, plan, checkout | [`api`](api/codemap-refresh-2026-11-22.md#billing-catchup) → `billing/catchup-claim.ts`, `catchup-plan.ts`, `catchup-checkout.service.ts` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →

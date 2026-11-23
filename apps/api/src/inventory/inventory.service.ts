@@ -1428,6 +1428,10 @@ export class InventoryService {
         totalCost?: number;
         sku?: string | null;
         packSize?: number | null;
+        /** SA-1207 S2b: the bill line's own unit and family, carried to the PO twin. */
+        unitLabel?: string | null;
+        familyProductId?: string | null;
+        familyGroupId?: string | null;
       }[];
     },
   ) {
@@ -1470,6 +1474,9 @@ export class InventoryService {
           : roundMoney(Number(l.qtyOrdered) * Number(l.unitCost)),
       sku: l.sku ?? null,
       packSize: l.packSize ?? null,
+      unitLabel: l.unitLabel ?? null,
+      familyProductId: l.familyProductId ?? null,
+      familyGroupId: l.familyGroupId ?? null,
     }));
     return tx.purchaseOrder.create({
       data: {

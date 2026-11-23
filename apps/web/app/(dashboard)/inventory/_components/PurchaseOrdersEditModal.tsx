@@ -3,6 +3,7 @@
 import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
+import { MODAL_BODY, MODAL_FOOTER, MODAL_FORM, MODAL_PANEL } from "./modal-panel";
 import {
   usePurchaseOrder,
   useUpdatePurchaseOrder,
@@ -155,7 +156,7 @@ function EditModalBody({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-2xl`}>
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Edit {po.poNumber}</h2>
           <button
@@ -225,80 +226,80 @@ function EditModalBody({
             // The browser's own min/step checks would swallow our messages (e.g. why a received
             // quantity can't drop) — validateEditLines explains it instead.
             noValidate
-            className="space-y-5 overflow-y-auto px-6 py-5"
-            style={{ maxHeight: "80vh" }}
+            className={MODAL_FORM}
           >
-            {received && (
-              <p className="rounded bg-surface-raised px-3 py-2 text-xs text-navy/80">
-                Already received: a received line can&apos;t go below what arrived, change product
-                or be removed. Extra quantity and new lines stay outstanding.
-              </p>
-            )}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="po-edit-supplier" className="mb-1 block text-xs text-navy">
-                  Supplier
-                </label>
-                <select
-                  id="po-edit-supplier"
-                  value={supplierId}
-                  onChange={(e) => setSupplierId(e.target.value)}
-                  className={inputCls}
-                >
-                  {!suppliers.some((s) => s.id === supplierId) && (
-                    <option value={supplierId}>{po.supplier?.name ?? "—"}</option>
-                  )}
-                  {suppliers
-                    .filter((s) => s.isActive || s.id === supplierId)
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                </select>
+            <div className={MODAL_BODY}>
+              {received && (
+                <p className="rounded bg-surface-raised px-3 py-2 text-xs text-navy/80">
+                  Already received: a received line can&apos;t go below what arrived, change product
+                  or be removed. Extra quantity and new lines stay outstanding.
+                </p>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="po-edit-supplier" className="mb-1 block text-xs text-navy">
+                    Supplier
+                  </label>
+                  <select
+                    id="po-edit-supplier"
+                    value={supplierId}
+                    onChange={(e) => setSupplierId(e.target.value)}
+                    className={inputCls}
+                  >
+                    {!suppliers.some((s) => s.id === supplierId) && (
+                      <option value={supplierId}>{po.supplier?.name ?? "—"}</option>
+                    )}
+                    {suppliers
+                      .filter((s) => s.isActive || s.id === supplierId)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="po-edit-date" className="mb-1 block text-xs text-navy">
+                    Expected date
+                  </label>
+                  <input
+                    id="po-edit-date"
+                    type="date"
+                    value={expectedDate}
+                    onChange={(e) => setExpectedDate(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
               </div>
+
+              <PurchaseOrderLinesTable
+                lines={lines}
+                setLines={setLines}
+                products={products}
+                received={received}
+                fallbackName={nameFor}
+              />
+
               <div>
-                <label htmlFor="po-edit-date" className="mb-1 block text-xs text-navy">
-                  Expected date
+                <label htmlFor="po-edit-notes" className="mb-1 block text-xs text-navy">
+                  Notes
                 </label>
-                <input
-                  id="po-edit-date"
-                  type="date"
-                  value={expectedDate}
-                  onChange={(e) => setExpectedDate(e.target.value)}
-                  className={inputCls}
+                <textarea
+                  id="po-edit-notes"
+                  rows={2}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
+
+              {error && (
+                <p role="alert" className="rounded bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {error}
+                </p>
+              )}
             </div>
-
-            <PurchaseOrderLinesTable
-              lines={lines}
-              setLines={setLines}
-              products={products}
-              received={received}
-              fallbackName={nameFor}
-            />
-
-            <div>
-              <label htmlFor="po-edit-notes" className="mb-1 block text-xs text-navy">
-                Notes
-              </label>
-              <textarea
-                id="po-edit-notes"
-                rows={2}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-            </div>
-
-            {error && (
-              <p role="alert" className="rounded bg-red-50 px-3 py-2 text-xs text-red-700">
-                {error}
-              </p>
-            )}
-
-            <div className="flex justify-end gap-2 pt-1">
+            <div className={MODAL_FOOTER}>
               <Button variant="secondary" onClick={onClose} type="button">
                 Cancel
               </Button>
@@ -355,7 +356,7 @@ export function PurchaseOrdersEditModal({
   }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-md`}>
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Edit {po.poNumber}</h2>
           <button

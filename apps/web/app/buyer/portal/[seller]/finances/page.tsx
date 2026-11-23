@@ -166,7 +166,7 @@ export default function FinancesPage() {
           icon={ShoppingCart}
           label="Total orders"
           value={String(summary.totalOrders)}
-          sub={`Avg ${fmt(summary.avgOrderValue)} / order`}
+          sub={summary.totalOrders > 0 ? `Avg ${fmt(summary.avgOrderValue)} / order` : undefined}
           color="bg-blue-50 text-blue-600"
         />
         <StatCard

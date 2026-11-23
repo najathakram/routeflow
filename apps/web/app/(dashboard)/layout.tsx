@@ -75,6 +75,8 @@ import { useInsightsAccess } from "@/components/insights/use-insights-access";
 import { RouteGuard } from "./_components/gates/RouteGuard";
 import { activeNavLeaf, navShortcuts, navShortcutTargets } from "./_components/nav-index";
 import { buildOperatorNav } from "./_components/build-operator-nav";
+import { PINNED_GROUP_LABEL } from "./_components/nav-layout";
+import { useNavLayout } from "@/lib/api/nav-layout";
 import { useOpenNavGroups, type NavGroupMode } from "./_components/use-open-nav-groups";
 
 import { type NavEntry, type NavGroup, type NavLeaf } from "./_components/nav-config";
@@ -316,7 +318,7 @@ function SidebarNav({
             group={entry}
             collapsed={collapsed}
             activeHref={activeLeaf}
-            open={isOpen(entry.label)}
+            open={entry.label === PINNED_GROUP_LABEL || isOpen(entry.label)}
             onToggle={toggleGroup}
             onNavigate={onNavigate}
           />
@@ -930,6 +932,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   );
   // The same predicate as every other way into product insights; the menu entry follows it.
   const insightsAccess = useInsightsAccess();
+  // SA-1209: the business's sidebar layout, from the shared GET /settings read; undefined while loading or failed.
+  const { data: navLayout } = useNavLayout({ enabled: isStaff });
   const navStructure = React.useMemo(
     () =>
       buildOperatorNav({
@@ -949,6 +953,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           failed: subscriptionFailed,
         },
         modes: tenantModes,
+        navLayout,
       }),
     [
       user,
@@ -964,6 +969,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       subscriptionFailed,
       counterEnabled,
       tenantModes,
+      navLayout,
     ],
   );
   const [collapsed, setCollapsed] = React.useState(() => {
