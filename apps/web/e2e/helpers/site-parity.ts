@@ -59,10 +59,14 @@ export function normaliseRow(raw: string, brand: ParityBrand): string {
   return normaliseBrand(raw.replace(/\s+/g, " ").trim(), brand).trim().slice(0, 100);
 }
 
-/** The brand as the file holds it now; never typed here. */
+/** The brand as the site shows it: the file, with the `site` overlay laid over it (the pages this
+ *  compares wear the overlay's name). Never typed here. */
 function readBrand(): ParityBrand {
   const file = path.join(__dirname, "../../../../packages/types/brand/brand.json");
-  return parseBrand(JSON.parse(fs.readFileSync(file, "utf8")) as Partial<ParityBrand>);
+  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<ParityBrand> & {
+    site?: Partial<ParityBrand>;
+  };
+  return parseBrand({ ...raw, ...raw.site });
 }
 
 /** An empty name would make an empty pattern that matches everywhere: refuse it. */

@@ -9,7 +9,7 @@
 // file back byte for byte. A re-run of the script therefore reproduces the pages.
 import * as fs from "fs";
 import * as path from "path";
-import { loadBrand } from "@routeflow/types/brand";
+import { loadSiteBrand as loadBrand } from "@routeflow/types/brand";
 import { renderSitePage } from "./static-site-page";
 const { tokenise } = require("../../../scripts/lib/site-port-tokens.cjs") as {
   tokenise: (html: string, brand: ReturnType<typeof loadBrand>) => string;

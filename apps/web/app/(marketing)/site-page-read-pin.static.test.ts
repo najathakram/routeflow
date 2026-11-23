@@ -36,6 +36,9 @@ const ALLOWED_DIRECT_READERS: Record<string, string> = {
   // Arrived from master in the catch-up (#4367), after the snapshot; lanes never edit master's guard.
   "app/(marketing)/site-pins.static.test.ts":
     "master's pin guard: the wheel's end-state markup in the raw home.html, byte for byte",
+  // Arrived from master in the C1 catch-up (#4393, B1371); lanes never edit master's tests.
+  "app/(marketing)/no-login-cutoff-claims.static.test.ts":
+    "master's claim scan: reads the raw pages for the login-cutoff wording",
 };
 
 // The file-size budget test (replaced by the wheel budget in W1) is matched by its suffix.

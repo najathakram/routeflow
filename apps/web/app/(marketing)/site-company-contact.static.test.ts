@@ -7,7 +7,7 @@
 // its credit, Contact by email only (no video call), and the old About page gone.
 import * as fs from "fs";
 import * as path from "path";
-import { BRAND } from "@routeflow/types/brand";
+import { SITE_BRAND as BRAND } from "@routeflow/types/brand";
 import { readServedSitePage } from "@/lib/read-site-page";
 import type { StaticSitePage } from "@/lib/static-site-page";
 

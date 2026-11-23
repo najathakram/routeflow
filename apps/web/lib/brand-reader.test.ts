@@ -12,6 +12,9 @@ import {
   BRAND_NUMBER_KEYS,
   brandValue,
   footerLine,
+  siteFooterLine,
+  SITE_BRAND,
+  SITE_OVERLAY_KEYS,
   loadPalette,
   pageTitle,
   paletteCss,
@@ -27,7 +30,8 @@ describe("brand.json", () => {
     const file = raw();
     for (const key of BRAND_KEYS) expect(typeof brandValue(file, key)).toBe("string");
     const top = new Set([...BRAND_KEYS, ...BRAND_NUMBER_KEYS].map((k) => k.split(".")[0]));
-    expect(Object.keys(file).sort()).toEqual([...top].sort());
+    // "site" is the overlay block (SA-1178 A6), checked by its own keys below
+    expect(Object.keys(file).sort()).toEqual([...top, "site"].sort());
   });
 
   it("BRAND is the validated, frozen file", () => {
@@ -69,6 +73,22 @@ describe("validateBrand", () => {
   });
 });
 
+describe("the site overlay block", () => {
+  it.each([...SITE_OVERLAY_KEYS])("throws naming the missing key site.%s", (key) => {
+    const broken = raw() as { site: Record<string, unknown> };
+    const parts = key.split(".");
+    let at = broken.site;
+    for (const part of parts.slice(0, -1)) at = at[part] as Record<string, unknown>;
+    delete at[parts[parts.length - 1] as string];
+    expect(() => validateBrand(broken)).toThrow(`"site.${key}"`);
+  });
+
+  it("is optional: a brand with no overlay is valid and is its own site view", () => {
+    const { site: _site, ...plain } = raw();
+    expect(() => validateBrand(plain)).not.toThrow();
+  });
+});
+
 describe("pageTitle and footerLine", () => {
   const PAGES = [
     "Product",
@@ -95,9 +115,13 @@ describe("pageTitle and footerLine", () => {
 
   // SA-1203 A1: D5 names the previous name in the footer line while it is set and differs
   it("the footer line follows D5", () => {
-    expect(footerLine()).toBe(`© 2026 ${BRAND.name}, formerly ${BRAND.formerly}`);
-    expect(footerLine(2030)).toBe(`© 2030 ${BRAND.name}, formerly ${BRAND.formerly}`);
-    expect(footerLine(2026, { ...BRAND, formerly: BRAND.name })).toBe(`© 2026 ${BRAND.name}`);
+    // the site view names the new name and the previous one; the top level (one name) is the bare line
+    expect(siteFooterLine()).toBe(`© 2026 ${SITE_BRAND.name}, formerly ${SITE_BRAND.formerly}`);
+    expect(siteFooterLine(2030)).toBe(`© 2030 ${SITE_BRAND.name}, formerly ${SITE_BRAND.formerly}`);
+    expect(footerLine()).toBe(`© 2026 ${BRAND.name}`);
+    expect(footerLine(2026, { ...BRAND, formerly: "Old Name" })).toBe(
+      `© 2026 ${BRAND.name}, formerly Old Name`,
+    );
     expect(footerLine(2026, { ...BRAND, formerly: "" })).toBe(`© 2026 ${BRAND.name}`);
   });
 });

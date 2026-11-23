@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BRAND } from "@routeflow/types/brand";
+import { SITE_BRAND } from "@routeflow/types/brand";
 import { hasBuyerPresence, hasOpPresence, readLastPortalCookie } from "@/lib/presence-cookies";
 import { resolveLandingTarget } from "@/lib/portal-routing";
 import { MENU_LINKS, NAV_LINKS } from "./site-frame-nav";
@@ -57,10 +57,10 @@ export function SiteFrameHeader({ current }: { current?: string }) {
     <>
       <header className="site-header">
         <div className="wrap nav">
-          <Link className="brand" href="/" aria-label={`${BRAND.name} home`}>
+          <Link className="brand" href="/" aria-label={`${SITE_BRAND.name} home`}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={BRAND.logo.onLight} width={30} height={30} alt="" />
-            <span>{BRAND.name}</span>
+            <img src={SITE_BRAND.logo.onLight} width={30} height={30} alt="" />
+            <span>{SITE_BRAND.name}</span>
           </Link>
           <nav aria-label="Main">
             <ul className="nav-links">

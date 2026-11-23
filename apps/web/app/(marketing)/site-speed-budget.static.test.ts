@@ -30,18 +30,8 @@ import {
 
 const PUBLIC_DIR = path.resolve(__dirname, "../../public");
 
-/** Rules not met yet. Key: `<rule>:<page>`. The wave package that clears it is named in `wave`. */
-const PENDING_WAVE: Record<string, { wave: string; reason: string }> = {
-  ...Object.fromEntries(
-    STATIC_SITE_PAGE_NAMES.map((p): [string, { wave: string; reason: string }] => [
-      `logo-svg:${p}`,
-      {
-        wave: "switch day (SA-1178 A2 K2)",
-        reason: "the logo (and on home the symbol and end-mark) is still a png; becomes SVG",
-      },
-    ]),
-  ),
-};
+/** Rules not met yet (none: the overlay's marks are SVG, SA-1253 C3). Key: `<rule>:<page>`. The wave package that clears it is named in `wave`. */
+const PENDING_WAVE: Record<string, { wave: string; reason: string }> = {};
 
 const kb = (bytes: number): number => bytes / 1024;
 const gz = (data: Buffer | string): number => zlib.gzipSync(data).length;

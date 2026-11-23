@@ -20,15 +20,10 @@ const raw = JSON.parse(
 const ALLOWLIST = [
   "apps/web/app/(marketing)/lib/metadata.ts",
   "apps/web/app/(marketing)/lib/site.ts",
-  "apps/web/app/(marketing)/opengraph-image/route.tsx",
   "apps/web/components/site-frame/SiteFrame.tsx",
   "apps/web/components/site-frame/SiteFrameHeader.tsx",
-  "apps/web/components/site-frame/site-frame-nav.ts",
   "apps/web/lib/read-site-page.ts",
-  "apps/web/next.config.mjs",
   "packages/types/brand/index.ts",
-  "packages/types/brand/load.ts",
-  "scripts/lib/site-port-jsonld.cjs",
 ].sort();
 
 const SKIP_DIRS = new Set(["node_modules", ".next", ".turbo", "dist", ".git", ".jest-cache"]);

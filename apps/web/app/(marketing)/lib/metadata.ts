@@ -4,13 +4,13 @@
 // the canonical path can't be left out on one page. Words stay with each caller.
 
 import type { Metadata } from "next";
-import { BRAND } from "@routeflow/types/brand";
+import { SITE_BRAND } from "@routeflow/types/brand";
 import { site } from "./site";
 
 /** The two lines on the share image. Words are from COPY.md section 8. */
 export const SHARE_IMAGE_LINES = {
-  name: BRAND.name,
-  line: BRAND.shareLine,
+  name: SITE_BRAND.name,
+  line: SITE_BRAND.shareLine,
 } as const;
 
 /**
@@ -34,6 +34,8 @@ export interface MarketingMetadataInput {
   title?: string | { absolute: string };
   /** Search description. Leave out to inherit the root layout's. */
   description?: string;
+  /** The og:site_name. Default: the site's name; Terms and Privacy pass today's (they are contracts). */
+  siteName?: string;
   /** Share lines when they differ from the title and description. */
   share?: { title?: string; description?: string };
 }
@@ -52,7 +54,7 @@ export function marketingMetadata(input: MarketingMetadataInput): Metadata {
       ...(shareTitle !== undefined ? { title: shareTitle } : {}),
       ...(shareDescription !== undefined ? { description: shareDescription } : {}),
       url: input.path,
-      siteName: site.name,
+      siteName: input.siteName ?? site.name,
       type: "website",
       images,
     },

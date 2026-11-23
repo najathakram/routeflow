@@ -1,6 +1,6 @@
 {
-  "name": "Rovio",
-  "officialName": "X-Rovio",
+  "name": "RouteFlow",
+  "officialName": "RouteFlow",
   "formerly": "RouteFlow",
   "legalEntity": "Routeflow Solutions LLC",
   "origin": "https://www.routeflow.info",
@@ -24,5 +24,23 @@
   },
   "emailLogo": "/brand/routeflow-mark-192.png",
   "emailLogoWidth": 24,
-  "emailLogoHeight": 24
+  "emailLogoHeight": 24,
+  "site": {
+    "name": "Rovio",
+    "officialName": "X-Rovio",
+    "origin": "https://www.xrov.io",
+    "logo": {
+      "onLight": "/site/img/brand/symbol.svg",
+      "onDark": "/site/img/brand/symbol-reversed.svg",
+      "small": "/site/img/brand/symbol.svg"
+    },
+    "symbol": "/site/img/brand/symbol.svg",
+    "symbolOnDark": "/site/img/brand/symbol-reversed.svg",
+    "icon": {
+      "favicon": "/site/img/brand/favicon-32.png",
+      "apple": "/site/img/brand/apple-touch-icon.png",
+      "192": "/site/img/brand/icon-192.png",
+      "512": "/site/img/brand/icon-512.png"
+    }
+  }
 }

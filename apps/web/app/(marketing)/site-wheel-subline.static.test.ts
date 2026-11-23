@@ -9,7 +9,7 @@
 // the brand file) and the script side keeps its name variable, which reads the page's og:site_name.
 import * as fs from "fs";
 import * as path from "path";
-import { BRAND } from "@routeflow/types/brand";
+import { SITE_BRAND as BRAND } from "@routeflow/types/brand";
 import { readServedSitePage } from "@/lib/read-site-page";
 
 const WHEEL = path.resolve(__dirname, "../../public/site/graphics/rf-wheel-up.js");

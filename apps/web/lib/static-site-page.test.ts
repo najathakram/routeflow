@@ -20,7 +20,12 @@ import {
 import { UMAMI_SCRIPT_SRC, umamiAllowedPath } from "./umami-tag";
 import { readServedSitePage } from "./read-site-page";
 import { renderSitePage, brandTokensTag } from "./static-site-page";
-import { BRAND, loadBrand, loadPalette, validatePalette } from "@routeflow/types/brand";
+import {
+  SITE_BRAND as BRAND,
+  loadSiteBrand as loadBrand,
+  loadPalette,
+  validatePalette,
+} from "@routeflow/types/brand";
 
 // The brand's own host, from the seam: a name or host swap needs no edit here.
 const HOST = new URL(BRAND.origin).hostname;

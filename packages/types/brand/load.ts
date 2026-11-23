@@ -32,7 +32,29 @@ export interface Brand {
   /** The email logo's size in px. 24 x 24 today; the flip sets the real logo's size. */
   readonly emailLogoWidth: number;
   readonly emailLogoHeight: number;
+  /** The site overlay (SA-1178 A6): the new name, marks and main host, read only through the
+   *  allowlisted site view (index.ts). Phase A lifts it to the top level and deletes it. */
+  readonly site?: SiteOverlay;
 }
+
+/** The keys the site overlay replaces. The mailboxes, legal entity, old host and former name stay. */
+export interface SiteOverlay {
+  readonly name: string;
+  readonly officialName: string;
+  readonly origin: string;
+  readonly logo: { readonly onLight: string; readonly onDark: string; readonly small: string };
+  readonly symbol: string;
+  readonly symbolOnDark: string;
+  readonly icon: {
+    readonly favicon: string;
+    readonly apple: string;
+    readonly "192": string;
+    readonly "512": string;
+  };
+}
+
+/** The brand as the site shows it: the top level with the overlay laid over it (no `site` key). */
+export type SiteBrand = Omit<Brand, "site">;
 
 /** Every key a brand must carry, dotted for the nested ones. The reader checks each. */
 export const BRAND_KEYS = [
@@ -56,6 +78,22 @@ export const BRAND_KEYS = [
   "icon.192",
   "icon.512",
   "emailLogo",
+] as const;
+
+/** Every key the overlay must carry when it is present. */
+export const SITE_OVERLAY_KEYS = [
+  "name",
+  "officialName",
+  "origin",
+  "logo.onLight",
+  "logo.onDark",
+  "logo.small",
+  "symbol",
+  "symbolOnDark",
+  "icon.favicon",
+  "icon.apple",
+  "icon.192",
+  "icon.512",
 ] as const;
 
 /** Keys that must be positive integers (sizes). The reader checks each. */
@@ -89,6 +127,15 @@ export function validateBrand(raw: unknown): Brand {
       throw new Error(`brand.json: key "${key}" must be a positive integer`);
     }
   }
+  const site = brandValue(raw, "site");
+  if (site !== undefined) {
+    for (const key of SITE_OVERLAY_KEYS) {
+      const value = brandValue(site, key);
+      if (typeof value !== "string" || value.length === 0) {
+        throw new Error(`brand.json: missing or empty key "site.${key}"`);
+      }
+    }
+  }
   const r = raw as Record<string, Record<string, string> | string>;
   const copy = JSON.parse(JSON.stringify(r)) as Record<string, unknown>;
   for (const v of Object.values(copy)) {
@@ -103,6 +150,20 @@ let cached: Brand | undefined;
 export function loadBrand(): Brand {
   cached ??= validateBrand(brandJson);
   return cached;
+}
+
+/** The site view of a brand: the overlay laid over the top level, key by key. A brand with no
+ *  overlay (a test fixture, or phase A done) is its own site view. index.ts builds it from the
+ *  mockable loadBrand(), so a fixture brand flows through. */
+export function siteView(brand: Brand): SiteBrand {
+  const { site, ...top } = brand;
+  if (!site) return top;
+  return Object.freeze({
+    ...top,
+    ...site,
+    logo: Object.freeze({ ...top.logo, ...site.logo }),
+    icon: Object.freeze({ ...top.icon, ...site.icon }),
+  });
 }
 
 export interface Palette {

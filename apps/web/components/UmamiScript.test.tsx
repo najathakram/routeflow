@@ -69,7 +69,7 @@ describe("umamiScriptProps", () => {
       src: UMAMI_SCRIPT_SRC,
       defer: true,
       "data-website-id": FAKE_ID,
-      "data-domains": "www.routeflow.info",
+      "data-domains": "www.xrov.io",
       "data-auto-track": "false",
       "data-exclude-search": "true",
     });
@@ -141,11 +141,11 @@ describe("<UmamiScript /> pageviews", () => {
         sent.push(
           build({
             website: FAKE_ID,
-            hostname: "www.routeflow.info",
+            hostname: "www.xrov.io",
             screen: "1440x900",
             language: "en-US",
             title: "A page",
-            url: "https://www.routeflow.info/signup?email=owner%40acme.com",
+            url: "https://www.xrov.io/signup?email=owner%40acme.com",
             referrer,
           } as Parameters<typeof build>[0]),
         ),
@@ -239,7 +239,7 @@ describe("<UmamiScript /> pageviews", () => {
   });
 
   it("never lets the query string out on an allowed page", () => {
-    installTracker("https://www.routeflow.info/signup/check-email?email=owner%40acme.com");
+    installTracker("https://www.xrov.io/signup/check-email?email=owner%40acme.com");
     render(at("/signup"));
     expect(urls()).toEqual(["/signup"]);
     const body = JSON.stringify(sent);
@@ -253,7 +253,7 @@ describe("<UmamiScript /> pageviews", () => {
     expect(sent).toEqual([
       {
         website: FAKE_ID,
-        hostname: "www.routeflow.info",
+        hostname: "www.xrov.io",
         screen: "1440x900",
         url: "/pricing",
         referrer: "https://news.example.com",
@@ -263,9 +263,9 @@ describe("<UmamiScript /> pageviews", () => {
 
   it.each([
     ["our own page, as a path", "/signup/check-email?email=owner%40acme.com", ""],
-    ["our own page, in full", "https://www.routeflow.info/login", ""],
-    ["our own host with no www", "https://routeflow.info/", ""],
-    ["a tenant's host, which names a client", "https://acme.routeflow.info", ""],
+    ["our own page, in full", "https://www.xrov.io/login", ""],
+    ["our own host with no www", "https://xrov.io/", ""],
+    ["a tenant's host, which names a client", "https://acme.xrov.io", ""],
     ["an app link", "android-app://com.google.android.gm/", ""],
     ["nonsense", "http://", ""],
     ["no referrer", "", ""],

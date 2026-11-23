@@ -8,14 +8,15 @@
 // pages' own copy instead of the redesign's preview-only text.
 
 import { Package, Route, Warehouse, type LucideIcon } from "lucide-react";
-import { BRAND } from "@routeflow/types/brand";
+import { BRAND, SITE_BRAND } from "@routeflow/types/brand";
 
 // Name, host and mailbox come from packages/types/brand/brand.json (the brand seam, T35): nothing
-// in this file types them.
+// in this file types them. `site` is the site's view (the overlay: the new name and the main host).
+// Terms and Privacy are contracts and read BRAND (today's name and host), never this table.
 export const site = {
-  name: BRAND.name,
-  origin: BRAND.origin,
-  email: BRAND.email,
+  name: SITE_BRAND.name,
+  origin: SITE_BRAND.origin,
+  email: SITE_BRAND.email,
 };
 
 // The one label for the call button, on every page (COPY.md section 0 and 4: "video call", never "demo").
@@ -58,13 +59,13 @@ export const routes: MarketingRoute[] = [
     slug: "privacy",
     label: "Privacy",
     title: "Privacy Policy",
-    description: `How ${site.name} collects, uses, and protects the information you share with us.`,
+    description: `How ${BRAND.name} collects, uses, and protects the information you share with us.`,
   },
   {
     slug: "terms",
     label: "Terms",
     title: "Terms of Service",
-    description: `The terms that apply to accessing and using the ${site.name} platform.`,
+    description: `The terms that apply to accessing and using the ${BRAND.name} platform.`,
   },
 ];
 

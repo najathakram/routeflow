@@ -4,7 +4,7 @@ import { ArrowRight } from "lucide-react";
 import { BRAND } from "@routeflow/types/brand";
 import { BRAND_DOMAIN } from "@/lib/brand-domain";
 import { SECURITY_POLICY_URL } from "@/lib/repo-links";
-import { routes, site } from "../lib/site";
+import { routes } from "../lib/site";
 import { marketingMetadata } from "../lib/metadata";
 import { addLegalDays, formatLegalDate, isBeforeLegalDay } from "../lib/legal-dates";
 
@@ -26,6 +26,7 @@ const route = routes.find((r) => r.slug === "terms")!;
 
 export const metadata: Metadata = marketingMetadata({
   path: "/terms",
+  siteName: BRAND.name,
   title: route.title,
   description: route.description,
 });
@@ -45,8 +46,8 @@ export default function TermsPage() {
           <strong>These Terms change on {formatLegalDate(EFFECTIVE_DATE)}.</strong> Until then, the
           earlier Sections 5, 8, and 9 apply. Under earlier Section 9, if your account has ended and
           you cannot download your Tenant Data, email{" "}
-          <a href={`mailto:${site.email}`}>{site.email}</a>. Once we confirm you are authorized, we
-          will make it available by hand. Section 6 already describes how the app works today.
+          <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a>. Once we confirm you are authorized,
+          we will make it available by hand. Section 6 already describes how the app works today.
         </p>
       )}
 
@@ -115,13 +116,13 @@ export default function TermsPage() {
         </li>
         <li>
           Fees are described at{" "}
-          <Link href="/pricing">{site.origin.replace(/^https?:\/\//, "")}/pricing</Link> or in your
+          <Link href="/pricing">{BRAND.origin.replace(/^https?:\/\//, "")}/pricing</Link> or in your
           order form, and are exclusive of taxes unless stated otherwise.
         </li>
         <li>Fees already paid are non-refundable.</li>
         <li>
           You may cancel your subscription at any time through account settings or by contacting{" "}
-          <a href={`mailto:${site.email}`}>{site.email}</a>; cancellation stops the next renewal,
+          <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a>; cancellation stops the next renewal,
           and your access continues through the end of the current paid period.
         </li>
         <li>
@@ -192,7 +193,7 @@ export default function TermsPage() {
         </li>
         <li>
           A Tenant may request a Data Processing Addendum by contacting{" "}
-          <a href={`mailto:${site.email}`}>{site.email}</a>.
+          <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a>.
         </li>
       </ul>
 
@@ -283,7 +284,7 @@ export default function TermsPage() {
           Tenant Data, and some downloads have limits. If your account is suspended or terminated,
           or your subscription ends another way, such as through our payment processor, your users
           may not be able to use the Service or download anything. In any of these cases, you can
-          email <a href={`mailto:${site.email}`}>{site.email}</a> to ask for a copy of your Tenant
+          email <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a> to ask for a copy of your Tenant
           Data. We prepare it by hand. Once we confirm you are authorized, we will give you a copy
           of the Tenant Data we hold and tell you when to expect it, unless the law or a security
           risk prevents it. Our <Link href="/privacy#data-retention">Privacy Policy</Link> describes
@@ -383,7 +384,7 @@ export default function TermsPage() {
       <p>Questions about these Terms:</p>
       <ul>
         <li>
-          <strong>Email:</strong> <a href={`mailto:${site.email}`}>{site.email}</a>
+          <strong>Email:</strong> <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a>
         </li>
         <li>
           <strong>Security reports:</strong>{" "}

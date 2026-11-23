@@ -1,4 +1,4 @@
-import { BRAND } from "@routeflow/types/brand";
+import { BRAND, SITE_BRAND } from "@routeflow/types/brand";
 import type { Metadata } from "next";
 import sitemap from "../sitemap";
 import robots from "../robots";
@@ -55,17 +55,17 @@ describe("marketing SEO", () => {
       .map((entry) => entry.url)
       .sort();
     const expected = [
-      `${BRAND.origin}/`,
-      `${BRAND.origin}/product`,
-      `${BRAND.origin}/pricing`,
-      `${BRAND.origin}/company`,
-      `${BRAND.origin}/contact`,
-      `${BRAND.origin}/privacy`,
-      `${BRAND.origin}/terms`,
-      `${BRAND.origin}/getting-started`,
-      `${BRAND.origin}/does-and-doesnt`,
-      `${BRAND.origin}/data-in-and-out`,
-      `${BRAND.origin}/security`,
+      `${SITE_BRAND.origin}/`,
+      `${SITE_BRAND.origin}/product`,
+      `${SITE_BRAND.origin}/pricing`,
+      `${SITE_BRAND.origin}/company`,
+      `${SITE_BRAND.origin}/contact`,
+      `${SITE_BRAND.origin}/privacy`,
+      `${SITE_BRAND.origin}/terms`,
+      `${SITE_BRAND.origin}/getting-started`,
+      `${SITE_BRAND.origin}/does-and-doesnt`,
+      `${SITE_BRAND.origin}/data-in-and-out`,
+      `${SITE_BRAND.origin}/security`,
     ].sort();
     expect(urls).toEqual(expected);
   });
@@ -73,14 +73,14 @@ describe("marketing SEO", () => {
   it("the sitemap lists none of the old addresses", () => {
     const urls = sitemap().map((entry) => entry.url);
     for (const gone of ["wholesalers", "retailers", "book-a-demo", "sign-in", "about", "demo"]) {
-      expect(urls).not.toContain(`${BRAND.origin}/${gone}`);
+      expect(urls).not.toContain(`${SITE_BRAND.origin}/${gone}`);
     }
   });
 
   it("robots.ts allows everything and points at the sitemap", () => {
     const result = robots();
     expect(result.rules).toEqual({ userAgent: "*", allow: "/" });
-    expect(result.sitemap).toBe(`${BRAND.origin}/sitemap.xml`);
+    expect(result.sitemap).toBe(`${SITE_BRAND.origin}/sitemap.xml`);
   });
 
   it.each(Object.keys(EXPECTED_ROUTE_METADATA))(

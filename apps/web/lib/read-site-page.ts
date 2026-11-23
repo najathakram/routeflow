@@ -3,7 +3,7 @@
 // reads of public/site/*.html are pinned by app/(marketing)/site-page-read-pin.static.test.ts.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadBrand, type Brand } from "@routeflow/types/brand";
+import { loadSiteBrand, type SiteBrand } from "@routeflow/types/brand";
 import {
   renderSitePage,
   withFirstTouch,
@@ -12,8 +12,8 @@ import {
 } from "@/lib/static-site-page";
 
 export interface ServedPageOptions {
-  /** Brand to fill the tokens from. Default: the real one (tests pass a fixture or mock loadBrand). */
-  brand?: Brand;
+  /** Brand to fill the tokens from. Default: the site view of the real one (tests pass a fixture or mock loadBrand). */
+  brand?: SiteBrand;
   /** Umami site ID. Default: the build-time NEXT_PUBLIC_UMAMI_WEBSITE_ID (pass `undefined` for none). */
   websiteId?: string | undefined;
 }
@@ -35,6 +35,6 @@ export function readSitePageFile(page: StaticSitePage): string {
 export function readServedSitePage(page: StaticSitePage, opts: ServedPageOptions = {}): string {
   // Written out in full so Next inlines it at build time, as in UmamiScript.
   const websiteId = "websiteId" in opts ? opts.websiteId : process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID;
-  const filled = renderSitePage(readSitePageFile(page), opts.brand ?? loadBrand());
+  const filled = renderSitePage(readSitePageFile(page), opts.brand ?? loadSiteBrand());
   return withVisitCount(withFirstTouch(filled), page, websiteId);
 }

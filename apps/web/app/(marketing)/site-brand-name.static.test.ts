@@ -7,7 +7,7 @@
 // lane 2.5b owns; its assertion joins this test there.
 import * as fs from "fs";
 import * as path from "path";
-import { BRAND, footerLine } from "@routeflow/types/brand";
+import { SITE_BRAND as BRAND, footerLine, siteFooterLine } from "@routeflow/types/brand";
 import { STATIC_SITE_PAGE_NAMES, type StaticSitePage } from "@/lib/static-site-page";
 import { readServedSitePage } from "@/lib/read-site-page";
 import { SITE_EMAIL } from "@/components/site-frame/site-frame-nav";
@@ -29,7 +29,7 @@ const escapeHtml = (v: string): string =>
 /** SA-1203 A1: the footer line occurs exactly once and equals footerLine(); it is removed, and the
  *  rest of the page is held to the old rule. */
 function withoutFooterLine(html: string): string {
-  const line = escapeHtml(footerLine());
+  const line = escapeHtml(siteFooterLine());
   expect(html.split(line)).toHaveLength(2);
   return html.replace(line, "");
 }
@@ -77,7 +77,7 @@ describe("the served pages", () => {
     "%s prints the copyright line footerLine() builds",
     (page) => {
       const lines = [...pageHtml(page).matchAll(/©[^<]*/g)].map((m) => m[0]);
-      expect(lines).toEqual([footerLine()]);
+      expect(lines).toEqual([siteFooterLine()]);
       expect(lines[0]).toContain("formerly");
     },
   );
@@ -101,8 +101,8 @@ describe("the frame and the libs", () => {
 
   it("the frame file types no name", () => {
     const frame = fs.readFileSync(path.join(WEB, "components/site-frame/SiteFrame.tsx"), "utf8");
-    expect(frame).toContain("footerLine");
-    expect(frame).toContain("<span>{footerLine()}</span>");
+    expect(frame).toContain("siteFooterLine");
+    expect(frame).toContain("<span>{siteFooterLine()}</span>");
     expect(frame).not.toContain(BRAND.name);
     expect(frame).not.toContain(BRAND.formerly);
   });
@@ -110,7 +110,7 @@ describe("the frame and the libs", () => {
 
 describe("footerLine", () => {
   it("names the previous name when it is set and differs from the name", () => {
-    expect(footerLine()).toBe(`© 2026 ${BRAND.name}, formerly ${BRAND.formerly}`);
+    expect(siteFooterLine()).toBe(`© 2026 ${BRAND.name}, formerly ${BRAND.formerly}`);
   });
 
   it("is the bare line when the previous name equals the name or is empty", () => {

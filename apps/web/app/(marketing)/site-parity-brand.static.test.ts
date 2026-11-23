@@ -6,7 +6,7 @@
 // here are synthetic, except in the capture case, which builds its probes from the brand file.
 import * as fs from "fs";
 import * as path from "path";
-import { BRAND } from "@routeflow/types/brand";
+import { SITE_BRAND as BRAND } from "@routeflow/types/brand";
 import {
   brandPatternSource,
   captureParity,

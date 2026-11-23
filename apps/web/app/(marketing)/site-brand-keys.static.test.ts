@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 // SA-1178 A2 K4: the keys whose target does not exist yet (the addresses, the mark files and the legal
-// entity) are byte-identical to their value at the lane base, and the two name keys have moved. It fails
+// entity) are byte-identical to their value at the lane base, and the two name keys are back on today's name (the new one is the `site` overlay). It fails
 // if a lane moves an address or a mark early. The switch commit deletes this test with the key changes.
 import { execFileSync } from "child_process";
 import * as path from "path";
@@ -53,8 +53,10 @@ describe("brand keys held until switch day", () => {
     expect(pick(BRAND, key)).toBe(pick(base, key));
   });
 
-  it.each(["name", "officialName"])("%s has moved off the base value", (key) => {
-    expect(pick(BRAND, key)).not.toBe(pick(base, key));
+  // SA-1253 C3: the two name keys are back on today's value at the top level; the new name lives in
+  // the `site` overlay (site-overlay.static.test.ts pins it).
+  it.each(["name", "officialName"])("%s is today's name at the top level", (key) => {
+    expect(pick(BRAND, key)).toBe(pick(base, "name"));
   });
 
   it("formerly holds the base name, so the structured data can list it", () => {

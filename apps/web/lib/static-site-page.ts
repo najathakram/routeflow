@@ -6,7 +6,7 @@ import {
   brandValue,
   loadPalette,
   paletteCss,
-  type Brand,
+  type SiteBrand,
   type Palette,
 } from "@routeflow/types/brand";
 import { UMAMI_OWN_DOMAIN, STATIC_SITE_PATHS, umamiScriptProps } from "@/lib/umami-tag";
@@ -63,7 +63,7 @@ function withBrandTokens(html: string, palette: Palette): string {
  */
 export function renderSitePage(
   html: string,
-  brand: Brand,
+  brand: SiteBrand,
   palette: Palette | null = loadPalette(),
 ): string {
   const out = html.replace(BRAND_TOKEN, (_token, key: string) => {

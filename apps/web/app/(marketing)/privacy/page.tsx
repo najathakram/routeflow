@@ -4,7 +4,7 @@ import { ArrowRight } from "lucide-react";
 import { BRAND } from "@routeflow/types/brand";
 import { BRAND_DOMAIN } from "@/lib/brand-domain";
 import { SECURITY_POLICY_URL } from "@/lib/repo-links";
-import { routes, site } from "../lib/site";
+import { routes } from "../lib/site";
 import { marketingMetadata } from "../lib/metadata";
 import { addLegalDays, formatLegalDate, isBeforeLegalDay } from "../lib/legal-dates";
 
@@ -24,6 +24,7 @@ const route = routes.find((r) => r.slug === "privacy")!;
 
 export const metadata: Metadata = marketingMetadata({
   path: "/privacy",
+  siteName: BRAND.name,
   title: route.title,
   description: route.description,
 });
@@ -71,12 +72,12 @@ export default function PrivacyPage() {
         <strong>Operator:</strong> {BRAND.legalEntity}, a Wyoming limited liability company (&ldquo;
         {BRAND.name}&rdquo;), 10701 Corporate Dr Ste 190, Stafford, TX 77477
         <br />
-        <strong>General contact:</strong> <a href={`mailto:${site.email}`}>{site.email}</a>
+        <strong>General contact:</strong> <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a>
         <br />
         <strong>Security / vulnerability reports:</strong>{" "}
         <a href={`mailto:${BRAND.securityEmail}`}>{BRAND.securityEmail}</a>
         <br />
-        <strong>Website:</strong> <a href={site.origin}>{site.origin}</a>
+        <strong>Website:</strong> <a href={BRAND.origin}>{BRAND.origin}</a>
       </p>
 
       <h2 id="controller-vs-processor">Our role: controller vs. processor</h2>
@@ -137,7 +138,7 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Support &amp; communications:</strong> messages sent to{" "}
-          <a href={`mailto:${site.email}`}>{site.email}</a> or{" "}
+          <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a> or{" "}
           <a href={`mailto:${BRAND.securityEmail}`}>{BRAND.securityEmail}</a>, or through in-app
           support/notification features.
         </li>
@@ -229,7 +230,7 @@ export default function PrivacyPage() {
         </li>
         <li>
           provide customer support and respond to inquiries sent to{" "}
-          <a href={`mailto:${site.email}`}>{site.email}</a> or{" "}
+          <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a> or{" "}
           <a href={`mailto:${BRAND.securityEmail}`}>{BRAND.securityEmail}</a>;
         </li>
         <li>detect, investigate, and prevent fraud, abuse, and security incidents;</li>
@@ -492,7 +493,7 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Buyer accounts.</strong> We do not yet offer a screen to delete a buyer account.
-          To ask us to delete yours, email <a href={`mailto:${site.email}`}>{site.email}</a>. If a
+          To ask us to delete yours, email <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a>. If a
           buyer account is marked as deleted, you can no longer sign in, but your name, email, phone
           numbers, and hashed password stay in our database, and we have not set an end date. The
           business you buy from keeps its own records about you. Ask that business about those
@@ -508,7 +509,7 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Asking for a copy or for deletion.</strong> A Tenant account holder can email{" "}
-          <a href={`mailto:${site.email}`}>{site.email}</a> to ask for a copy of Tenant Data,
+          <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a> to ask for a copy of Tenant Data,
           including data the Service cannot download, or to ask us to delete Tenant Data. We do this
           by hand. We will reply within 30 days and tell you what we can do and when. We may not be
           able to delete records the law requires us to keep, and deleted data can stay in backups
@@ -540,8 +541,8 @@ export default function PrivacyPage() {
             If you are a Tenant account holder, staff user, or website visitor contacting{" "}
             {BRAND.name} directly:
           </strong>{" "}
-          email <a href={`mailto:${site.email}`}>{site.email}</a> with your request. We will respond
-          within 30 days and may need to verify your identity before acting on the request.
+          email <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a> with your request. We will
+          respond within 30 days and may need to verify your identity before acting on the request.
         </li>
         <li>
           You can also access and update most of your account information directly within the{" "}
@@ -555,7 +556,7 @@ export default function PrivacyPage() {
         local data protection authority, or California&rsquo;s right to know, delete, or opt out of
         the sale or sharing of personal information. As noted above, {BRAND.name} does not sell
         personal information. To exercise any of these rights, contact{" "}
-        <a href={`mailto:${site.email}`}>{site.email}</a>.
+        <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a>.
       </p>
 
       <h2 id="data-security">Data security</h2>
@@ -587,8 +588,8 @@ export default function PrivacyPage() {
         The Service is a business tool intended for use by adults acting on behalf of a business.{" "}
         {BRAND.name} is not directed to children, and we do not knowingly collect personal
         information from anyone under the age of 18. If you believe a child has provided us with
-        personal information, please contact <a href={`mailto:${site.email}`}>{site.email}</a> so we
-        can delete it.
+        personal information, please contact <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a> so
+        we can delete it.
       </p>
 
       <h2 id="changes">Changes to this policy</h2>
@@ -611,7 +612,7 @@ export default function PrivacyPage() {
       <p>Questions about this Privacy Policy or our data practices:</p>
       <ul>
         <li>
-          <strong>Email:</strong> <a href={`mailto:${site.email}`}>{site.email}</a>
+          <strong>Email:</strong> <a href={`mailto:${BRAND.email}`}>{BRAND.email}</a>
         </li>
         <li>
           <strong>Security reports:</strong>{" "}
