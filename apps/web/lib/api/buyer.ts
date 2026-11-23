@@ -9,6 +9,7 @@ import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type {
   AccountStatement,
+  BuyerInvoiceDetailAccount,
   BuyerOrderItemEdit,
   ReorderLinesRequest,
   OrderStatusGroupValue,
@@ -572,7 +573,7 @@ export function useBuyerCreateChangeRequest() {
 
 // ─── Invoice Detail ──────────────────────────────────────────────────────────
 
-export interface BuyerInvoiceDetail {
+export interface BuyerInvoiceDetail extends BuyerInvoiceDetailAccount {
   id: string;
   invoiceNumber: string;
   /** The business's "Show price per piece on invoices" switch: true = the Per piece column is off (owner ruling 2026-11-04). */
