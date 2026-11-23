@@ -276,22 +276,20 @@ export async function readListReceipts(
     const chunk = list.slice(i, i + 8); // at most 8 receipt reads in flight (a page may hold 1,000 rows)
     views.push(...(await Promise.all(chunk.map(([, id]) => readReceiptGroup(prisma, id)))));
   }
-  await Promise.all(
-    list.map(([k], i) => {
-      const view = views[i];
-      if (view.kind !== "OFFICE_GROUP" || !view.header?.confirmed) return;
-      const seen = new Set<string>();
-      const invoices = view.applications
-        .filter((a) => a.status === "PAID" && !seen.has(a.invoiceId) && seen.add(a.invoiceId))
-        .map((a) => ({ id: a.invoiceId, invoiceNumber: a.invoiceNumber }));
-      tags.set(k, {
-        key: view.header.key,
-        number: view.header.number,
-        total: view.header.total,
-        invoices,
-      });
-    }),
-  );
+  list.forEach(([k], i) => {
+    const view = views[i];
+    if (view.kind !== "OFFICE_GROUP" || !view.header?.confirmed) return;
+    const seen = new Set<string>();
+    const invoices = view.applications
+      .filter((a) => a.status === "PAID" && !seen.has(a.invoiceId) && seen.add(a.invoiceId))
+      .map((a) => ({ id: a.invoiceId, invoiceNumber: a.invoiceNumber }));
+    tags.set(k, {
+      key: view.header.key,
+      number: view.header.number,
+      total: view.header.total,
+      invoices,
+    });
+  });
   const byRow = new Map<string, PaymentListReceipt>();
   for (const r of eligible) {
     const tag = tags.get(tagKey(r));
