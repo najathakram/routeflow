@@ -362,8 +362,13 @@ describe("receipt page: a clicked row's field is never the receipt's", () => {
       const [check, cash] = within(
         screen.getByRole("list", { name: "Tenders on this receipt" }),
       ).getAllByRole("listitem");
-      expect(check).toHaveTextContent("Check #1001$3,000.00");
-      expect(cash).toHaveTextContent("Cash$1,000.00");
+      // the method label and the amount are two spans of one line (no separator in the markup): exact text of each
+      expect(check.textContent).toBe("Check #1001$3,000.00");
+      expect(within(check).getByText("Check #1001")).toBeInTheDocument();
+      expect(within(check).getByText("$3,000.00")).toBeInTheDocument();
+      expect(cash.textContent).toBe("Cash$1,000.00");
+      expect(within(cash).getByText("Cash")).toBeInTheDocument();
+      expect(within(cash).getByText("$1,000.00")).toBeInTheDocument();
     },
   );
 
@@ -375,8 +380,8 @@ describe("receipt page: a clicked row's field is never the receipt's", () => {
       }),
     );
     renderWithProviders(<PaymentDetailPage />);
-    expect(screen.getByText("Payment method")).toBeInTheDocument();
-    expect(screen.getByText("Check")).toBeInTheDocument();
+    const methodRow = screen.getByText("Payment method").parentElement as HTMLElement;
+    expect(within(methodRow).getByText("Check")).toBeInTheDocument();
     expect(screen.queryByText("Reference")).not.toBeInTheDocument();
     expect(screen.queryByText("1002")).not.toBeInTheDocument();
   });
@@ -415,6 +420,8 @@ describe("receipt page: a clicked row's field is never the receipt's", () => {
     show(payment({ status: "VOID" }));
     renderWithProviders(<PaymentDetailPage />);
     expect(screen.getByText("This payment: Voided")).toBeInTheDocument();
+    expect(screen.getByText("Paid")).toBeInTheDocument(); // the receipt's badge, not the clicked row's
+    expect(screen.queryByText("Void")).not.toBeInTheDocument();
   });
 
   it("a PAID row adds no 'This payment' status line", () => {
