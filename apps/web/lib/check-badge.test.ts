@@ -98,8 +98,24 @@ describe("paymentRowBadge", () => {
     expect(paymentRowBadge({ method: "ADVANCE", status: "PAID" })?.label).toBe("Applied");
   });
 
-  it("a voided check with no lifecycle status reads Void; an unknown status reads nothing", () => {
-    expect(paymentRowBadge({ method: "CHECK", status: "VOID" })?.label).toBe("Void");
+  // SA-1240: a stored check always carries a checkStatus; the payment status decides the word.
+  it.each([
+    ["RECORDED", "VOID", "Void"],
+    ["CLEARED", "VOID", "Void"],
+    ["BOUNCED", "VOID", "Bounced"],
+    ["RECORDED", "DRAFT", "Not confirmed"],
+    ["RECORDED", "PENDING", "Post-dated · pending"],
+    ["CLEARED", "PAID", "Cleared"],
+  ] as const)("a CHECK %s row with status %s reads %s", (checkStatus, status, label) => {
+    expect(paymentRowBadge({ method: "CHECK", status, checkStatus })?.label).toBe(label);
+  });
+
+  it("a CASH PENDING row reads Pending; a legacy check with no status keeps Recorded", () => {
+    expect(paymentRowBadge({ method: "CASH", status: "PENDING" })?.label).toBe("Pending");
+    expect(paymentRowBadge({ method: "CHECK" })?.label).toBe("Recorded");
+  });
+
+  it("an unknown status on a non-check row reads nothing", () => {
     expect(paymentRowBadge({ method: "CASH", status: "WEIRD" })).toBeNull();
   });
 });
