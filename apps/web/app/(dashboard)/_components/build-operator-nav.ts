@@ -168,6 +168,14 @@ export function buildOperatorNav(ctx: OperatorNavContext): NavEntry[] {
   return isStaff ? applyNavLayout(base, ctx.navLayout) : base;
 }
 
+/**
+ * The viewer's visible menu BEFORE the business's layout: what the command palette, the g keys, the shortcut help and
+ * the quick actions read (display only, L-305: hiding a page only tidies the sidebar).
+ */
+export function buildOperatorNavIndex(ctx: OperatorNavContext): NavEntry[] {
+  return buildOperatorNav({ ...ctx, navLayout: undefined });
+}
+
 function buildBaseNav(ctx: OperatorNavContext): NavEntry[] {
   const { role, counterEnabled, addonsLoading, hasSalesAgents, regulatedLoading } = ctx;
   const isStaff = role !== "CUSTOMER" && role !== "DRIVER";
@@ -187,7 +195,7 @@ function buildBaseNav(ctx: OperatorNavContext): NavEntry[] {
   let base = nav;
   if (isStaff && addonsLoading) {
     const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
-    const skeleton: NavEntry = { kind: "skeleton", key: "dispatch-skeleton" };
+    const skeleton: NavEntry = { kind: "skeleton", key: "dispatch-skeleton", holds: "dispatch" };
     base = idx === -1 ? [...base, skeleton] : [...base.slice(0, idx), skeleton, ...base.slice(idx)];
   }
 
@@ -216,10 +224,11 @@ function buildBaseNav(ctx: OperatorNavContext): NavEntry[] {
   const inject: NavEntry[] = [];
   const sections = ctx.regulatedSections ?? [];
   if (regulatedLoading) {
-    inject.push({ kind: "skeleton", key: "regulated-skeleton" });
+    inject.push({ kind: "skeleton", key: "regulated-skeleton", holds: "regulated" });
   } else if (sections.length > 0) {
     inject.push({
       kind: "group",
+      id: "regulated",
       label: "Regulated items",
       icon: ShieldCheck,
       children: sections.map((s) => ({
@@ -236,7 +245,11 @@ function buildBaseNav(ctx: OperatorNavContext): NavEntry[] {
     // same addons fetch as Dispatch — hold a skeleton at the leaf's position
     // (right after Customers) meanwhile.
     const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
-    const skeleton: NavEntry = { kind: "skeleton", key: "sales-agents-skeleton" };
+    const skeleton: NavEntry = {
+      kind: "skeleton",
+      key: "sales-agents-skeleton",
+      holds: "/sales-agents",
+    };
     base =
       idx === -1
         ? [...base, skeleton]
