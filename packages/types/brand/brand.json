@@ -25,6 +25,7 @@
   "emailLogo": "/brand/routeflow-mark-192.png",
   "emailLogoWidth": 24,
   "emailLogoHeight": 24,
+  "aliasOrigins": ["https://xrov.io"],
   "site": {
     "name": "Rovio",
     "officialName": "X-Rovio",

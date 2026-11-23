@@ -40,10 +40,14 @@ export function readSiteHosts() {
     ),
   );
   return {
-    origin: brand.origin,
+    // The site's main address is the overlay's origin (SA-1178 A6). With no overlay, or one equal to
+    // oldOrigin, the two hosts are equal and no host rule of any kind exists (the rollback).
+    origin: brand.site?.origin ?? brand.origin,
     oldOrigin: brand.oldOrigin,
-    // Optional: the short domain, named only on switch day. Absent means no rule.
-    ...(brand.shortOrigin ? { shortOrigin: brand.shortOrigin } : {}),
+    // Optional: the alias hosts (each a bare or www origin). Absent or empty means no alias rule.
+    ...(Array.isArray(brand.aliasOrigins) && brand.aliasOrigins.length
+      ? { aliasOrigins: brand.aliasOrigins }
+      : {}),
   };
 }
 
@@ -186,26 +190,36 @@ function appPathRules(hostname, oldOrigin, aliases, routes = listAppRoutes(), pu
 }
 
 /**
- * The short domain (bare and www). Paths outside the stays set go straight to the old host (307,
- * like the main host's rule); paths inside it are a 301 to the same path and query on the main
- * host. Both come from the one stays set, so they never overlap. The host comes from brand.json's
- * optional `shortOrigin`; absent, or the same host as the main one, there is no rule.
- * @param {{ origin: string, oldOrigin: string, shortOrigin?: string }} hosts
+ * The alias hosts (each origin's bare and www form). Paths outside the stays set go straight to the
+ * old host; paths inside it go to the same path and query on the main host. Both are 307 until after
+ * the demo (a cached 301 would defeat a rollback) and both come from the one stays set, so they never
+ * overlap. Only the form that equals the main host is dropped (never the whole alias). With one host
+ * (the site origin equals the old origin) there is no alias rule of any kind.
+ * @param {{ origin: string, oldOrigin: string, aliasOrigins?: string[] }} hosts
  * @param {Array<{ source: string, destination: string }>} aliases
  */
-export function buildShortHostRedirects({ origin, oldOrigin, shortOrigin }, aliases) {
-  if (!shortOrigin) return [];
+export function buildAliasHostRedirects({ origin, oldOrigin, aliasOrigins = [] }, aliases) {
   const to = new URL(origin);
-  const bare = new URL(shortOrigin).hostname.replace(/^www\./, "");
-  if (bare === to.hostname || `www.${bare}` === to.hostname) return [];
+  const from = new URL(oldOrigin);
+  if (to.host === from.host) return [];
+  const taken = new Set([to.hostname, from.hostname]);
+  const hosts = [
+    ...new Set(
+      aliasOrigins.flatMap((alias) => {
+        const bare = new URL(alias).hostname.replace(/^www\./, "");
+        return [bare, `www.${bare}`];
+      }),
+    ),
+  ].filter((host) => !taken.has(host));
+  if (hosts.length === 0) return [];
   const stays = staysPattern(aliases);
-  return [bare, `www.${bare}`].flatMap((host) => [
-    ...appPathRules(host, new URL(oldOrigin).origin, aliases),
+  return hosts.flatMap((host) => [
+    ...appPathRules(host, from.origin, aliases),
     {
       source: `/:path((?=(?:${stays})).*)`,
       has: [{ type: "host", value: host.replace(/\./g, "\\.") }],
       destination: `${to.origin}/:path`,
-      statusCode: 301,
+      permanent: false,
     },
   ]);
 }
@@ -246,7 +260,7 @@ export function buildRedirects(hosts) {
   return [
     ...buildSiteHostRedirects(hosts, HOST_ALIASES),
     ...buildAppHostRedirects(hosts, HOST_ALIASES),
-    ...buildShortHostRedirects(hosts, HOST_ALIASES),
+    ...buildAliasHostRedirects(hosts, HOST_ALIASES),
     {
       source: "/route-runs/:id",
       destination: "/routes/:id",

@@ -15,6 +15,7 @@ import { SHELL_UA_PRODUCT, shellUserAgentToken } from "@routeflow/ui/shell-bridg
 import { STATIC_SITE_PAGE_NAMES } from "@/lib/static-site-page";
 import { STATIC_SITE_PATHS } from "@/lib/umami-tag";
 import { BUYER_PRESENCE_COOKIE, OP_PRESENCE_COOKIE } from "@/lib/presence-cookies";
+import { BRAND } from "@routeflow/types/brand";
 import { site } from "./lib/site";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
@@ -23,13 +24,14 @@ interface Rule {
   source: string;
   destination: string;
   permanent: boolean;
+  statusCode?: number;
   has?: Array<{ type: string; value: string }>;
   missing?: Array<{ type: string; key: string; value?: string }>;
 }
 
 interface Loaded {
   SITE_PAGES: Record<string, string>;
-  hosts: { origin: string; oldOrigin: string };
+  hosts: { origin: string; oldOrigin: string; aliasOrigins?: string[] };
   today: Rule[];
   todayFromHosts: Rule[];
   rewrites: Array<{ source: string; destination: string }>;
@@ -143,19 +145,43 @@ describe("T31: one page list", () => {
   });
 });
 
-describe("T30: today's values (one host)", () => {
-  it("the config reads both hosts from brand.json, and they are the same host", () => {
-    const brand = JSON.parse(
+describe("T30: the launch values (two hosts, one alias)", () => {
+  // SA-1253 C4: the A2 hold ("one host, no rule") is gone. The site lives on the overlay's origin;
+  // the app and the contracts stay on the old host; the bare host is an alias.
+  const brandJson = () =>
+    JSON.parse(
       fs.readFileSync(path.join(WEB_ROOT, "../../packages/types/brand/brand.json"), "utf8"),
     );
-    expect(cfg.hosts).toEqual({ origin: brand.origin, oldOrigin: brand.oldOrigin });
-    expect(new URL(cfg.hosts.origin).host).toBe(new URL(cfg.hosts.oldOrigin).host);
+
+  it("the config reads the main host from the site overlay, the old host and the aliases", () => {
+    const brand = brandJson();
+    expect(cfg.hosts).toEqual({
+      origin: brand.site.origin,
+      oldOrigin: brand.oldOrigin,
+      aliasOrigins: brand.aliasOrigins,
+    });
+    expect(new URL(cfg.hosts.origin).host).not.toBe(new URL(cfg.hosts.oldOrigin).host);
   });
 
-  it("redirects() holds no host rule (it would redirect the site to itself)", () => {
-    expect(cfg.today.length).toBeGreaterThan(0);
-    expect(cfg.today.filter((r) => r.has || r.missing)).toEqual([]);
-    expect(cfg.today.filter((r) => r.destination.startsWith("https://"))).toEqual([]);
+  it("redirects() holds host rules for the old host and for the bare alias host", () => {
+    const hosts = new Set(cfg.today.flatMap((r) => (r.has ?? []).map((h) => h.value)));
+    const pattern = (origin: string) => new URL(origin).hostname.split(".").join(String.raw`\.`);
+    expect(hosts.has(pattern(cfg.hosts.oldOrigin))).toBe(true);
+    expect(hosts.has(pattern(cfg.hosts.aliasOrigins![0]))).toBe(true);
+    // the main host's own www form is the main host (its app-path rule), never an alias
+    expect(hosts.has(pattern(cfg.hosts.origin))).toBe(true);
+  });
+
+  it("every redirect with a host condition is temporary (307) until after the demo", () => {
+    const hostRules = cfg.today.filter((r) => r.has);
+    expect(hostRules.length).toBeGreaterThan(30);
+    for (const rule of hostRules) {
+      expect({ source: rule.source, permanent: rule.permanent }).toEqual({
+        source: rule.source,
+        permanent: false,
+      });
+      expect(rule.statusCode).toBeUndefined();
+    }
   });
 });
 
@@ -314,7 +340,7 @@ describe("the host rules are exactly the public addresses", () => {
   });
 });
 
-describe("T33: the signed-out layouts set their own base address from site.origin", () => {
+describe("T33: the signed-out layouts keep the top-level origin as their base address (A6 R2)", () => {
   const LAYOUTS = [
     "./layout",
     "../(auth)/login/layout",
@@ -326,6 +352,7 @@ describe("T33: the signed-out layouts set their own base address from site.origi
 
   it.each(LAYOUTS)("%s", (mod) => {
     const { metadata } = require(mod);
-    expect(metadata.metadataBase.href).toBe(new URL(site.origin).href);
+    expect(metadata.metadataBase.href).toBe(new URL(BRAND.origin).href);
+    expect(metadata.metadataBase.href).not.toBe(new URL(site.origin).href);
   });
 });

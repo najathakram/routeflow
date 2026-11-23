@@ -32,6 +32,9 @@ export interface Brand {
   /** The email logo's size in px. 24 x 24 today; the flip sets the real logo's size. */
   readonly emailLogoWidth: number;
   readonly emailLogoHeight: number;
+  /** Other hosts that serve the site by redirect (bare or www origins; the host builder drops the
+   *  form equal to the main host). Optional: none means no alias rule. */
+  readonly aliasOrigins?: readonly string[];
   /** The site overlay (SA-1178 A6): the new name, marks and main host, read only through the
    *  allowlisted site view (index.ts). Phase A lifts it to the top level and deletes it. */
   readonly site?: SiteOverlay;
@@ -80,6 +83,16 @@ export const BRAND_KEYS = [
   "emailLogo",
 ] as const;
 
+/** An https origin with a host and no path, query or trailing slash. */
+const isHttpsOrigin = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value;
+  } catch {
+    return false;
+  }
+};
+
 /** Every key the overlay must carry when it is present. */
 export const SITE_OVERLAY_KEYS = [
   "name",
@@ -126,6 +139,13 @@ export function validateBrand(raw: unknown): Brand {
     if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
       throw new Error(`brand.json: key "${key}" must be a positive integer`);
     }
+  }
+  const aliases = brandValue(raw, "aliasOrigins");
+  if (
+    aliases !== undefined &&
+    (!Array.isArray(aliases) || aliases.some((a) => typeof a !== "string" || !isHttpsOrigin(a)))
+  ) {
+    throw new Error('brand.json: "aliasOrigins" must be a list of https origins with no path');
   }
   const site = brandValue(raw, "site");
   if (site !== undefined) {

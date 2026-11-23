@@ -30,8 +30,8 @@ describe("brand.json", () => {
     const file = raw();
     for (const key of BRAND_KEYS) expect(typeof brandValue(file, key)).toBe("string");
     const top = new Set([...BRAND_KEYS, ...BRAND_NUMBER_KEYS].map((k) => k.split(".")[0]));
-    // "site" is the overlay block (SA-1178 A6), checked by its own keys below
-    expect(Object.keys(file).sort()).toEqual([...top, "site"].sort());
+    // "aliasOrigins" and "site" are the host alias list and the overlay block (SA-1178 A6), checked by its own keys below
+    expect(Object.keys(file).sort()).toEqual([...top, "aliasOrigins", "site"].sort());
   });
 
   it("BRAND is the validated, frozen file", () => {

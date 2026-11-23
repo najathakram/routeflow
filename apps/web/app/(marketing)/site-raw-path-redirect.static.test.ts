@@ -17,6 +17,7 @@ interface Redirect {
   source: string;
   destination: string;
   permanent: boolean;
+  has?: unknown;
 }
 
 function loadRedirects(): Redirect[] {
@@ -49,7 +50,7 @@ describe("raw /site/<page>.html of a tokenised page", () => {
   });
 
   it.each(tokenised)("%s redirects (307) to its clean address", (page) => {
-    const rule = loadRedirects().find((r) => r.source === `/site/${page}.html`);
+    const rule = loadRedirects().find((r) => r.source === `/site/${page}.html` && !r.has);
     expect(rule).toEqual({
       source: `/site/${page}.html`,
       destination: cleanPath(page),

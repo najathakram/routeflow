@@ -23,6 +23,7 @@ const ALLOWLIST = [
   "apps/web/components/site-frame/SiteFrame.tsx",
   "apps/web/components/site-frame/SiteFrameHeader.tsx",
   "apps/web/lib/read-site-page.ts",
+  "apps/web/next.config.mjs",
   "packages/types/brand/index.ts",
 ].sort();
 

@@ -3,7 +3,7 @@
  */
 // Lane 2A.2b: the main host sends every app path to the old host (one rule, the complement of one
 // derived stays set), an alias that ends on an app path gets its own one-hop rule, and the short
-// domain is a 301 to the main host when brand.json names one. Fixture hosts only: with the real
+// domain is a 307 to the main host when brand.json names one. Fixture hosts only: with the real
 // values the hosts are equal, so every rule here is inert today. The old-host rules and the rules
 // that are not host rules must stay exactly what their own builders give (compared in process).
 import * as fs from "fs";
@@ -36,6 +36,12 @@ const MAIN_HOST = "www.new.test";
 const OLD_HOST = "www.old.test";
 const OLD_ORIGIN = "https://www.old.test:8444";
 const SHORT_HOSTS = ["go.short.test", "www.go.short.test"];
+// The launch fixture (SA-1253 T6): the main host is the www form, the alias is its bare form.
+const LAUNCH = {
+  origin: "https://www.new.test",
+  oldOrigin: "https://www.old.test",
+  aliasOrigins: ["https://new.test"],
+};
 const BROWSER = "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0 Safari/537.36";
 const escDots = (host: string) => host.replace(/\./g, "\\.");
 
@@ -46,6 +52,10 @@ interface Loaded {
   withShort: Rule[];
   shortIsMain: Rule[];
   shortIsMainBare: Rule[];
+  launch: Rule[];
+  sameWithAlias: Rule[];
+  twoAliases: Rule[];
+  aliasEqualsOld: Rule[];
   expectedRest: Rule[];
   bareShortIsMain: Rule[];
   bareShortIsMainWww: Rule[];
@@ -139,11 +149,15 @@ function load(): Loaded {
     ` equalApp: m.buildAppHostRedirects(SAME, alias),` +
     ` equalAll: m.buildRedirects(SAME),` +
     ` all: m.buildRedirects(MAIN),` +
-    ` withShort: m.buildRedirects({ ...MAIN, shortOrigin: ${JSON.stringify(SHORT_ORIGIN)} }),` +
-    ` shortIsMain: m.buildRedirects({ ...MAIN, shortOrigin: MAIN.origin }),` +
-    ` shortIsMainBare: m.buildRedirects({ ...MAIN, shortOrigin: "https://new.test" }),` +
-    ` bareShortIsMain: m.buildRedirects({ ...BARE, shortOrigin: "https://new.test" }),` +
-    ` bareShortIsMainWww: m.buildRedirects({ ...BARE, shortOrigin: "https://www.new.test" }),` +
+    ` withShort: m.buildRedirects({ ...MAIN, aliasOrigins: [${JSON.stringify(SHORT_ORIGIN)}] }),` +
+    ` shortIsMain: m.buildRedirects({ ...MAIN, aliasOrigins: [MAIN.origin] }),` +
+    ` shortIsMainBare: m.buildRedirects({ ...MAIN, aliasOrigins: ["https://new.test"] }),` +
+    ` bareShortIsMain: m.buildRedirects({ ...BARE, aliasOrigins: ["https://new.test"] }),` +
+    ` bareShortIsMainWww: m.buildRedirects({ ...BARE, aliasOrigins: ["https://www.new.test"] }),` +
+    ` launch: m.buildRedirects(${JSON.stringify(LAUNCH)}),` +
+    ` sameWithAlias: m.buildRedirects({ ...SAME, aliasOrigins: [${JSON.stringify(SHORT_ORIGIN)}, "https://new.test"] }),` +
+    ` twoAliases: m.buildRedirects({ ...MAIN, aliasOrigins: [${JSON.stringify(SHORT_ORIGIN)}, "https://other.short.test"] }),` +
+    ` aliasEqualsOld: m.buildRedirects({ ...MAIN, aliasOrigins: [MAIN.oldOrigin] }),` +
     ` expectedRest: [...m.buildSiteHostRedirects(MAIN, m.HOST_ALIASES), ...m.buildRedirects(SAME)],` +
     ` siteHostPorted: m.buildSiteHostRedirects(MAIN, alias),` +
     ` routes: l.listAppRoutes(),` +
@@ -584,18 +598,25 @@ describe("the 2A.2a leftovers: a host with a port", () => {
 describe("the short domain", () => {
   const short = cfg.withShort.filter(isShortRule);
 
-  it("is one 301 rule per host form, to the main host, path and query kept", () => {
-    const moved = short.filter((r) => r.statusCode === 301);
+  // The stays rule of one host form: its source matches the public paths (the complement of the app rule).
+  const staysRules = (rules: Rule[]) =>
+    rules.filter((r) => isShortRule(r) && r.source.includes("(?=("));
+
+  it("is one 307 rule per host form, to the main host, path and query kept", () => {
+    const moved = staysRules(cfg.withShort);
     expect(moved).toHaveLength(2);
     expect(moved.map((r) => r.has![0].value).sort()).toEqual(SHORT_HOSTS.map(escDots).sort());
     for (const r of short) {
       expect(r.missing).toBeUndefined();
-      expect("permanent" in r).toBe(r.statusCode === undefined);
+      // every alias rule is a temporary redirect (307): permanent false, never a statusCode 301
+      expect(r.permanent).toBe(false);
+      expect(r.statusCode).toBeUndefined();
     }
     for (const host of SHORT_HOSTS) {
       const at = new URL("/pricing?utm_source=x", `https://${host}`);
       const hop = hopOf(cfg.withShort, at);
-      expect(hop!.rule.statusCode).toBe(301);
+      expect(hop!.rule.permanent).toBe(false);
+      expect(hop!.rule.statusCode).toBeUndefined();
       expect(hop!.next.origin).toBe(MAIN.origin);
       expect(hop!.next.pathname).toBe("/pricing");
       expect(hop!.next.search).toBe("?utm_source=x");
@@ -603,8 +624,8 @@ describe("the short domain", () => {
     }
   });
 
-  it("the 301 rule matches no app path, on its own", () => {
-    const moved = short.filter((r) => r.statusCode === 301);
+  it("the stays rule matches no app path, on its own", () => {
+    const moved = staysRules(cfg.withShort);
     expect(moved).toHaveLength(2);
     const routes = crossPaths();
     expect(routes).toContain("/login");
@@ -616,30 +637,135 @@ describe("the short domain", () => {
     }
   });
 
-  it("makes no rule when the short host is the main host, bare or www", () => {
-    for (const rules of [
-      cfg.shortIsMain,
-      cfg.shortIsMainBare,
-      cfg.bareShortIsMain,
-      cfg.bareShortIsMainWww,
-    ]) {
-      expect(rules.filter(isShortRule)).toEqual([]);
-      expect(rules.filter((r) => r.statusCode !== undefined)).toEqual([]);
-      // As many host rules as with no short host at all: nothing was added on the main host's name.
-      expect(rules.filter((r) => r.has)).toHaveLength(cfg.all.filter((r) => r.has).length);
+  // A6 R3 (SA-1253 C4): the builder drops only the alias FORM that equals the main host, never the
+  // whole alias (the old early return left the bare host serving the app with no rule).
+  const hostsOf = (rules: Rule[]) =>
+    [...new Set(rules.filter((r) => r.has).map((r) => r.has![0].value))].sort();
+  const appHostValues = (rules: Rule[], exclude: string[]) =>
+    hostsOf(rules).filter((h) => !exclude.includes(h));
+
+  it("an alias that is the main host's www form keeps its bare form (and the reverse)", () => {
+    // main www.new.test: the bare form new.test stays an alias host
+    for (const rules of [cfg.shortIsMain, cfg.shortIsMainBare]) {
+      expect(appHostValues(rules, [escDots(OLD_HOST), escDots(MAIN_HOST)])).toEqual([
+        escDots("new.test"),
+      ]);
+    }
+    // main new.test (bare): the www form stays an alias host
+    for (const rules of [cfg.bareShortIsMain, cfg.bareShortIsMainWww]) {
+      expect(appHostValues(rules, [escDots("old.test"), escDots("new.test")])).toEqual([
+        escDots("www.new.test"),
+      ]);
     }
   });
 
-  it("makes no rule when the key is absent", () => {
+  it("makes no alias rule when the key is absent", () => {
     expect(cfg.all.filter(isShortRule)).toEqual([]);
     expect(cfg.all.filter((r) => r.statusCode !== undefined)).toEqual([]);
   });
 
-  it("brand.json does not carry the key yet", () => {
+  it("holds no alias host rule of any kind when the site origin equals the old origin (rollback)", () => {
+    expect(cfg.sameWithAlias.filter((r) => r.has)).toEqual([]);
+    expect(cfg.sameWithAlias.filter((r) => r.statusCode !== undefined)).toEqual([]);
+  });
+
+  it("holds the rules of every alias in the list, and an alias equal to the old host adds none", () => {
+    expect(appHostValues(cfg.twoAliases, [escDots(OLD_HOST), escDots(MAIN_HOST)]).sort()).toEqual(
+      [...SHORT_HOSTS, "other.short.test", "www.other.short.test"].map(escDots).sort(),
+    );
+    // the old host's own www form is never an alias host: its rules are exactly the old-host rules
+    const ownRules = (rules: Rule[]) =>
+      rules.filter((r) => r.has?.some((h) => h.value === escDots(OLD_HOST)));
+    expect(JSON.stringify(ownRules(cfg.aliasEqualsOld))).toBe(JSON.stringify(ownRules(cfg.all)));
+  });
+
+  it("brand.json names the bare host as the one alias, and no longer carries shortOrigin", () => {
     const brand = JSON.parse(
       fs.readFileSync(path.join(WEB_ROOT, "../../packages/types/brand/brand.json"), "utf8"),
     );
     expect(brand.shortOrigin).toBeUndefined();
+    expect(brand.aliasOrigins).toEqual(["https://xrov.io"]);
+    expect(brand.site.origin).toBe("https://www.xrov.io");
+    expect(new URL(brand.site.origin).hostname).toBe(
+      `www.${new URL(brand.aliasOrigins[0]).hostname}`,
+    );
+  });
+});
+
+// SA-1253 T6: the launch matrix on fixture hosts, followed the way a browser follows a 307.
+describe("T6: the launch matrix (old host, main host, bare alias host)", () => {
+  const OLD = "www.old.test";
+  const BARE = "new.test";
+  const MAINHOST = "www.new.test";
+  const hop = (host: string, url: string, ua = BROWSER, cookies: string[] = []) =>
+    hopOf(cfg.launch, new URL(url, `https://${host}`), ua, cookies);
+
+  function chain(host: string, url: string, ua = BROWSER, cookies: string[] = []) {
+    let at = new URL(url, `https://${host}`);
+    const seen = [at.host];
+    const statuses: Array<number | boolean | undefined> = [];
+    for (let i = 0; i < 6; i++) {
+      const h = hopOf(cfg.launch, at, ua, cookies);
+      if (!h) break;
+      statuses.push(h.rule.statusCode ?? h.rule.permanent);
+      at = h.next;
+      seen.push(at.host);
+    }
+    return { at, hops: statuses.length, statuses, seen };
+  }
+
+  it("old /pricing: one 307 to the main host's /pricing", () => {
+    const c = chain(OLD, "/pricing");
+    expect(c.hops).toBe(1);
+    expect(c.statuses).toEqual([false]);
+    expect(c.at.href).toBe("https://www.new.test/pricing");
+  });
+
+  it("main /login?next=/x: one 307 to the old host's /login?next=/x", () => {
+    const c = chain(MAINHOST, "/login?next=/x");
+    expect(c.hops).toBe(1);
+    expect(c.statuses).toEqual([false]);
+    expect(c.at.href).toBe("https://www.old.test/login?next=/x");
+  });
+
+  it("bare /pricing: one 307 to the main host's /pricing", () => {
+    const c = chain(BARE, "/pricing");
+    expect(c.hops).toBe(1);
+    expect(c.statuses).toEqual([false]);
+    expect(c.at.href).toBe("https://www.new.test/pricing");
+  });
+
+  it("bare /login?next=/x: one 307 to the old host's /login?next=/x", () => {
+    const c = chain(BARE, "/login?next=/x");
+    expect(c.hops).toBe(1);
+    expect(c.statuses).toEqual([false]);
+    expect(c.at.href).toBe("https://www.old.test/login?next=/x");
+  });
+
+  it("main /pricing: no rule, served as it is", () => {
+    expect(hop(MAINHOST, "/pricing")).toBeNull();
+  });
+
+  it("old /pricing with a presence cookie, or the shell user agent: no rule", () => {
+    expect(hop(OLD, "/pricing", BROWSER, [OP_PRESENCE_COOKIE])).toBeNull();
+    expect(hop(OLD, "/pricing", BROWSER, [BUYER_PRESENCE_COOKIE])).toBeNull();
+    expect(hop(OLD, "/pricing", `Mozilla/5.0 ${SHELL_UA_PRODUCT}/1.0`)).toBeNull();
+  });
+
+  it("no path on any of the three hosts takes more than two hops or visits a host twice", () => {
+    const paths = [...cfg.publicPaths, ...crossPaths(), "/sign-in", "/book-a-demo", "/_next/x"];
+    const bad: string[] = [];
+    for (const host of [OLD, MAINHOST, BARE]) {
+      for (const p of paths) {
+        const c = chain(host, `${p}?next=/x`);
+        // a hop that stays on its host is not a revisit
+        const hostTrail = c.seen.filter((h, i) => h !== c.seen[i - 1]);
+        if (!(c.hops <= 2 && new Set(hostTrail).size === hostTrail.length)) {
+          bad.push(`${host}${p}: ${c.seen.join(" > ")}`);
+        }
+      }
+    }
+    expect(bad).toEqual([]);
   });
 });
 

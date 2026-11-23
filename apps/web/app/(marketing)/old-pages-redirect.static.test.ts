@@ -27,8 +27,11 @@ function loadConfig<T>(call: "redirects" | "rewrites"): T {
   ) as T;
 }
 
-const redirects =
-  loadConfig<Array<{ source: string; destination: string; permanent: boolean }>>("redirects");
+// The unconditional rules only. The host-matched rules (the old host's public pages, the main and
+// alias hosts' app paths, all 307) are pinned by app-host-redirects.static.test.ts (SA-1253 C4).
+const redirects = loadConfig<
+  Array<{ source: string; destination: string; permanent: boolean; has?: unknown }>
+>("redirects").filter((r) => !r.has);
 const rewrites = loadConfig<{ beforeFiles: Array<{ source: string; destination: string }> }>(
   "rewrites",
 );
