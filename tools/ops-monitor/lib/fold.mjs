@@ -129,7 +129,8 @@ export function fold(events, { bugs = new Map() } = {}) {
     assignments: [], // { id, ts, item, to, note, actor, lane, machine }, fold order (rf assign)
     pushes: [],
     prEvents: [],
-    anomalies: [],
+    anomalies: [], // { kind, eventId, item, detail, ts, acked: { at, by, note } | null }
+    retiredLanes: new Map(), // lane -> { lane, at, by, note } (rf lane retire; unretire deletes)
     eventCount: 0,
     lastEventAt: null,
     machines: {},
@@ -143,6 +144,8 @@ export function fold(events, { bugs = new Map() } = {}) {
       detail,
       ts: Number.isFinite(ts) ? ts : null,
     });
+
+  const acks = new Map(); // anomaly event id -> { at, by, note } (rf anomaly ack)
 
   const valid = [];
   for (const ev of events) {
@@ -593,6 +596,18 @@ export function fold(events, { bugs = new Map() } = {}) {
         touched = !!it;
         break;
       }
+      case "lane.retire": {
+        state.retiredLanes.set(d.lane, { lane: d.lane, at: ts, by: ev.actor, note: d.note });
+        break;
+      }
+      case "lane.unretire": {
+        state.retiredLanes.delete(d.lane);
+        break;
+      }
+      case "anomaly.ack": {
+        if (!acks.has(d.eventId)) acks.set(d.eventId, { at: ts, by: ev.actor, note: d.note });
+        break;
+      }
       default:
         break;
     }
@@ -609,6 +624,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     }
   }
 
+  for (const a of state.anomalies) a.acked = (a.eventId && acks.get(a.eventId)) || null;
   for (const l of state.lanes.values()) l.claims = [];
   for (const it of state.items.values()) {
     it.children = [];
