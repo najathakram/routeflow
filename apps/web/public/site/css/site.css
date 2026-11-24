@@ -250,6 +250,7 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
 
 /* ---------- phones: a list of plans instead of cards, then the risk; a plain list instead of the four-column table ---------- */
 .pl-wrap,.pl-why,.pl-inc,.pl-go,.risk{display:none}
+.pg-cta{margin-top:20px;text-align:center}
 /* /pricing/: what every plan includes, a plain list at every width. */
 .cmp-list{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 32px;max-width:1040px;margin:0 auto}
 .cmp-list li{font-size:18px;line-height:1.35}
