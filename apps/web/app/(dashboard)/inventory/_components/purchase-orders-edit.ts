@@ -42,6 +42,8 @@ export interface EditLine extends POLineItem {
   received: number;
   sku?: string | null;
   packSize?: number | null;
+  /** The stored line's own unit name; read-only here (the save never sends it). */
+  unitLabel?: string | null;
 }
 
 export const emptyEditLine = (): EditLine => ({
@@ -68,6 +70,7 @@ export function toEditLine(item: POItem, livePack: number): EditLine {
     received: Number(item.qtyReceived ?? 0),
     sku: item.sku ?? null,
     packSize: item.packSize ?? null,
+    unitLabel: item.unitLabel ?? null,
   };
   if (unitsPerBox > 1) {
     const split = normalizeBoxesPieces({ qty: ordered, unitsPerBox });

@@ -499,3 +499,4 @@ Catch-up (2026-10-31, train V): [packages/landing-2026-10-31-v.md](packages/land
 Catch-up (2026-10-31, train X): [packages/landing-2026-10-31-x.md](packages/landing-2026-10-31-x.md): toast text wraps, `changeSinceLast` doc, percent-site pin count.
 Catch-up (2026-10-31, train Y): [packages/landing-2026-10-31-y.md](packages/landing-2026-10-31-y.md): `COUNTER_COPY.regularOrder` and `pickupLater`.
 Catch-up (2026-10-31, train Z): [packages/landing-2026-10-31-z.md](packages/landing-2026-10-31-z.md): `ReadyForPickupRecord`, `isAboveListLine`, `stickyPrice`, `rulingLineIndex`, `signalHeld`.
+Catch-up (2026-11-23, window 42): [packages/landing-2026-11-23-w42.md](packages/landing-2026-11-23-w42.md): `PaymentListReceipt`, `BuyerInvoiceDetailAccount`.

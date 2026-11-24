@@ -124,6 +124,14 @@ describe("validateEditLines", () => {
 describe("buildUpdateItems", () => {
   const p = upb({ p1: 0, p2: 12 });
 
+  it("never sends the stored unitLabel: a labelled line's payload is exactly the line's own fields", () => {
+    const labelled = toEditLine(item({ sku: "W-1", packSize: null, unitLabel: "tray" }), 0);
+    expect(labelled.unitLabel).toBe("tray");
+    expect(buildUpdateItems([labelled], p)).toEqual([
+      { id: "i1", productId: "p1", qtyOrdered: 10, unitCost: 3, sku: "W-1", packSize: null },
+    ]);
+  });
+
   it("keeps id / sku / packSize on existing lines, none on new ones, and drops blank rows", () => {
     const existing = toEditLine(item({ sku: "W-1", packSize: null }), 0);
     const fresh = { ...emptyEditLine(), productId: "p2", boxes: "2", pieces: "3", unitCost: "24" };

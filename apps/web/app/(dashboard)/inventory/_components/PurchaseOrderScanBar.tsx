@@ -20,11 +20,14 @@ export function PurchaseOrderScanBar({
   addedIds,
   disabled = false,
   hint,
+  onRetry,
 }: {
   /** `level` is what the scanned code carries (absent for a name pick). */
   onAdd: (product: any, level?: SellLevel) => { created: boolean; refused?: boolean };
   disabled?: boolean;
   hint?: string;
+  /** Shown beside the hint as "Try again" (a failed catalog read). */
+  onRetry?: () => void;
   hasLine: (productId: string) => boolean;
   addedIds: ReadonlySet<string>;
 }) {
@@ -88,6 +91,18 @@ export function PurchaseOrderScanBar({
       {(hint || note) && (
         <p role="status" className="mt-1 text-xs text-navy/70">
           {hint ?? note}
+          {hint && onRetry && (
+            <>
+              {" "}
+              <button
+                type="button"
+                onClick={onRetry}
+                className="font-medium text-brand-600 underline"
+              >
+                Try again
+              </button>
+            </>
+          )}
         </p>
       )}
       <CounterLiveMatches live={live} onPick={(p) => add(p)} />

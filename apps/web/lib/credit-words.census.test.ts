@@ -26,7 +26,6 @@ const ALLOW: Record<string, number> = {
   "app/(dashboard)/returns/_components/RecordInlineReturnDialog.tsx": 5,
   "app/(dashboard)/returns/_components/refund-copy.ts": 9,
   "app/buyer/portal/[seller]/finances/page.tsx": 1,
-  "app/buyer/portal/[seller]/payments/page.tsx": 1,
   "lib/cancel-impact.ts": 1,
   "lib/counter-void-copy.ts": 1,
   "lib/counter-week.ts": 2,

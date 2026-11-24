@@ -297,3 +297,25 @@ describe("BuyerInvoicesPage — paid at sale shows no due date (row 401 follow-u
     expect(cards[1].textContent).toMatch(/Due Oct 10, 2026/);
   });
 });
+
+describe("BuyerInvoicesPage — the date column is the issue date (BF-3, SA-1211)", () => {
+  beforeEach(() => {
+    push.mockClear();
+    mockGet.mockReset();
+  });
+
+  it("shows issueDate, not createdAt, in the table and on the phone card", async () => {
+    // A backdated invoice: issued 3 March, keyed in 20 June.
+    respondWith([
+      invoiceListItem({
+        id: "i1",
+        issueDate: "2026-03-03T00:00:00.000Z",
+        createdAt: "2026-06-20T15:00:00.000Z",
+      }),
+    ]);
+    const rows = await renderRows();
+
+    expect(cell(rows[0], "Date")).toContain("Mar 3, 2026");
+    expect(document.body.textContent).not.toContain("Jun 20, 2026");
+  });
+});

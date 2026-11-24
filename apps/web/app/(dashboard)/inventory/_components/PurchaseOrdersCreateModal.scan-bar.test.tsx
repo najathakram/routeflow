@@ -27,6 +27,8 @@ const mockCatalogRows = [
   { id: "v1", name: "Mint", kind: "VARIANT", parentProductId: "fam", unitsPerBox: 10 },
 ];
 let mockCatalogState: "ready" | "loading" | "error" = "ready";
+const mockRefetch = jest.fn();
+let mockCatalogFetching = false;
 const mockUseProducts = jest.fn();
 jest.mock("@/lib/api/products", () => ({
   useProducts: (params: { limit?: number }) => mockUseProducts(params),
@@ -66,11 +68,18 @@ const optionLabels = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockCatalogState = "ready";
+  mockCatalogFetching = false;
   mockUseProducts.mockImplementation((params: { limit?: number }) => {
     if (params?.limit !== 0) return { data: { data: [] }, isFetching: false };
     if (mockCatalogState === "loading")
       return { data: undefined, isLoading: true, isFetching: true };
-    if (mockCatalogState === "error") return { data: undefined, isError: true, isFetching: false };
+    if (mockCatalogState === "error")
+      return {
+        data: undefined,
+        isError: true,
+        isFetching: mockCatalogFetching,
+        refetch: mockRefetch,
+      };
     return { data: { data: mockCatalogRows }, isFetching: false };
   });
 });
@@ -90,7 +99,7 @@ describe("product select", () => {
 
   it.each([
     ["loading", "Loading products…"],
-    ["error", "Couldn't load products. Reopen this window to try again."],
+    ["error", "Couldn't load products."],
   ] as const)(
     "fails closed while the catalog is %s: no bare variant names, no family, the bar is off",
     (state, hint) => {
@@ -101,6 +110,36 @@ describe("product select", () => {
       expect(screen.getByText(hint)).toBeInTheDocument();
     },
   );
+
+  it("W-1319: a failed catalog read shows Try again; one click reads again and the options appear", () => {
+    mockCatalogState = "error";
+    const view = open();
+    expect(screen.queryByText(/Reopen this window/)).not.toBeInTheDocument();
+    mockRefetch.mockImplementation(() => {
+      mockCatalogState = "ready";
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(mockRefetch).toHaveBeenCalledTimes(1);
+    view.rerender(<CreatePOModal suppliers={suppliers} products={products} onClose={jest.fn()} />);
+    expect(bar()).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(optionLabels()).toContain("Widget (W-1)");
+  });
+
+  it("W-1319: while a retry is reading (error and fetching) it says Loading and offers no Try again", () => {
+    mockCatalogState = "error";
+    mockCatalogFetching = true;
+    open();
+    expect(screen.getByText("Loading products…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(bar()).toBeDisabled();
+  });
+
+  it("W-1319: no Try again while the catalog is loading", () => {
+    mockCatalogState = "loading";
+    open();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
 });
 
 describe("line fields", () => {
