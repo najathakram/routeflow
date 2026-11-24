@@ -66,6 +66,7 @@ describe("ReturnsService.create → cumulative over-return / double-refund race 
         order: prisma.order,
         customer: prisma.customer,
         $executeRaw: txExecuteRaw,
+        tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) },
         $queryRaw: jest.fn(),
       }),
     );

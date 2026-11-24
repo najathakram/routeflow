@@ -56,6 +56,7 @@ async function createLocks(opts: { contextTenant: string | null; withService: bo
         if (q.join("").includes("pg_advisory_xact_lock")) locked.push(String(v[1]));
         return 0;
       }),
+      tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) },
       $queryRaw: jest.fn(),
     }),
   );

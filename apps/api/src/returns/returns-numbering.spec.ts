@@ -63,6 +63,7 @@ describe("ReturnsService.create — return numbering via NumberingService (B353)
       returnItem: { findMany: jest.fn().mockResolvedValue([]) },
       order: prisma.order,
       customer: prisma.customer,
+      tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) },
       $executeRaw: jest.fn().mockResolvedValue(0),
     };
     prisma.tenantTransaction.mockImplementation((fn: any) => fn(txHandle));
