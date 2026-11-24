@@ -51,9 +51,27 @@ export function addressedByOwnId(call: { args: string; scope: string }): boolean
   return where && !fanOut;
 }
 
-/** Controllers that read `invoicePayment` rows themselves (not through a service). */
+/** Controllers that read `invoicePayment` rows themselves (not through a service): dot or bracket access (SA-1235 B3-3). */
 export const controllerReadsPayments = (text: string): boolean =>
-  /\binvoicePayment\s*\.\s*(findMany|findFirst|findUnique|count)\s*\(/.test(codeOnly(text));
+  /(?:\binvoicePayment|\[\s*["']invoicePayment["']\s*\])\s*\.\s*(findMany|findFirst|findUnique|count|aggregate|groupBy)\s*\(/.test(
+    codeOnly(text),
+  );
+
+/** Nested `payments: {` selects inside another model's read (an invoice include, a customer select). */
+export const nestedPaymentSelects = (text: string): number =>
+  (codeOnly(text).match(/\bpayments\s*:\s*(\{|true\b)/g) ?? []).length;
+
+/**
+ * The deliberate nested reads, each named with a reason (SA-1235 B3-3): counted on purpose, never silently skipped. A new
+ * nested `payments:` select in a controller fails until it is added here with its reason. M1-04 owns whether the buyer one moves.
+ */
+export const NESTED_PAYMENT_SELECTS: { file: string; count: number; reason: string }[] = [
+  {
+    file: "buyer/buyer.controller.ts",
+    count: 1,
+    reason: "balance roll-up inside an invoice read, not a receipt list",
+  },
+];
 
 /**
  * The one named exception to "the staff receipt read is the only route": the buyer list. It exists if and only if the
@@ -210,6 +228,34 @@ ${body}
     );
     expect(controllerReadsPayments("// db.invoicePayment.findMany(")).toBe(false);
     expect(controllerReadsPayments("return this.service.list();")).toBe(false);
+  });
+
+  it("the controller detector also flags bracket access, aggregate and groupBy (SA-1235 B3-3)", () => {
+    expect(controllerReadsPayments('await db["invoicePayment"].findMany({ where });')).toBe(true);
+    expect(controllerReadsPayments("await db.invoicePayment.aggregate({ _sum });")).toBe(true);
+    expect(controllerReadsPayments("await db.invoicePayment.groupBy({ by });")).toBe(true);
+    expect(controllerReadsPayments('// db["invoicePayment"].findMany(')).toBe(false);
+    expect(controllerReadsPayments("await db.invoice.findMany({ where });")).toBe(false);
+  });
+
+  it("nested payments selects in controllers are exactly the named list (counted on purpose, SA-1235 B3-3)", () => {
+    expect(nestedPaymentSelects("select: { payments: { where, select: { amount: true } } }")).toBe(
+      1,
+    );
+    expect(nestedPaymentSelects("include: { payments: true }")).toBe(1); // M1 of #4454: a bare include is a read too
+    expect(nestedPaymentSelects("include: { payments: false }")).toBe(0);
+    expect(nestedPaymentSelects("// payments: { a: 1 }")).toBe(0);
+    expect(nestedPaymentSelects("constructor(private readonly payments: Svc) {}")).toBe(0);
+    for (const n of NESTED_PAYMENT_SELECTS) expect(n.reason.length).toBeGreaterThan(10);
+    const found = files
+      .filter((f) => f.file.endsWith(".controller.ts") && nestedPaymentSelects(f.text) > 0)
+      .map((f) => ({ file: f.file, count: nestedPaymentSelects(f.text) }))
+      .sort((a, b) => a.file.localeCompare(b.file));
+    expect(found).toEqual(
+      NESTED_PAYMENT_SELECTS.map(({ file, count }) => ({ file, count })).sort((a, b) =>
+        a.file.localeCompare(b.file),
+      ),
+    );
   });
 
   it("the SA-749r2 split-leg namespace is not declared yet (it needs a grain ruling first)", () => {

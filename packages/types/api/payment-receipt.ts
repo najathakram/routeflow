@@ -23,7 +23,7 @@ export type ReceiptKind =
 export interface ReceiptHeader {
   /** The group id, or the row's own id for a one-row view. */
   key: string;
-  /** The lowest PAID `paymentNumber` (compared numerically), else the lowest live one, else the reference, else null. Never from a VOID row. */
+  /** The lowest PAID `paymentNumber` (compared numerically); with no PAID row, the lowest live one; else the reference, else null. Never from a VOID row. */
   number: string | null;
   reference: string | null;
   method: string | null;
@@ -41,7 +41,7 @@ export interface ReceiptHeader {
   partlyVoided: boolean;
 }
 
-/** One instrument: the rows of one (method, reference), live and VOID kept apart. */
+/** One instrument: the rows of one (method, reference, status); rows of a different status (PAID, DRAFT, PENDING, VOID) are kept apart. */
 export interface ReceiptTender {
   method: string;
   reference: string | null;
