@@ -1,4 +1,5 @@
 import { computeCreditNoteSummary } from "./credit-note-summary";
+import { numberYear } from "../common/number-year";
 import { isSettleAdjustedPayment } from "../invoices/settle-adjusted-payment";
 import {
   BadRequestException,
@@ -634,7 +635,7 @@ export class CreditNotesService {
     // queueing them (cause-refutation.md §2.1 CORRECTION 1). A validation
     // failure above burns nothing; a genuine race caught by the re-validation
     // below still burns a number, same trade the invoice mint already takes.
-    const year = new Date().getFullYear();
+    const year = await numberYear(this.prisma, tenantId);
     const creditNoteNumber = await this.numbering.reserveNext("CREDIT_NOTE", {
       year,
       tenantId,

@@ -1,4 +1,5 @@
 import { STOCK_TX_OPTIONS, setStockLockTimeout } from "../common/product-locks";
+import { numberYear } from "../common/number-year";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { retryStockTx } from "../common/tx-retry";
 import {
@@ -468,7 +469,7 @@ export class VendorBillsService {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new Error("vendor bill number: no tenant in context");
     await advisoryXactLock(tx, "vendor-bill-number", tenantId);
-    const year = new Date().getFullYear();
+    const year = await numberYear(tx, tenantId);
     const prefix = `BILL-${year}-`;
     const last = await tx.vendorBill.findFirst({
       where: { billNumber: { startsWith: prefix } },

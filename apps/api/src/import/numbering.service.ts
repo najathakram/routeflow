@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from "@nestjs/common";
+import { numberYear } from "../common/number-year";
 import { randomUUID } from "crypto";
 import { DocumentNumberType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -124,7 +125,8 @@ export class NumberingService {
       where: { year: 0 },
     });
     const byType = new Map(rows.map((r) => [r.docType, r]));
-    const year = new Date().getFullYear();
+    // W-1199: the tenant's year, the same one the mint takes, read BEFORE the tx opens (nothing is held yet).
+    const year = await numberYear(this.prisma, tenantId);
 
     return this.prisma.tenantTransaction(async (tx: Prisma.TransactionClient) => {
       const settings: NumberingSettingRow[] = [];
