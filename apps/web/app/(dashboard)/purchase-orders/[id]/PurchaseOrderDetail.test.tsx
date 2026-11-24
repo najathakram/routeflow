@@ -31,6 +31,11 @@ jest.mock("@/lib/api/inventory", () => ({
 }));
 jest.mock("@/lib/api/products", () => ({
   useProducts: () => ({ data: { data: [{ id: "p1", name: "Widget", sku: "W-1" }] } }),
+  useProductsByIds: () => ({
+    data: [{ id: "p1", name: "Widget", sku: "W-1" }],
+    isLoading: false,
+    isError: false,
+  }),
 }));
 // the existing modals have their own tests; here they are markers
 jest.mock("../../inventory/_components/PurchaseOrdersEditModal", () => ({
