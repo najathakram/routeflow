@@ -80,6 +80,7 @@
   "POST /estimates/:p/accept",
   "POST /estimates/:p/convert",
   "POST /estimates/:p/decline",
+  "POST /estimates/:p/revert-to-draft",
   "POST /estimates/:p/send",
   "POST /estimates/:p/void",
   "POST /inventory/cost-basis/bulk",
