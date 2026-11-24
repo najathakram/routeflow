@@ -51,28 +51,51 @@ describe("prod-migrate-resolve.mjs contract (W-1275)", () => {
     const fake = path.join(dir, "fake-npx.mjs");
     fs.writeFileSync(
       fake,
-      [
-        'import fs from "node:fs";',
-        "const argv = process.argv.slice(2);",
-        "fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(argv) + '\\n');",
-        "const cmd = argv.join(' ');",
-        "if (cmd.includes('resolve')) {",
-        "  fs.writeFileSync(process.env.FAKE_STATE, 'resolved');",
-        "  console.log('Migration marked as rolled back.');",
-        "  process.exit(0);",
-        "}",
-        "const mode = fs.existsSync(process.env.FAKE_STATE) ? 'clean' : process.env.FAKE_STATUS || 'clean';",
-        "console.log('url: ' + process.env.DATABASE_URL);",
-        "if (mode.startsWith('failed:')) {",
-        "  const names = mode.slice(7).split(',');",
-        "  console.error('Following migration' + (names.length > 1 ? 's' : '') + ' have failed:\\n' + names.join('\\n') + '\\n\\nDuring development if the failed migration(s) have not been deployed to a production database you can then fix the migration(s) and run npx prisma migrate dev.\\n');",
-        "  console.error('The failed migration(s) can be marked as rolled back or applied:\\n\\n- If you rolled back the migration(s) manually:\\nnpx prisma migrate resolve --rolled-back \"' + names[0] + '\"');",
-        "  process.exit(1);",
-        "}",
-        "console.log('Database schema is up to date!');",
-        "process.exit(0);",
-        "",
-      ].join("\n"),
+      String.raw`import fs from "node:fs";
+const argv = process.argv.slice(2);
+fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(argv) + "\n");
+const cmd = argv.join(" ");
+const mode = process.env.FAKE_STATUS || "clean";
+const resolved = fs.existsSync(process.env.FAKE_STATE);
+const names = mode.includes(":") ? mode.split(":")[1].split(",") : [];
+if (cmd.includes("resolve")) {
+  if (process.env.FAKE_RESOLVE_FAIL) {
+    console.error("Error: P1001 resolve failed");
+    process.exit(1);
+  }
+  if (!process.env.FAKE_RESOLVE_NOOP) fs.writeFileSync(process.env.FAKE_STATE, "resolved");
+  console.log("Migration marked as rolled back.");
+  process.exit(0);
+}
+if (cmd.includes("db execute")) {
+  fs.writeFileSync(process.env.FAKE_LOG + ".sql", fs.readFileSync(0, "utf8"));
+  if (mode === "qerror") {
+    console.error("Error: P1001: Can not reach database server");
+    process.exit(1);
+  }
+  if (resolved || names.length === 0) {
+    console.log("Script executed successfully.");
+    process.exit(0);
+  }
+  // Real prisma 7.10.1 db execute output on a throwaway Postgres.
+  console.error("Loaded Prisma config from prisma.config.ts.\n\nError: ERROR: rf-failed-migrations:" + names.join(","));
+  process.exit(1);
+}
+console.log("url: " + process.env.DATABASE_URL);
+if (resolved || mode === "clean" || mode === "qerror") {
+  console.log("Database schema is up to date!");
+  process.exit(0);
+}
+if (mode.startsWith("behind:")) {
+  // Real prisma 7.10.1 output captured on a throwaway Postgres with a failed migration AND a later pending
+  // one: the failed block is NOT printed, only the pending list (stdout, exit 1).
+  console.log("118 migrations found in prisma/migrations\nFollowing migration have not yet been applied:\n29990101000100_p84_later\n\nTo apply migrations in development run prisma migrate dev.\nTo apply migrations in production run prisma migrate deploy.");
+  process.exit(1);
+}
+console.error("Following migration" + (names.length > 1 ? "s" : "") + " have failed:\n" + names.join("\n") + "\n\nDuring development if the failed migration(s) have not been deployed to a production database you can then fix the migration(s) and run npx prisma migrate dev.\n");
+console.error("The failed migration(s) can be marked as rolled back or applied:\n\n- If you rolled back the migration(s) manually:\nnpx prisma migrate resolve --rolled-back \"" + names[0] + "\"");
+process.exit(1);
+`,
     );
     // POSIX `npx` and Windows `npx.cmd`; both hand argv to the same node stub.
     fs.writeFileSync(path.join(dir, "npx"), `#!/bin/sh\nexec node "${fake}" "$@"\n`, {
@@ -200,7 +223,7 @@ describe("prod-migrate-resolve.mjs contract (W-1275)", () => {
     expect(res.status).toBe(1);
   });
 
-  it("marks the one failed folder rolled back: status, resolve --rolled-back, status", () => {
+  it("marks the one failed folder rolled back: status, resolve --rolled-back, status, check", () => {
     const res = run([FAILED], { FAKE_STATUS: `failed:${FAILED}` });
 
     expect(res.stderr).not.toContain("Cannot find module");
@@ -208,8 +231,64 @@ describe("prod-migrate-resolve.mjs contract (W-1275)", () => {
       ["prisma", "migrate", "status"],
       ["prisma", "migrate", "resolve", "--rolled-back", FAILED],
       ["prisma", "migrate", "status"],
+      ["prisma", "db", "execute", "--stdin"],
     ]);
     expect(res.status).toBe(0);
+  });
+
+  // N1 (R-63): real prisma, when the DB has a failed migration AND later pending ones, prints only the
+  // pending list and never the failed block. The script falls back to a read-only _prisma_migrations read.
+  it("finds the failed folder when status prints only the pending list (failed + behind)", () => {
+    const res = run([FAILED], { FAKE_STATUS: `behind:${FAILED}` });
+
+    expect(res.stderr).not.toContain("Cannot find module");
+    expect(res.stderr).not.toContain("no failed migration");
+    expect(calls()).toEqual([
+      ["prisma", "migrate", "status"],
+      ["prisma", "db", "execute", "--stdin"],
+      ["prisma", "migrate", "resolve", "--rolled-back", FAILED],
+      ["prisma", "migrate", "status"],
+      ["prisma", "db", "execute", "--stdin"],
+    ]);
+    const sql = fs.readFileSync(log + ".sql", "utf8");
+    expect(sql).toContain("_prisma_migrations");
+    expect(sql).not.toMatch(/\b(insert|update|delete|drop|alter|truncate)\b/i);
+    expect(res.status).toBe(0);
+  });
+
+  it("refuses a folder that is not the failed one when status is failed + behind", () => {
+    const res = run([OTHER], { FAKE_STATUS: `behind:${FAILED}` });
+
+    expect(res.stderr).toContain(FAILED);
+    expect(resolveCalls()).toHaveLength(0);
+    expect(res.status).toBe(1);
+  });
+
+  it("refuses when the failed list cannot be read at all", () => {
+    const res = run([FAILED], { FAKE_STATUS: "qerror" });
+
+    expect(res.stderr).toContain("could not read");
+    expect(resolveCalls()).toHaveLength(0);
+    expect(res.status).toBe(1);
+  });
+
+  // N2 (R-63)
+  it("prints the after status and exits non-zero when resolve itself fails", () => {
+    const res = run([FAILED], { FAKE_STATUS: `failed:${FAILED}`, FAKE_RESOLVE_FAIL: "1" });
+
+    expect(res.stdout).toContain("(after)");
+    expect(calls().filter((c) => c.includes("status"))).toHaveLength(2);
+    expect(res.stderr).toContain("resolve failed");
+    expect(res.status).toBe(1);
+  });
+
+  // N3 (R-63)
+  it("exits non-zero when the folder is still reported failed after resolve", () => {
+    const res = run([FAILED], { FAKE_STATUS: `failed:${FAILED}`, FAKE_RESOLVE_NOOP: "1" });
+
+    expect(res.stderr).toContain("still reported as failed");
+    expect(res.stdout).not.toContain("marked rolled back");
+    expect(res.status).toBe(1);
   });
 
   it("accepts the explicit --rolled-back flag as the same operation", () => {

@@ -50,47 +50,63 @@ console.log(`Target host: ${redactUrl(url)}`);
 
 // Prisma is called with an argv list. Windows needs a shell for npx.cmd; every token is a constant
 // or the folder validated against the regex above, so nothing can inject.
-const prisma = (...argv) => {
+const prisma = (argv, input) => {
   const win = process.platform === "win32";
+  const opts = { cwd: apiDir, env, encoding: "utf8", input };
   const r = win
-    ? spawnSync(["npx.cmd", "prisma", ...argv].join(" "), {
-        cwd: apiDir,
-        env,
-        encoding: "utf8",
-        shell: true,
-      })
-    : spawnSync("npx", ["prisma", ...argv], { cwd: apiDir, env, encoding: "utf8" });
+    ? spawnSync(["npx.cmd", "prisma", ...argv].join(" "), { ...opts, shell: true })
+    : spawnSync("npx", ["prisma", ...argv], opts);
   const text = scrubSecrets(`${r.stdout ?? ""}${r.stderr ?? ""}`, url);
   return { text, status: r.status ?? 1 };
 };
 const show = (title, text) => console.log(`\n=== ${title} ===\n${text}`);
 
-// Prisma prints this block on stderr (console.error) with exit 1:
-//   "Following migration have failed:" / "Following migrations have failed:" then one name per line.
-const failedNames = (text) => {
-  const m = /Following migrations? have failed:\r?\n([\s\S]*?)(?:\r?\n\s*\r?\n|$)/.exec(text);
-  return m
+// Read-only fallback (R-63 N1). Observed on prisma 7.10.1: when a failed migration is ALSO followed by
+// pending ones, `migrate status` prints only the pending list and never the failed block. This DO block
+// writes nothing; it raises an error naming the unfinished, not-rolled-back rows (prisma's own "failed"
+// definition), and `db execute` prints it as "Error: ERROR: rf-failed-migrations:<names>".
+const FAILED_ROWS_SQL = `DO $$
+DECLARE names text;
+BEGIN
+  SELECT string_agg(migration_name, ',' ORDER BY started_at) INTO names
+  FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL;
+  IF names IS NOT NULL THEN RAISE EXCEPTION 'rf-failed-migrations:%', names; END IF;
+END $$;
+`;
+
+// Failed names: prisma's block when it prints one (stderr, exit 1: "Following migration have failed:" /
+// "Following migrations have failed:", one name per line), else the read-only rows above.
+const failedMigrations = (statusText) => {
+  const m = /Following migrations? have failed:\r?\n([\s\S]*?)(?:\r?\n\s*\r?\n|$)/.exec(statusText);
+  const fromBlock = m
     ? m[1]
         .split(/\r?\n/)
         .map((s) => s.trim())
         .filter(Boolean)
     : [];
+  if (fromBlock.length) return fromBlock;
+  const q = prisma(["db", "execute", "--stdin"], FAILED_ROWS_SQL);
+  const hit = /rf-failed-migrations:([0-9a-z_,]+)/.exec(q.text);
+  if (hit) return hit[1].split(",");
+  if (q.status === 0) return [];
+  die(`Refused: could not read the failed migrations (db execute exit ${q.status}).\n${q.text}`);
 };
 
-const before = prisma("migrate", "status");
+const before = prisma(["migrate", "status"]);
 show("prisma migrate status (before)", before.text);
-const failed = failedNames(before.text);
+const failed = failedMigrations(before.text);
 if (failed.length === 0)
-  die("Refused: migrate status reports no failed migration; nothing to resolve.");
+  die("Refused: status and _prisma_migrations report no failed migration; nothing to resolve.");
 if (failed.length !== 1 || failed[0] !== folder) {
-  die(
-    `Refused: ${folder} is not the one failed migration. Status reports failed: ${failed.join(", ")}`,
-  );
+  die(`Refused: ${folder} is not the one failed migration. Reported failed: ${failed.join(", ")}`);
 }
 
-const done = prisma("migrate", "resolve", "--rolled-back", folder);
+const done = prisma(["migrate", "resolve", "--rolled-back", folder]);
 show(`prisma migrate resolve --rolled-back ${folder}`, done.text);
+const after = prisma(["migrate", "status"]);
+show("prisma migrate status (after)", after.text);
 if (done.status !== 0) die(`migrate resolve failed (exit ${done.status}).`);
-
-show("prisma migrate status (after)", prisma("migrate", "status").text);
+if (failedMigrations(after.text).includes(folder)) {
+  die(`${folder} is still reported as failed after resolve; do not re-run the deploy.`);
+}
 console.log(`\n✅ ${folder} marked rolled back. Re-run prod-migrate.mjs to apply it.`);
