@@ -124,6 +124,11 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Buyer invoice account rows, one renderer | [`web`](web/landing-2026-11-23-w42.md) → `components/InvoiceAccountRows.tsx` |
 | Buyer payment status word | [`web`](web/landing-2026-11-23-w42.md) → `lib/check-badge.ts` |
 | Ops board comments and rf inbox | [`api`](api/landing-2026-11-23-w42.md) → `tools/ops-monitor/lib/inbox.mjs` |
+| Group receipt card (receipt fields vs this payment) | [`web`](web/landing-2026-11-24-w43.md) → `app/(dashboard)/finance/payments/[id]/page.tsx` |
+| Buyer portal home landing (0 orders to Invoices) | [`web`](web/landing-2026-11-24-w43.md) → `app/buyer/portal/[seller]/page.tsx` |
+| PO create retry, edit line product lock | [`web`](web/landing-2026-11-24-w43.md) → `inventory/_components/PurchaseOrderLinesTable.tsx` |
+| Alias pack memory and void date columns (schema only) | [`api`](api/landing-2026-11-24-w43.md) → `prisma/schema/catalog.prisma`, `finance.prisma` |
+| Local mail TLS pair, fleet CLI | [`api`](api/landing-2026-11-24-w43.md) → `scripts/lib/mailpit-tls.mjs`, `scripts/fleet.mjs` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →
