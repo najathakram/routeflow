@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "fleet-st-"));
 const bodyFile = path.join(tmp, "body.md");
@@ -45,7 +46,7 @@ const postWith = async (over, exec) => {
 };
 const realRepo = () => {
   const repo = fs.mkdtempSync(path.join(tmp, "repo-"));
-  spawnSync("git", ["init", "-q"], { cwd: repo });
+  spawnSync("git", ["init", "-q"], { cwd: repo, env: scrubbedGitEnv() });
   fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
   fs.writeFileSync(
     path.join(repo, ".git", "info", "leak-patterns"),
