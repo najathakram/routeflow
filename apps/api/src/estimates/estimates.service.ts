@@ -20,6 +20,7 @@ import {
   withinStaffOverrideTolerance,
   type DiscountTaxBase,
 } from "@routeflow/pricing";
+import { ESTIMATE_MOVES, canMoveEstimate, type EstimateAction } from "@routeflow/types";
 import { loadMsrpMap } from "../common/msrp";
 import { discountModeOf, newDocumentDiscountMode } from "../common/discount-tax-mode";
 import { configuredTaxRateFraction } from "../common/tax-rate";
@@ -58,13 +59,6 @@ import { priceEditAllowedFor } from "../auth/permissions/price-edit";
 import { stampInvoicePositions } from "../invoices/invoice-line-position";
 import { assertCustomPricesAllowed, assertPriceEditAllowed } from "../orders/staff-override";
 import { describeUniqueViolation, uniqueViolationOn } from "../common/prisma-unique";
-
-// B70: terminal status set — CONVERTED is terminal and cannot be re-transitioned; voided
-// (DECLINED) is also terminal per the requirement that send/decline/accept refuse both.
-export const TERMINAL_ESTIMATE_STATUSES = [
-  "CONVERTED",
-  "DECLINED",
-] as const satisfies readonly EstimateStatus[];
 
 /** A line as a create or draft-edit request sends it; `id` names the held line an edit re-sends. */
 type EstimateLineInput = CreateEstimateItemDto & { id?: string };
@@ -120,25 +114,25 @@ export class EstimatesService {
   }
 
   /**
-   * B70: atomic claim for estimate status transitions. Ensures only one call succeeds
-   * when multiple transitions are attempted concurrently; throws NotFoundException if
-   * estimate is missing, or BadRequestException if the estimate is in one of `exclude`
-   * and the transition is not allowed. `exclude` defaults to the full terminal set
-   * (CONVERTED + DECLINED/voided); accept() passes a narrower set — see its call site
-   * for why DECLINED is not terminal there.
+   * B70 / SA-1263: the atomic claim for every estimate status move. One UPDATE both guards and writes, so only one of
+   * two concurrent calls wins; NotFoundException if the estimate is missing, BadRequestException if its status is not
+   * one `ESTIMATE_MOVES[action]` lists. The guard is an allowlist (`in`): a status nobody listed (CONVERTED, VOID,
+   * or a value added later) has no move, so no action can reopen it. B70 is that rule for CONVERTED: it is absorbing,
+   * or send/decline/accept would launder it back to ACCEPTED and convert would mint a second invoice. VOID is absorbing
+   * for the same reason: a voided quote must never reach convert. A revert also counts the revision in the same UPDATE.
    */
   private async claimTransition(
     id: string,
+    action: Exclude<EstimateAction, "edit" | "convert">,
     to: EstimateStatus,
     refusal: (humanizedActualStatus: string) => string,
-    exclude: readonly EstimateStatus[] = TERMINAL_ESTIMATE_STATUSES,
   ): Promise<void> {
     const r = await this.prisma.forTenant().estimate.updateMany({
       where: {
         id,
-        status: { notIn: [...exclude] },
+        status: { in: [...ESTIMATE_MOVES[action]] },
       },
-      data: { status: to },
+      data: action === "revert" ? { status: to, revision: { increment: 1 } } : { status: to },
     });
     if (r.count === 1) return;
     const row = await this.prisma.forTenant().estimate.findFirst({
@@ -231,7 +225,7 @@ export class EstimatesService {
       include: { items: true },
     });
     if (!held) throw new NotFoundException("Estimate not found");
-    if (held.status !== "DRAFT") throw notDraftRefusal(held.status);
+    if (!canMoveEstimate(held.status, "edit")) throw notDraftRefusal(held.status);
 
     const issueDate = dto.issueDate !== undefined ? parseIssueDate(dto.issueDate) : undefined;
     const customerId = dto.customerId ?? held.customerId;
@@ -282,7 +276,7 @@ export class EstimatesService {
       // The claim is the authority: a draft sent (or edited) between the read above and here is refused, never
       // silently overwritten with lines priced for a document the customer has already seen.
       const claimed = await tx.estimate.updateMany({
-        where: { id, status: "DRAFT" },
+        where: { id, status: { in: [...ESTIMATE_MOVES.edit] } },
         data: header,
       });
       if (claimed.count !== 1) {
@@ -299,16 +293,16 @@ export class EstimatesService {
   }
 
   /**
-   * Bring a SENT or ACCEPTED estimate back to DRAFT so it can be revised and sent again. A CONVERTED estimate has an
-   * invoice and stays converted; a DECLINED one is also how a void is stored today, so it stays closed (duplicate it
-   * to quote again).
+   * Bring a SENT or ACCEPTED estimate back to DRAFT so it can be revised and sent again, counting the revision in the
+   * same claim ("Rev 2" once it is sent again). A CONVERTED estimate has an invoice and stays converted; a DECLINED one
+   * is also how a void is stored until A2, so it stays closed (A2 opens it, with Mark as void beside it).
    */
   async revertToDraft(id: string) {
     await this.claimTransition(
       id,
+      "revert",
       "DRAFT",
       (status) => `${status} estimates cannot be moved back to draft`,
-      ["DRAFT", ...TERMINAL_ESTIMATE_STATUSES],
     );
     return this.findOne(id);
   }
@@ -554,41 +548,43 @@ export class EstimatesService {
   }
 
   async send(id: string) {
-    await this.claimTransition(id, "SENT", (status) => `${status} estimates cannot be re-sent`);
+    await this.claimTransition(
+      id,
+      "send",
+      "SENT",
+      (status) => `${status} estimates cannot be re-sent`,
+    );
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
-  // Atomic claim: a CONVERTED estimate must never be re-accepted, or the convert path
-  // below could see it as ACCEPTED again. Deliberately excludes ONLY CONVERTED (not
-  // the full TERMINAL_ESTIMATE_STATUSES set): accept() has always allowed
-  // DECLINED -> ACCEPTED (a pre-existing, pre-B70 invariant — staff can override a
-  // decline), and that stays true here. This does not reopen the laundering chain
-  // B70 closed: CONVERTED is an absorbing state across every writer of `status` —
-  // voidEstimate()/send()/decline() below each atomically refuse to act on an
-  // already-CONVERTED row (excluding the full terminal set), so nothing can ever
-  // move a CONVERTED estimate back to ACCEPTED. THAT is what actually gates a second
-  // invoice — convertToInvoice()'s own ACCEPTED->CONVERTED claim only prevents two
-  // *concurrent* converts of one already-ACCEPTED estimate; it does not by itself stop
-  // a laundered one, so never relax voidEstimate/send/decline's exclusion set while
-  // trusting this claim alone.
+  // Atomic claim: a CONVERTED or VOID estimate must never be re-accepted, or convert could see it as ACCEPTED again.
+  // DECLINED -> ACCEPTED is closed (SA-1263, W-1335): a void is still stored as DECLINED, and this move was how a void
+  // became an invoice. A repeat accept of an ACCEPTED estimate stays allowed here (SA-1260 1a makes it a no-write).
   async accept(id: string) {
     await this.claimTransition(
       id,
+      "accept",
       "ACCEPTED",
       (status) => `${status} estimates cannot be re-accepted`,
-      ["CONVERTED"],
     );
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async decline(id: string) {
     await this.claimTransition(
       id,
+      "decline",
       "DECLINED",
       (status) => `${status} estimates cannot be declined`,
     );
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
   async voidEstimate(id: string) {
-    await this.claimTransition(id, "DECLINED", (status) => `${status} estimates cannot be voided`);
+    // A1: a void is still written as DECLINED. A2 writes VOID, once VOID is proven in the prod enum.
+    await this.claimTransition(
+      id,
+      "void",
+      "DECLINED",
+      (status) => `${status} estimates cannot be voided`,
+    );
     return this.prisma.forTenant().estimate.findUniqueOrThrow({ where: { id } });
   }
 
@@ -628,7 +624,7 @@ export class EstimatesService {
       },
     });
     if (!existing) throw new NotFoundException("Estimate not found");
-    if (existing.status !== "ACCEPTED") {
+    if (!canMoveEstimate(existing.status, "convert")) {
       throw new BadRequestException("Only ACCEPTED estimates can be converted");
     }
     // units_v1: no DTO can write a unit-aware estimate line today, but refuse it here — BEFORE a
@@ -672,7 +668,7 @@ export class EstimatesService {
       // old read-then-check and both minted an invoice. Claiming inside the tx
       // means a later failure rolls the claim back too.
       const claimed = await tx.estimate.updateMany({
-        where: { id, status: "ACCEPTED" },
+        where: { id, status: { in: [...ESTIMATE_MOVES.convert] } },
         data: { status: "CONVERTED" },
       });
       if (claimed.count === 0) {
