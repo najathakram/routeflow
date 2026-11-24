@@ -4360,3 +4360,44 @@ describe("B1371 — downgrade preview, schedule and notice carry no seat consequ
     );
   });
 });
+
+/**
+ * SA-1254 V7 (P-45): a refused business reads the plan's name, never its key. Red on master: the
+ * invitation-only errors read `Plan "LITE" ...` and the off-ladder error reads `Plan "PRO" is not a
+ * recognized plan key ...`.
+ */
+describe("SubscriptionMutationService — plan refusals name the plan, never the key (P-45)", () => {
+  type Call = (svc: SubscriptionMutationService) => Promise<unknown>;
+  const calls: ReadonlyArray<readonly [string, Call]> = [
+    ["subscribe", (svc) => svc.subscribe("t1", { planKey: "LITE", cycle: "MONTHLY" })],
+    ["upgrade", (svc) => svc.upgrade("t1", "LITE", "admin")],
+    ["downgrade", (svc) => svc.downgrade("t1", "LITE", [], "admin")],
+  ];
+
+  it.each(calls)("%s() to an invite-only plan reads 'The Lite plan ...'", async (_name, call) => {
+    const { svc } = make({ catalog: catalogWithLite() });
+    const err = await call(svc).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(
+      "The Lite plan is available by invitation only — contact us.",
+    );
+    expect((err as Error).message).not.toContain("LITE");
+  });
+
+  it("subscribe() to a published key outside the ladder prints no key", async () => {
+    const v = catalog();
+    const offLadder = {
+      ...v,
+      definitions: [
+        { planKey: "PRO", name: "Bad row", monthlyPrice: 199, isCustom: false, seatsIncluded: 1 },
+        ...v.definitions,
+      ],
+    } as ReturnType<typeof catalog>;
+    const { svc } = make({ catalog: offLadder });
+    const err = await svc
+      .subscribe("t1", { planKey: "PRO", cycle: "MONTHLY" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe("This plan can't be chosen here — contact support.");
+  });
+});
