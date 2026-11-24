@@ -30,6 +30,7 @@ import {
   type RecomputeCostsResult,
 } from "@/lib/api/inventory";
 import { useProducts, type CostingMethod } from "@/lib/api/products";
+import { displayProductName } from "@/lib/product-display";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
@@ -44,6 +45,7 @@ import { useInventoryTab } from "./_components/use-inventory-tab";
 import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
 import type { Supplier } from "./_components/purchase-orders-shared";
 import { QuickRestockModal } from "./_components/QuickRestockModal";
+import { MODAL_BODY, MODAL_FOOTER, MODAL_FORM, MODAL_PANEL } from "./_components/modal-panel";
 import {
   InventoryCards,
   InventorySortControl,
@@ -96,6 +98,10 @@ interface ForecastItem {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** SA-1216: the full "<Family> - <Variant>" name for a product id, for the panels whose own read carries
+ *  only the stored name (forecast, reorder settings, missing costs, recompute); falls back to it. */
+type FullName = (id: string, stored: string) => string;
+
 function daysRemainingBadge(days: number | null) {
   if (days === null) return <span className="text-navy/70 text-xs">N/A</span>;
   const cls =
@@ -117,6 +123,14 @@ function daysRemainingBadge(days: number | null) {
  * convention — the chevron only appears on header hover or when the column is
  * the active sort.
  */
+// Module-level so `useSortableData`'s memo hits across renders (an inline object missed every time).
+const STOCK_COMPARATORS: Partial<Record<string, (a: StockItem, b: StockItem) => number>> = {
+  currentStock: (a, b) => Number(a.currentStock) - Number(b.currentStock),
+  unitsPerBox: (a, b) => (a.unitsPerBox ?? -1) - (b.unitsPerBox ?? -1),
+  averageCost: (a, b) => Number(a.averageCost ?? 0) - Number(b.averageCost ?? 0),
+  totalValue: (a, b) => Number(a.totalValue ?? 0) - Number(b.totalValue ?? 0),
+};
+
 function StockTable({
   stockItems,
   stockSearch,
@@ -177,12 +191,7 @@ function StockTable({
   const { sorted, sortKey, sortDir, requestSort, setSort } = useSortableData(filtered, {
     defaultKey: "name",
     defaultDir: "asc",
-    comparators: {
-      currentStock: (a, b) => Number(a.currentStock) - Number(b.currentStock),
-      unitsPerBox: (a, b) => (a.unitsPerBox ?? -1) - (b.unitsPerBox ?? -1),
-      averageCost: (a, b) => Number(a.averageCost ?? 0) - Number(b.averageCost ?? 0),
-      totalValue: (a, b) => Number(a.totalValue ?? 0) - Number(b.totalValue ?? 0),
-    },
+    comparators: STOCK_COMPARATORS,
   });
 
   // 3) Scroll-to + brief highlight support for a picked search suggestion.
@@ -534,172 +543,174 @@ function AdjustStockModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-md`}>
         <div className="border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Adjust stock</h2>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
-          <div>
-            <label className="mb-1 block text-xs text-navy">Product *</label>
-            <input
-              ref={barcodeInputRef}
-              type="text"
-              value={
-                selectedProduct && !productSearch
-                  ? `${selectedProduct.name}${selectedProduct.sku ? ` (${selectedProduct.sku})` : ""}`
-                  : productSearch
-              }
-              onChange={(e) => {
-                setProductSearch(e.target.value);
-                if (form.productId) setForm((f) => ({ ...f, productId: "" }));
-              }}
-              placeholder="Type name or SKU, or scan barcode…"
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-            {productSearch && !form.productId && (
-              <div className="mt-1 max-h-48 overflow-y-auto rounded border border-surface-border bg-white shadow-sm">
-                {filteredProducts.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-navy/70">
-                    No products match &quot;{productSearch}&quot;
-                  </p>
-                ) : (
-                  filteredProducts.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => {
-                        setForm((f) => ({ ...f, productId: p.id }));
-                        setProductSearch("");
-                      }}
-                      className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-navy hover:bg-surface-raised"
-                    >
-                      {p.name}
-                      {p.sku ? <span className="text-navy/70"> ({p.sku})</span> : null}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-            {!form.productId && !productSearch && (
-              <p className="mt-1 text-xs text-navy/70">Type to search products</p>
-            )}
-            {selectedProduct && (
-              <p className="mt-1 text-xs text-navy/70">
-                {/* Stock is stored in PIECES — a boxed product must never be labelled
+        <form onSubmit={handleSubmit} className={MODAL_FORM}>
+          <div className={MODAL_BODY}>
+            <div>
+              <label className="mb-1 block text-xs text-navy">Product *</label>
+              <input
+                ref={barcodeInputRef}
+                type="text"
+                value={
+                  selectedProduct && !productSearch
+                    ? `${selectedProduct.name}${selectedProduct.sku ? ` (${selectedProduct.sku})` : ""}`
+                    : productSearch
+                }
+                onChange={(e) => {
+                  setProductSearch(e.target.value);
+                  if (form.productId) setForm((f) => ({ ...f, productId: "" }));
+                }}
+                placeholder="Type name or SKU, or scan barcode…"
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              {productSearch && !form.productId && (
+                <div className="mt-1 max-h-48 overflow-y-auto rounded border border-surface-border bg-white shadow-sm">
+                  {filteredProducts.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-navy/70">
+                      No products match &quot;{productSearch}&quot;
+                    </p>
+                  ) : (
+                    filteredProducts.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          setForm((f) => ({ ...f, productId: p.id }));
+                          setProductSearch("");
+                        }}
+                        className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-navy hover:bg-surface-raised"
+                      >
+                        {p.name}
+                        {p.sku ? <span className="text-navy/70"> ({p.sku})</span> : null}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+              {!form.productId && !productSearch && (
+                <p className="mt-1 text-xs text-navy/70">Type to search products</p>
+              )}
+              {selectedProduct && (
+                <p className="mt-1 text-xs text-navy/70">
+                  {/* Stock is stored in PIECES — a boxed product must never be labelled
                     with `product.unit` (the SELLING unit noun), or the operator adjusts
                     in cases; `unitsLabel` keeps that noun only for unboxed products. */}
-                Current stock:{" "}
-                {unitsLabel(
-                  selectedProduct.currentStock,
-                  selectedProduct.unitsPerBox,
-                  selectedProduct.unit,
-                )}
-                {form.quantity !== "" && !isNaN(qty) && (
-                  <>
-                    {" "}
-                    →{" "}
-                    <strong>
-                      {unitsLabel(
-                        Number((selectedProduct.currentStock + qty).toFixed(2)),
-                        selectedProduct.unitsPerBox,
-                        selectedProduct.unit,
-                      )}
-                    </strong>
-                  </>
-                )}
-                {" · "}
-                <button
-                  type="button"
-                  className="underline"
-                  onClick={() => setForm((f) => ({ ...f, productId: "" }))}
-                >
-                  change
-                </button>
+                  Current stock:{" "}
+                  {unitsLabel(
+                    selectedProduct.currentStock,
+                    selectedProduct.unitsPerBox,
+                    selectedProduct.unit,
+                  )}
+                  {form.quantity !== "" && !isNaN(qty) && (
+                    <>
+                      {" "}
+                      →{" "}
+                      <strong>
+                        {unitsLabel(
+                          Number((selectedProduct.currentStock + qty).toFixed(2)),
+                          selectedProduct.unitsPerBox,
+                          selectedProduct.unit,
+                        )}
+                      </strong>
+                    </>
+                  )}
+                  {" · "}
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => setForm((f) => ({ ...f, productId: "" }))}
+                  >
+                    change
+                  </button>
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-navy">
+                Quantity change (positive to add, negative to remove) *
+              </label>
+              <input
+                required
+                type="number"
+                step={0.001}
+                value={form.quantity}
+                onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="adjust-reason" className="mb-1 block text-xs text-navy">
+                Reason *
+              </label>
+              <select
+                id="adjust-reason"
+                value={form.reason}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, reason: e.target.value as AdjustmentReason | "" }))
+                }
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Choose a reason</option>
+                {(Object.keys(ADJUSTMENT_REASON_LABELS) as AdjustmentReason[]).map((r) => (
+                  <option key={r} value={r}>
+                    {ADJUSTMENT_REASON_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-navy">Reference</label>
+              <input
+                type="text"
+                value={form.reference}
+                onChange={(e) => setForm((f) => ({ ...f, reference: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs text-navy">
+                Notes{form.reason === "OTHER" ? " *" : ""}
+              </label>
+              <textarea
+                rows={2}
+                maxLength={ADJUSTMENT_REASON_NOTE_MAX}
+                value={form.notes}
+                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-navy/70">
+              <input
+                type="checkbox"
+                checked={form.backdate}
+                onChange={(e) => setForm((f) => ({ ...f, backdate: e.target.checked }))}
+              />
+              Backdate this entry
+            </label>
+            {form.backdate && (
+              <input
+                type="date"
+                value={form.effectiveDate}
+                onChange={(e) => setForm((f) => ({ ...f, effectiveDate: e.target.value }))}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            )}
+
+            {reasonProblem && form.quantity.trim() !== "" && (
+              <p className="text-right text-xs text-navy/70" data-testid="adjust-save-hint">
+                {reasonProblem}
               </p>
             )}
           </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-navy">
-              Quantity change (positive to add, negative to remove) *
-            </label>
-            <input
-              required
-              type="number"
-              step={0.001}
-              value={form.quantity}
-              onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="adjust-reason" className="mb-1 block text-xs text-navy">
-              Reason *
-            </label>
-            <select
-              id="adjust-reason"
-              value={form.reason}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, reason: e.target.value as AdjustmentReason | "" }))
-              }
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              <option value="">Choose a reason</option>
-              {(Object.keys(ADJUSTMENT_REASON_LABELS) as AdjustmentReason[]).map((r) => (
-                <option key={r} value={r}>
-                  {ADJUSTMENT_REASON_LABELS[r]}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-navy">Reference</label>
-            <input
-              type="text"
-              value={form.reference}
-              onChange={(e) => setForm((f) => ({ ...f, reference: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-navy">
-              Notes{form.reason === "OTHER" ? " *" : ""}
-            </label>
-            <textarea
-              rows={2}
-              maxLength={ADJUSTMENT_REASON_NOTE_MAX}
-              value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-
-          <label className="flex items-center gap-2 text-sm text-navy/70">
-            <input
-              type="checkbox"
-              checked={form.backdate}
-              onChange={(e) => setForm((f) => ({ ...f, backdate: e.target.checked }))}
-            />
-            Backdate this entry
-          </label>
-          {form.backdate && (
-            <input
-              type="date"
-              value={form.effectiveDate}
-              onChange={(e) => setForm((f) => ({ ...f, effectiveDate: e.target.value }))}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          )}
-
-          {reasonProblem && form.quantity.trim() !== "" && (
-            <p className="text-right text-xs text-navy/70" data-testid="adjust-save-hint">
-              {reasonProblem}
-            </p>
-          )}
-          <div className="flex justify-end gap-2 pt-2">
+          <div className={MODAL_FOOTER}>
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>
@@ -745,38 +756,40 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-md`}>
         <div className="border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Add supplier</h2>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-4">
-          {[
-            { key: "name", label: "Company Name *", required: true },
-            { key: "contactName", label: "Contact Name" },
-            { key: "phone", label: "Phone" },
-            { key: "email", label: "Email", type: "email" },
-          ].map(({ key, label, required, type }) => (
-            <div key={key}>
-              <label className="mb-1 block text-xs text-navy">{label}</label>
-              <input
-                required={required}
-                type={type ?? "text"}
-                value={(form as any)[key]}
-                onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+        <form onSubmit={handleSubmit} className={MODAL_FORM}>
+          <div className={MODAL_BODY}>
+            {[
+              { key: "name", label: "Company Name *", required: true },
+              { key: "contactName", label: "Contact Name" },
+              { key: "phone", label: "Phone" },
+              { key: "email", label: "Email", type: "email" },
+            ].map(({ key, label, required, type }) => (
+              <div key={key}>
+                <label className="mb-1 block text-xs text-navy">{label}</label>
+                <input
+                  required={required}
+                  type={type ?? "text"}
+                  value={(form as any)[key]}
+                  onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+            ))}
+            <div>
+              <label className="mb-1 block text-xs text-navy">Notes</label>
+              <textarea
+                rows={2}
+                value={form.notes}
+                onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+                className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
               />
             </div>
-          ))}
-          <div>
-            <label className="mb-1 block text-xs text-navy">Notes</label>
-            <textarea
-              rows={2}
-              value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
-              className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
           </div>
-          <div className="flex justify-end gap-2 pt-2">
+          <div className={MODAL_FOOTER}>
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>
@@ -792,7 +805,15 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
 
 // ─── Reorder Settings Modal ───────────────────────────────────────────────────
 
-function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: () => void }) {
+function ReorderSettingsModal({
+  item,
+  fullName,
+  onClose,
+}: {
+  item: ForecastItem;
+  fullName: FullName;
+  onClose: () => void;
+}) {
   const updateSettings = useUpdateReorderSettings();
   const { toast } = useToast();
   const [reorderPoint, setReorderPoint] = React.useState(String(item.reorderPoint ?? ""));
@@ -818,7 +839,7 @@ function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-sm rounded-xl bg-white shadow-xl">
+      <div className={`${MODAL_PANEL} max-w-sm`}>
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Reorder settings</h2>
           <button
@@ -828,33 +849,35 @@ function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: 
             <X className="h-4 w-4" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-4 px-6 py-5">
-          <p className="text-sm text-navy/70">{item.name}</p>
-          <div>
-            <label className="mb-1 block text-xs text-navy">Reorder Point (trigger qty)</label>
-            <input
-              required
-              type="number"
-              min={0}
-              step={0.001}
-              value={reorderPoint}
-              onChange={(e) => setReorderPoint(e.target.value)}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
+        <form onSubmit={handleSubmit} className={MODAL_FORM}>
+          <div className={MODAL_BODY}>
+            <p className="text-sm text-navy/70">{fullName(item.productId, item.name)}</p>
+            <div>
+              <label className="mb-1 block text-xs text-navy">Reorder Point (trigger qty)</label>
+              <input
+                required
+                type="number"
+                min={0}
+                step={0.001}
+                value={reorderPoint}
+                onChange={(e) => setReorderPoint(e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-navy">Reorder Qty (amount to order)</label>
+              <input
+                required
+                type="number"
+                min={0}
+                step={0.001}
+                value={reorderQty}
+                onChange={(e) => setReorderQty(e.target.value)}
+                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-navy">Reorder Qty (amount to order)</label>
-            <input
-              required
-              type="number"
-              min={0}
-              step={0.001}
-              value={reorderQty}
-              onChange={(e) => setReorderQty(e.target.value)}
-              className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-          <div className="flex justify-end gap-2 pt-1">
+          <div className={MODAL_FOOTER}>
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>
@@ -933,9 +956,11 @@ function InlineNumberEdit({
 function ForecastingTab({
   suppliers,
   products,
+  fullName,
 }: {
   suppliers: Supplier[];
   products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
+  fullName: FullName;
 }) {
   const { data: forecastData, isLoading } = useForecasting();
   const updateSettings = useUpdateReorderSettings();
@@ -1009,7 +1034,9 @@ function ForecastingTab({
                     item.needsReorder && "bg-red-50/60",
                   )}
                 >
-                  <td className="px-4 py-3 font-medium text-navy">{item.name}</td>
+                  <td className="px-4 py-3 font-medium text-navy">
+                    {fullName(item.productId, item.name)}
+                  </td>
                   <td className="px-4 py-3 text-navy/70">{Number(item.currentStock).toFixed(2)}</td>
                   <td className="px-4 py-3 text-navy/70">
                     {item.avgDailySales != null ? Number(item.avgDailySales).toFixed(2) : "—"}
@@ -1079,9 +1106,11 @@ function ForecastingTab({
 
 function BulkSetCostModal({
   products,
+  fullName,
   onClose,
 }: {
   products: { id: string; name: string }[];
+  fullName: FullName;
   onClose: () => void;
 }) {
   const bulkSet = useBulkSetCostBasis();
@@ -1128,8 +1157,11 @@ function BulkSetCostModal({
         <div className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
           {products.map((p) => (
             <div key={p.id} className="flex items-center justify-between gap-3">
-              <span className="min-w-0 flex-1 truncate text-sm text-navy" title={p.name}>
-                {p.name}
+              <span
+                className="min-w-0 flex-1 truncate text-sm text-navy"
+                title={fullName(p.id, p.name)}
+              >
+                {fullName(p.id, p.name)}
               </span>
               <div className="relative w-32 shrink-0">
                 <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-navy/50">
@@ -1175,7 +1207,7 @@ function BulkSetCostModal({
 // InventoryController.recomputeCosts). The component and its state are left in
 // place, unreachable from the UI, until B562's root cause is fixed.
 
-function RecomputeModal({ onClose }: { onClose: () => void }) {
+function RecomputeModal({ fullName, onClose }: { fullName: FullName; onClose: () => void }) {
   const recompute = useRecomputeCosts();
   const { toast } = useToast();
   const [preview, setPreview] = React.useState<RecomputeCostsResult | null>(null);
@@ -1268,8 +1300,11 @@ function RecomputeModal({ onClose }: { onClose: () => void }) {
                 <tbody className="divide-y divide-surface-border">
                   {changed.map((r) => (
                     <tr key={r.productId}>
-                      <td className="max-w-[180px] truncate px-3 py-1.5 text-navy" title={r.name}>
-                        {r.name}
+                      <td
+                        className="max-w-[180px] truncate px-3 py-1.5 text-navy"
+                        title={fullName(r.productId, r.name)}
+                      >
+                        {fullName(r.productId, r.name)}
                       </td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-navy/70">
                         {r.oldAvgCost != null ? `$${r.oldAvgCost.toFixed(4)}` : "—"}
@@ -1310,7 +1345,37 @@ export default function InventoryPage() {
   // once on mount; StockCountTab strips `amend` from the URL itself once it's consumed it.
   const { activeTab, selectTab } = useInventoryTab();
 
-  const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
+  const { data: rawStockItems = [], isLoading: stockLoading } = useStockOverview();
+  const [showRestockModal, setShowPurchaseModal] = React.useState(false);
+  const [showAdjustModal, setShowAdjustModal] = React.useState(false);
+  // Whole-catalog read (`limit: 0`): the Stock tab's "Assign to variants" gate and the full product
+  // names (SA-1216) both need every product's parent. Enabled on the Stock tab, or while a picker that
+  // lists products is open from another tab.
+  const { data: variantProductsData } = useProducts(
+    { includeVariants: true, limit: 0 },
+    { enabled: activeTab === "stock" || showAdjustModal || showRestockModal },
+  );
+  // SA-1216: a family variant is stored as just its flavor, so every row reads "<Family> - <Variant>"
+  // (the one rule, `displayProductName`) composed from this catalog. `name` is the full name from here
+  // on, so the table, the search, the pickers and the modals agree. Until the catalog arrives a row keeps
+  // its stored name.
+  const stockItems = React.useMemo(() => {
+    const catalog: any[] = variantProductsData?.data ?? [];
+    if (catalog.length === 0) return rawStockItems as StockItem[];
+    const byId = new Map<string, any>(catalog.map((c) => [c.id, c]));
+    return (rawStockItems as StockItem[]).map((i) => {
+      const c = byId.get(i.id);
+      if (!c) return i;
+      const like = {
+        name: i.name,
+        variantName: c.variantName,
+        parentProductId: c.parentProductId,
+        parent: c.parent,
+      };
+      return { ...i, name: displayProductName(like, catalog) };
+    });
+  }, [rawStockItems, variantProductsData]);
+  const fullName: FullName = (id, stored) => stockItems.find((i) => i.id === id)?.name ?? stored;
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
   // The pickers (Adjust Stock, Quick Restock, Create PO) list the active products. The stock
   // overview above already carries every field they read (id, name, sku, unit, currentStock,
@@ -1329,10 +1394,6 @@ export default function InventoryPage() {
   // no family filter on GET /products, and /inventory/overview selects neither parentProductId nor
   // the variants), and the Stock table shows every row, so the answer is needed for any of them.
   // It is only consumed by the Stock tab, so it is enabled only while that tab is showing.
-  const { data: variantProductsData } = useProducts(
-    { includeVariants: true, limit: 0 },
-    { enabled: activeTab === "stock" },
-  );
   const variantInfoById = React.useMemo(() => {
     const map = new Map<string, VariantInfo>();
     for (const p of variantProductsData?.data ?? []) {
@@ -1344,8 +1405,6 @@ export default function InventoryPage() {
     return map;
   }, [variantProductsData]);
 
-  const [showRestockModal, setShowPurchaseModal] = React.useState(false);
-  const [showAdjustModal, setShowAdjustModal] = React.useState(false);
   // When set, the next AdjustStockModal opens with this product pre-selected.
   // Cleared after the modal closes so the next "Adjust Stock" header click
   // opens with no pre-selection.
@@ -1976,6 +2035,7 @@ export default function InventoryPage() {
         {/* ── Forecasting tab ── */}
         <Tabs.Content value="forecasting" className="pt-4">
           <ForecastingTab
+            fullName={fullName}
             suppliers={suppliers as Supplier[]}
             products={products.map((p: any) => ({
               id: p.id,
@@ -2049,11 +2109,14 @@ export default function InventoryPage() {
       )}
       {showBulkCostModal && (
         <BulkSetCostModal
+          fullName={fullName}
           products={valuation?.missingCostProducts ?? []}
           onClose={() => setShowBulkCostModal(false)}
         />
       )}
-      {showRecomputeModal && <RecomputeModal onClose={() => setShowRecomputeModal(false)} />}
+      {showRecomputeModal && (
+        <RecomputeModal fullName={fullName} onClose={() => setShowRecomputeModal(false)} />
+      )}
     </div>
   );
 }

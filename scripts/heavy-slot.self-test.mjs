@@ -33,10 +33,12 @@ import {
   formatStatus,
   formatWaitLine,
   historyRecord,
-  nextGrant,
+  nextGrant as nextGrantRaw,
+  parsePriority,
   isCappedLabel,
   parseCappedMax,
   inspectSlotsFile,
+  inspectMaxCpuFile,
   readSlotsFile,
   cpuPctFromTimes,
   loadOverReason,
@@ -138,6 +140,8 @@ const deadPid = (() => {
   return r.pid;
 })();
 const NO_LOG = { log: () => {} };
+// nextGrant requires `now` (M2); the older cases do not use the age term, so they pass 0.
+const nextGrant = (a) => nextGrantRaw({ now: 0, ...a });
 const cleanEnv = () => {
   const env = { ...process.env };
   for (const k of ["CI", "RF_HEAVY_SLOT", "RF_HEAVY_SLOT_TOKEN", "RF_HEAVY_SLOTS"]) delete env[k];
@@ -1869,6 +1873,276 @@ check(
         [true, "-e", 3],
       ],
     ],
+  );
+}
+
+{
+  // Q: priority lane (RF_HEAVY_SLOT_PRIORITY=high). A ticket with no priority field behaves exactly as before.
+  const ord = ["n1", "n2", "n3", "h1", "h2"];
+  const high = new Set(["h1", "h2"]);
+  const g = (myName, extra = {}) => nextGrant({ order: ord, myName, freeSlots: 1, ...extra });
+  check(
+    "Q1 a high ticket queued behind 3 normal ones gets the next free slot; the normals wait",
+    [g("h1", { high }).grant, g("n1", { high }).grant, g("h1", { high }).position],
+    [true, false, 1],
+  );
+  check(
+    "Q2 two highs stay FIFO between themselves",
+    [g("h1", { high }).grant, g("h2", { high }).grant, g("h2", { high }).position],
+    [true, false, 2],
+  );
+  check(
+    "Q3 no priority anywhere: the order is exactly as today (oldest first)",
+    [g("n1").grant, g("h1").grant, g("n1", { high: new Set() }).grant, g("n3").position],
+    [true, false, true, 3],
+  );
+  const atCap = { capped: new Set(["h1"]), cappedHeld: 2, cappedMax: 2 };
+  check(
+    "Q4 a capped high ticket is still skipped at the cap; the oldest normal goes",
+    [
+      g("h1", { high, ...atCap }).grant,
+      g("h2", { high, ...atCap }).grant, // the next high one is eligible
+      g("n1", { high: new Set(["h1"]), ...atCap }).grant,
+    ],
+    [false, true, true],
+  );
+  check(
+    "Q5 stale high tickets do not block anyone",
+    g("n1", { high, stale: new Set(["h1", "h2"]) }).grant,
+    true,
+  );
+  // Q6: an OLD-code waiter ignores `high` (it calls nextGrant without it): with a high ticket behind it, it still
+  // believes it is first and may take a free slot; the high waiter believes the same. Both may try the slot; the
+  // atomic `wx` lock file picks one, so nobody waits on a slot nobody takes. A new-code normal waiter defers.
+  const two = { order: ["n1", "h1"], freeSlots: 1 };
+  check(
+    "Q6 old-code waiter ahead of a high ticket still takes a free slot; a new-code normal waiter defers to it",
+    [
+      nextGrant({ ...two, myName: "n1" }).grant,
+      nextGrant({ ...two, myName: "h1", high: new Set(["h1"]) }).grant,
+      nextGrant({ ...two, myName: "n1", high: new Set(["h1"]) }).grant,
+    ],
+    [true, true, false],
+  );
+  check(
+    "Q7 the wait line marks a high ticket",
+    [
+      formatWaitLine({ position: 1, total: 4, holder: null, now: 0, priority: "high" }).includes(
+        "(priority)",
+      ),
+      formatWaitLine({ position: 1, total: 4, holder: null, now: 0 }).includes("priority"),
+    ],
+    [true, false],
+  );
+  check(
+    "Q8 parsePriority: only `high` (any case) counts",
+    [
+      parsePriority("high"),
+      parsePriority(" HIGH "),
+      parsePriority("low"),
+      parsePriority(undefined),
+    ],
+    ["high", "high", null, null],
+  );
+  // Q9: on disk. A waiter started with the env switch writes priority:"high" on its ticket; a normal one writes none.
+  const dirQ = mkTmp();
+  ghost(dirQ, {}, 0);
+  const prio = async (env) => {
+    const W = withHeavySlot(
+      { label: "wt-db-1", branch: "b", dir: dirQ, env, slots: 1, ...FAST, ...NO_LOG },
+      async () => {},
+    );
+    await until(() => queued(dirQ).length === 1);
+    const f = path.join(dirQ, "queue", queued(dirQ)[0]);
+    const t = JSON.parse(readFileSync(f, "utf8"));
+    rmSync(lockFile(dirQ, 0), { force: true }); // let the waiter take the slot and finish
+    await W;
+    ghost(dirQ, {}, 0);
+    return t.priority;
+  };
+  const pHigh = await prio({ RF_HEAVY_SLOT_PRIORITY: "high" });
+  const pNone = await prio({});
+  check(
+    "Q9 the ticket records priority only when the env switch is high",
+    [pHigh, pNone],
+    ["high", undefined],
+  );
+}
+
+{
+  // Q10-Q13: the 120-minute age cap (SA-1230 M1 option A). Age comes from the ticket NAME ms, never the JSON field.
+  const NOW = 1_000_000_000_000;
+  const nm = (m) => ticketName(NOW - m * 60_000, 1, "aa");
+  const g = (order, myName, high) =>
+    nextGrant({ order, myName, freeSlots: 1, high, now: NOW }).grant;
+  const oldN = nm(121);
+  const hiNew = nm(1);
+  check(
+    "Q10 a normal ticket older than 120 min is granted ahead of a newer high ticket; the high one waits",
+    [g([oldN, hiNew], oldN, new Set([hiNew])), g([oldN, hiNew], hiNew, new Set([hiNew]))],
+    [true, false],
+  );
+  const youngN = nm(119);
+  check(
+    "Q11 a normal ticket at 119 min still defers to a high ticket",
+    [g([youngN, hiNew], youngN, new Set([hiNew])), g([youngN, hiNew], hiNew, new Set([hiNew]))],
+    [false, true],
+  );
+  const oldHigh = nm(130);
+  check(
+    "Q12 an aged normal ticket joins the high group in queue order: an older high ticket is never jumped",
+    [g([oldHigh, oldN], oldHigh, new Set([oldHigh])), g([oldHigh, oldN], oldN, new Set([oldHigh]))],
+    [true, false],
+  );
+  check(
+    "Q13 nextGrant without a finite `now` throws (the age term must never be silently dropped)",
+    [undefined, NaN, "5"].map((now) => {
+      try {
+        nextGrantRaw({ order: [oldN], myName: oldN, freeSlots: 1, now });
+        return "no throw";
+      } catch (e) {
+        return /nextGrant: `now` must be a finite number/.test(String(e.message));
+      }
+    }),
+    [true, true, true],
+  );
+  // Q14: on disk. An aged normal ticket whose JSON is truncated (mid-write) is still promoted by its NAME: a high
+  // waiter queued behind it sees position 2 of 2 (without the cap it would be 1 of 2).
+  const dirA = mkTmp();
+  ghost(dirA, {}, 0);
+  mkdirSync(path.join(dirA, "queue"), { recursive: true });
+  writeFileSync(
+    path.join(dirA, "queue", ticketName(Date.now() - 121 * 60_000, 1, "aa")),
+    '{"pid":1,"lab',
+  );
+  const logA = [];
+  await withHeavySlot(
+    {
+      label: "wt-db-1",
+      branch: "b",
+      dir: dirA,
+      env: { RF_HEAVY_SLOT_PRIORITY: "high" },
+      slots: 1,
+      maxWaitMs: 300,
+      ...FAST,
+      log: (m) => logA.push(m),
+    },
+    async () => {},
+  ).catch(() => {});
+  check(
+    "Q14 an aged ticket with an unreadable body still counts as promoted: the high waiter is position 2 of 2",
+    /position 2 of 2/.test(logA.find((l) => /position/.test(l)) ?? ""),
+    true,
+  );
+}
+
+{
+  // R: a machine-wide <dir>/max-cpu file (percent 1..100) overrides every waiter's own RF_HEAVY_SLOT_MAX_CPU_PCT,
+  // re-read on each check, like the slots file. Invalid or absent = ignored.
+  const dir = mkTmp();
+  const f = path.join(dir, "max-cpu");
+  const read = (txt) => {
+    if (txt === null) rmSync(f, { force: true });
+    else writeFileSync(f, txt);
+    return inspectMaxCpuFile(dir);
+  };
+  check(
+    "R1 inspectMaxCpuFile: valid, invalid and absent",
+    [
+      read("95"),
+      read(" 100\n"),
+      read("96"),
+      read("0"),
+      read("101"),
+      read("9.5"),
+      read("hot"),
+      read(null),
+    ],
+    [
+      { state: "ok", value: 95 },
+      { state: "invalid", reason: "100 is outside 1..95" },
+      { state: "invalid", reason: "96 is outside 1..95" },
+      { state: "invalid", reason: "0 is outside 1..95" },
+      { state: "invalid", reason: "101 is outside 1..95" },
+      { state: "invalid", reason: 'not a plain decimal integer: "9.5"' },
+      { state: "invalid", reason: 'not a plain decimal integer: "hot"' },
+      { state: "absent" },
+    ],
+  );
+  // R2: a waiter whose own cap is 80 runs at 90% cpu when the file says 95; invalid/absent file keeps its 80 (K6-style).
+  const attempt = async (txt) => {
+    const d = mkTmp();
+    if (txt !== null) writeFileSync(path.join(d, "max-cpu"), txt);
+    let ran = false;
+    await withHeavySlot(
+      {
+        label: "hot",
+        branch: "b",
+        dir: d,
+        env: {},
+        ...FAST,
+        maxWaitMs: 300,
+        maxCpuPct: 80,
+        ...NO_LOG,
+        sampleLoad: async () => ({ cpuPct: 90, memPct: 10 }),
+      },
+      async () => void (ran = true),
+    ).catch(() => {});
+    return ran;
+  };
+  check(
+    "R2 the file's 95 lets a 90% cpu start; an invalid or absent file keeps the waiter's own 80",
+    [await attempt("95"), await attempt("junk"), await attempt(null)],
+    [true, false, false],
+  );
+  // R4/R5 (SA-1230): 96-100 never override (no clamp); one warning per bad reason; one line for a valid override.
+  const hot = async (txt, cpuPct, ownCap) => {
+    const d = mkTmp();
+    writeFileSync(path.join(d, "max-cpu"), txt);
+    const lines = [];
+    let ran = false;
+    await withHeavySlot(
+      {
+        label: "hot",
+        branch: "b",
+        dir: d,
+        env: {},
+        ...FAST,
+        maxWaitMs: 400,
+        maxCpuPct: ownCap,
+        log: (m) => lines.push(m),
+        sampleLoad: async () => ({ cpuPct, memPct: 10 }),
+      },
+      async () => void (ran = true),
+    ).catch(() => {});
+    return { ran, n: lines.filter((l) => l.includes("max-cpu")).length };
+  };
+  const h100 = await hot("100", 99.9, 80);
+  const h90 = await hot("90", 95, 70);
+  check(
+    "R4 a file of 100 never overrides: at 99.9% cpu with own cap 80 the waiter waits",
+    h100.ran,
+    false,
+  );
+  check(
+    "R5 a bad file prints exactly one warning line; a valid override prints exactly one line",
+    [h100.n, h90.n],
+    [1, 1],
+  );
+  const d3 = mkTmp();
+  const st = (txt) => {
+    if (txt === null) rmSync(path.join(d3, "max-cpu"), { force: true });
+    else writeFileSync(path.join(d3, "max-cpu"), txt);
+    return formatStatus(d3);
+  };
+  check(
+    "R3 status names the max-cpu file: value, invalid, none",
+    [
+      /max-cpu file: .* = 95/.test(st("95")),
+      /max-cpu file: .*INVALID/.test(st("x")),
+      /max-cpu file: none/.test(st(null)),
+    ],
+    [true, true, true],
   );
 }
 

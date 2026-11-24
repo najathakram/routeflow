@@ -499,6 +499,9 @@ export const API_ERROR_CODES = {
   SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
   PO_LINK_BROKEN: "PO_LINK_BROKEN",
   BILL_NEEDS_A_LINE: "BILL_NEEDS_A_LINE",
+  SPLIT_LINE_LOCKED: "SPLIT_LINE_LOCKED",
+  RECEIVE_PARTIAL_UNIT: "RECEIVE_PARTIAL_UNIT",
+  LOT_QTY_NOT_WHOLE: "LOT_QTY_NOT_WHOLE",
   BILL_NOT_EDITABLE: "BILL_NOT_EDITABLE",
   BILL_PO_SUPPLIER_LOCKED: "BILL_PO_SUPPLIER_LOCKED",
   BILL_NEVER_RECEIVED: "BILL_NEVER_RECEIVED",
@@ -517,6 +520,11 @@ export const API_ERROR_CODES = {
   INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
   PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
   PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
+  /**
+   * 409 from POST /inventory/purchase-orders (SA-1222): the body's `draftId` names a Create PO builder draft that is already gone (turned into a PO by
+   * another tab, or deleted). Raised before any PO row is written. The client shows "This draft was already turned into a PO or deleted. Check your POs."
+   */
+  PO_DRAFT_GONE: "PO_DRAFT_GONE",
   INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
   /** B297 PR5: a money-bearing edit to a line whose regulated SALE rows sit in a LOCKED filing period. */
   FILED_PERIOD_LOCKED: "FILED_PERIOD_LOCKED",
@@ -1102,6 +1110,8 @@ export const API_ERROR_CODES = {
    * BOTH ("Keep this one or open the other?"), never overwrites.
    */
   DRAFT_CHANGED: "DRAFT_CHANGED",
+  /** 404 from /drafts/:id (SA-1234): the draft itself is gone (or not the caller's). Any other 404 is a missing reference, not a gone draft. */
+  DRAFT_NOT_FOUND: "DRAFT_NOT_FOUND",
   /**
    * 409 from void / revert-to-draft / delete (and a per-bill `skipped` entry of the bulk delete) of a vendor bill that still carries CASH
    * payments (B288, SA-814 R5-3). Body carries `amount` (the rounded cash total). Nothing was written; move the payments to a supplier

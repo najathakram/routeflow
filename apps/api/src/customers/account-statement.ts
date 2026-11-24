@@ -30,6 +30,13 @@ import {
 } from "../common/calendar-date";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { statementOutstandingAmount, statementOverdueAmount } from "./customer-statement";
+import {
+  advanceRemaining,
+  creditNoteRemaining,
+  isAdvanceAvailable,
+  loadAdvanceSourceStatuses,
+  sumAvailableCredit,
+} from "./available-credit";
 
 /**
  * SA-1078 (W-1096) PR-1: the customer account statement read. One function over Prisma-by-parameter (like the
@@ -101,7 +108,7 @@ export async function buildAccountStatement(
       where: { customerId: customer.id, balance: { gt: 0 } },
       orderBy: { receivedAt: "asc" },
       // `notes` is a staff form field and never reaches a customer's statement (A-3).
-      select: { id: true, balance: true, reference: true, receivedAt: true },
+      select: { id: true, balance: true, reference: true, receivedAt: true, sourcePaymentId: true },
     }),
     // Confirmed money on any invoice of this customer, dated by when it was collected (`settledAt ?? paidAt`).
     // The window is applied here; the newest-first order and the cap in code, because that date is a coalesce.
@@ -158,8 +165,8 @@ export async function buildAccountStatement(
   // The wallet rule of the older statements: open, non-expired notes with something left, plus advances with a balance.
   const credits: AccountStatementCredit[] = [];
   for (const c of creditNotes) {
-    const remaining = roundMoney(Number(c.amount) - Number(c.amountUsed));
-    if (remaining <= 0.001 || (c.expiresAt && c.expiresAt <= now)) continue;
+    const remaining = creditNoteRemaining(c, now);
+    if (remaining === 0) continue;
     credits.push({
       kind: "CREDIT_NOTE",
       id: c.id,
@@ -170,18 +177,33 @@ export async function buildAccountStatement(
       expiresAt: c.expiresAt ? isoOf(c.expiresAt) : null,
     });
   }
-  for (const a of advances) {
+  // B839: an advance whose source payment is not PAID (DRAFT, PENDING, VOID) is not credit, on the list or the total.
+  const sourceStatuses = await loadAdvanceSourceStatuses(prisma.forTenant(), advances);
+  const spendableAdvances = advances.filter((a: any) =>
+    isAdvanceAvailable(a, a.sourcePaymentId ? sourceStatuses.get(a.sourcePaymentId) : undefined),
+  );
+  for (const a of spendableAdvances) {
+    const remaining = advanceRemaining(a);
+    if (remaining === 0) continue;
     credits.push({
       kind: "ADVANCE",
       id: a.id,
-      number: a.reference ?? null,
+      // F8: a buyer never sees the staff-typed reference; the sheet and the PDF print the label instead.
+      number: opts.staff ? (a.reference ?? null) : null,
+      ...(opts.staff ? {} : { label: "Credit from payment" }),
       date: tenantTodayDay(zone, a.receivedAt),
       reason: null,
-      remaining: roundMoney(Number(a.balance)),
+      remaining,
       expiresAt: null,
     });
   }
-  const creditAvailable = roundMoney(credits.reduce((sum, c) => sum + c.remaining, 0));
+  // SA-1208 D7: the total is the helper's, over the same rows the list shows, so the rows always add up to it.
+  const creditAvailable = sumAvailableCredit({
+    notes: creditNotes,
+    advances: spendableAdvances,
+    sourceStatuses,
+    now,
+  }).total;
 
   const dated = payments
     .map((p) => ({ p, at: new Date(collectedDateOf(p) as Date) }))

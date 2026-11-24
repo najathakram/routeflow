@@ -14,6 +14,7 @@ import { summarizeOpenInvoices } from "../invoices/invoice-balance-classify";
 import { OPEN_INVOICE_STATUSES } from "../invoices/invoice-status-sets";
 import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 import { ACTIVE_ORDER_STATUSES } from "../common/terminal-order-statuses";
+import { buyerSpendTotal, tenantDayBefore } from "./buyer-spend";
 
 @Injectable()
 export class BuyerDashboardService {
@@ -83,9 +84,6 @@ export class BuyerDashboardService {
       frequentlyOrderedRaw,
       newProducts,
       featuredProducts,
-      spend30d,
-      spend90d,
-      spendAllTime,
       openInvoices,
       sellerZone,
     ] = await Promise.all([
@@ -168,35 +166,6 @@ export class BuyerDashboardService {
         take: 10,
       }),
 
-      // Spend last 30 days
-      this.prisma.forTenant().order.aggregate({
-        where: {
-          customerId,
-          status: { not: "CANCELLED" },
-          createdAt: { gte: thirtyDaysAgo },
-        },
-        _sum: { total: true },
-      }),
-
-      // Spend last 90 days
-      this.prisma.forTenant().order.aggregate({
-        where: {
-          customerId,
-          status: { not: "CANCELLED" },
-          createdAt: { gte: ninetyDaysAgo },
-        },
-        _sum: { total: true },
-      }),
-
-      // Spend all time
-      this.prisma.forTenant().order.aggregate({
-        where: {
-          customerId,
-          status: { not: "CANCELLED" },
-        },
-        _sum: { total: true },
-      }),
-
       // Unpaid invoices over the open statuses (SA-770 r-note): the strip counts what is still OWED, via the
       // same classifier as getAnalytics' summary, so the dashboard strip and the Finances screen never
       // diverge and an overpaid or part-paid invoice shows its balance, never the gross.
@@ -216,6 +185,14 @@ export class BuyerDashboardService {
       tenantTimeZone(this.prisma),
     ]);
     const unpaid = summarizeOpenInvoices(openInvoices, overdueCutoff(now, sellerZone));
+
+    // SA-1211 A1.3: spend is the buyer's invoices less credit notes, in the seller's days (never orders).
+    const db = this.prisma.forTenant();
+    const [spend30d, spend90d, spendAllTime] = await Promise.all([
+      buyerSpendTotal(db, customerId, sellerZone, tenantDayBefore(sellerZone, 30, now)),
+      buyerSpendTotal(db, customerId, sellerZone, tenantDayBefore(sellerZone, 90, now)),
+      buyerSpendTotal(db, customerId, sellerZone),
+    ]);
 
     // Enrich frequently ordered products with product details + buyer pricing.
     // Unlisted (catalog-free) lines have no productId and can't be reordered.
@@ -409,9 +386,9 @@ export class BuyerDashboardService {
         activeOrders: activeOrderCount,
         pendingDeliveries,
         templateCount,
-        spend30d: Number(spend30d._sum.total ?? 0),
-        spend90d: Number(spend90d._sum.total ?? 0),
-        spendAllTime: Number(spendAllTime._sum.total ?? 0),
+        spend30d,
+        spend90d,
+        spendAllTime,
         unpaidInvoiceCount: unpaid.unpaidCount + unpaid.overdueCount,
         unpaidInvoiceTotal: unpaid.unpaidTotal,
       },

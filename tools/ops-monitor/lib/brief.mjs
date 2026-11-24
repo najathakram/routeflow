@@ -8,6 +8,7 @@ import { DONE_STATUSES } from "./schema.mjs";
 import { parseEta } from "./ids.mjs";
 import { deepMasker, maskText } from "./mask.mjs";
 import { laneNow, pickNext } from "./next.mjs";
+import { commentsFor, inboxHeadline, isUnread, renderComment } from "./inbox.mjs";
 
 // Same owner-facing words as snapshot.mjs STATUS_WORDS (not imported: the hooks must load fast).
 const STATUS_WORDS = {
@@ -20,6 +21,7 @@ const STATUS_WORDS = {
   shipping: "Shipping",
   planned: "Planned",
   idea: "Idea",
+  draft: "Waiting for triage",
   parked: "Parked",
   dropped: "Dropped",
 };
@@ -232,9 +234,26 @@ function driftLines(snapshot, state, now) {
   ];
 }
 
-/** The brief's inputs with every string masked (a copy; no names -> the inputs themselves). */
-function maskInputs(inputs, names) {
-  const deep = deepMasker(names);
+/** Deep copy with `fn` applied to every string value (keys untouched), the shape deepMasker walks. */
+const deepStrings = (fn) => {
+  const walk = (v) =>
+    typeof v === "string"
+      ? fn(v)
+      : Array.isArray(v)
+        ? v.map(walk)
+        : v && typeof v === "object"
+          ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]))
+          : v;
+  return walk;
+};
+
+/**
+ * The brief's inputs with every string masked (a copy; no names -> the inputs themselves), then
+ * `cleanText` on every string when given (the session hook's control-byte strip, SA-1237 A1).
+ */
+function maskInputs(inputs, names, cleanText = null) {
+  const masker = deepMasker(names);
+  const deep = cleanText ? (v) => deepStrings(cleanText)(masker(v)) : masker;
   const { state, snapshot, config } = inputs;
   const items = new Map();
   for (const [k, v] of state.items) items.set(k, deep(v));
@@ -242,6 +261,20 @@ function maskInputs(inputs, names) {
     state: { ...state, items },
     snapshot: snapshot ? deep(snapshot) : snapshot,
     config: config ? deep(config) : config,
+  };
+}
+
+/** Unread comments for `me` (newest 5 shown), as the brief's first section. */
+function inboxLines(state, me, seen, now, clientNames, frame) {
+  if (!me) return { total: 0, lines: [], headline: "" };
+  const unread = commentsFor(state, me).filter((x) => isUnread(x.comment, seen));
+  const line = (c) => renderComment(c, state, { now, clientNames, replyHint: false });
+  return {
+    total: unread.length,
+    headline: inboxHeadline(unread),
+    lines: unread
+      .slice(-5)
+      .map((x) => (frame ? frame(line(x.comment), x.comment) : line(x.comment))),
   };
 }
 
@@ -263,16 +296,22 @@ export function renderBrief(
     maxLines = 25,
     short = false,
     utcOffsetMin = 0,
+    me = null,
+    inboxSeen = null,
+    frameComment = null, // (line, comment) => line: the session hook frames comments (SA-1237)
+    cleanText = null, // (string) => string on every input text: the hook's strip (SA-1237 A1)
   } = {},
 ) {
   // Mask every input text BEFORE a line is built, clipped or cut: a client name must never
   // survive as a fragment. (The final maskText below stays as a belt-and-braces pass.)
-  ({ state, snapshot, config } = maskInputs({ state, snapshot, config }, clientNames));
+  ({ state, snapshot, config } = maskInputs({ state, snapshot, config }, clientNames, cleanText));
   const sections = [];
   const add = (key, title, part) => {
     if (part.lines.length === 0) return;
     sections.push({ key, title, total: part.total, lines: part.lines });
   };
+  const inbox = inboxLines(state, me, inboxSeen, now, clientNames, frameComment);
+  add("inbox", `${inbox.headline} for you (rf inbox)`, inbox);
   add("hurting", "Hurting now", hurtingNow(state, snapshot));
   add("owner", "Waiting on the owner", waitingOnOwner(state, snapshot));
   if (!short) {
@@ -287,7 +326,7 @@ export function renderBrief(
 
   // Trim to fit: take lines from the lowest-priority section that still has more than one line,
   // then drop whole sections from the bottom.
-  const priority = ["hurting", "owner", "queue", "shipping", "lanes"];
+  const priority = ["inbox", "hurting", "owner", "queue", "shipping", "lanes"];
   const rank = (s) => priority.indexOf(s.key);
   const size = () => 1 + footer.length + sections.reduce((n, s) => n + 1 + s.lines.length, 0);
   while (size() > maxLines && sections.length > 0) {
@@ -300,7 +339,7 @@ export function renderBrief(
   for (const s of sections.sort((a, b) => order(a.key) - order(b.key))) {
     const shown = s.lines.filter((l) => !l.startsWith("    ")).length;
     const count =
-      s.total > shown && s.key !== "queue" && s.key !== "shipping"
+      s.total > shown && !["queue", "shipping", "inbox"].includes(s.key)
         ? ` (showing ${shown} of ${s.total})`
         : "";
     out.push(`${s.title}${count}:`, ...s.lines);
@@ -310,7 +349,7 @@ export function renderBrief(
 }
 
 // Display order (differs from trim priority: shipping reads before the owner's list).
-const DISPLAY = ["hurting", "queue", "shipping", "owner", "lanes"];
+const DISPLAY = ["inbox", "hurting", "queue", "shipping", "owner", "lanes"];
 const order = (k) => DISPLAY.indexOf(k);
 
 // ── since ───────────────────────────────────────────────────────────────────
@@ -325,11 +364,18 @@ const ids4 = (ids) =>
 export function renderSince(
   before,
   now,
-  { lane = null, nowMs = Date.now(), utcOffsetMin = 0, config = null, clientNames = [] } = {},
+  {
+    lane = null,
+    nowMs = Date.now(),
+    utcOffsetMin = 0,
+    config = null,
+    clientNames = [],
+    cleanText = null,
+  } = {},
 ) {
   // Mask the item texts BEFORE any clip (a trainLabel is cut at 40 characters).
-  ({ state: before } = maskInputs({ state: before }, clientNames));
-  ({ state: now } = maskInputs({ state: now }, clientNames));
+  ({ state: before } = maskInputs({ state: before }, clientNames, cleanText));
+  ({ state: now } = maskInputs({ state: now }, clientNames, cleanText));
   const done = [];
   const created = [];
   const blocked = [];

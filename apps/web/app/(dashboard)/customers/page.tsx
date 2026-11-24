@@ -647,7 +647,7 @@ export default function CustomersPage() {
       },
       {
         id: "credits",
-        header: "Credits",
+        header: "Credit",
         enableSorting: false,
         meta: HIDE_BELOW_SM,
         cell: ({ row }) => {

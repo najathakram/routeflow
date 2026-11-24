@@ -18,7 +18,11 @@ const ALLOWLIST: string[] = [
 ];
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 const ROOTS = ["apps/api/src", "apps/web", "apps/mobile"];
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist", ".expo", "coverage", ".turbo"]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS]);
 const EXT = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const NEEDLE = /\b(componentUnitPrice4|displayComponentUnitPrice)\b/;
 

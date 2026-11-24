@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Badge, type BadgeVariant, Button, Card, PageHeader } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { displayProductName } from "@/lib/product-display";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
 import {
@@ -199,7 +200,7 @@ export default function StockCountDetailPage() {
                     href={`/products/${line.product.id}`}
                     className="font-medium text-navy hover:text-brand-500 hover:underline"
                   >
-                    {line.product.name}
+                    {displayProductName(line.product)}
                   </Link>
                   {line.product.sku && (
                     <p className="font-mono text-xs text-navy/70">{line.product.sku}</p>

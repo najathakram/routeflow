@@ -231,6 +231,8 @@ model Invoice {
   shippedAt              DateTime?
   writeOffReason         String?
   writtenOffAt           DateTime?
+  // SA-1208 M1-15 (migration 20261122000100_void_date): date the invoice was voided. Nullable, never back-filled; no writer yet.
+  voidedAt               DateTime?
   // SA-1050 PR-0: who wrote the CURRENT write-off off (clears on reinstate, with writtenOffAt and writeOffReason).
   // Plain id string, no FK, like feeForPaymentId: the history of who did what is the event table's `byId` (FK SetNull).
   // No writer or reader until SA-1050 PR-1 merges.
@@ -504,6 +506,8 @@ model InvoicePayment {
   depositedAt  DateTime?
   clearedAt    DateTime?
   bouncedAt    DateTime?
+  // SA-1208 M1-15: date this payment was voided (reader: voidedAt ?? bouncedAt). Nullable, never back-filled; no writer yet.
+  voidedAt     DateTime?
   nsfFeeAmount Decimal?     @db.Decimal(10, 2)
 
   // Payment image (receipt / slip / check photo). One image per payment EVENT:

@@ -9,6 +9,9 @@ import { CustomerRecordPaymentModal } from "./CustomerRecordPaymentModal";
  * action that resends the SAME form with `recordAnyway: true`. A non-staff role gets the sentence and no action.
  */
 const mockToast = jest.fn();
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+}));
 jest.mock("@routeflow/ui/web", () => ({
   ...jest.requireActual("@routeflow/ui/web"),
   useToast: () => ({ toast: mockToast }),

@@ -6,6 +6,8 @@ import {
   roundMoney,
   type POLineAmounts,
 } from "@routeflow/pricing";
+import { unitsLabel } from "@/lib/stock-label";
+import { displayProductName } from "@/lib/product-display";
 import type { PurchaseOrderBillLink, PurchaseOrderReceipt } from "@routeflow/types";
 
 // Shared purchase-order types + pure line helpers, extracted verbatim from
@@ -33,7 +35,17 @@ export type POStatus = "DRAFT" | "SENT" | "PARTIAL" | "RECEIVED" | "CLOSED";
 export interface POItem {
   id: string;
   productId: string;
-  product?: { id: string; name: string; unit: string } | null;
+  product?: {
+    id: string;
+    name: string;
+    unit: string;
+    unitsPerBox?: number | null;
+    currentStock?: number | string | null;
+    /** Family linkage (the detail read selects it) so the name composes without the active-only catalog. */
+    parentProductId?: string | null;
+    variantName?: string | null;
+    parent?: { name: string } | null;
+  } | null;
   qtyOrdered: number | string;
   qtyReceived: number | string;
   unitCost: number | string;
@@ -41,6 +53,8 @@ export interface POItem {
   /** The supplier's own SKU / pieces-per-supplier-unit — null on lines that never carried them. */
   sku?: string | null;
   packSize?: number | null;
+  /** The line's own unit name ("tray"): a line that states one is labelled and keeps its product. */
+  unitLabel?: string | null;
 }
 
 export interface PurchaseOrder {
@@ -222,4 +236,32 @@ export function toCreateItem(line: POLineItem, unitsPerBox: number) {
   }
   const { qty, unitCost } = resolvePOLine(line, unitsPerBox);
   return { productId: line.productId, qty, unitCost };
+}
+
+/** The stock reader's figure (pieces) or null when the product carries none, never a made-up 0. */
+export const onHandOf = (v: number | string | null | undefined): number | null =>
+  v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v);
+
+/**
+ * The on-hand text of a PO line. On hand is stock TODAY, so a boxed split uses the product's CURRENT pack
+ * (`livePack`, the catalog's units-per-box), never the line's stored `linePack`: after a repack 12 -> 6,
+ * 30 pcs reads "5 boxes", the same as the inventory screen. A fractional figure keeps its fraction
+ * and is not split ("30.5 pcs"); a missing figure is a dash.
+ */
+export function onHandLabel(raw: number | string | null | undefined, livePack: number): string {
+  const n = onHandOf(raw);
+  if (n == null) return "—";
+  if (!Number.isInteger(n)) return `${n.toLocaleString("en-US", { maximumFractionDigits: 3 })} pcs`;
+  return unitsLabel(n, livePack > 1 ? livePack : null);
+}
+
+/** A stored line's display name, composed from its OWN include ("<Family> - <Variant>"), so an archived or
+ *  deleted product keeps its family name and nothing flips while the catalog loads. */
+export function poLineName(item: Pick<POItem, "product">, catalogName?: string): string {
+  const p = item.product;
+  if (!p) return catalogName ?? "—";
+  // An include that carries no family fields at all (an older read shape) cannot compose the name;
+  // the catalog's composed name is then the only source. A real read always has them (null for a standalone).
+  if (p.parentProductId === undefined && catalogName) return catalogName;
+  return displayProductName(p);
 }

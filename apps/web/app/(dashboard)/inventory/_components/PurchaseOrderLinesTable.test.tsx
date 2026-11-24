@@ -15,7 +15,7 @@ const COST_PER_PIECE = `Cost per ${UW.base.lower}`;
 
 const products: CatalogProduct[] = [
   { id: "p-each", name: "Napkins", sku: "NAP", unitsPerBox: 1 },
-  { id: "p-box", name: "Cola", unitsPerBox: 24 },
+  { id: "p-box", name: "Cola", unitsPerBox: 24, currentStock: 50 },
 ];
 
 /** Holds the lines like the modal does, and mirrors the latest value out for assertions. */
@@ -164,5 +164,53 @@ describe("PurchaseOrderLinesTable", () => {
     expect(screen.getByRole("columnheader", { name: /Cost per box/ })).toBeInTheDocument();
     expect(screen.queryByText("Unit cost ($)")).toBeNull();
     expect(screen.queryByText("Cost ($)")).toBeNull();
+  });
+
+  it("P1b: shows the stock on hand under the product and the line amount", () => {
+    const seen = { lines: [] as EditLine[] };
+    render(
+      <Harness
+        initial={[line({ productId: "p-box", boxes: "1000", pieces: "0", unitCost: "11" })]}
+        seen={seen}
+      />,
+    );
+    // 50 pieces on a 24-pack = 2 boxes + 2 pcs
+    expect(screen.getByTestId("po-line-on-hand").textContent).toContain("50 pcs (2 boxes + 2 pcs)");
+    // 1,000 cases at $11.00 is $11,000.00 (qty x the rounded per-piece cost gives $11,000.40)
+    expect(screen.getAllByText("$11,000.00").length).toBeGreaterThan(0);
+  });
+
+  describe("W-1325: a stored labelled line keeps its product", () => {
+    const HINT = "To change the product on this line, remove the line and add a new one.";
+    const productSelect = () => screen.getByLabelText("Product") as HTMLSelectElement;
+
+    it("disables the product picker and says why on a stored line with its own unit label", () => {
+      render(
+        <Harness
+          seen={{ lines: [] }}
+          initial={[
+            line({ id: "l1", productId: "p-each", qty: "5", unitCost: "2", unitLabel: "tray" }),
+          ]}
+        />,
+      );
+      expect(productSelect()).toBeDisabled();
+      expect(screen.getByText(HINT)).toBeInTheDocument();
+    });
+
+    it("keeps the picker open on a stored line with no label, and on a new line", () => {
+      render(
+        <Harness
+          seen={{ lines: [] }}
+          initial={[
+            line({ id: "l1", productId: "p-each", qty: "5", unitCost: "2" }),
+            line({ productId: "p-each", qty: "1", unitCost: "2", unitLabel: "tray" }),
+          ]}
+        />,
+      );
+      const pickers = screen.getAllByLabelText("Product");
+      expect(pickers).toHaveLength(2);
+      for (const s of pickers) expect(s).not.toBeDisabled();
+      expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    });
   });
 });

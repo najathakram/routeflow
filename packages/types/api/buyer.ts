@@ -21,6 +21,7 @@ import type {
 import type { LineComponentView } from "./orders";
 import type { InvoiceDisplayUnitView, PerBaseUnit } from "./invoices";
 import type { DecimalWire } from "./decimal";
+import type { InvoiceAccountRow } from "./invoice-account";
 
 export interface LockedCategory {
   id: string;
@@ -105,13 +106,31 @@ export interface BuyerStatementTransaction {
   expiresAt?: string | null;
 }
 
+/** One spendable credit row on the buyer's credit list (SA-1214). `description` never carries a staff reference. */
+export interface BuyerCreditItem {
+  kind: "NOTE" | "ADVANCE";
+  id: string;
+  date: string;
+  remaining: number;
+  description: string;
+}
+
 export interface BuyerStatement {
   outstandingAmount: number;
   overdueAmount: number;
-  /** Wallet balance: Σ roundMoney(amount − amountUsed) over open, non-expired,
-   *  non-VOID credit notes. Never nets AdvancePayment in. */
+  /** Available credit (SA-1208 D7), per route, and the two fields are NEVER added together:
+   *  - `GET /buyer/statement` (the portal and phone tiles): the TOTAL, unused open non-expired non-VOID credit
+   *    notes PLUS spendable advance balances. Shown on its own row, never netted against the open balance.
+   *  - the staff statement (`GET /customers/:id/statement`): the credit NOTES only.
+   *  Spendable advance: no source payment, or its source payment is PAID (B839). */
   availableCredit: number;
+  /** The advance part only. On the buyer route it is already INSIDE `availableCredit`, so no buyer screen reads it
+   *  (a pin in web and mobile jest fails if one does). On the staff statement it is the second tile. */
   advanceBalance: number;
+  /** Buyer route only (SA-1214): the spendable credit rows behind `availableCredit`, newest first, at most 50.
+   *  Their `remaining` sums to `availableCredit` unless `creditItemsTruncated`. Absent on older servers. */
+  creditItems?: BuyerCreditItem[];
+  creditItemsTruncated?: boolean;
   pendingOrdersAmount: number;
   /** Lifetime billed total (every non-DRAFT, non-VOID invoice), summed by the
    *  DATABASE over the whole history — never a reduce over the capped
@@ -436,6 +455,11 @@ export interface BuyerInvoiceListItem {
   revisedAt?: string | null;
   isOverdue: boolean;
   customer: { id: string; businessName: string };
+}
+
+/** SA-1228 D5: GET /buyer/invoices/:id only; the server's rows, printed as given (L-119). */
+export interface BuyerInvoiceDetailAccount {
+  accountBlock?: InvoiceAccountRow[];
 }
 
 // ─── Invoice detail lines + payments (#2703, SA-562/562a: server truth) ─────────

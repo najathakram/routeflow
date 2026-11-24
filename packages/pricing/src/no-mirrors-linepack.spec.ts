@@ -13,7 +13,11 @@ import { join, relative, sep } from "path";
  */
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const SCAN_ROOTS = ["apps/api/src", "apps/api/scripts", "apps/web", "apps/mobile", "scripts"];
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist"]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS]);
 const SOURCE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const TEST = /(\.spec\.|\.test\.|__tests__\/|\/e2e\/)/;
 const WEB_REEXPORT = "apps/web/app/(dashboard)/inventory/_components/purchase-orders-shared.ts";

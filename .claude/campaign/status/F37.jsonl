@@ -2,4 +2,4 @@
 {"id":"B301","batch":"F37","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B302","batch":"F37","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B303","batch":"F37","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B304","batch":"F37","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B304","batch":"F37","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"PR #4380: cart and reorder review show the server quote (POST /buyer/cart/quote) with tax and levy from create() (fixed in b0ceda1ab0ae84350f6a03deca1af38d6c305fd6)","sha":"b0ceda1ab0ae84350f6a03deca1af38d6c305fd6"}

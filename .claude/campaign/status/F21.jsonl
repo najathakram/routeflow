@@ -6,4 +6,4 @@
 {"id":"B113","batch":"F21","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0cd59277"}
 {"id":"B114","batch":"F21","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0cd59277"}
 {"id":"B115","batch":"F21","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0cd59277"}
-{"id":"B139","batch":"F21","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0b2c3a0a"}
+{"id":"B139","batch":"F21","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"PR #4371: getBuyerAccessToken reads the namespaced key only, buyerLogout clears the legacy keys, callback stops writing them; 3 cases red on master (fixed in 04e10077d4a789ec210d7e02e634a4d6c1a0f7ff)","roundSha":"0b2c3a0a","sha":"04e10077d4a789ec210d7e02e634a4d6c1a0f7ff"}

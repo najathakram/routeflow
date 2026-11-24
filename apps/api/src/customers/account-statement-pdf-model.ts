@@ -127,14 +127,16 @@ export function buildAccountStatementPdfModel(s: AccountStatement): AccountState
     credits: s.credits.map((c) => ({
       key: c.id,
       date: fmtPdfDate(c.date),
-      what: [
-        c.kind === "ADVANCE" ? "Advance" : "Credit note",
-        c.number,
-        c.reason,
-        c.expiresAt ? `Expires ${fmtPdfDate(c.expiresAt)}` : null,
-      ]
-        .filter(Boolean)
-        .join(" · "),
+      what: c.label
+        ? `${c.label}, ${fmtPdfDate(c.date)}`
+        : [
+            c.kind === "ADVANCE" ? "Advance" : "Credit note",
+            c.number,
+            c.reason,
+            c.expiresAt ? `Expires ${fmtPdfDate(c.expiresAt)}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
       amount: fmtMoney(c.remaining),
     })),
     foot: { label: "Open balance", value: fmtMoney(s.openBalance) },

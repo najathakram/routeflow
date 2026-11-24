@@ -81,7 +81,10 @@ const SCAN_DIRS = [
   path.join(WEB_ROOT, "components"),
   path.join(WEB_ROOT, "..", "..", "packages", "ui", "src", "web"),
 ];
-const SKIP_DIRS = new Set(["node_modules", ".next", ".jest-cache", "coverage"]);
+const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS]);
 const TEST_FILE = /\.(test|spec)\.(ts|tsx)$/;
 
 /** Files where a hit is genuinely safe. Path (posix, relative to apps/web) -> why. Keep this tiny. */

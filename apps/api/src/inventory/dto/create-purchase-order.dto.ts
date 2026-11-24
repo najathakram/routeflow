@@ -65,6 +65,8 @@ export class CreatePurchaseOrderDto {
   items: PurchaseOrderItemDto[];
   @IsOptional() @IsDateString() expectedDate?: string;
   @IsOptional() @IsString() notes?: string;
+  /** SA-1222: the Create PO builder draft this PO was made from; consumed in the same transaction (409 PO_DRAFT_GONE when gone). */
+  @IsOptional() @IsUUID() draftId?: string;
 }
 
 /**

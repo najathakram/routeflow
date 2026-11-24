@@ -18,6 +18,16 @@
 // alive), or the total wait passed the long MAX_WAIT backstop. A queue of several healthy jobs is
 // NOT a reason to give up.
 //
+// Priority lane (owner 2026-11-22): `RF_HEAVY_SLOT_PRIORITY=high git push ...` (set in the env of the WAITING
+// process) writes `priority: "high"` on its ticket. Grant order is then: high tickets first (FIFO among themselves),
+// then normal tickets (FIFO); a normal ticket queued over 120 min ago (PRIORITY_AGE_CAP_MS, fixed, from the ticket name) counts as high; the capped and stale rules still apply. A ticket without the field is normal, so with no
+// switch the order is exactly the old one. GRANT_RULE is NOT bumped: a waiter on older code ignores the field, sees plain
+// FIFO and may still take a free slot (the atomic `wx` lock picks one winner), so nobody is stranded; it just does not
+// defer to a high ticket that queued behind it. Priority is therefore guaranteed only against new-code waiters.
+//
+// A `max-cpu` file in the dir (integer percent 1..95; 96-100 are invalid and ignored, never clamped) overrides every waiter's cpu cap, re-read on each
+// check (like `slots`); a bad file logs one warning per reason, a valid one that changes the cap one line per value.
+//
 // Knobs (env): RF_HEAVY_SLOT_DIR, RF_HEAVY_SLOTS (default 1), RF_HEAVY_SLOT_MAX_WAIT_MIN (default
 // 720), RF_HEAVY_SLOT_MAX_HOLD_MIN (default 90; the HOLDER enforces it too, W-759: at the cap it ends its own job's
 // process tree and releases the slot with exit 76 and `capped: true` in history; waiters give up only HOLD_GRACE after the cap, so a
@@ -37,6 +47,7 @@ export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 120_000;
 export const DEFAULT_MAX_WAIT_MIN = 720;
 export const DEFAULT_MAX_HOLD_MIN = 90;
+export const PRIORITY_AGE_CAP_MS = 120 * 60_000; // a normal ticket older than this joins the high group (SA-1230)
 export const HOLD_GRACE_MS = 5 * 60_000; // waiters give up at cap + this, never at the cap itself
 export const HOLD_KILL_MS = 15_000; // after the cap's SIGTERM the holder releases the slot regardless of fn
 export const HOLD_CAP_EXIT_CODE = 76; // the job was ended at the hold cap
@@ -127,6 +138,30 @@ export function inspectSlotsFile(dir) {
 export function readSlotsFile(dir) {
   const f = inspectSlotsFile(dir);
   return f.state === "ok" ? f.value : null;
+}
+
+/**
+ * The machine-wide cpu cap file `<dir>/max-cpu` (owner 2026-11-22): a plain integer percent 1..95 (96-100 are ignored, not clamped: owner cap 95) that overrides every
+ * waiter's own RF_HEAVY_SLOT_MAX_CPU_PCT, re-read on each check like `slots`, so the cap moves without restarting
+ * waiters. { state: "absent" } | { state: "ok", value } | { state: "invalid", reason } (invalid = ignored).
+ */
+export function inspectMaxCpuFile(dir) {
+  let raw;
+  try {
+    raw = decodeSlotsBytes(fs.readFileSync(path.join(dir, "max-cpu")))?.trim();
+  } catch {
+    return { state: "absent" };
+  }
+  if (raw === undefined) return { state: "invalid", reason: "UTF-16 body has an odd byte count" };
+  if (!/^[0-9]+$/.test(raw))
+    return {
+      state: "invalid",
+      reason: `not a plain decimal integer: ${JSON.stringify(raw.slice(0, 20))}`,
+    };
+  const n = Number(raw);
+  return n >= 1 && n <= 95
+    ? { state: "ok", value: n }
+    : { state: "invalid", reason: `${n} is outside 1..95` };
 }
 
 function parseMinutesMs(raw, fallbackMin) {
@@ -485,6 +520,15 @@ export function staleReason(
 const CAPPED_LABEL = /verify|pre-?push|\bpush\b/i;
 export const DEFAULT_CAPPED_MAX = 2;
 
+/** RF_HEAVY_SLOT_PRIORITY: "high" (any case) or null. */
+export function parsePriority(raw) {
+  return String(raw ?? "")
+    .trim()
+    .toLowerCase() === "high"
+    ? "high"
+    : null;
+}
+
 export function isCappedLabel(label) {
   return CAPPED_LABEL.test(label ?? "");
 }
@@ -508,7 +552,16 @@ export function nextGrant({
   cappedHeld = 0,
   cappedMax = Infinity,
   stale,
+  high,
+  now,
 }) {
+  // `high` (names of priority tickets): they go first, FIFO among themselves, then the rest. Empty/absent = plain FIFO.
+  // A normal ticket older than PRIORITY_AGE_CAP_MS (age from the NAME's queuedAt ms, never the JSON) joins the high group
+  // in queue order, so a high ticket never starves it and an older high ticket is never jumped.
+  if (typeof now !== "number" || !Number.isFinite(now))
+    throw new Error("nextGrant: `now` must be a finite number (the age cap needs it)");
+  const up = (n) => high?.has(n) || now - Number(n.slice(0, 15)) > PRIORITY_AGE_CAP_MS;
+  if (high?.size) order = [...order.filter(up), ...order.filter((n) => !up(n))];
   const idx = order.indexOf(myName);
   const atCap = cappedHeld >= cappedMax;
   // A ticket written under an older grant rule (or none) is not first in line: its waiter does not apply this rule, so
@@ -522,13 +575,13 @@ export function nextGrant({
   };
 }
 
-export function formatWaitLine({ position, total, holder, now }) {
+export function formatWaitLine({ position, total, holder, now, priority }) {
   const held = holder
     ? `held by ${holder.label} on ${holder.branch || "?"}, pid ${holder.pid}, ${(
         Math.max(0, now - (holder.startedAt ?? now)) / 60_000
       ).toFixed(1)} min`
     : "held by (none yet)";
-  return `heavy-slot: waiting (position ${position} of ${total}) — ${held}`;
+  return `heavy-slot: waiting${priority === "high" ? " (priority)" : ""} (position ${position} of ${total}) — ${held}`;
 }
 
 /** Keep the last `max` non-empty lines of a history file's text. */
@@ -773,6 +826,7 @@ function resolveConfig(opts, env) {
     heartbeatMs: opts.heartbeatMs ?? parseMs(env.RF_HEAVY_SLOT_HEARTBEAT_MS, HEARTBEAT_MS),
     waitLogMs: opts.waitLogMs ?? WAIT_LOG_MS,
     maxCpuPct: opts.maxCpuPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_CPU_PCT),
+    priority: parsePriority(opts.priority ?? env.RF_HEAVY_SLOT_PRIORITY),
     cappedMax: opts.cappedMax ?? parseCappedMax(env.RF_HEAVY_SLOT_CAPPED_MAX),
     maxMemPct: opts.maxMemPct ?? parseLoadPct(env.RF_HEAVY_SLOT_MAX_MEM_PCT),
     sampleLoad: opts.sampleLoad ?? sampleMachineLoad,
@@ -824,6 +878,7 @@ async function acquire(cfg, state) {
     queuedAt,
     heartbeatAt: queuedAt,
     rule: GRANT_RULE,
+    ...(cfg.priority ? { priority: cfg.priority } : {}),
   };
   writeJson(ticketFile, base);
   const beat = setInterval(() => {
@@ -845,6 +900,7 @@ async function acquire(cfg, state) {
 
   let lastLog = -Infinity;
   let warnedSlots = null;
+  const warnedCpu = new Set(); // one max-cpu line per distinct reason / overriding value
   try {
     for (;;) {
       if (state.aborted)
@@ -872,6 +928,10 @@ async function acquire(cfg, state) {
       );
       if (isCappedLabel(cfg.label)) capped.add(name);
       if (!entries.some((t) => t.name === name)) entries.push({ name }); // just (re)written
+      const high = new Set(
+        snap.tickets.filter((t) => t.entry.priority === "high").map((t) => t.name),
+      );
+      if (cfg.priority) high.add(name); // my own ticket, even if just (re)written
       const g = nextGrant({
         order: orderTickets(entries).map((t) => t.name),
         myName: name,
@@ -880,14 +940,31 @@ async function acquire(cfg, state) {
         cappedHeld: snap.holders.filter((h) => isCappedLabel(h.entry.label)).length,
         cappedMax: cfg.cappedMax,
         stale: new Set(snap.tickets.filter((t) => ticketStale(t.entry)).map((t) => t.name)),
+        high,
+        now,
       });
       // Owner cap: first in line with a free slot, but the machine is too busy -> keep waiting. Sampled only
       // here (sampling takes ~3 s), so a job queued behind another holder costs nothing. A sampler that
       // throws fails open: the cap is a load guard, never a reason to wedge the queue.
       let busy = null;
-      if (g.grant && (cfg.maxCpuPct < 100 || cfg.maxMemPct < 100)) {
+      const cf = inspectMaxCpuFile(cfg.dir); // the machine-wide file wins over this waiter's own cap
+      const maxCpuPct = cf.state === "ok" ? cf.value : cfg.maxCpuPct;
+      const cpuNote =
+        cf.state === "invalid"
+          ? `ignoring ${cfg.dir}/max-cpu (${cf.reason}); using this waiter's own cpu cap ${cfg.maxCpuPct}%`
+          : cf.state === "ok" && cf.value !== cfg.maxCpuPct
+            ? `using machine-wide max-cpu ${cf.value}% from ${cfg.dir}/max-cpu (own cap ${cfg.maxCpuPct}%)`
+            : null;
+      if (cpuNote && !warnedCpu.has(cpuNote)) {
+        warnedCpu.add(cpuNote);
+        cfg.log(`heavy-slot: ${cpuNote}`);
+      }
+      if (g.grant && (maxCpuPct < 100 || cfg.maxMemPct < 100)) {
         try {
-          busy = loadOverReason(await sampleWithin(cfg.sampleLoad, cfg.sampleTimeoutMs), cfg);
+          busy = loadOverReason(await sampleWithin(cfg.sampleLoad, cfg.sampleTimeoutMs), {
+            maxCpuPct,
+            maxMemPct: cfg.maxMemPct,
+          });
           now = cfg.now(); // the sample took ~3 s: judge the max wait and the wait line on the clock after it
         } catch {
           busy = null;
@@ -948,6 +1025,7 @@ async function acquire(cfg, state) {
             total: g.total,
             holder: snap.holders[0]?.entry,
             now,
+            priority: cfg.priority,
           }),
         );
         lastLog = now;
@@ -1138,6 +1216,14 @@ export function formatStatus(
         ? `slots file: ${path.join(dir, "slots")} is INVALID (${sf.reason}) — ignored`
         : "slots file: none (each waiter uses its own RF_HEAVY_SLOTS)",
   );
+  const cf = inspectMaxCpuFile(dir);
+  out.push(
+    cf.state === "ok"
+      ? `max-cpu file: ${path.join(dir, "max-cpu")} = ${cf.value}% (overrides every waiter's RF_HEAVY_SLOT_MAX_CPU_PCT)`
+      : cf.state === "invalid"
+        ? `max-cpu file: ${path.join(dir, "max-cpu")} is INVALID (${cf.reason}) — ignored`
+        : "max-cpu file: none (each waiter uses its own RF_HEAVY_SLOT_MAX_CPU_PCT)",
+  );
   if (!st.holders.length) out.push("holder: none (slot free)");
   for (const h of st.holders) {
     const e = h.entry;
@@ -1153,7 +1239,7 @@ export function formatStatus(
   st.tickets.forEach((t, i) => {
     const e = t.entry;
     out.push(
-      `queue ${i + 1} of ${st.tickets.length}: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, waiting ${min(now - e.queuedAt)} min` +
+      `queue ${i + 1} of ${st.tickets.length}${e.priority === "high" ? " (priority)" : ""}: ${e.label} on ${e.branch || "?"} — pid ${e.pid}, waiting ${min(now - e.queuedAt)} min` +
         (ticketStale(e)
           ? ` **OLD GRANT RULE (ticket rule ${Number.isInteger(e.rule) ? e.rule : "none"}, current ${GRANT_RULE}): fresh waiters skip it; its waiter needs a restart**`
           : ""),

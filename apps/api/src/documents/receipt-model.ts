@@ -19,6 +19,7 @@ import {
   servedCashTendered,
   servedChange,
 } from "../orders/counter-sale/counter-sale-readback";
+import { CREDIT_WORDS_API } from "../common/credit-words";
 import { RECEIPT_FOOTER_MAX_CHARS } from "../system-config/receipt-footer";
 import {
   counterReturnSplit,
@@ -148,7 +149,8 @@ const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
 /**
  * A non-counter (delivery) order's Payment method line, exactly as master printed it: labels only, in master's order,
- * an advance application read as Store credit (#3576 Opus MUST: R7b is counter-only, so delivery emails never change).
+ * an advance application read as credit (#3576 Opus MUST: R7b is counter-only, so delivery emails never change the
+ * order or the fold). SA-1211 A1.7 supersedes "exactly as master printed it" for the WORD only: Store credit now reads Credit.
  */
 const DELIVERY_METHOD_ORDER = ["CASH", "CARD", "CHECK", "OTHER", "STORE_CREDIT"] as const;
 const DELIVERY_METHOD_LABEL: Record<(typeof DELIVERY_METHOD_ORDER)[number], string> = {
@@ -156,7 +158,7 @@ const DELIVERY_METHOD_LABEL: Record<(typeof DELIVERY_METHOD_ORDER)[number], stri
   CARD: "Card",
   CHECK: "Check",
   OTHER: "Other",
-  STORE_CREDIT: "Store credit",
+  STORE_CREDIT: CREDIT_WORDS_API.noun,
 };
 function deliveryMethodLine(tenders: ReadonlyArray<{ method: string }>): string {
   const used = new Set(tenders.map((t) => (t.method === "ADVANCE" ? "STORE_CREDIT" : t.method)));

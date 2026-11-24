@@ -484,7 +484,7 @@ function BuyerPortalInner() {
 
   const handleSellerClick = (seller: BuyerSeller) => {
     setActiveSeller(seller);
-    router.push(`/buyer/portal/${seller.tenant.slug}/orders`);
+    router.push(`/buyer/portal/${seller.tenant.slug}?then=orders`);
   };
 
   const handleRefresh = async () => {

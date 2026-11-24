@@ -125,6 +125,75 @@ describe("BuyerDashboardService — W7 gate", () => {
     });
   });
 
+  // SA-1211 A1.3: the Spending summary is invoices less credit notes, in the seller's days; orders are never summed.
+  describe("spending summary (SA-1211 A1.3: invoices, not orders)", () => {
+    const NOW = new Date("2026-11-15T18:00:00.000Z");
+    const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+    type Row = Record<string, any>;
+    const fakeAggregate = (rows: Row[], field: string) =>
+      jest.fn(async ({ where }: any) => {
+        const hit = rows.filter(
+          (r) =>
+            r.customerId === where.customerId &&
+            where.status.in.includes(r.status) &&
+            (!where.issueDate || r.issueDate >= where.issueDate.gte) &&
+            (!where.createdAt || r.createdAt >= where.createdAt.gte),
+        );
+        return { _sum: { [field]: hit.length ? hit.reduce((a, r) => a + r[field], 0) : null } };
+      });
+    const spend = async (invoices: Row[], notes: Row[] = [], orders: Row[] = []) => {
+      jest.useFakeTimers({ now: NOW, doNotFake: ["nextTick", "setImmediate", "queueMicrotask"] });
+      visibility.computeGate.mockResolvedValue({ hiddenIds: new Set(), locked: [] });
+      prisma.invoice.aggregate.mockImplementation(fakeAggregate(invoices, "total"));
+      prisma.creditNote.aggregate.mockImplementation(fakeAggregate(notes, "amount"));
+      // The old read: orders. It must not be what the figures come from.
+      prisma.order.aggregate.mockResolvedValue({
+        _sum: { total: orders.reduce((a, r) => a + r.total, 0) },
+      });
+      return (await service.getDashboard("c1")).stats;
+    };
+    const inv = (o: Row) => ({ customerId: "c1", status: "PAID", ...o });
+    afterEach(() => jest.useRealTimers());
+
+    it("an invoice-only buyer shows the invoices, not $0, in every window", async () => {
+      const st = await spend([inv({ total: 150, issueDate: day("2026-11-01") })]);
+      expect([st.spend30d, st.spend90d, st.spendAllTime]).toEqual([150, 150, 150]);
+    });
+
+    it("never sums orders: an order with no invoice adds nothing", async () => {
+      const st = await spend([], [], [{ total: 500 }]);
+      expect(st.spendAllTime).toBe(0);
+    });
+
+    it("$100 with a $40 return is $60; VOID and DRAFT are out", async () => {
+      const st = await spend(
+        [
+          inv({ total: 100, issueDate: day("2026-11-01") }),
+          inv({ status: "VOID", total: 900, issueDate: day("2026-11-01") }),
+          inv({ status: "DRAFT", total: 900, issueDate: day("2026-11-01") }),
+        ],
+        [
+          {
+            customerId: "c1",
+            status: "ISSUED",
+            amount: 40,
+            createdAt: new Date("2026-11-02T15:00:00Z"),
+          },
+        ],
+      );
+      expect(st.spendAllTime).toBe(60);
+    });
+
+    it("30 and 90 days are the seller's days: 20, 60 and 200 days back", async () => {
+      const st = await spend([
+        inv({ total: 1, issueDate: day("2026-10-26") }), // 20 days back
+        inv({ total: 10, issueDate: day("2026-09-16") }), // 60 days back
+        inv({ total: 100, issueDate: day("2026-04-29") }), // 200 days back
+      ]);
+      expect([st.spend30d, st.spend90d, st.spendAllTime]).toEqual([1, 11, 111]);
+    });
+  });
+
   it("1B: recent orders carry fulfillPath + shippedAt so the badge matches the order detail", async () => {
     visibility.computeGate.mockResolvedValue({ hiddenIds: new Set(), locked: [] });
     // The recent-orders read is the only order.findMany with a `select` + take 5.

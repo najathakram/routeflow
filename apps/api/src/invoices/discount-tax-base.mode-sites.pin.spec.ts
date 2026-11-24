@@ -22,7 +22,11 @@ import * as path from "path";
  */
 const ROOT = path.resolve(__dirname, "../../../..");
 const SCOPE_ROOTS = ["apps", "scripts"];
-const SKIP_DIRS = new Set(["node_modules", "dist", "__tests__"]);
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const { GENERATED_DIRS } = require("../../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS, "__tests__"]);
 const SOURCE = /\.(ts|tsx|mjs|cjs|js)$/;
 const TEST_FILE = /\.(spec|test|e2e-spec)\.(ts|tsx|mjs|cjs|js)$/;
 const TOKENS = [

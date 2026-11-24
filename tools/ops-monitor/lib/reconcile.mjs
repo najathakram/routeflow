@@ -562,6 +562,7 @@ export function reconcile({
   // lane-silent
   for (const lane of state.lanes.values()) {
     if (!lane.claims || lane.claims.length < 1) continue;
+    if (state.retiredLanes?.has(lane.id)) continue; // rf lane retire: off the board, history kept
     // The lane's activity (events, commits on its branches, handoffs) when the snapshot knows it.
     const last = laneActivity?.get(lane.id) ?? lane.lastEventAt ?? null;
     const silentMs = last === null ? Infinity : now - last;
@@ -692,6 +693,7 @@ export function reconcile({
   // anomaly (claim conflicts are reported once, by claim-conflict, only while live)
   for (const a of state.anomalies ?? []) {
     if (a.kind === "claim-conflict") continue;
+    if (a.acked) continue; // rf anomaly ack hides this one; a new anomaly of the kind still alarms
     const historical = Number.isFinite(a.ts) && now - a.ts >= 24 * HOUR;
     add({
       kind: "anomaly",
@@ -699,6 +701,7 @@ export function reconcile({
       message:
         `${historical ? "historical: " : ""}Event anomaly (${a.kind}): ${a.detail ?? ""}`.trim(),
       item: a.item ?? null,
+      ...(a.eventId ? { suggest: `rf anomaly ack ${a.eventId} --note "<why>"` } : {}),
       // eventId stands in for the target when the anomaly has no item.
       _target: a.item ?? a.eventId ?? a.kind,
     });

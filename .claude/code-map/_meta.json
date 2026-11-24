@@ -1,6 +1,6 @@
 {
-  "mappedSha": "a250e9194cb9e27bc00a8a7dd461a0eac7546a4c",
-  "generatedAt": "2026-11-19T19:32:39.987Z",
+  "mappedSha": "6296a86f0b",
+  "generatedAt": "2026-11-23T21:12:57Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -9,11 +9,11 @@
     "packages"
   ],
   "partCounts": {
-    "api": 38,
-    "web": 33,
-    "mobile": 16,
+    "api": 42,
+    "web": 36,
+    "mobile": 17,
     "packages": 0
   },
-  "fileCount": 1160,
-  "notes": "2026-11-19 (master f5dbd46a83): web landing note for #4367 (home wheel fit, spec 84 on the local lane), TOC row; see CHANGELOG.md. Earlier 2026-11-19 (master 8faa1a09e5): api and web landing notes for windows 54 to 59, TOC rows. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
+  "fileCount": 1162,
+  "notes": "2026-11-23 (master 6296a86f0b): window 42 landing notes (api, web, packages), five INDEX rows; mappedSha 6296a86f0b. 2026-11-23 (master 2fb17c47f6): window 41 landing notes (api and web), five INDEX rows; mappedSha 2fb17c47f6. 2026-11-23 (master e43d589f5f): window 40 landing notes (api and web), five INDEX rows; mappedSha e43d589f5f. 2026-11-23 (master ca66cb5fb8): window 39 landing notes (api and web), seven INDEX rows; mappedSha ca66cb5fb8. Earlier 2026-11-22 (master a07da9102d, partial): six areas refreshed in api/codemap-refresh-2026-11-22.md. See CHANGELOG.md. Windows 13 to 26 (11-07 to 11-09) are not mapped yet."
 }

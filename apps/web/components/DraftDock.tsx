@@ -36,10 +36,15 @@ export function DraftDock() {
   return <DraftDockInner />;
 }
 
-// The `kind` a resumed draft routes to. Order drafts are the only kind the
-// builder can create today; invoice drafts are handled once that builder is wired.
+// The `kind` a resumed draft routes to: invoices to the invoice builder, a PURCHASE_ORDER draft (SA-1222) to the
+// Create PO surface (the Purchase orders page), everything else to the order builder.
 function resumeHref(draft: SaleDraft, scanCode?: string): string {
-  const base = draft.kind === "INVOICE" ? "/invoices/new" : "/orders";
+  const base =
+    draft.kind === "INVOICE"
+      ? "/invoices/new"
+      : draft.kind === "PURCHASE_ORDER"
+        ? "/purchase-orders"
+        : "/orders";
   // Merge the intent onto the CURRENT query when resuming from the same route
   // the dock is floating over. Building it from scratch dropped the operator's
   // list state — `?page=` and `?search=` — because the target page's deep-link
@@ -186,7 +191,7 @@ function DraftDockInner() {
   // One chip per draft, shared by the floating dock and the till's popover.
   const chipRows = (rows: SaleDraft[]) =>
     rows.map((draft, i) => {
-      const { title, itemCount, total } = draftSummary(draft);
+      const { title, itemCount, total, hasTotal } = draftSummary(draft);
       return (
         <div
           key={draft.id}
@@ -201,9 +206,15 @@ function DraftDockInner() {
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-semibold">{title}</p>
             <p className="truncate text-[11.5px] text-white/55">
-              {itemCount} item{itemCount === 1 ? "" : "s"} ·{" "}
-              <span className="font-mono">${total.toFixed(2)}</span> · paused{" "}
-              {parkedAgo(draft.updatedAt)}
+              {!hasTotal ? (
+                <>paused {parkedAgo(draft.updatedAt)}</>
+              ) : (
+                <>
+                  {itemCount} item{itemCount === 1 ? "" : "s"} ·{" "}
+                  <span className="font-mono">${total.toFixed(2)}</span> · paused{" "}
+                  {parkedAgo(draft.updatedAt)}
+                </>
+              )}
             </p>
           </div>
           <Button size="sm" onClick={() => resume(draft)}>

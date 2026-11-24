@@ -426,6 +426,14 @@ function payloadLineItems(payload: unknown): DraftLineItem[] {
 }
 
 /**
+ * SA-1222: the drafts this build can open. A PURCHASE_ORDER builder draft (web Create PO) is skipped, never listed as an "Order" and
+ * never swept; so is any kind a newer server may add.
+ */
+export function openableDrafts<T extends { kind: string }>(drafts: readonly T[]): T[] {
+  return drafts.filter((d) => d.kind === "ORDER" || d.kind === "INVOICE");
+}
+
+/**
  * Strip display fields for a draft: a title, item count, and running subtotal
  * — computed with the shared money helper (`computeLineSubtotal`, boxed
  * proration) so it matches the builder exactly, never a raw `qty * unitPrice`.

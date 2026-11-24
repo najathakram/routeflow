@@ -27,7 +27,7 @@ import {
 } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
-import { checkBadgeFor } from "@/lib/check-badge";
+import { paymentRowBadge } from "@/lib/check-badge";
 import { paymentMethodLabel } from "@/lib/payment-methods";
 import { BuyerOpenBalanceButton } from "@/components/account-statement/BuyerOpenBalanceButton";
 import { MakePaymentPanel } from "./_components/MakePaymentPanel";
@@ -249,7 +249,7 @@ function BuyerPaymentsPageInner() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         <StatCard
           icon={Wallet}
-          label="Store credit"
+          label="Credit"
           value={fmt(statement?.availableCredit ?? 0)}
           sub={hasActiveCredit ? "Available" : "None available"}
           color="bg-buyer-50 text-buyer-600"
@@ -352,7 +352,7 @@ function BuyerPaymentsPageInner() {
                   </thead>
                   <tbody className="divide-y divide-surface-border">
                     {rows.map((p) => {
-                      const badge = checkBadgeFor(p);
+                      const badge = paymentRowBadge(p);
                       const voided = p.status === "VOID";
                       return (
                         <tr key={p.id} className="hover:bg-surface-raised/50">

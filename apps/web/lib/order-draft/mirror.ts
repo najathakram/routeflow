@@ -15,6 +15,8 @@ export const LOCAL_MIRROR_MS = 300;
 
 export interface MirrorWriteInput {
   localId: string;
+  /** SA-1222: the draft's kind; absent (an older caller) = ORDER. */
+  kind?: LocalDraftRecord["kind"];
   serverDraftId: string | null;
   serverUpdatedAt: string | null;
   syncedHash: string | null;
@@ -62,6 +64,7 @@ export function createDraftMirror(opts: {
       localId: input.localId,
       tenantId,
       userId,
+      kind: input.kind ?? "ORDER",
       serverDraftId: input.serverDraftId,
       serverUpdatedAt: input.serverUpdatedAt,
       syncedHash: input.syncedHash,

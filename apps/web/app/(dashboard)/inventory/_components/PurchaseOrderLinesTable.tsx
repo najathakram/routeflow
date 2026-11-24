@@ -4,9 +4,14 @@ import * as React from "react";
 import { Plus, X } from "lucide-react";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
-import { linePack, resolvePOLine, resolvePOLineAmounts } from "./purchase-orders-shared";
+import {
+  linePack,
+  onHandLabel,
+  resolvePOLine,
+  resolvePOLineAmounts,
+} from "./purchase-orders-shared";
 import { emptyEditLine, type EditLine } from "./purchase-orders-edit";
-import { unitWords } from "@routeflow/pricing";
+import { billLineUnit, unitWords } from "@routeflow/pricing";
 
 // U-3a: a PO line carries no per-product label yet, so this prints the default words.
 const UW = unitWords();
@@ -16,6 +21,8 @@ export type CatalogProduct = {
   name: string;
   sku?: string;
   unitsPerBox?: number | null;
+  /** The stock reader's on-hand figure, in pieces (absent when the read carries none). */
+  currentStock?: number | string | null;
 };
 
 const inputCls =
@@ -112,7 +119,13 @@ export function PurchaseOrderLinesTable({
             const upb = linePack(line, unitsPerBoxFor(line.productId)); // B699: stored pack wins
             const isBoxed = upb > 1;
             const locked = received && !!line.id && line.received > 0;
+            // A stored line that states its own unit keeps its product (the API answers 409 otherwise).
+            const keepsProduct = !!line.id && billLineUnit({ unitLabel: line.unitLabel }).stated;
             const { qty } = resolvePOLine(line, upb);
+            const onHandText = onHandLabel(
+              productById.get(line.productId)?.currentStock,
+              unitsPerBoxFor(line.productId),
+            );
             const subtotal = resolvePOLineAmounts(line, upb).totalCost;
             return (
               <div
@@ -124,7 +137,7 @@ export function PurchaseOrderLinesTable({
                   <select
                     aria-label="Product"
                     value={line.productId}
-                    disabled={locked}
+                    disabled={locked || keepsProduct}
                     onChange={(e) => updateLine(i, { productId: e.target.value, packSize: null })}
                     className={inputCls}
                   >
@@ -139,6 +152,16 @@ export function PurchaseOrderLinesTable({
                       </option>
                     ))}
                   </select>
+                  {line.productId && (
+                    <p data-testid="po-line-on-hand" className="mt-0.5 text-[10px] text-navy/50">
+                      On hand: {onHandText}
+                    </p>
+                  )}
+                  {keepsProduct && (
+                    <p className="mt-0.5 text-[10px] text-navy/50">
+                      To change the product on this line, remove the line and add a new one.
+                    </p>
+                  )}
                   {locked && (
                     <p className="mt-0.5 text-[10px] text-navy/50">
                       Received: {isBoxed ? unitsLabel(line.received, upb) : line.received}

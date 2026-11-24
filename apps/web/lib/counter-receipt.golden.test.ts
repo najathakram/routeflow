@@ -124,7 +124,7 @@ describe("receipt golden: live vs reprint", () => {
   });
   it("store credit is labelled, not hidden, and the date reads in the sale timezone", () => {
     const b = reprint([{ method: "STORE_CREDIT", amount: 24.5 }]);
-    expect(b.methodLabel).toBe("Store credit");
+    expect(b.methodLabel).toBe("Credit");
     expect(b.dateLabel).toMatch(/11:15/);
   });
   it("the live receipt reads the sale time in the tenant zone, the same clock as the reprint", () => {

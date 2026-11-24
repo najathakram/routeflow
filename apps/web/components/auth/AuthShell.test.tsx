@@ -106,3 +106,25 @@ describe("AuthShell in the site frame", () => {
     }
   });
 });
+
+// SA-1211: a store (buyer) arriving from an invite or a verify link is not a prospect, so the
+// marketing "Start free trial" button is gone from the retailer doors; the distributor doors keep it.
+describe("AuthShell trial button", () => {
+  const trialLinks = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("a")).filter((a) =>
+      /start free trial/i.test(a.textContent ?? ""),
+    );
+
+  it("keeps Start free trial on the distributor doors", () => {
+    expect(trialLinks(renderShell(DISTRIBUTOR)).length).toBeGreaterThan(0);
+  });
+
+  it("shows no Start free trial link on the retailer doors (header, phone menu or footer)", () => {
+    const { container } = render(
+      <AuthShell audience="retailer" kicker="Retailer account" title="Confirm your email.">
+        <form aria-label="probe" />
+      </AuthShell>,
+    );
+    expect(trialLinks(container)).toHaveLength(0);
+  });
+});

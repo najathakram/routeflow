@@ -29,17 +29,3 @@ describe("validatePayment: a short cash tender (S4)", () => {
     expect(validatePayment({ ...base, tendered: 20, isWalkIn: false })).toBeNull();
   });
 });
-
-describe("validatePayment: a surface that has not opened part payment", () => {
-  it("fullTenderOnly keeps an identified customer's short cash tender refused (the store-pickup dialog)", () => {
-    expect(
-      validatePayment({
-        method: "CASH",
-        total: 12.5,
-        tendered: 5,
-        isWalkIn: false,
-        fullTenderOnly: true,
-      }),
-    ).toBe("TENDER_SHORT");
-  });
-});

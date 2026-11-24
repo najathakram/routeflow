@@ -1,6 +1,6 @@
 import {
-  COUNTER_METHOD_LABEL,
   counterMethodLine,
+  counterMethodParts,
   dayCloseDateLabel,
   explainedTaxRatePercent,
   formatReceiptMoney,
@@ -182,12 +182,8 @@ export function tenderRows(input: {
     methodLabel: hasTender
       ? split
         ? counterMethodLine(tenders, { checkReference })
-        : tenders
-            .map((m) =>
-              m.method === "CHECK" && checkReference
-                ? `${REPRINT_METHOD_LABEL[m.method]} #${checkReference}`
-                : REPRINT_METHOD_LABEL[m.method],
-            )
+        : counterMethodParts(tenders, { checkReference })
+            .map((p) => p.label)
             .join(" + ")
       : null,
     returns: lines
@@ -365,6 +361,8 @@ export function buildCounterReceipt(input: {
           : METHOD_LABEL[method]
         : null,
     ...(tenderSplit ? tenderSplit.returns : {}),
+    // SA-1211 A1.1: the server's stored return lines, as given (the view words each reason code)
+    ...(receipt.returnItems?.length ? { returnItems: receipt.returnItems } : {}),
     tendered,
     tenderedAsEntered,
     change,
@@ -455,8 +453,6 @@ export interface ReprintSaleFacts {
 
 /** The tender of a today's-sales row (the shared POS-7b-1 type; never hand-typed here). */
 export type ReprintTender = TodaysSaleMethod;
-
-const REPRINT_METHOD_LABEL = COUNTER_METHOD_LABEL;
 
 /**
  * "Oct 7, 2026, 11:15 AM" in the given zone (the sale's own zone, not the browser's). The tenant timezone is a free
