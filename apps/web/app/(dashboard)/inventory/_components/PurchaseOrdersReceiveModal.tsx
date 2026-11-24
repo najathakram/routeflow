@@ -13,6 +13,7 @@ export function ReceivePOModal({
   po,
   products,
   onClose,
+  onReceived,
 }: {
   po: PurchaseOrder;
   /** Same catalog list threaded through from the page — carries `unitsPerBox`
@@ -20,6 +21,8 @@ export function ReceivePOModal({
    *  which come back without the `product` relation. */
   products: { id: string; name?: string; unitsPerBox?: number | null }[];
   onClose: () => void;
+  /** Called once the receive succeeded (the detail page offers the supplier bill then). */
+  onReceived?: () => void;
 }) {
   const receivePO = useReceivePurchaseOrder();
   const { toast } = useToast();
@@ -83,6 +86,7 @@ export function ReceivePOModal({
       {
         onSuccess: () => {
           toast({ title: "Purchase order received.", variant: "success" });
+          onReceived?.();
           onClose();
         },
         onError: () => toast({ title: "Failed to receive purchase order.", variant: "error" }),
