@@ -57,6 +57,9 @@ export function counterRowItem(
  * quantity goes through `setLineQty` (whole numbers, the 100,000-piece cap, said when refused); the price changes only through
  * the till's price dialog (tap the price), gated by EDIT_LINE_PRICE; History opens that dialog at the picked price.
  */
+/** SA-1262: the till holds a quantity box's text until Enter, Tab or blur (a scan into a box is one whole number). */
+const COUNTER_QTY_ENTRY = { commit: "enter" } as const;
+
 export function CounterLineRow({
   line: l,
   locked,
@@ -153,6 +156,7 @@ export function CounterLineRow({
       noteAutoFocus
       hideOriginalPrice={hideOriginalPrice}
       touchTargets
+      qtyEntry={COUNTER_QTY_ENTRY}
       flexFrom="lg"
       labels={{
         remove: `Remove ${l.name}`,

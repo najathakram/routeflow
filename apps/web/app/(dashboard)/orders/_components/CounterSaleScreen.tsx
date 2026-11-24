@@ -146,6 +146,7 @@ import {
   takeLine,
   toSaleItem,
 } from "./counter-sale-line-edit";
+import { handsBackToScan, isQtyBox } from "./counter-qty-keys";
 import { useCounterSaleScan } from "./useCounterSaleScan";
 import { CounterScanFeedback } from "./CounterScanFeedback";
 import { useCounterNewItem } from "./CounterNewItem";
@@ -2087,18 +2088,10 @@ export function CounterSaleScreen() {
             }}
             onChange={(e) => {
               const t = e.target as HTMLElement;
-              if (t instanceof HTMLInputElement && t.type === "number") typedQtyRef.current = t;
+              if (isQtyBox(t)) typedQtyRef.current = t;
             }}
             onKeyDown={(e) => {
-              const t = e.target as HTMLElement;
-              if (!(t instanceof HTMLInputElement) || t.type !== "number") return;
-              const fields = t.closest("li")?.querySelectorAll('input[type="number"]');
-              const tabOut =
-                e.key === "Tab" &&
-                !e.shiftKey &&
-                typedQtyRef.current === t &&
-                fields?.[fields.length - 1] === t;
-              if (e.key !== "Enter" && !tabOut) return;
+              if (!handsBackToScan(e, typedQtyRef.current)) return;
               e.preventDefault();
               typedQtyRef.current = null;
               refocusFromActive();

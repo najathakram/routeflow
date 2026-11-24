@@ -3,6 +3,7 @@
 import * as React from "react";
 import type { UnitWords } from "@routeflow/pricing";
 import { cn } from "@routeflow/ui/web";
+import { useHeldQty, type QtyEntry } from "./use-held-qty";
 
 /**
  * #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
@@ -57,6 +58,8 @@ export interface CasesPiecesInputProps {
   inputClassName?: string;
   /** The counter till: the extra-pieces buttons are full 44 px targets below lg (default: the hit slop only). */
   touchTargets?: boolean;
+  /** SA-1262: hold both fields' text until Enter, Tab or blur (the counter only). Absent = a commit per keystroke. */
+  qtyEntry?: QtyEntry;
 }
 
 /**
@@ -80,10 +83,13 @@ export function CasesPiecesInput({
   onSetPieces,
   inputClassName = DEFAULT_INPUT,
   touchTargets = false,
+  qtyEntry,
 }: CasesPiecesInputProps) {
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(pieces);
   const boxesField = useTypedNumber(boxes, onSetBoxes);
   const piecesField = useTypedNumber(pieces, onSetPieces);
+  const heldBoxes = useHeldQty(boxes ?? 0, onSetBoxes, qtyEntry);
+  const heldPieces = useHeldQty(pieces ?? 0, onSetPieces, qtyEntry);
   // F10: the "+ pieces" button unmounts when it opens the field, so focus would fall to the page top; follow it.
   const piecesRef = React.useRef<HTMLInputElement>(null);
   const focusPiecesNext = React.useRef(false);
@@ -104,6 +110,8 @@ export function CasesPiecesInput({
           onChange={boxesField.onChange}
           onBlur={boxesField.onBlur}
           onFocus={(e) => e.target.select()}
+          data-qty-box=""
+          {...heldBoxes}
           className={inputClassName}
           title={`Number of whole ${w.pack.lowerOther}`}
         />
@@ -127,6 +135,8 @@ export function CasesPiecesInput({
             onChange={piecesField.onChange}
             onBlur={piecesField.onBlur}
             onFocus={(e) => e.target.select()}
+            data-qty-box=""
+            {...heldPieces}
             className={inputClassName}
             title={`Extra ${w.base.lowerOther} (less than a full ${w.pack.lower})`}
             aria-label={`Extra ${w.base.lowerOther}`}
