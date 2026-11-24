@@ -170,7 +170,9 @@ describe("pages read the fixture brand and show none of the real one", () => {
   });
 
   it("the small strings read the name", () => {
-    expect(rendered["not-found"]).toContain(`Back to ${FIXTURE.name}`);
+    // the 404 button names no brand: the frame shows the site name, the page the old one (C7)
+    expect(rendered["not-found"]).toContain("Back to the home page");
+    expect(rendered["not-found"]).not.toContain(`Back to ${FIXTURE.name}`);
     expect(rendered.login).toContain(`New to ${FIXTURE.name}?`);
     expect(rendered["buyer login"]).toContain(`Selling on ${FIXTURE.name}?`);
     expect(rendered["admin-login"]).toContain(`${FIXTURE.name} Platform`);

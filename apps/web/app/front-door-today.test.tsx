@@ -32,9 +32,10 @@ describe("T4: the app and the front door keep today's name, marks and host", () 
     expect(JSON.stringify(md.icons)).toContain("/brand/routeflow-mark-180.png");
   });
 
-  it("the app 404 says today's name; its frame is the site's", () => {
+  it("the app 404 button names no brand; its frame is the site's", () => {
     const html = renderToStaticMarkup(createElement(NotFound));
-    expect(html).toContain(`Back to ${TODAY}`);
+    expect(html).toContain("Back to the home page");
+    expect(html).not.toContain(`Back to ${TODAY}`);
   });
 
   it("BRAND_DOMAIN is today's host", () => {
