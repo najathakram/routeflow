@@ -1788,6 +1788,8 @@ export class InventoryService {
         }
 
         const prod = await tx.product.findUnique({ where: { id: item.productId } });
+        // W-1318: a PO line written before the create guard must not post stock against a FAMILY container.
+        if (prod) assertSellableLines([prod]);
 
         // Boxed payloads convert to pieces up front; a bare receivedQty/
         // qtyReceived KEEPS meaning pieces (existing callers must be
