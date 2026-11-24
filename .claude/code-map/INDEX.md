@@ -124,6 +124,9 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Buyer invoice account rows, one renderer | [`web`](web/landing-2026-11-23-w42.md) → `components/InvoiceAccountRows.tsx` |
 | Buyer payment status word | [`web`](web/landing-2026-11-23-w42.md) → `lib/check-badge.ts` |
 | Ops board comments and rf inbox | [`api`](api/landing-2026-11-23-w42.md) → `tools/ops-monitor/lib/inbox.mjs` |
+| Pre-push verify fail-fast (RF_VERIFY_FAIL_FAST) | [`api`](api/landing-2026-11-24-w44.md) → `scripts/lib/verify-fail-fast.mjs` |
+| Edited test assertions flagger | [`api`](api/landing-2026-11-24-w44.md) → `scripts/review-test-edits.mjs` |
+| Dashboard overdue days, new-sale quantity | [`web`](web/landing-2026-11-24-w44.md) → `app/(dashboard)/dashboard/page.tsx` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →
