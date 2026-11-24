@@ -32,6 +32,8 @@ import {
 const logger = new Logger("OpenCheckoutSession");
 const DAY_S = 86_400;
 const LIST_PAGE = 100;
+/** Sessions older than this are not listed: Stripe caps a session at 24 h, and the idempotency key's predecessor is at most that old. */
+const LIST_WINDOW_S = 2 * DAY_S;
 /** Pages read per customer (500 sessions). A customer with more fails closed (503): a blind spot is never a green light. */
 const LIST_MAX_PAGES = 5;
 
@@ -130,6 +132,7 @@ async function tenantSessions(
     for (let n = 0; n < LIST_MAX_PAGES; n++) {
       const page = await d.stripe.client.checkout.sessions.list({
         customer: customerId,
+        created: { gte: Math.floor(Date.now() / 1000) - LIST_WINDOW_S },
         limit: LIST_PAGE,
         ...(status ? { status } : {}),
         ...(after ? { starting_after: after } : {}),
@@ -166,36 +169,44 @@ async function closeOpen(d: SlotDeps, tenantId: string, sessions: Sess[]): Promi
   }
 }
 
+/** What the slot bills: the hashed terms and the full create body (without the hash). */
+export interface SlotOffer {
+  terms: SessionTerms;
+  params: Stripe.Checkout.SessionCreateParams;
+}
 /**
- * Open (or reuse) the business's one session for `terms`. `params` is the full create body without the terms hash.
- * Hosted sessions only are reused: an embedded one has no url to hand a second click.
+ * Reads the business's terms. The slot calls it ONLY while it holds the tenant-price lock, after the unapplied
+ * check (price-lock.ts: lock, then read). It takes no input: a caller gives the slot ids, never values.
  */
-export async function openCheckoutSession(
-  d: SlotDeps,
-  a: {
-    tenantId: string;
-    customerId: string;
-    surface: CheckoutSurface;
-    terms: SessionTerms;
-    params: Stripe.Checkout.SessionCreateParams;
-  },
-): Promise<CheckoutStart> {
-  const { terms } = a;
-  const hash = sha(
+export type SlotOfferReader = () => Promise<SlotOffer>;
+
+const termsHash = (terms: SessionTerms, surface: CheckoutSurface) =>
+  sha(
     JSON.stringify([
       terms.planKey,
       terms.unitAmount,
       [...terms.addonSkus].sort(),
       terms.addonLines.map((l) => [l.unitAmount, l.quantity]).sort(),
       terms.anchorAt.getTime(),
-      checkoutUiMode(a.surface),
+      checkoutUiMode(surface),
     ]),
   ).slice(0, 32);
+
+/**
+ * Open (or reuse) the business's one session for the terms `readOffer` returns under the lock.
+ * Hosted sessions only are reused: an embedded one has no url to hand a second click.
+ */
+export async function openCheckoutSession(
+  d: SlotDeps,
+  a: { tenantId: string; customerId: string; surface: CheckoutSurface; readOffer: SlotOfferReader },
+): Promise<CheckoutStart> {
   return underSlotLock(
     a.tenantId,
     async () => {
       const sessions = await tenantSessions(d, a.tenantId, a.customerId);
       if (hasUnapplied(sessions, await readRow(d, a.tenantId))) throw inProgress();
+      const { terms, params } = await a.readOffer(); // the ONLY term read, under the lock
+      const hash = termsHash(terms, a.surface);
       const live = sessions.find(
         (s) =>
           s.status === "open" &&
@@ -207,7 +218,7 @@ export async function openCheckoutSession(
       await closeOpen(d, a.tenantId, sessions);
       const session = await d.stripe.client.checkout.sessions.create(
         withCheckoutPolicy(
-          { ...a.params, metadata: { ...a.params.metadata, termsHash: hash } },
+          { ...params, metadata: { ...params.metadata, termsHash: hash } },
           { surface: a.surface },
         ),
         {
@@ -226,8 +237,9 @@ export async function openCheckoutSession(
 
 /**
  * Expire the business's open sessions before a plan or price change commits. The CALLER holds the tenant-price lock
- * ACROSS the whole change (upgrade, subscribe, downgrade and the fee save all take it before this call and keep it
- * through their write), so a Pay now cannot open a session at the old terms between the expire and the commit. A
+ * ACROSS the whole change (upgrade, subscribe, downgrade, the plan edit and the fee save all take it before this call
+ * and keep it through their write), and the slot reads its terms under the same lock, so a Pay now cannot open a
+ * session at the old terms between the expire and the commit. A
  * complete-but-unapplied session or a failed expire refuses the change with a code: completion writes `planKey`
  * from the session's metadata. The unapplied check stays closed for the 24 h a session can still complete in.
  */

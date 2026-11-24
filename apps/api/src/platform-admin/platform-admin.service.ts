@@ -1208,6 +1208,9 @@ export class PlatformAdminService {
     const repriceZone =
       leavesInclusion && addonMode === "MANUAL" ? await dunningZone(this.prisma, id) : "UTC";
     let leavingToBill: LeavingAddon[] = [];
+    // W-1338 L14: a plan move closes the open payment link (it would complete and revert planKey), after every refusal above.
+    if (fromKey !== targetPlanKey)
+      await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, id);
     // R1 Option B: undo an early pre-renewal downgrade push BEFORE this change prorates from Stripe's price.
     if (priorSub?.stripeSubId && priorSub.downgradeToPlanKey && fromKey !== targetPlanKey) {
       await this.scheduledPrice?.restoreIfPushedLocked(id, priorSub.downgradeToPlanKey, {
@@ -2450,14 +2453,15 @@ export class PlatformAdminService {
         stripeCustomerId: true,
       },
     });
-    // W-1338 L14: a fee change closes the open payment link first (it would complete at the old price).
-    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, id, existing);
     const nextMonthly =
       dto.monthly === undefined ? (existing?.priceOverrideMonthly ?? null) : dto.monthly;
     if (nextMonthly == null) {
       // Throws BadRequestException when the catalog can't price this tenant's plan.
       await this.platformPricingService.resolveCatalogPricing(id);
     }
+    // W-1338 L14: a fee change closes the open payment link (it would complete at the old price), after the refusal above
+    // and before the first Stripe write (the push refusals below are outcomes of that write).
+    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, id, existing);
 
     // R1 Option B: if a pre-renewal push already moved Stripe onto a scheduled downgrade's LOWER price, put the
     // current plan's price back FIRST - the override then applies (and prorates, if asked) from the right price,

@@ -3,6 +3,7 @@ import { BillingService } from "./billing.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { LockTimeoutError } from "../common/db-locks";
 import { pinWallClock } from "../testing/pin-clock";
+import { underSlotLock } from "./open-checkout-session";
 
 /**
  * W-1338 / SA-1267 PR-1: ONE open-session slot per tenant for the admin link and the tenant's own Pay now.
@@ -11,6 +12,8 @@ import { pinWallClock } from "../testing/pin-clock";
  */
 
 const locked = { fail: null as null | Error, waits: [] as number[] };
+/** The lock keys held right now (family:key), so a spy can say whether a read ran under the lock. */
+const held = new Set<string>();
 const chains = new Map<string, Promise<unknown>>();
 jest.mock("../common/db-locks", () => {
   const actual = jest.requireActual("../common/db-locks");
@@ -23,10 +26,14 @@ jest.mock("../common/db-locks", () => {
       locked.waits.push(o.waitMs ?? -1);
       if (locked.fail) throw locked.fail;
       const k = `${o.family}:${o.key}`;
-      const run = (chains.get(k) ?? Promise.resolve()).then(async () => ({
-        acquired: true,
-        value: await fn(),
-      }));
+      const run = (chains.get(k) ?? Promise.resolve()).then(async () => {
+        held.add(k);
+        try {
+          return { acquired: true, value: await fn() };
+        } finally {
+          held.delete(k);
+        }
+      });
       chains.set(
         k,
         run.catch(() => undefined),
@@ -66,9 +73,18 @@ function fakeStripe(customerId = "cus_1") {
     return s;
   });
   const list = jest.fn(
-    async (p: { customer?: string; status?: string; limit?: number; starting_after?: string }) => {
+    async (p: {
+      customer?: string;
+      status?: string;
+      created?: { gte?: number };
+      limit?: number;
+      starting_after?: string;
+    }) => {
       const all = sessions.filter(
-        (s) => (!p.customer || s.customer === p.customer) && (!p.status || s.status === p.status),
+        (s) =>
+          (!p.customer || s.customer === p.customer) &&
+          (!p.status || s.status === p.status) &&
+          (p.created?.gte === undefined || s.created >= p.created.gte),
       );
       const from = p.starting_after ? all.findIndex((s) => s.id === p.starting_after) + 1 : 0;
       const limit = p.limit ?? 10;
@@ -104,7 +120,11 @@ function make(
 ) {
   const tenantId = opts.tenantId ?? "t1";
   const fake = opts.stripeState ?? fakeStripe();
-  const price = { unit: opts.unitAmount ?? 9900 };
+  const price = { unit: opts.unitAmount ?? 9900, plan: "STARTER" };
+  /** Every term read, with whether it ran under the tenant-price lock and whether it was the read-only gate. */
+  const reads: { fn: string; readOnly: boolean; locked: boolean }[] = [];
+  const seen = (fn: string, o?: { readOnly?: boolean }) =>
+    reads.push({ fn, readOnly: !!o?.readOnly, locked: held.has("tenant-price:t1") });
   const prisma: any = {
     tenant: {
       findUnique: jest.fn(async () => ({
@@ -132,10 +152,12 @@ function make(
   };
   const pricing: any = {
     resolveTenantPricing: jest.fn(async () => {
+      seen("resolveTenantPricing");
       if (opts.unpriced) throw new Error("no price");
-      return { planKey: "STARTER" };
+      return { planKey: price.plan };
     }),
-    checkoutPriceData: jest.fn(async (_t: string, interval: string) => {
+    checkoutPriceData: jest.fn(async (_t: string, interval: string, _p?: unknown, o?: any) => {
+      seen("checkoutPriceData", o);
       if (opts.unpriced) throw new Error("no price");
       return {
         currency: "usd",
@@ -146,16 +168,17 @@ function make(
     }),
   };
   const mutations: any = {
-    checkoutAddonLines: jest.fn(async () =>
-      opts.addon
+    checkoutAddonLines: jest.fn(async (_t: string, _i: string, o?: any) => {
+      seen("checkoutAddonLines", o);
+      return opts.addon
         ? {
             lineItems: [
               { price_data: { unit_amount: opts.addon.amount, product: "prod_a" }, quantity: 1 },
             ],
             skus: ["REGULATED_ITEMS"],
           }
-        : { lineItems: [], skus: [] },
-    ),
+        : { lineItems: [], skus: [] };
+    }),
   };
   const billing = new BillingService(
     prisma,
@@ -168,13 +191,14 @@ function make(
     {} as any,
     mutations,
   );
-  return { billing, prisma, price, ...fake, fake };
+  return { billing, prisma, price, reads, ...fake, fake };
 }
 
 beforeEach(() => {
   pinWallClock();
   locked.fail = null;
   locked.waits = [];
+  held.clear();
   chains.clear();
 });
 afterEach(() => jest.useRealTimers());
@@ -448,7 +472,7 @@ describe("W-1338 PR-1 — the one open-session slot", () => {
       customer: "cus_1",
       metadata: { tenantId: "t1" },
       expires_at: 1,
-      created: 1,
+      created: Math.floor(Date.now() / 1000) - 3600,
       subscription: null,
       ...over,
     });
@@ -480,14 +504,98 @@ describe("W-1338 PR-1 — the one open-session slot", () => {
       });
     });
 
-    it("a customer with more sessions than the read cap fails closed with the 503", async () => {
+    it("F4a: sessions older than the list window never lock the business out", async () => {
       const h = make();
-      for (let i = 0; i < 700; i++) h.sessions.push(old(i));
+      const threeDaysAgo = Math.floor(Date.now() / 1000) - 3 * 86_400;
+      for (let i = 0; i < 501; i++) h.sessions.push(old(i, { created: threeDaysAgo }));
+      await expect(h.billing.createCheckoutSession("t1", self)).resolves.toMatchObject({
+        sessionId: "cs_1",
+      });
+      expect(h.list.mock.calls[0][0].created?.gte).toBe(Math.floor(Date.now() / 1000) - 2 * 86_400);
+    });
+
+    it("F4b: a customer with more sessions than the read cap fails closed with the 503", async () => {
+      const h = make();
+      for (let i = 0; i < 501; i++) h.sessions.push(old(i));
       await expect(h.billing.createCheckoutSession("t1", admin)).rejects.toMatchObject({
         status: 503,
         response: { code: API_ERROR_CODES.CHECKOUT_SLOT_UNAVAILABLE },
       });
       expect(h.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("R-102: the slot reads its terms under its own lock", () => {
+    const flush = () => new Promise((r) => setImmediate(r));
+    /** A writer holds the tenant-price lock, Pay now queues behind it, the writer commits `write` and releases. */
+    async function writerWhilePayWaits(write: () => void, pay: () => Promise<unknown>) {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const writer = underSlotLock("t1", async () => {
+        await gate;
+        write();
+      });
+      await flush();
+      const waiting = pay();
+      await flush();
+      release();
+      await writer;
+      return waiting;
+    }
+
+    it("R1: a fee committed while Pay now waits for the lock is the price billed", async () => {
+      const h = make();
+      await writerWhilePayWaits(
+        () => (h.price.unit = 12345),
+        () => h.billing.createCheckoutSession("t1", self),
+      );
+      expect(h.create).toHaveBeenCalledTimes(1);
+      expect(h.create.mock.calls[0][0].line_items[0].price_data.unit_amount).toBe(12345);
+      // the stored hash is the one a fresh read at 12345 produces: asking again reuses, never recreates
+      await h.billing.createCheckoutSession("t1", self);
+      expect(h.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("R2: a plan committed while the admin link waits for the lock is the plan billed", async () => {
+      const h = make();
+      await writerWhilePayWaits(
+        () => (h.price.plan = "TEAM"),
+        () => h.billing.createCheckoutSession("t1", admin),
+      );
+      expect(h.create.mock.calls[0][0].metadata.planKey).toBe("TEAM");
+    });
+
+    it("R3: every term read that is billed runs under the tenant-price lock; only the gates run outside", async () => {
+      const h = make({ addon: { amount: 500 } });
+      await h.billing.createCheckoutSession("t1", self);
+      const billed = h.reads.filter((r) => !r.readOnly);
+      expect(billed.map((r) => r.fn).sort()).toEqual([
+        "checkoutAddonLines",
+        "checkoutPriceData",
+        "resolveTenantPricing",
+      ]);
+      expect(billed.filter((r) => !r.locked)).toEqual([]);
+      const gates = h.reads.filter((r) => r.readOnly);
+      expect(gates.filter((r) => r.locked)).toEqual([]);
+      expect(gates.map((r) => r.fn).sort()).toEqual(["checkoutAddonLines", "checkoutPriceData"]);
+    });
+
+    it("a payment in progress refuses before any billed term is read", async () => {
+      const h = make();
+      h.sessions.push({
+        id: "cs_paid",
+        url: null,
+        status: "complete",
+        customer: "cus_1",
+        metadata: { tenantId: "t1" },
+        expires_at: 1,
+        created: Math.floor(Date.now() / 1000) - 60,
+        subscription: "sub_paid",
+      });
+      await expect(h.billing.createCheckoutSession("t1", self)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS },
+      });
+      expect(h.reads.filter((r) => !r.readOnly)).toEqual([]);
     });
   });
 

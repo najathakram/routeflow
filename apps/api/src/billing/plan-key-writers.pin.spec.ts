@@ -214,6 +214,80 @@ describe("SA-774 - every planKey writer is GATED, ACTIVATION or SANCTIONED", () 
   });
 });
 
+/**
+ * W-1338 / SA-1267 (slot class): a plan move while a Checkout Session is open can be reverted by that session's
+ * completion (it writes `planKey` from the session's metadata). So every `planKey` writer is in ONE class:
+ *
+ *   EXPIRE_FIRST  its own function calls `expireOpenCheckoutSessions(` (after its refusals, under the tenant-price lock);
+ *   COMPLETION    the session itself;
+ *   NO_SESSION    no session can exist for the row it writes (creation, or a null-only fill with no plan move);
+ *   FOLLOW_UP:<item>  not yet hooked, with the work item that owns it.
+ */
+type SlotClass = "EXPIRE_FIRST" | "COMPLETION" | "NO_SESSION" | `FOLLOW_UP:W-${number}`;
+const SLOT_CLASS: Record<string, SlotClass> = {
+  "billing/subscription-mutation.service.ts#subscribeLocked": "EXPIRE_FIRST",
+  "billing/subscription-mutation.service.ts#upgradeLocked": "EXPIRE_FIRST",
+  "platform-admin/platform-admin.service.ts#updatePlanLocked": "EXPIRE_FIRST",
+  "billing/billing.service.ts#onCheckoutCompleted": "COMPLETION",
+  "platform-admin/platform-admin.service.ts#createTenant": "NO_SESSION",
+  "tenants/tenants.service.ts#register": "NO_SESSION",
+  "platform-admin/platform-admin.service.ts#updateStatus": "NO_SESSION",
+  // holds billing add-on locks and no tenant-price lock: hooking it is a lock-order change (SA read first)
+  "platform-admin/platform-admin.service.ts#activateManualSubscription": "FOLLOW_UP:W-1354",
+  // a scheduled downgrade can be armed on a row with no live Stripe subscription, so "checkout is refused" is not provable
+  "billing/billing-cron.service.ts#applyScheduledDowngrades": "FOLLOW_UP:W-1354",
+};
+
+/** Writers with no slot class, and EXPIRE_FIRST rows whose own function lacks the expire call. */
+function slotViolations(
+  writers: Pick<CallSite, "file" | "fn">[],
+  classes: Record<string, SlotClass>,
+  bodyOf: (file: string, fn: string) => string,
+): string[] {
+  const found = new Set(writers.map(siteId));
+  return [
+    ...[...found].filter((id) => !(id in classes)).map((id) => `unclassified ${id}`),
+    ...Object.keys(classes)
+      .filter((id) => !found.has(id))
+      .map((id) => `stale ${id}`),
+    ...Object.entries(classes)
+      .filter(
+        ([id, k]) =>
+          k === "EXPIRE_FIRST" &&
+          !/\bexpireOpenCheckoutSessions\(/.test(bodyOf(...(id.split("#") as [string, string]))),
+      )
+      .map(([id]) => `no expire call in ${id}`),
+  ];
+}
+
+describe("W-1338 slot class - every planKey writer closes the open link, or says why not", () => {
+  const writers = scanSource(SUBSCRIPTION_WRITE).filter(setsPlanKey);
+  const bodyOf = (file: string, fn: string) =>
+    functionBody(fs.readFileSync(path.join(API_SRC_ROOT, file), "utf8"), fn);
+
+  it("the repo has no unclassified, stale or un-hooked writer", () => {
+    expect(writers.length).toBeGreaterThanOrEqual(8);
+    expect(slotViolations(writers, SLOT_CLASS, bodyOf)).toEqual([]);
+  });
+
+  it("self-test: a planted writer, a stale row and an EXPIRE_FIRST row without the call are each reported", () => {
+    const planted = [{ file: "billing/planted.ts", fn: "newWriter" }];
+    expect(slotViolations(planted, {}, () => "")).toEqual([
+      "unclassified billing/planted.ts#newWriter",
+    ]);
+    expect(slotViolations([], { "billing/planted.ts#gone": "COMPLETION" }, () => "")).toEqual([
+      "stale billing/planted.ts#gone",
+    ]);
+    const hooked = { "billing/planted.ts#newWriter": "EXPIRE_FIRST" as const };
+    expect(
+      slotViolations(planted, hooked, () => "await expireOpenCheckoutSessions(d, id);"),
+    ).toEqual([]);
+    expect(slotViolations(planted, hooked, () => "await this.write(id);")).toEqual([
+      "no expire call in billing/planted.ts#newWriter",
+    ]);
+  });
+});
+
 /** The source of the method/function called `fn` (declaration line to the next sibling declaration). */
 function functionBody(code: string, fn: string): string {
   const decl = new RegExp(

@@ -4466,3 +4466,67 @@ describe("W-1338 L14 - a plan change closes the open payment link first", () => 
     },
   );
 });
+
+// R-102 F6: a request the writer refuses must never close the open payment link (the admin still needs it).
+describe("W-1338 L14 - a refused plan change leaves the open payment link alone", () => {
+  const openSession = {
+    id: "cs_open",
+    status: "open",
+    url: "https://pay.test/1",
+    created: Math.floor(Date.now() / 1000),
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    metadata: { tenantId: "t1" },
+    subscription: null,
+  };
+  const withOpenSession = () => {
+    const expire = jest.fn().mockResolvedValue({});
+    const stripe = {
+      isConfigured: true,
+      client: {
+        checkout: {
+          sessions: { list: jest.fn().mockResolvedValue({ data: [openSession] }), expire },
+        },
+      },
+      getSubscription: jest.fn(),
+    };
+    return { expire, stripe };
+  };
+  const sub = {
+    planKey: "BUSINESS",
+    cycle: "MONTHLY",
+    periodStart: null,
+    periodEnd: new Date("2026-12-01"),
+    stripeCustomerId: "cus_1",
+    stripeSubId: null,
+  };
+
+  it("E2 subscribe: an admin-locked business is refused and nothing is expired", async () => {
+    const f = withOpenSession();
+    const { svc } = make({
+      tenantStatus: "READ_ONLY",
+      readOnlyReason: "admin_set",
+      stripe: f.stripe,
+      sub,
+    });
+    await expect(
+      svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin"),
+    ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.TENANT_ADMIN_LOCKED } });
+    expect(f.expire).not.toHaveBeenCalled();
+  });
+
+  it("E3 upgrade: a target that is not an upgrade refuses and expires nothing", async () => {
+    const f = withOpenSession();
+    const { svc } = make({ sub: { ...sub, planKey: "BUSINESS" }, stripe: f.stripe });
+    await expect(svc.upgrade("t1", "STARTER", "admin")).rejects.toThrow("not an upgrade");
+    expect(f.expire).not.toHaveBeenCalled();
+  });
+
+  it("E4 downgrade: a target that is not a downgrade refuses and expires nothing", async () => {
+    const f = withOpenSession();
+    const { svc } = make({ sub: { ...sub, planKey: "STARTER" }, stripe: f.stripe });
+    await expect(svc.downgrade("t1", "BUSINESS", ["u1"], "admin")).rejects.toThrow(
+      "not a downgrade",
+    );
+    expect(f.expire).not.toHaveBeenCalled();
+  });
+});
