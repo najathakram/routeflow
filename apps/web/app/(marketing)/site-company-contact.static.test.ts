@@ -54,11 +54,8 @@ describe("Company page", () => {
     expect(note).toContain("14 days, with no card");
     expect(note).toContain("We reply within one business day.");
     expect(note).toContain("I want to be honest with you.");
-    expect(note).toContain(
-      'We show the <a href="/pricing">prices</a> for Starter, Growth, and Scale before you start.',
-    );
-    for (const plan of ["Starter", "Growth", "Scale"])
-      expect(read("pricing.html")).toContain(`<h2>${plan}</h2>`);
+    expect(note).toContain('We show the <a href="/pricing">prices</a> before you start.');
+    expect(read("pricing.html")).toContain("Plans from $");
     // what the product does: each is on the product page or in the pricing package
     expect(note).toContain(`${BRAND.name} runs your selling, from order to payment.`);
     expect(note).toContain("Stores can order for themselves, each at its own price.");

@@ -1193,7 +1193,7 @@ const CENSUS_NOW: SourceCensus = {
   svgStyles: 0,
   dataUrls: 7,
   escapes: 0,
-  inlineSvg: 268,
+  inlineSvg: 260, // SA-1253 C5 (owner box 1): the pricing page lost its plan cards, 8 check icons (268 before)
   noscript: 0,
   inlineScripts: 11,
 };

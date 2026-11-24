@@ -31,7 +31,10 @@ const escapeHtml = (v: string): string =>
 function withoutFooterLine(html: string): string {
   const line = escapeHtml(siteFooterLine());
   expect(html.split(line)).toHaveLength(2);
-  return html.replace(line, "");
+  // C5: the home page's bridge line names the previous name on purpose (T10 pins it)
+  return html
+    .replace(line, "")
+    .replace(/<p class="[^"]*bridge[^"]*" data-bridge>[\s\S]*?<\/p>/, "");
 }
 
 /** The visible text of a page: tags, scripts and styles removed. */

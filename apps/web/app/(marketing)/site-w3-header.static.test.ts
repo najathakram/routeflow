@@ -212,7 +212,8 @@ describe("P01 and the band line", () => {
     expect(span).toBeGreaterThan(0);
     expect(css).not.toContain("pfoot");
     const counts: number[] = [];
-    for (const page of ["home", "pricing"] as const) {
+    // C5: /pricing shows one line and no plan cards, so only the home page has cards
+    for (const page of ["home"] as const) {
       const html = readServedSitePage(page, { websiteId: undefined });
       expect(html).not.toContain("pfoot");
       const doc = new JSDOM(html).window.document;
@@ -232,11 +233,8 @@ describe("P01 and the band line", () => {
         counts.push(kids.length);
         expect(kids.map((k, i) => k.matches(order[i] ?? "never"))).toEqual(order.map(() => true));
       }
-      if (page === "pricing") {
-        expect(cards[0]?.querySelector("a.pbtn")?.id).toBe("plans");
-      }
     }
-    expect(counts).toEqual(Array(8).fill(span));
+    expect(counts).toEqual(Array(4).fill(span));
   });
 
   it("band-line closes a band with the one-pixel line, next to the band roles", () => {

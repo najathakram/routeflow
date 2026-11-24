@@ -73,24 +73,21 @@ describe("T41: plans differ by customers only", () => {
     expect(text).not.toMatch(/customers and logins/);
   });
 
-  it("pricing and product say the plans differ by customers only", () => {
-    expect(readable(served("pricing"))).toContain(
-      "The plans differ by how many customers they include.",
-    );
+  it("product says the plans differ by customers only; pricing names no plan ladder (C5)", () => {
+    expect(readable(served("pricing"))).not.toMatch(/\b(?:Growth|Scale|Enterprise)\b/);
     expect(readable(served("product"))).toContain(
       "The plans differ by how many customers they include.",
     );
   });
 
-  it("pricing has exactly one Enterprise email line", () => {
+  it("pricing has one contact line and no Enterprise line (C5)", () => {
     const html = served("pricing");
     expect(readable(html)).not.toMatch(/Need more than Scale/);
-    const mails = html.match(/<a[^>]*href="mailto:[^"]*"[^>]*>/g) ?? [];
-    const enterprise = mails.filter((m) => /enterprise_click/.test(m));
-    expect(enterprise).toHaveLength(1);
-    // the card's link keeps the #contact anchor
-    expect(enterprise[0]).toMatch(/id="contact"/);
+    expect(html).not.toMatch(/enterprise_click/);
     expect(html.match(/id="contact"/g)).toHaveLength(1);
+    expect(
+      html.match(/<p id="contact">[^<]*<a href="mailto:[^"]+">[^<]+<\/a>\.\<\/p>/g),
+    ).toHaveLength(1);
   });
 
   it("pricing drops the stray lines", () => {
@@ -101,11 +98,8 @@ describe("T41: plans differ by customers only", () => {
 
   it("the trial line is the same weight as its siblings", () => {
     const html = served("pricing");
-    expect(html).toContain("Every trial starts on Starter and lasts 14 days. No card needed.");
-    expect(html).not.toMatch(/<(strong|b)>\s*Every trial starts/);
-    expect(html).toMatch(
-      /<p>Every trial starts on Starter and lasts 14 days\. No card needed\.<\/p>/,
-    );
+    expect(html).not.toMatch(/<(strong|b)>\s*Every trial/);
+    expect(html).toContain("<p>Every trial lasts 14 days. No card needed.</p>");
   });
 
   it("the closing band says free and the 14 days in one sentence", () => {

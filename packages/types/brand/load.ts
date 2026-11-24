@@ -57,7 +57,13 @@ export interface SiteOverlay {
 }
 
 /** The brand as the site shows it: the top level with the overlay laid over it (no `site` key). */
-export type SiteBrand = Omit<Brand, "site">;
+export type SiteBrand = Omit<Brand, "site"> & {
+  /** The one bridge sentence ("<today's name> is now <the new name>. ..."), or "" when the site's name
+   *  is the top-level name. The page renderer drops the bridge element when this is empty. */
+  readonly bridgeLine?: string;
+};
+
+const BRIDGE_TAIL = "Your sign-in, data and account stay the same.";
 
 /** Every key a brand must carry, dotted for the nested ones. The reader checks each. */
 export const BRAND_KEYS = [
@@ -177,10 +183,11 @@ export function loadBrand(): Brand {
  *  mockable loadBrand(), so a fixture brand flows through. */
 export function siteView(brand: Brand): SiteBrand {
   const { site, ...top } = brand;
-  if (!site) return top;
+  if (!site) return Object.freeze({ ...top, bridgeLine: "" });
   return Object.freeze({
     ...top,
     ...site,
+    bridgeLine: site.name === top.name ? "" : `${top.name} is now ${site.name}. ${BRIDGE_TAIL}`,
     logo: Object.freeze({ ...top.logo, ...site.logo }),
     icon: Object.freeze({ ...top.icon, ...site.icon }),
   });

@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pricing{{brand:titleSeparator}}{{brand:name}}</title>
-<meta name="description" content="{{brand:name}} plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed. Pay for a year and get 2 months free.">
+<meta name="description" content="{{brand:name}} plans from $99 a month. 14 days free, no card needed. Pay for a year and get 2 months free.">
 <link rel="canonical" href="{{brand:origin}}/pricing">
 <meta property="og:site_name" content="{{brand:name}}">
 <meta property="og:type" content="website">
 <meta property="og:url" content="{{brand:origin}}/pricing">
 <meta property="og:title" content="Pricing{{brand:titleSeparator}}{{brand:name}}">
-<meta property="og:description" content="{{brand:name}} plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed. Pay for a year and get 2 months free.">
+<meta property="og:description" content="{{brand:name}} plans from $99 a month. 14 days free, no card needed. Pay for a year and get 2 months free.">
 <meta property="og:image" content="{{brand:origin}}/opengraph-image">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -18,7 +18,7 @@
 <meta property="og:image:alt" content="{{brand:name}}. {{brand:shareLine}}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Pricing{{brand:titleSeparator}}{{brand:name}}">
-<meta name="twitter:description" content="{{brand:name}} plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed. Pay for a year and get 2 months free.">
+<meta name="twitter:description" content="{{brand:name}} plans from $99 a month. 14 days free, no card needed. Pay for a year and get 2 months free.">
 <meta name="twitter:image" content="{{brand:origin}}/opengraph-image">
 <meta name="theme-color" content="#ffffff">
 <link rel="icon" href="{{brand:icon.favicon}}" type="image/png">
@@ -93,36 +93,17 @@
 <main id="main">
 <section class="section band-white band-line pg-top" id="pricing" aria-labelledby="price-h"><div class="wrap">
   <div class="section-head center"><p class="eyebrow">Pricing</p><h1 id="price-h">Plans from $<span data-plan="STARTER" data-field="monthly">99</span> a month.</h1><p class="lede">Pay for a year and get 2 months free.</p></div>
-  <div class="pgrid pgrid--4">
-    <div class="pcard reveal"><h2>Starter</h2><p class="pfrom">From</p><p class="pprice"><span class="cur">$</span><span data-plan="STARTER" data-field="monthly">99</span><small>a month</small></p><p class="pyear">or $<span data-plan="STARTER" data-field="yearly">990</span> a year</p><p class="pfor">For a small wholesaler moving off paper and texts.</p><a class="btn btn-primary pbtn" id="plans" href="/signup" data-track="trial_start_click" data-where="plan_starter">Start free trial</a>
-      <ul class="checks"><li><svg class="ico"><use href="#i-check"/></svg><span><b data-plan="STARTER" data-field="customers">100</b> customers included</span></li><li><svg class="ico"><use href="#i-check"/></svg><span>Orders, invoices, and estimates</span></li><li><svg class="ico"><use href="#i-check"/></svg><span>Bookkeeping reports and supplier bills</span></li><li><svg class="ico"><use href="#i-check"/></svg><span>Store ordering and analytics</span></li><li><svg class="ico"><use href="#i-check"/></svg><span><a href="#every-plan">And the rest of what every plan includes</a></span></li></ul></div>
-    <div class="pcard featured reveal"><h2>Growth</h2><p class="pfrom">From</p><p class="pprice"><span class="cur">$</span><span data-plan="GROWTH" data-field="monthly">249</span><small>a month</small></p><p class="pyear">or $<span data-plan="GROWTH" data-field="yearly">2,490</span> a year</p><p class="pfor">For a wholesaler with many store buyers.</p><a class="btn btn-light pbtn" href="/signup" data-track="trial_start_click" data-where="plan_growth">Start free trial</a>
-      <ul class="checks"><li class="pc-lead"><span><b>Everything in Starter, plus:</b></span></li><li><svg class="ico"><use href="#i-check"/></svg><span><b data-plan="GROWTH" data-field="customers">250</b> customers included</span></li></ul></div>
-    <div class="pcard reveal"><h2>Scale</h2><p class="pfrom">From</p><p class="pprice"><span class="cur">$</span><span data-plan="SCALE" data-field="monthly">499</span><small>a month</small></p><p class="pyear">or $<span data-plan="SCALE" data-field="yearly">4,990</span> a year</p><p class="pfor">For a wholesaler with a long list of stores.</p><a class="btn btn-primary pbtn" href="/signup" data-track="trial_start_click" data-where="plan_scale">Start free trial</a>
-      <ul class="checks"><li class="pc-lead"><span><b>Everything in Growth, plus:</b></span></li><li><svg class="ico"><use href="#i-check"/></svg><span><b data-plan="SCALE" data-field="customers">500</b> customers included</span></li></ul></div>
-    <div class="pcard reveal"><h2>Enterprise</h2><p class="pfrom">Price</p><p class="pprice pprice--word">Custom</p><p class="pyear">Based on your size.</p><p class="pfor">For wholesalers with the most customers.</p><a class="btn btn-primary pbtn" id="contact" href="mailto:{{brand:email}}" data-track="enterprise_click" data-where="plan_enterprise">Email us</a>
-      <ul class="checks"><li class="pc-lead"><span><b>Everything in Scale, plus:</b></span></li><li><svg class="ico"><use href="#i-check"/></svg><span>Unlimited customers</span></li></ul></div>
-  </div>
-  <div class="pl-wrap reveal"><table class="pl pl--y" aria-label="Plans and prices">
-    <thead><tr><th scope="col">Plan</th><th scope="col">Customers</th><th scope="col" class="plp">From, a month</th><th scope="col" class="ply">Each year</th></tr></thead>
-    <tbody>
-    <tr><th scope="row">Starter</th><td><span data-plan="STARTER" data-field="customers">100</span></td><td class="plp">$<span data-plan="STARTER" data-field="monthly">99</span></td><td class="ply">$<span data-plan="STARTER" data-field="yearly">990</span></td></tr>
-    <tr><th scope="row">Growth</th><td><span data-plan="GROWTH" data-field="customers">250</span></td><td class="plp">$<span data-plan="GROWTH" data-field="monthly">249</span></td><td class="ply">$<span data-plan="GROWTH" data-field="yearly">2,490</span></td></tr>
-    <tr><th scope="row">Scale</th><td><span data-plan="SCALE" data-field="customers">500</span></td><td class="plp">$<span data-plan="SCALE" data-field="monthly">499</span></td><td class="ply">$<span data-plan="SCALE" data-field="yearly">4,990</span></td></tr>
-    <tr><th scope="row">Enterprise</th><td>Unlimited</td><td class="plp plp--w" colspan="2">Custom</td></tr>
-    </tbody>
-  </table></div>
+  <p class="pl-go"><a class="btn btn-primary btn-lg" id="plans" href="/signup" data-track="trial_start_click" data-where="pricing_phone">Start free trial</a></p>
   <div class="center small muted pg-notes">
-    <p>Every trial starts on Starter and lasts 14 days. No card needed.</p>
-    <p>The plans differ by how many customers they include. Scale and Enterprise also get regulated items at no fee.</p>
+    <p>Every trial lasts 14 days. No card needed.</p>
+    <p id="contact">Questions about pricing? Email <a href="mailto:{{brand:email}}">{{brand:email}}</a>.</p>
   </div>
-  <p class="pl-go"><a class="btn btn-primary btn-lg" href="/signup" data-track="trial_start_click" data-where="pricing_phone">Start free trial</a></p>
   <div class="custom reveal" id="customize">
     <div class="section-head center"><h2 class="h-md">Options and add-ons.</h2><p class="lede">Some are free to set up. Others may add a monthly fee.</p></div>
     <div class="custom-grid">
       <div class="ccol ccol--free"><h3>Free to set up</h3><ul class="addlist"><li><span><b>Routes and delivery</b><small>Deliver with your own trucks? Select that when you set up your account, and routes and drivers are on, at no added fee.</small></span></li><li><span><b>Counter sales</b><small>Sell at a counter? Select that when you set up your account, and counter sales are on, at no fee.</small></span></li><li><span><b>Where your orders go</b><small>Tell us how orders reach your customers when you set up your account. There’s no fee.</small></span></li><li><span><b>Promotions</b><small>Run a promotion. New orders use its price.</small></span></li><li><span><b>Product varieties</b><small>Email us and we set them up, at no fee.</small></span></li></ul><p class="small muted" style="margin-top:14px">To change it later, <a href="mailto:{{brand:email}}">email us</a>.</p></div>
       <div class="ccol ccol--add"><h3>Add when you need it</h3><ul class="addlist">
-        <li><span><b>Regulated items</b><small>We turn it on for you. $<span data-addon="REGULATED" data-field="monthly">39</span> a month on Starter and Growth. No fee on Scale and Enterprise.</small></span><span class="aprice">$<span data-addon="REGULATED" data-field="monthly">39</span><em>a month</em></span></li>
+        <li><span><b>Regulated items</b><small>We turn it on for you. $<span data-addon="REGULATED" data-field="monthly">39</span> a month, and no fee on the largest plans.</small></span><span class="aprice">$<span data-addon="REGULATED" data-field="monthly">39</span><em>a month</em></span></li>
         <li><span><b>Customer pack</b><small><span data-addon="CUSTOMER_PACK" data-field="customers">100</span> more customers. Add more than one.</small></span><span class="aprice">$<span data-addon="CUSTOMER_PACK" data-field="monthly">50</span><em>a month</em></span></li>
       </ul></div>
     </div>
@@ -137,8 +118,8 @@
   <div class="faq">
     <details><summary>What is {{brand:name}} for?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Software for businesses that sell to stores. Take orders, send invoices, and get paid.</p></details>
     <details><summary>Who is it for?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Wholesalers and distributors who sell to stores. We built it with a wholesaler who buys from other wholesalers and delivers to retailers.</p></details>
-    <details><summary>How much does it cost?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Starter is $<span data-plan="STARTER" data-field="monthly">99</span> a month, Growth is $<span data-plan="GROWTH" data-field="monthly">249</span>, and Scale is $<span data-plan="SCALE" data-field="monthly">499</span>. The plans differ by how many customers they include. Scale and Enterprise also get regulated items at no fee. Pay for a year and get 2 months free.</p></details>
-    <details><summary>Do I need a card to start?<svg class="ico"><use href="#i-plus"/></svg></summary><p>No. Every trial starts on Starter and runs for 14 days.</p></details>
+    <details><summary>How much does it cost?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Plans start at $<span data-plan="STARTER" data-field="monthly">99</span> a month. Pay for a year and get 2 months free.</p></details>
+    <details><summary>Do I need a card to start?<svg class="ico"><use href="#i-plus"/></svg></summary><p>No. Your 14-day trial needs no card.</p></details>
     <details><summary>Can I bring my data?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Yes. Import customers, products, invoices, payments, and stock from CSV files. You can undo a product import for 24 hours, unless a product is already on an order.</p></details>
     <details><summary>Can I get my data out?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Yes. Download your customers, products, orders, invoices, and payments as CSV files. Orders and invoices download as summaries, without line items, up to 1,000 rows at a time. <a href="/data-in-and-out">See what you can download.</a></p></details>
     <details><summary>Does it connect to my other tools?<svg class="ico"><use href="#i-plus"/></svg></summary><p>Not directly. {{brand:name}} doesn’t connect to QuickBooks, Xero, or Zoho. Move data with CSV files.</p></details>

@@ -28,6 +28,8 @@ export const FIRST_TOUCH_SRC = "/site/js/first-touch.js";
 export const FIRST_TOUCH_TAG = `<script defer src="${FIRST_TOUCH_SRC}"></script>`;
 
 const BRAND_TOKEN = /\{\{brand:([^{}]*)\}\}/g;
+/** The bridge line's element (owner box 2): one paragraph a page marks with `data-bridge`. */
+const BRIDGE_ELEMENT = /<p class="[^"]*\bbridge\b[^"]*" data-bridge>[\s\S]*?<\/p>\n?/g;
 
 const escapeHtml = (value: string) =>
   value
@@ -66,7 +68,9 @@ export function renderSitePage(
   brand: SiteBrand,
   palette: Palette | null = loadPalette(),
 ): string {
-  const out = html.replace(BRAND_TOKEN, (_token, key: string) => {
+  // The bridge line is shown only while the site's name differs from the top-level name.
+  const shown = brand.bridgeLine ? html : html.replace(BRIDGE_ELEMENT, "");
+  const out = shown.replace(BRAND_TOKEN, (_token, key: string) => {
     const value = brandValue(brand, key.trim());
     if (typeof value !== "string") throw new Error(`renderSitePage: unknown brand key "${key}"`);
     return escapeHtml(value);
