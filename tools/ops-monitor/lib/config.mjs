@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ROLES } from "./schema.mjs";
 
 /** Root of the routeflow checkout this tool runs from (…/tools/ops-monitor/lib → repo root). */
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -191,6 +192,85 @@ export function normalizeLane(text, config = DEFAULT_CONFIG) {
     if (re.test(t) && (!best || alias.length > best.alias.length)) best = { alias, id };
   }
   return best ? best.id : null;
+}
+
+// ── team members (specs ops/config.json `members`) ──────────────────────────
+// { id, name, machine, lanes: [lane ids], role: builder | tester | reviewer }. A member is a person
+// on their own computer and Claude account; their id is the name their events are written under.
+
+const MEMBER_ID_RE = /^[a-z0-9][a-z0-9-]{0,40}$/;
+
+function memberError(m, config, seen) {
+  if (!m || typeof m !== "object" || Array.isArray(m)) return "a member must be an object";
+  if (typeof m.id !== "string" || !MEMBER_ID_RE.test(m.id))
+    return `member id ${JSON.stringify(m.id)} must be lower-case letters, digits and dashes`;
+  if (seen.has(m.id)) return `member "${m.id}" is listed twice`;
+  if ((config.lanes ?? []).some((l) => l.id === m.id))
+    return `member "${m.id}" is also a lane id (a mention would be ambiguous)`;
+  if (typeof m.name !== "string" || !m.name.trim() || m.name.length > 80)
+    return `member "${m.id}" needs a display name (1-80 characters)`;
+  if (!ROLES.includes(m.role)) return `member "${m.id}": role must be builder, tester or reviewer`;
+  if (m.machine !== undefined && m.machine !== null && typeof m.machine !== "string")
+    return `member "${m.id}": machine must be a machine id or null`;
+  if (!Array.isArray(m.lanes)) return `member "${m.id}": lanes must be a list of lane ids`;
+  const bad = m.lanes.find((l) => !(config.lanes ?? []).some((x) => x.id === l));
+  if (bad !== undefined) return `member "${m.id}": unknown lane ${JSON.stringify(bad)}`;
+  return null;
+}
+
+/** Why each bad `members` entry is ignored (for `rf doctor`). Never throws. */
+export function memberProblems(config = DEFAULT_CONFIG) {
+  const list = config?.members;
+  if (list === undefined) return [];
+  if (!Array.isArray(list)) return ["members must be a list"];
+  const seen = new Set();
+  const out = [];
+  for (const m of list) {
+    const err = memberError(m, config, seen);
+    if (err) out.push(err);
+    else seen.add(m.id);
+  }
+  return out;
+}
+
+/** The valid members, in file order (bad entries are skipped; memberProblems says why). */
+export function membersOf(config = DEFAULT_CONFIG) {
+  const list = Array.isArray(config?.members) ? config.members : [];
+  const seen = new Set();
+  const out = [];
+  for (const m of list) {
+    if (memberError(m, config, seen)) continue;
+    seen.add(m.id);
+    out.push({
+      id: m.id,
+      name: m.name.trim(),
+      machine: m.machine ?? null,
+      lanes: [...m.lanes],
+      role: m.role,
+    });
+  }
+  return out;
+}
+
+/** The member with this id (case-insensitive), or null. */
+export function findMember(config, id) {
+  if (typeof id !== "string" || !id) return null;
+  const k = id.trim().toLowerCase();
+  return membersOf(config).find((m) => m.id === k) ?? null;
+}
+
+/** A member's display name, or null when the id is not a member (a lane, a hook, a machine). */
+export const memberName = (config, id) => findMember(config, id)?.name ?? null;
+
+export const MEMBER_FILE = "member";
+
+/** The member this computer works as: RF_MEMBER, else <opsHome>/member, else null (unchecked). */
+export function memberId(env = process.env) {
+  const raw = env.RF_MEMBER ?? null;
+  if (raw !== null) return String(raw).trim().toLowerCase() || null;
+  const f = join(opsHome(env), MEMBER_FILE);
+  if (!existsSync(f)) return null;
+  return readFileSync(f, "utf8").trim().toLowerCase() || null;
 }
 
 /** Lane id for this process: explicit flag → RF_LANE → null. */

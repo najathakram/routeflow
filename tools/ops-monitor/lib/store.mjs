@@ -21,7 +21,7 @@ import {
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { BUG_ID_RE, validateEvent } from "./schema.mjs";
-import { fold } from "./fold.mjs";
+import { fold, holderLabel, holdsClaim } from "./fold.mjs";
 import { allocateItemId, utcDate } from "./ids.mjs";
 import { REPO_ROOT, loadConfig, opsHome, specsDir } from "./config.mjs";
 import { RegistryUnavailable, registryDir } from "./registry.mjs";
@@ -611,14 +611,47 @@ export function validateAgainstState(ev, state, { bugIds = new Set() } = {}) {
         else if (parent.item !== ev.item)
           errors.push(`comment ${ev.data.replyTo} is on ${parent.item}, not ${ev.item}`);
       }
-      if (ev.kind === "claim") {
-        const held = state.items.get(ev.item)?.claimedBy;
-        if (held && held !== ev.lane && !ev.data.steal) {
-          const since = new Date(state.items.get(ev.item).claimedAt).toISOString();
-          errors.push(`item ${ev.item} is held by ${held} since ${since}; pass --steal to take it`);
+      if (ev.kind === "claim" || ev.kind === "release") {
+        const it = state.items.get(ev.item);
+        const member = ev.data?.member ?? null;
+        if (ev.kind === "claim" && state.retiredLanes?.has(ev.lane))
+          errors.push(`lane ${ev.lane} is retired; rf lane unretire ${ev.lane} first`);
+        else if (it?.claimedBy && !holdsClaim(it, ev.lane, member)) {
+          const holder = holderLabel(it.claimedBy, it.claimedMember);
+          if (ev.kind === "release")
+            errors.push(`${ev.item} belongs to ${holder}; only that holder can release it`);
+          else if (!ev.data.steal) {
+            const since = new Date(it.claimedAt).toISOString();
+            errors.push(
+              `item ${ev.item} is held by ${holder} since ${since}; pass --steal to take it`,
+            );
+          }
         }
       }
     }
+  }
+  if (ev.kind === "lane.retire") {
+    const lane = ev.data.lane;
+    const claims = state.lanes.get(lane)?.claims ?? [];
+    if (state.retiredLanes?.has(lane)) errors.push(`lane ${lane} is already retired`);
+    else if (claims.length > 0) {
+      const n = claims.length === 1 ? "1 claim" : `${claims.length} claims`;
+      errors.push(
+        `lane ${lane} still holds ${n} (${claims.join(", ")}); release ${claims.length === 1 ? "it" : "them"} first (rf release ${claims[0]} --lane ${lane})`,
+      );
+    }
+  } else if (ev.kind === "lane.unretire") {
+    if (!state.retiredLanes?.has(ev.data.lane)) errors.push(`lane ${ev.data.lane} is not retired`);
+  } else if (ev.kind === "anomaly.ack") {
+    const id = ev.data.eventId;
+    const found = (state.anomalies ?? []).filter((a) => a.eventId === id);
+    if (found.length === 0) errors.push(`no anomaly for event ${id} (rf anomaly ls lists them)`);
+    else if (found.every((a) => a.kind === "claim-conflict"))
+      errors.push(
+        `event ${id} is a claim conflict: it clears when the loser releases (rf release <id> --lane <loser>)`,
+      );
+    else if (found.every((a) => a.acked))
+      errors.push(`anomaly for event ${id} is already acknowledged`);
   }
   return errors;
 }
