@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { TenantPricingCard } from "./TenantPricingCard";
 
@@ -13,12 +13,14 @@ const mockOpenLink = jest.fn();
 const mockCancel = jest.fn();
 const mockCheckout = jest.fn();
 const mockCatchup = jest.fn();
+const mockUpdate = jest.fn();
 
 jest.mock("@/lib/api/platform-pricing", () => ({
   ...jest.requireActual("@/lib/api/platform-pricing"),
   fetchTenantPricing: (id: string) => mockFetchPricing(id),
   fetchOpenPaymentLink: (id: string) => mockOpenLink(id),
   cancelOpenPaymentLink: (id: string) => mockCancel(id),
+  updateTenantPriceOverride: (...a: unknown[]) => mockUpdate(...a),
   createTenantCheckout: (...a: unknown[]) => mockCheckout(...a),
 }));
 jest.mock("@/lib/api/platform-catchup", () => ({
@@ -151,6 +153,35 @@ describe("TenantPricingCard: the one Payment link section", () => {
     expect(screen.queryByText(URL_1)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy payment link" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create link" })).toBeInTheDocument();
+    // the plan is read again, so a held-claim line cannot sit under the expired line
+    expect(mockFetchPlan).toHaveBeenCalledTimes(2);
+  });
+
+  it("an expired link with a failed plan read still offers Retry", async () => {
+    mockOpenLink.mockResolvedValue({
+      kind: "card",
+      url: URL_1,
+      expiresAt: "2020-01-01T00:00:00.000Z",
+    });
+    mockFetchPlan.mockRejectedValue(new Error("boom"));
+    renderCard();
+    expect(await screen.findByText("This link expired. Create a new one.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("a fee save reads the open link again (a save closes the link)", async () => {
+    mockOpenLink.mockResolvedValueOnce({ kind: "card", url: URL_1, expiresAt: FAR });
+    mockUpdate.mockResolvedValue({ ...pricing, sync: { synced: false, reason: "none" } });
+    renderCard();
+    await screen.findByText("Payment link ready");
+    mockOpenLink.mockResolvedValue(null);
+    fireEvent.change(screen.getByLabelText("Monthly (USD)"), { target: { value: "80" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save custom fee" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Confirm" }),
+    );
+    await waitFor(() => expect(screen.queryByText("Payment link ready")).not.toBeInTheDocument());
+    expect(mockOpenLink).toHaveBeenCalledTimes(2);
   });
 
   it("a new catch-up link shows its expiry from the API and is never logged", async () => {
@@ -165,6 +196,8 @@ describe("TenantPricingCard: the one Payment link section", () => {
       jest.spyOn(console, "log"),
       jest.spyOn(console, "info"),
       jest.spyOn(console, "warn"),
+      jest.spyOn(console, "error"),
+      jest.spyOn(console, "debug"),
     ];
     renderCard();
     fireEvent.click(await screen.findByRole("button", { name: "Create payment link" }));
@@ -211,5 +244,36 @@ describe("TenantPricingCard: the one Payment link section", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("button", { name: "Create link" })).toBeInTheDocument();
     expect(mockFetchPlan).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("TenantPricingCard: the link flips at its own expiry", () => {
+  const T0 = new Date(2099, 2, 4, 9, 0, 0);
+  const T_EXPIRY = new Date(2099, 2, 4, 10, 30, 0);
+  beforeEach(() => jest.useFakeTimers({ now: T0 }));
+  afterEach(() => jest.useRealTimers());
+
+  it("a same-day link says the time only, and flips to expired at expiresAt", async () => {
+    mockOpenLink.mockResolvedValue({ kind: "card", url: URL_1, expiresAt: T_EXPIRY.toISOString() });
+    renderCard();
+    await act(async () => {});
+    const time = T_EXPIRY.toLocaleString([], { hour: "numeric", minute: "2-digit" });
+    expect(screen.getByText(`Works until ${time}`)).toBeInTheDocument();
+    act(() => jest.advanceTimersByTime(89 * 60_000));
+    expect(screen.getByText("Payment link ready")).toBeInTheDocument();
+    act(() => jest.advanceTimersByTime(2 * 60_000));
+    expect(screen.getByText("This link expired. Create a new one.")).toBeInTheDocument();
+    expect(screen.queryByText(URL_1)).not.toBeInTheDocument();
+  });
+
+  it("a woken tab re-checks the expiry on focus, without waiting for a late timer", async () => {
+    mockOpenLink.mockResolvedValue({ kind: "card", url: URL_1, expiresAt: T_EXPIRY.toISOString() });
+    renderCard();
+    await act(async () => {});
+    jest.setSystemTime(new Date(2099, 2, 4, 11, 0, 0)); // the clock moved on while timers slept
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(screen.getByText("This link expired. Create a new one.")).toBeInTheDocument();
   });
 });

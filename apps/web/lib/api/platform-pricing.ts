@@ -214,7 +214,9 @@ export interface OpenPaymentLink {
 
 export async function fetchOpenPaymentLink(tenantId: string): Promise<OpenPaymentLink | null> {
   const res = await superAdminClient.get(`/platform-admin/tenants/${tenantId}/billing/open-link`);
-  return res.data ?? null;
+  // Nest answers a null result with an empty body, which axios hands back as "": only an object with a url is a link.
+  const d = res.data as Partial<OpenPaymentLink> | string | null | undefined;
+  return d && typeof d === "object" && typeof d.url === "string" ? (d as OpenPaymentLink) : null;
 }
 
 export async function cancelOpenPaymentLink(tenantId: string): Promise<void> {

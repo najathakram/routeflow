@@ -220,12 +220,6 @@ function worksUntil(expiresAt: string, now: number): string | null {
   );
 }
 
-/** True once `expiresAt` has passed. An unreadable stamp never counts as expired (the API only returns open links). */
-function isExpired(expiresAt: string, now: number): boolean {
-  const t = Date.parse(expiresAt);
-  return !Number.isNaN(t) && t <= now;
-}
-
 /**
  * W-1338 PR-2 (SA-1267 rule 4): the one open payment link, both kinds. It comes from `GET …/billing/open-link`, so it is
  * shown again after a reload. The URL is held in this component's state only: never logged, toasted or stored.
@@ -312,7 +306,8 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
   const [openLink, setOpenLink] = React.useState<OpenPaymentLink | null>(null);
   const [cancelling, setCancelling] = React.useState(false);
   const [linkError, setLinkError] = React.useState<string | null>(null);
-  const [now, setNow] = React.useState(() => Date.now());
+  const [linkExpired, setLinkExpired] = React.useState(false);
+  const [clockTick, setClockTick] = React.useState(0);
 
   // SA-1206 R2: how this business pays, from GET catchup-plan alone. Until it is read, neither block shows.
   const [payReport, setPayReport] = React.useState<CatchupReportView | null>(null);
@@ -334,15 +329,6 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
     loadOpenLink();
   }, [loadOpenLink]);
 
-  // The link flips to "expired" by itself at its own `expiresAt`.
-  React.useEffect(() => {
-    if (!openLink) return;
-    const wait = Date.parse(openLink.expiresAt) - Date.now();
-    if (Number.isNaN(wait) || wait <= 0) return;
-    const id = setTimeout(() => setNow(Date.now()), Math.min(wait + 50, 2_000_000_000));
-    return () => clearTimeout(id);
-  }, [openLink]);
-
   const loadPayReport = React.useCallback(() => {
     setPayReadFailed(false);
     fetchCatchupPlan(tenantId)
@@ -358,6 +344,32 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
   React.useEffect(() => {
     loadPayReport();
   }, [loadPayReport]);
+
+  // The link expires at its own `expiresAt`: a timer, plus a re-check when the tab wakes or regains focus (timers
+  // are delayed across sleep), plus the check below for a link already past its expiry when read. An expired link is
+  // dropped so Create or Retry shows, and the plan is read again so a held-claim line never sits under it.
+  React.useEffect(() => {
+    const bump = () => setClockTick((n) => n + 1);
+    document.addEventListener("visibilitychange", bump);
+    window.addEventListener("focus", bump);
+    return () => {
+      document.removeEventListener("visibilitychange", bump);
+      window.removeEventListener("focus", bump);
+    };
+  }, []);
+  React.useEffect(() => {
+    if (!openLink) return;
+    const wait = Date.parse(openLink.expiresAt) - Date.now();
+    if (Number.isNaN(wait)) return;
+    if (wait <= 0) {
+      setOpenLink(null);
+      setLinkExpired(true);
+      loadPayReport();
+      return;
+    }
+    const id = setTimeout(() => setClockTick((n) => n + 1), Math.min(wait, 2_000_000_000));
+    return () => clearTimeout(id);
+  }, [openLink, clockTick, loadPayReport]);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -413,6 +425,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
   /** A link just created: show it now, then read its expiry from the API. */
   const showCreated = (kind: OpenPaymentLink["kind"], url: string) => {
     setLinkError(null);
+    setLinkExpired(false);
     setOpenLink({ kind, url, expiresAt: "" });
     loadOpenLink(true); // the link just made stays shown if this read comes back empty
   };
@@ -423,6 +436,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
     try {
       await cancelOpenPaymentLink(tenantId);
       setOpenLink(null);
+      setLinkExpired(false);
       loadPayReport();
     } catch {
       setLinkError(CANCEL_FAILED_COPY);
@@ -648,7 +662,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
           {/* One "Payment link" section for both kinds (SA-1267 rule 4). An open link wins; otherwise a business
               invoiced by hand creates the catch-up link, and any other business with a price creates the ordinary
               one (the ordinary checkout refuses an invoiced-by-hand business: EXTERNAL_PAYMENT_USE_CATCHUP). */}
-          {(openLink || payReport) && (
+          {(openLink || payReport || linkExpired) && (
             <div className="border-t border-slate-700 pt-4" data-testid="payment-link">
               <p className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-400">
                 Payment link
@@ -661,7 +675,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
                   {linkError}
                 </div>
               )}
-              {openLink && !isExpired(openLink.expiresAt, now) ? (
+              {openLink ? (
                 <OpenLinkPanel
                   link={openLink}
                   cancelling={cancelling}
@@ -669,7 +683,7 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
                 />
               ) : (
                 <>
-                  {openLink && (
+                  {linkExpired && (
                     <p role="status" className="mb-3 text-sm text-amber-300">
                       {LINK_EXPIRED_COPY}
                     </p>
