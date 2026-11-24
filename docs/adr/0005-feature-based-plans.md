@@ -46,17 +46,21 @@ Plans differ by **what a business does**, never by how many customers it has or 
   store with a $79 add-on on Essentials.
 - **The database values are reused** (correction 2026-11-24): `CORE` is Essentials and `ALL_IN` is Pro.
   These `TenantPlan` values were added by PR #4401 and applied in production on 2026-11-21, but no
-  account uses them yet. The new $199 Growth gets **its own internal plan key**. It never reuses
-  today's `GROWTH` key, because today's Growth accounts ($249, 250 customers) keep their plan.
+  account uses them yet. The new $199 Growth gets **its own internal plan key, `PLUS`** (SA-1254). It
+  never reuses today's `GROWTH` key (today's Growth accounts, $249 and 250 customers, keep their plan)
+  or `TEAM` (which live $249 Growth rows already hold).
 - **Paying accounts are protected** (correction 2026-11-24): accounts on Starter, Growth and Scale keep
-  every feature and their price for 12 months. After that comes a review with 90 days' written notice.
-  This replaces the 2026-11-07 "grandfathered forever". A per-account custom price stays as it is.
+  every feature and their price for 12 months, from one date for everyone: the day v14 is published.
+  After that comes a review with 90 days' written notice. This replaces the 2026-11-07 "grandfathered
+  forever". A per-account custom price stays as it is. The first 50 founding accounts keep a 24-month
+  lock (owner, 2026-11-24).
 - **A price moves only when a feature ships**, only for new accounts, and only with the notice periods
   above. See `pricing-roadmap.md`.
 
 This replaces the 2026-11-21 idea of Core $99 with $49 modules and All-in $199 (ruled as SA-1204). The
-name "catalog v14" was reserved by SA-1204. The architect re-rules SA-1204 into this programme before
-any build starts.
+name "catalog v14" was reserved by SA-1204 and passes to this programme. SA-1254 (2026-11-24) folded
+SA-1204 into it: the modules model is retired, and its engineering rules carry. A Full architect panel
+on the Phase 2-3 spec rules the code shape before any build starts.
 
 ## Consequences
 
