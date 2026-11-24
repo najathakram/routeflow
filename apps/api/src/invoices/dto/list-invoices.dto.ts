@@ -26,6 +26,8 @@ export class ListInvoicesDto {
   @IsOptional() @IsString() dateTo?: string;
   @IsOptional() @IsDateString() dueFrom?: string;
   @IsOptional() @IsDateString() dueTo?: string;
+  /** P-30 (SA-1264) "Due soon": open invoices due from the tenant's today through today + N days (0 = due today). */
+  @IsOptional() @IsInt() @Min(0) @Max(90) @Type(() => Number) dueWithinDays?: number;
   @IsOptional() @IsString() sortBy?: string;
   @IsOptional() @IsString() sortOrder?: "asc" | "desc";
   @IsOptional() @Transform(({ value }) => value === "true") @IsBoolean() isOverdue?: boolean;

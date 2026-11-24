@@ -25,6 +25,7 @@
 // FIFO and may still take a free slot (the atomic `wx` lock picks one winner), so nobody is stranded; it just does not
 // defer to a high ticket that queued behind it. Priority is therefore guaranteed only against new-code waiters.
 //
+// A `max-mem` file in the dir works the same way for the memory cap.
 // A `max-cpu` file in the dir (integer percent 1..95; 96-100 are invalid and ignored, never clamped) overrides every waiter's cpu cap, re-read on each
 // check (like `slots`); a bad file logs one warning per reason, a valid one that changes the cap one line per value.
 //
@@ -146,9 +147,21 @@ export function readSlotsFile(dir) {
  * waiters. { state: "absent" } | { state: "ok", value } | { state: "invalid", reason } (invalid = ignored).
  */
 export function inspectMaxCpuFile(dir) {
+  return inspectPercentFile(dir, "max-cpu");
+}
+
+/**
+ * The machine-wide memory cap file `<dir>/max-mem`: same format and rules as `max-cpu` (plain integer percent 1..95, 96-100 ignored
+ * not clamped, UTF-8 or BOM'd UTF-16), overriding every waiter's own RF_HEAVY_SLOT_MAX_MEM_PCT, re-read on each check.
+ */
+export function inspectMaxMemFile(dir) {
+  return inspectPercentFile(dir, "max-mem");
+}
+
+function inspectPercentFile(dir, name) {
   let raw;
   try {
-    raw = decodeSlotsBytes(fs.readFileSync(path.join(dir, "max-cpu")))?.trim();
+    raw = decodeSlotsBytes(fs.readFileSync(path.join(dir, name)))?.trim();
   } catch {
     return { state: "absent" };
   }
@@ -162,6 +175,15 @@ export function inspectMaxCpuFile(dir) {
   return n >= 1 && n <= 95
     ? { state: "ok", value: n }
     : { state: "invalid", reason: `${n} is outside 1..95` };
+}
+
+/** One log line for a cap file: why an invalid one is ignored, or that a valid one overrides the waiter's own cap; else null. */
+function capFileNote(name, dir, f, ownCap, what) {
+  if (f.state === "invalid")
+    return `ignoring ${dir}/${name} (${f.reason}); using this waiter's own ${what} cap ${ownCap}%`;
+  if (f.state === "ok" && f.value !== ownCap)
+    return `using machine-wide ${name} ${f.value}% from ${dir}/${name} (own cap ${ownCap}%)`;
+  return null;
 }
 
 function parseMinutesMs(raw, fallbackMin) {
@@ -947,23 +969,25 @@ async function acquire(cfg, state) {
       // here (sampling takes ~3 s), so a job queued behind another holder costs nothing. A sampler that
       // throws fails open: the cap is a load guard, never a reason to wedge the queue.
       let busy = null;
-      const cf = inspectMaxCpuFile(cfg.dir); // the machine-wide file wins over this waiter's own cap
+      // The machine-wide max-cpu / max-mem files win over this waiter's own caps and are re-read on every poll.
+      const cf = inspectMaxCpuFile(cfg.dir);
+      const mf = inspectMaxMemFile(cfg.dir);
       const maxCpuPct = cf.state === "ok" ? cf.value : cfg.maxCpuPct;
-      const cpuNote =
-        cf.state === "invalid"
-          ? `ignoring ${cfg.dir}/max-cpu (${cf.reason}); using this waiter's own cpu cap ${cfg.maxCpuPct}%`
-          : cf.state === "ok" && cf.value !== cfg.maxCpuPct
-            ? `using machine-wide max-cpu ${cf.value}% from ${cfg.dir}/max-cpu (own cap ${cfg.maxCpuPct}%)`
-            : null;
-      if (cpuNote && !warnedCpu.has(cpuNote)) {
-        warnedCpu.add(cpuNote);
-        cfg.log(`heavy-slot: ${cpuNote}`);
+      const maxMemPct = mf.state === "ok" ? mf.value : cfg.maxMemPct;
+      for (const note of [
+        capFileNote("max-cpu", cfg.dir, cf, cfg.maxCpuPct, "cpu"),
+        capFileNote("max-mem", cfg.dir, mf, cfg.maxMemPct, "memory"),
+      ]) {
+        if (note && !warnedCpu.has(note)) {
+          warnedCpu.add(note);
+          cfg.log(`heavy-slot: ${note}`);
+        }
       }
-      if (g.grant && (maxCpuPct < 100 || cfg.maxMemPct < 100)) {
+      if (g.grant && (maxCpuPct < 100 || maxMemPct < 100)) {
         try {
           busy = loadOverReason(await sampleWithin(cfg.sampleLoad, cfg.sampleTimeoutMs), {
             maxCpuPct,
-            maxMemPct: cfg.maxMemPct,
+            maxMemPct,
           });
           now = cfg.now(); // the sample took ~3 s: judge the max wait and the wait line on the clock after it
         } catch {
@@ -1216,14 +1240,18 @@ export function formatStatus(
         ? `slots file: ${path.join(dir, "slots")} is INVALID (${sf.reason}) — ignored`
         : "slots file: none (each waiter uses its own RF_HEAVY_SLOTS)",
   );
-  const cf = inspectMaxCpuFile(dir);
-  out.push(
-    cf.state === "ok"
-      ? `max-cpu file: ${path.join(dir, "max-cpu")} = ${cf.value}% (overrides every waiter's RF_HEAVY_SLOT_MAX_CPU_PCT)`
-      : cf.state === "invalid"
-        ? `max-cpu file: ${path.join(dir, "max-cpu")} is INVALID (${cf.reason}) — ignored`
-        : "max-cpu file: none (each waiter uses its own RF_HEAVY_SLOT_MAX_CPU_PCT)",
-  );
+  for (const [name, f, envName] of [
+    ["max-cpu", inspectMaxCpuFile(dir), "RF_HEAVY_SLOT_MAX_CPU_PCT"],
+    ["max-mem", inspectMaxMemFile(dir), "RF_HEAVY_SLOT_MAX_MEM_PCT"],
+  ]) {
+    out.push(
+      f.state === "ok"
+        ? `${name} file: ${path.join(dir, name)} = ${f.value}% (overrides every waiter's ${envName})`
+        : f.state === "invalid"
+          ? `${name} file: ${path.join(dir, name)} is INVALID (${f.reason}) — ignored`
+          : `${name} file: none (each waiter uses its own ${envName})`,
+    );
+  }
   if (!st.holders.length) out.push("holder: none (slot free)");
   for (const h of st.holders) {
     const e = h.entry;

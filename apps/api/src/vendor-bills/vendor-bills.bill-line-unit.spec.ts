@@ -9,6 +9,7 @@ import { ProductAliasService } from "../import/product-alias.service";
 import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { billPlanFromPO } from "@routeflow/pricing";
 import { wireStockHelper } from "../inventory/testing/stock-helper-mock";
 
 jest.mock("@anthropic-ai/sdk", () => ({ __esModule: true, default: jest.fn() }));
@@ -596,5 +597,44 @@ describe("SA-1224 MED-1 and MED-2", () => {
       const { res } = await edit([PLAIN], [echo(PLAIN), echo(PLAIN)]);
       expect(res).toEqual({ status: 400, code: "DUPLICATE_LINE_ID" });
     });
+  });
+});
+
+describe("SA-1207 P2b: a bill made from a purchase order keeps the whole-lot rule", () => {
+  it("a PO piece line stored with its own 1 Piece label, PATCHed to {pack 6, qty 0.5, 6 Pieces}, is 400 and writes nothing", async () => {
+    // The stored line is what the PO prefill sends for one piece (a piece line, qty 1, no pack).
+    const plan = billPlanFromPO(
+      [{ id: "poi-1", productId: "p-1", qtyOrdered: 1, unitCost: 2, totalCost: 2 }],
+      [1],
+    );
+    const line = plan.lines[0];
+    expect(line).toMatchObject({ qty: 1, packSize: null });
+    const stored = {
+      ...PLAIN,
+      id: "it-po",
+      qty: D(line.qty),
+      unitCost: D(line.unitCost),
+      packSize: null,
+      unitLabel: "1 Piece",
+    };
+    const { service, prisma } = await make();
+    prisma.vendorBill.findUnique.mockResolvedValue(draft([stored]));
+    const res = await outcome(
+      service.update("bill-1", {
+        items: [
+          {
+            id: stored.id,
+            productId: "p-1",
+            description: stored.description,
+            qty: 0.5,
+            unitCost: line.unitCost,
+            packSize: 6,
+            unitLabel: "6 Pieces",
+          },
+        ],
+      }),
+    );
+    expect(res).toEqual({ status: 400, code: "LOT_QTY_NOT_WHOLE" });
+    expect(prisma.vendorBill.update).not.toHaveBeenCalled();
   });
 });

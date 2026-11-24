@@ -216,6 +216,8 @@ export interface CreateVendorBillItem {
   sku?: string;
   /** Units per box/case, only when the line explicitly printed one. */
   packSize?: number;
+  /** Create only: the line states its own unit (a lot, "5 Boxes + 2 Pieces"). */
+  unitLabel?: string;
   /** Line amount as printed. Evidence from the document, not derived from
    *  qty × unitCost — an operator correction leaves it standing. */
   lineTotal?: number;

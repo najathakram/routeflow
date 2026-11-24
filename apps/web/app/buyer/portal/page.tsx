@@ -24,6 +24,7 @@ import {
   buyerResendVerification,
 } from "@/lib/buyer-auth";
 import type { BuyerSeller } from "@/lib/buyer-auth";
+import { sellerLandingHref } from "@/lib/buyer-portal-landing";
 import { sellerUnavailableCopy } from "@/components/SellerUnavailableLine";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
@@ -484,7 +485,7 @@ function BuyerPortalInner() {
 
   const handleSellerClick = (seller: BuyerSeller) => {
     setActiveSeller(seller);
-    router.push(`/buyer/portal/${seller.tenant.slug}?then=orders`);
+    router.push(sellerLandingHref(seller.tenant.slug));
   };
 
   const handleRefresh = async () => {

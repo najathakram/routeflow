@@ -3,6 +3,7 @@ import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-
 import { apiClient } from "@/lib/api-client";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { typeQty } from "@/test-utils/type-qty";
 
 /** B1373: a till line shows its quantity in the order row's number field (no "× N" text). */
 const qtyOf = (line: HTMLElement) =>
@@ -148,14 +149,10 @@ const typePieces = (n: number) => {
   if (!within(li).queryByRole("spinbutton", { name: /^Extra / })) {
     fireEvent.click(within(li).getByRole("button", { name: /^\+ .*: add extra / }));
   }
-  fireEvent.change(within(li).getByRole("spinbutton", { name: /^Extra / }), {
-    target: { value: String(n) },
-  });
+  typeQty(within(li).getByRole("spinbutton", { name: /^Extra / }), String(n));
 };
 const typeBoxes = (n: number) =>
-  fireEvent.change(within(lines()[0]).getByTitle(/^Number of whole /), {
-    target: { value: String(n) },
-  });
+  typeQty(within(lines()[0]).getByTitle(/^Number of whole /), String(n));
 const deferred = <T,>() => {
   let resolve!: (v: T) => void;
   const promise = new Promise<T>((r) => (resolve = r));

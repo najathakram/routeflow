@@ -22,6 +22,7 @@ import {
 import { Button, cn, useToast, EmptyState, Select } from "@routeflow/ui/web";
 import { OPEN_INVOICE_STATUS_LIST } from "@/lib/open-invoice-status";
 import { ToCollectChip } from "@/components/ToCollectChip";
+import { FollowUpView } from "./follow-up-view";
 import { RecordCard, RecordCardList } from "@/components/RecordCard";
 import { FiltersDisclosure, activeFilterCount } from "@/components/FiltersDisclosure";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -551,7 +552,9 @@ export default function InvoicesPage() {
     dueTo: "",
     toCollect: "", // SA-1026: "true" = only invoices that read To collect (staff)
     customerId: "", // the customer chip's link: one customer's list
+    view: "", // P-30: "follow-up" = the Follow up view (staff)
   });
+  const followUpOn = urlFilters.view === "follow-up" && !isCustomer;
   const toCollectOn = urlFilters.toCollect === "true";
   const customerFilter = (urlFilters.customerId as string) ?? "";
   const statusFilter = (urlFilters.status as string) ?? "";
@@ -710,6 +713,8 @@ export default function InvoicesPage() {
     setFilter("status", status);
   }
 
+  if (followUpOn) return <FollowUpView onExit={() => setFilter("view", "")} />;
+
   return (
     <div className="space-y-5 p-6">
       {/* Header: below md the title and New invoice share one row, the description is hidden and
@@ -812,6 +817,15 @@ export default function InvoicesPage() {
 
       {/* Due-soon chips */}
       <div className="flex snap-x items-center gap-2 overflow-x-auto py-1 scrollbar-hide md:flex-wrap md:overflow-visible md:py-0">
+        {!isCustomer && (
+          <button
+            type="button"
+            onClick={() => setFilter("view", "follow-up")}
+            className="min-h-[44px] shrink-0 snap-start rounded-full border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy transition-colors hover:bg-surface-raised"
+          >
+            Follow up
+          </button>
+        )}
         {!isCustomer && (
           <button
             type="button"

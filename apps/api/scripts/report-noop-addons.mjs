@@ -90,17 +90,16 @@ export const ALWAYS_ENFORCED_PLAN_KEYS = ["LITE"];
 export const LOWER_BOUND_NOTE =
   "A lower bound: it can miss a no-op purchase (plan flags gained forward from a later published plan are not read), never list a wrong one. Cross-check with the S2 sweep.";
 
-/** planKeyFromEnum / normalizePlanKey in one: the enum names and the catalog names meet on the catalog name. */
+// SA-1204 C2b / SA-1254 V1 (P-41): the alias map comes from the one JS home of the plan-key helpers.
+const { normalizePlanKey } = require("./lib/feature-registry-mirror.cjs");
+
+/**
+ * planKeyFromEnum / normalizePlanKey in one: the enum names and the catalog names meet on the catalog name. A legacy
+ * alias maps forward, a missing key reads as STARTER, and any other key passes through unchanged.
+ */
 export function normalizePlan(key) {
-  switch (key) {
-    case "TEAM":
-      return "GROWTH";
-    case "BUSINESS":
-    case "PROFESSIONAL":
-      return "SCALE";
-    default:
-      return key ?? "STARTER";
-  }
+  if (key == null) return "STARTER";
+  return normalizePlanKey(key) ?? key;
 }
 
 /**

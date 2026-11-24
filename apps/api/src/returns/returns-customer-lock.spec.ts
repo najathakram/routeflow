@@ -90,6 +90,7 @@ describe("ReturnsService.create — customer lock mutual exclusion (§5 fix-roun
         order: prisma.order,
         customer: prisma.customer,
         $executeRaw: jest.fn().mockResolvedValue(0),
+        tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) },
         $queryRaw: jest.fn(),
       };
       const hash = "test-tenant:returns.customer:cust-shared";

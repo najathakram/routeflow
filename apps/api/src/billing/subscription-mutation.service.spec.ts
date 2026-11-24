@@ -4435,3 +4435,69 @@ describe("SubscriptionMutationService — plan refusals name the plan, never the
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * SA-1254 (b) 6, the $99 tie rule (P-41; SA-A Lens co-sign in SA-1261 rule 9), verbatim: "among the
+ * three $99 keys, a move up the array is an upgrade that takes effect now at $0 difference, and a
+ * move down takes effect at period end. A pinned test covers STARTER→CORE and LITE→CORE."
+ *
+ * The fixture is a catalog that publishes CORE beside STARTER and LITE at $99. No real catalog does
+ * yet: CORE has no published row until v14, so the live service refuses it (V2). This pins the rank
+ * for the moment v14 publishes it. Red on master: CORE is not in PLAN_KEYS there, so the preview
+ * throws `Unknown plan "CORE"` (T4: planRank("CORE") = -1).
+ */
+describe("SA-1254 (b) 6: the $99 tie rule (STARTER→CORE, LITE→CORE)", () => {
+  const tieCatalog = () => {
+    const v = catalogV8();
+    return {
+      ...v,
+      id: "v14-fixture",
+      definitions: [
+        { planKey: "LITE", name: "Lite", monthlyPrice: 99, isCustom: false, seatsIncluded: 3 },
+        {
+          planKey: "CORE",
+          name: "Essentials",
+          monthlyPrice: 99,
+          isCustom: false,
+          seatsIncluded: 3,
+        },
+        ...v.definitions,
+      ],
+    } as ReturnType<typeof catalogV8>;
+  };
+  const previewFrom = async (fromKey: string, toKey: string) => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: tieCatalog(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: fromKey, cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    return { preview: await svc.planChangePreview("t1", toKey, "MONTHLY"), periodEnd };
+  };
+
+  it.each(["STARTER", "LITE"])(
+    "%s→CORE is an upgrade that takes effect now at $0 difference",
+    async (fromKey) => {
+      const { preview } = await previewFrom(fromKey, "CORE");
+      expect(preview.action).toBe("UPGRADE");
+      expect(preview.effectiveAt).toBeNull();
+      expect(preview.proratedNow).toBe(0);
+    },
+  );
+
+  it("the same path charges a real difference, so the $0 above is the tie, not a dead quote", async () => {
+    const { preview } = await previewFrom("CORE", "GROWTH");
+    expect(preview.action).toBe("UPGRADE");
+    expect(preview.proratedNow).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["CORE", "STARTER"],
+    ["CORE", "LITE"],
+  ])("%s→%s is a move down that takes effect at period end", async (fromKey, toKey) => {
+    const { preview, periodEnd } = await previewFrom(fromKey, toKey);
+    expect(preview.action).toBe("DOWNGRADE");
+    expect(preview.effectiveAt).toEqual(periodEnd);
+    expect(preview.proratedNow).toBeNull();
+  });
+});
