@@ -505,6 +505,7 @@ export class SubscriptionMutationService {
   async subscribe(tenantId: string, input: SubscribeInput, actorId?: string) {
     // The card-first gate runs BEFORE the tenant-price lock (never re-take it inside).
     await this.enforceCardFirst(tenantId, "subscribe");
+    await this.assertNotOverdue(tenantId, "subscribe");
     return underTenantPriceLock(tenantId, () => this.subscribeLocked(tenantId, input, actorId), {
       waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
       busyMessage: UPGRADE_BUSY,
@@ -512,7 +513,6 @@ export class SubscriptionMutationService {
   }
 
   private async subscribeLocked(tenantId: string, input: SubscribeInput, actorId?: string) {
-    await this.assertNotOverdue(tenantId, "subscribe");
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === input.planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${input.planKey}"`);
@@ -1752,6 +1752,7 @@ export class SubscriptionMutationService {
     actorId?: string,
   ) {
     await this.enforceCardFirst(tenantId, "downgrade");
+    await this.assertNotOverdue(tenantId, "downgrade");
     return underTenantPriceLock(
       tenantId,
       () => this.downgradeLocked(tenantId, targetPlanKey, retainedUserIds, actorId),
@@ -1765,7 +1766,6 @@ export class SubscriptionMutationService {
     retainedUserIds: string[],
     actorId?: string,
   ) {
-    await this.assertNotOverdue(tenantId, "downgrade");
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === targetPlanKey);
     if (!def) throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);

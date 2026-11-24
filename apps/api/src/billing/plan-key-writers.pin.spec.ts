@@ -74,7 +74,7 @@ export const PLAN_KEY_WRITERS: readonly {
     reason: "S4 manual activation planSwitch",
   },
   {
-    id: "billing/subscription-mutation.service.ts#subscribe",
+    id: "billing/subscription-mutation.service.ts#subscribeLocked",
     kind: "INCLUSION",
     calls: 1,
     reason: "SA-787 C3: the plan pick",
@@ -180,7 +180,7 @@ describe("SA-786 P2 - every writer of TenantSubscription.planKey is classified",
  * The list is derived from the same scan as above; the gate is also pinned on the three self-serve entry points.
  */
 const SA774_CLASS: Record<string, "GATED" | "ACTIVATION" | "SANCTIONED"> = {
-  "billing/subscription-mutation.service.ts#subscribe": "GATED",
+  "billing/subscription-mutation.service.ts#subscribeLocked": "GATED",
   "billing/subscription-mutation.service.ts#upgradeLocked": "GATED",
   "billing/billing.service.ts#onCheckoutCompleted": "ACTIVATION",
   "billing/billing-cron.service.ts#applyScheduledDowngrades": "SANCTIONED",
