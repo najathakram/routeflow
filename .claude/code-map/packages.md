@@ -501,3 +501,4 @@ Catch-up (2026-10-31, train Y): [packages/landing-2026-10-31-y.md](packages/land
 Catch-up (2026-10-31, train Z): [packages/landing-2026-10-31-z.md](packages/landing-2026-10-31-z.md): `ReadyForPickupRecord`, `isAboveListLine`, `stickyPrice`, `rulingLineIndex`, `signalHeld`.
 Catch-up (2026-11-23, window 42): [packages/landing-2026-11-23-w42.md](packages/landing-2026-11-23-w42.md): `PaymentListReceipt`, `BuyerInvoiceDetailAccount`.
 Catch-up (2026-11-24, window 43): [packages/landing-2026-11-24-w43.md](packages/landing-2026-11-24-w43.md): `receiptStatusText` over `PaymentStatus`.
+Catch-up (2026-11-24, window 45): [packages/landing-2026-11-24-w45.md](packages/landing-2026-11-24-w45.md): `billPlanFromPO`.

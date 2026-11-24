@@ -113,3 +113,5 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-23-w41.md](web/landing-2026-11-23-w41.md) | Window 41: counter part or no payment (tenderIntent, on-account button), buyer credit tile, Credit column |
 | [web/landing-2026-11-23-w42.md](web/landing-2026-11-23-w42.md) | Window 42: one check one receipt (list, detail, toast), buyer invoice account rows, buyer payment status words |
 | [web/landing-2026-11-24-w43.md](web/landing-2026-11-24-w43.md) | Window 43: group receipt card, PO retry and product lock, buyer portal home and issue date |
+| [web/landing-2026-11-24-w44.md](web/landing-2026-11-24-w44.md) | Window 44: dashboard overdue days on the business day, new-sale quantity, middle dot, Credit word |
+| [web/landing-2026-11-24-w45.md](web/landing-2026-11-24-w45.md) | Window 45: create a supplier bill from a purchase order (PO detail link, bill modal prefill) |
