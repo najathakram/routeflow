@@ -554,6 +554,8 @@ export class SettingsController {
       await tx.orderCreditNote.deleteMany({ where: { creditNote: { tenantId } } });
       await tx.creditNote.deleteMany({ where: { tenantId } });
 
+      // SA-1268: PurchaseOrderCharge.vendorBillId is ON DELETE RESTRICT, so charges go before bills.
+      await tx.purchaseOrderCharge.deleteMany({ where: { po: { tenantId } } });
       await tx.billPayment.deleteMany({ where: { vendorBill: { tenantId } } });
       await tx.vendorBillItem.deleteMany({ where: { vendorBill: { tenantId } } });
       await tx.vendorBill.deleteMany({ where: { tenantId } });

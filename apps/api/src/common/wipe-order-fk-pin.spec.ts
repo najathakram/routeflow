@@ -129,10 +129,16 @@ function resetAndSeedDelegates(): string[] {
 /**
  * Pre-existing gaps (NOT M1/M2) the pin found on its first run. Allow-listed by
  * `list|model|referencing` so a NEW violation still fails; each is reported, not fixed silently.
+ * Rows using OWNER_FIX are new FKs the pin caught after its first run; the script fix is the owner's.
  */
 const L = "wipe-tenant-fresh-start.js NUKE_MODELS";
 const GAP =
   "pre-existing gap: model is missing from NUKE_MODELS (a tenant holding rows fails P2003)";
+// SA-1268: a NEW Restrict FK the pin caught (P-85). The wipe script is agent-forbidden
+// (CLAUDE_SESSION_PREAMBLE rule 2), so its order fix is the owner's. Fails safe: P2003 aborts the
+// wipe, nothing is orphaned. The fired-check below forces this row out once the owner fixes it.
+const OWNER_FIX =
+  "new FK, owner-only fix (SA-1268): PurchaseOrderCharge must be deleted before VendorBill in NUKE_MODELS";
 const ALLOWED_PREEXISTING = new Map<string, string>([
   [`${L}|Invoice|CommissionAccrual`, GAP],
   [`${L}|Order|Return`, "pre-existing order gap: `returnRecord` is listed AFTER `order`"],
@@ -144,6 +150,7 @@ const ALLOWED_PREEXISTING = new Map<string, string>([
   [`${L}|Product|SupplierProduct`, GAP],
   [`${L}|Supplier|SupplierProduct`, GAP],
   [`${L}|Supplier|SupplierCredit`, GAP],
+  [`${L}|VendorBill|PurchaseOrderCharge`, OWNER_FIX],
 ]);
 
 const key = (v: Violation) => `${v.list}|${v.model}|${v.referencing}`;
