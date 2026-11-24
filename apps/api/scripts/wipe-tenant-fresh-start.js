@@ -80,6 +80,7 @@ const NUKE_MODELS = [
   "estimateItem",
   "vendorBillItem",
   "billPayment",
+  "purchaseOrderCharge", // SA-1268: ON DELETE RESTRICT to VendorBill (and self), so charges go before vendorBill
   "purchaseOrderItem",
   "returnItem",
   "recurringInvoiceItem",
