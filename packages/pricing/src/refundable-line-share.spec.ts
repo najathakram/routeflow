@@ -1,5 +1,6 @@
 import { MoneyInvariantError } from "./money-invariants";
 import {
+  lastPaidCapSubtotal,
   refundableLineShare,
   refundableProductPoolShare,
   taxRateMicros,
@@ -350,5 +351,66 @@ describe("refundableLineShare invoicePrior (SA-1091 A-1)", () => {
       invoicePrior: { net: first.net, tax: first.tax, categoryTax: first.categoryTax },
     });
     expect(second.total).toBe(2.71);
+  });
+});
+
+/** SA-1244 A2 (W-1316): the cap is the product's pooled price on the newest invoice, one rounding, equal to the pool share. */
+describe("lastPaidCapSubtotal (SA-1244 A2)", () => {
+  const promo = (): RefundableInvoice => ({
+    taxAmount: 8,
+    discount: 0,
+    lines: [line("paid", 100, 10, 0.08), line("free", 0, 2, 0.08)],
+  });
+  const at = (id: string, pieces: number) => ({ id, pieces });
+
+  it("a paid line plus a free line: 1 of 12 pieces is 8.33, in either line order", () => {
+    const lines = [at("paid", 10), at("free", 2)];
+    expect(lastPaidCapSubtotal({ invoice: promo(), lines, pieces: 1 })).toBe(8.33);
+    expect(lastPaidCapSubtotal({ invoice: promo(), lines: [...lines].reverse(), pieces: 1 })).toBe(
+      8.33,
+    );
+  });
+
+  it("is equal to the SA-970 pool share's net for every piece count up to the pool", () => {
+    const lines = [at("paid", 10), at("free", 2)];
+    for (let n = 0; n <= 12; n++) {
+      const pool = refundableProductPoolShare({
+        invoice: promo(),
+        lines: lines.map((l) => ({ ...l, prior: NONE })),
+        returnedPieces: n,
+      });
+      expect(lastPaidCapSubtotal({ invoice: promo(), lines, pieces: n })).toBe(pool.net);
+    }
+  });
+
+  it("two lines at 100.00 and 50.00: 1 of 2 pieces is 75.00", () => {
+    const invoice: RefundableInvoice = {
+      taxAmount: 0,
+      discount: 0,
+      lines: [line("dear", 100, 1, 0), line("cheap", 50, 1, 0)],
+    };
+    expect(
+      lastPaidCapSubtotal({ invoice, lines: [at("dear", 1), at("cheap", 1)], pieces: 1 }),
+    ).toBe(75);
+  });
+
+  it("an all-$0 pool caps at 0", () => {
+    const invoice: RefundableInvoice = { taxAmount: 0, discount: 0, lines: [line("a", 0, 3, 0)] };
+    expect(lastPaidCapSubtotal({ invoice, lines: [at("a", 3)], pieces: 2 })).toBe(0);
+  });
+
+  it("6 pieces for 10.00, 4 back: 6.67 in one rounding (not 1.67 x 4 = 6.68)", () => {
+    const invoice: RefundableInvoice = { taxAmount: 0, discount: 0, lines: [line("a", 10, 6, 0)] };
+    expect(lastPaidCapSubtotal({ invoice, lines: [at("a", 6)], pieces: 4 })).toBe(6.67);
+  });
+
+  it("past the pool: roundMoney(poolNet x pieces / poolPieces), 150.00 for 2, 3 back is 225.00", () => {
+    const invoice: RefundableInvoice = { taxAmount: 0, discount: 0, lines: [line("a", 150, 2, 0)] };
+    expect(lastPaidCapSubtotal({ invoice, lines: [at("a", 2)], pieces: 3 })).toBe(225);
+  });
+
+  it("no cap (null) for an empty pool or a line that is not on the invoice", () => {
+    expect(lastPaidCapSubtotal({ invoice: promo(), lines: [], pieces: 1 })).toBeNull();
+    expect(lastPaidCapSubtotal({ invoice: promo(), lines: [at("gone", 2)], pieces: 1 })).toBeNull();
   });
 });

@@ -317,3 +317,32 @@ export function refundableInvoiceOf(
     })),
   };
 }
+
+/**
+ * SA-1244 A2 (W-1316): the most a return of `pieces` of a product may credit, the pool's price on the newest invoice that
+ * carries it: every live line of the product on that invoice, paid and $0 lines together (the SA-970 pool, prior 0).
+ * Up to the pool's pieces it IS `refundableProductPoolShare(...).net`; past them it scales the whole pool's net once,
+ * `roundMoney(poolNet x pieces / poolPieces)`, never a rounded per-piece figure times pieces. `null` (no cap) when the pool
+ * cannot be priced (a line not on the invoice, or an empty pool): a cap only ever lowers a credit.
+ */
+export function lastPaidCapSubtotal(input: {
+  invoice: RefundableInvoice;
+  lines: readonly Pick<ProductPoolLine, "id" | "pieces">[];
+  pieces: number;
+}): number | null {
+  const lines = input.lines.map((l) => ({
+    ...l,
+    prior: { qty: 0, net: 0, tax: 0, categoryTax: 0 },
+  }));
+  const poolPieces = lines.reduce((t, l) => t + Math.max(0, Number(l.pieces) || 0), 0);
+  const pieces = Math.max(0, Number(input.pieces) || 0);
+  if (!(poolPieces > 0)) return null;
+  const pool = (returnedPieces: number) =>
+    refundableProductPoolShare({ invoice: input.invoice, lines, returnedPieces });
+  if (round3(pieces) <= round3(poolPieces)) {
+    const share = pool(pieces);
+    return share.refusal ? null : share.net;
+  }
+  const whole = pool(poolPieces);
+  return whole.refusal ? null : roundMoney((whole.net * pieces) / poolPieces);
+}
