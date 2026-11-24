@@ -312,6 +312,40 @@ test.describe("POS stack counter: ring the sale @ 1440", () => {
   });
 });
 
+test.describe("W-1336 / SA-1262 C10: a wedge scan into a focused qty box @ 1440", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("scan, type a qty + Enter, a 12-digit burst + Enter is refused whole, Pay carries the typed qty", async ({
+    page,
+    context,
+  }) => {
+    await setTenantCookie(context, BASE);
+    const { products } = await discover(page);
+    await page.goto("/orders/counter-sale");
+    const scanField = page.getByLabel("Scan or search items");
+    await expect(scanField).toBeVisible({ timeout: 15_000 });
+    await scanField.fill(String(products[0].sku));
+    await scanField.press("Enter");
+    const name = String(products[0].name);
+    const qty = page.getByLabel(`Set quantity of ${name}`);
+    await expect(qty).toBeVisible({ timeout: 15_000 });
+    await qty.fill("3");
+    await qty.press("Enter");
+    await expect(scanField).toBeFocused();
+    // the wedge types a code into the qty box (a number box is a text field to the scan guard), then Enter
+    await qty.focus();
+    await page.keyboard.type("012345678905", { delay: 0 });
+    await page.keyboard.press("Enter");
+    // C10: the prefixes never commit; the whole code is refused with the one sentence and the qty stays 3
+    await expect(page.getByText("That is more than one line can hold.").first()).toBeVisible();
+    await expect(qty).toHaveValue("3");
+    await chooseWalkIn(page);
+    await page.getByRole("button", { name: "Exact" }).click();
+    await page.getByRole("button", { name: "Complete & show receipt" }).click();
+    await expect(page.getByTestId("counter-sale-receipt")).toBeVisible({ timeout: 20_000 });
+  });
+});
+
 test.describe("W-715 / W-716: the receipt's Change row, its actions at 1440 and 390, and Void sale", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 

@@ -2,6 +2,7 @@ import * as React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { CounterLineRow } from "./CounterLineRow";
 import { stepLine, type SaleLine, type StepUnit } from "./counter-sale-scan";
+import { typeQty } from "@/test-utils/type-qty";
 
 /** Row 676 (SA-831b M13 / row 531): a boxed line speaks the selling unit; a typed box count goes to onQty as boxes. B1373: the order row replaced the +/- step buttons. */
 
@@ -63,7 +64,7 @@ describe("CounterLineRow selling-unit entry (676, B1373)", () => {
         />
       </ul>,
     );
-    fireEvent.change(screen.getByTitle(/^Number of whole box/), { target: { value: "2" } });
+    typeQty(screen.getByTitle(/^Number of whole box/), "2");
     expect(onQty).toHaveBeenCalledWith("t1", { boxes: "2" });
     expect(onStep).not.toHaveBeenCalled();
   });

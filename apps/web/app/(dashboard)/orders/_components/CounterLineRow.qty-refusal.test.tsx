@@ -1,6 +1,7 @@
 import * as React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { CounterLineRow } from "./CounterLineRow";
+import { typeQty } from "@/test-utils/type-qty";
 import type { SaleLine } from "./counter-sale-scan";
 import { setLineQty } from "./counter-sale-line-edit";
 import { QTY_TOO_LARGE_COPY } from "./counter-qty-refusal";
@@ -29,7 +30,7 @@ function mount() {
   );
   return { onQty, field: screen.getByRole("spinbutton", { name: "Set quantity of Cola" }) };
 }
-const type = (field: HTMLElement, v: string) => fireEvent.change(field, { target: { value: v } });
+const type = (field: HTMLElement, v: string) => typeQty(field, v);
 
 describe("CounterLineRow typed quantity refusals (CQ-12)", () => {
   it.each([

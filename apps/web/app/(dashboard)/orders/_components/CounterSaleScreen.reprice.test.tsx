@@ -2,6 +2,7 @@ import * as React from "react";
 import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-utils/render";
 import { apiClient } from "@/lib/api-client";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { typeQty } from "@/test-utils/type-qty";
 
 /**
  * POS-2: a customer picked AFTER items were scanned as a walk-in RE-PRICES every line, through the same lookup Create
@@ -153,9 +154,7 @@ describe("CounterSaleScreen: re-price when a customer is picked (POS-2)", () => 
     // B1373: no one-tap piece stepper on a boxed line: open the loose-pieces field and type 3
     const line = screen.getByRole("button", { name: "Remove Water" }).closest("li") as HTMLElement;
     fireEvent.click(within(line).getByRole("button", { name: /^\+ .*: add extra / }));
-    fireEvent.change(within(line).getByRole("spinbutton", { name: /^Extra / }), {
-      target: { value: "3" },
-    });
+    typeQty(within(line).getByRole("spinbutton", { name: /^Extra / }), "3");
     await waitFor(() => expect(total()).toHaveTextContent("$15.00")); // 1 box + 3 pcs at 12/box
     pickAcme();
     await waitFor(() => expect(total()).toHaveTextContent("$11.25")); // 9 + 3 x (9/12)
