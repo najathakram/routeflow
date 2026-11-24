@@ -9,6 +9,7 @@ const mockCheckout = jest.fn();
 jest.mock("@/lib/api/platform-pricing", () => ({
   ...jest.requireActual("@/lib/api/platform-pricing"),
   fetchTenantPricing: (id: string) => mockFetchPricing(id),
+  fetchOpenPaymentLink: () => Promise.resolve(null),
   createTenantCheckout: (...a: unknown[]) => mockCheckout(...a),
 }));
 
@@ -49,7 +50,7 @@ describe("ordinary payment link on the admin card", () => {
     fireEvent.click(
       within(await screen.findByRole("dialog")).getByRole("button", { name: "Create link" }),
     );
-    await screen.findByText(/Link ready/);
+    await screen.findByText("Payment link ready");
     expect(screen.queryByLabelText("Billing interval")).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: /Annual/ })).not.toBeInTheDocument();
     expect(mockCheckout).toHaveBeenCalledTimes(1);
@@ -74,7 +75,7 @@ describe("ordinary payment link on the admin card", () => {
     fireEvent.click(
       within(await screen.findByRole("dialog")).getByRole("button", { name: "Create link" }),
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Copy link" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Copy payment link" }));
     expect(await screen.findByText("Copied")).toBeInTheDocument();
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenCalledWith(URL_1);
