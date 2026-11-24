@@ -4,7 +4,7 @@ import * as React from "react";
 import { X, StickyNote, Pencil } from "lucide-react";
 import { cn, type BadgeStatus } from "@routeflow/ui/web";
 import { CasesPiecesInput } from "./CasesPiecesInput";
-import { useHeldQty, type QtyEntry } from "./use-held-qty";
+import { heldNote, useHeldQty, type QtyEntry } from "./use-held-qty";
 import {
   computeLineSubtotal,
   isAboveListLine,
@@ -669,6 +669,7 @@ export function LineItemRow({
               onSetPieces={onSetPieces}
             />
           )}
+          {heldNote(heldUnit)}
           <span className="text-[10px] text-navy/30">
             1 {w.pack.lower} = {li.unitsPerBox} {w.base.short.other}
             {li.qty > 0 && (
@@ -750,6 +751,7 @@ export function LineItemRow({
           >
             +
           </button>
+          {heldNote(heldQty)}
         </fieldset>
       )}
       {/* Line total */}

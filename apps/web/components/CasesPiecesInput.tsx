@@ -3,7 +3,7 @@
 import * as React from "react";
 import type { UnitWords } from "@routeflow/pricing";
 import { cn } from "@routeflow/ui/web";
-import { useHeldQty, type QtyEntry } from "./use-held-qty";
+import { heldNote, useHeldQty, type QtyEntry } from "./use-held-qty";
 
 /**
  * #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
@@ -122,6 +122,7 @@ export function CasesPiecesInput({
           {w.packFor(boxes ?? 0)}
         </span>
       </span>
+      {heldNote(heldBoxes, heldPieces)}
       {showLooseUnits ? (
         <span className="flex items-center gap-1.5 whitespace-nowrap">
           <span className="text-xs text-navy/30">+</span>

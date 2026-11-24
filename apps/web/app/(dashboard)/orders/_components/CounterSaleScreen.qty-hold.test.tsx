@@ -217,6 +217,20 @@ describe("the counter holds qty-box text until Enter, Tab or blur (SA-1262 PR A)
     expect(asked).toEqual([]);
   });
 
+  it("G7: a visible note says press Enter while text is held, gone after Enter or Esc", async () => {
+    await colaTill();
+    expect(screen.queryByText("press Enter")).toBeNull();
+    qty().focus();
+    typeIn(qty(), "12");
+    expect(screen.getByText("press Enter")).toBeInTheDocument();
+    fireEvent.keyDown(qty(), { key: "Enter" });
+    expect(screen.queryByText("press Enter")).toBeNull();
+    typeIn(qty(), "13");
+    expect(screen.getByText("press Enter")).toBeInTheDocument();
+    fireEvent.keyDown(qty(), { key: "Escape" });
+    expect(screen.queryByText("press Enter")).toBeNull();
+  });
+
   it("C10 (jsdom half): a scanned 12-digit code in a qty box is refused whole at Enter", async () => {
     await colaTill();
     qty().focus();

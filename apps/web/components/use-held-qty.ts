@@ -11,6 +11,7 @@ export interface QtyEntry {
 
 /** Props to spread on a qty `<input>` in hold mode; null when the mode is off (the caller keeps its own handlers). */
 export interface HeldQtyProps {
+  "data-qty-held"?: "";
   value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onBlur: () => void;
@@ -46,6 +47,7 @@ export function useHeldQty(
     commit(parseInt(text, 10));
   };
   return {
+    ...(held === null ? null : { "data-qty-held": "" as const }),
     value: held ?? String(committed),
     onChange: (e) => put(e.target.value),
     onBlur: flush,
@@ -55,3 +57,13 @@ export function useHeldQty(
     },
   };
 }
+
+/** The one line shown beside the boxes while any holds uncommitted text (SA-1262 G7); null otherwise. */
+export const heldNote = (...boxes: Array<HeldQtyProps | null>): React.ReactNode =>
+  boxes.some((b) => b?.["data-qty-held"] !== undefined)
+    ? React.createElement(
+        "span",
+        { role: "status", className: "text-[10px] text-navy/70" },
+        "press Enter",
+      )
+    : null;
