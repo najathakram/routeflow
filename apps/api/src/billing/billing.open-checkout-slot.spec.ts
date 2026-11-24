@@ -10,13 +10,17 @@ import { pinWallClock } from "../testing/pin-clock";
  * and `expire` refusing a session that is not open. The advisory lock is a per-key mutex (the real one is Postgres).
  */
 
-const locked = { fail: null as null | Error };
+const locked = { fail: null as null | Error, waits: [] as number[] };
 const chains = new Map<string, Promise<unknown>>();
 jest.mock("../common/db-locks", () => {
   const actual = jest.requireActual("../common/db-locks");
   return {
     ...actual,
-    withAdvisoryLock: async (o: { family: string; key: string }, fn: () => Promise<unknown>) => {
+    withAdvisoryLock: async (
+      o: { family: string; key: string; waitMs?: number },
+      fn: () => Promise<unknown>,
+    ) => {
+      locked.waits.push(o.waitMs ?? -1);
       if (locked.fail) throw locked.fail;
       const k = `${o.family}:${o.key}`;
       const run = (chains.get(k) ?? Promise.resolve()).then(async () => ({
@@ -149,6 +153,7 @@ function make(
 beforeEach(() => {
   pinWallClock();
   locked.fail = null;
+  locked.waits = [];
   chains.clear();
 });
 afterEach(() => jest.useRealTimers());
@@ -175,6 +180,14 @@ describe("W-1338 PR-1 — the one open-session slot", () => {
     ]);
     expect(h.create).toHaveBeenCalledTimes(1);
     expect(h.sessions.filter((s) => s.status === "open")).toHaveLength(1);
+  });
+
+  it("the tenant's own click waits the short self-serve budget, the admin link the admin one", async () => {
+    const h = make();
+    await h.billing.createCheckoutSession("t1", self);
+    await h.billing.cancelOpenLink("t1");
+    await h.billing.createCheckoutSession("t1", admin);
+    expect(locked.waits).toEqual([2_500, 20_000, 20_000]);
   });
 
   it("a changed price expires the old session and opens a new one at the new amount", async () => {

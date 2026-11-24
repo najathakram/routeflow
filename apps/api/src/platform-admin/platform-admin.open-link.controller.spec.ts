@@ -7,13 +7,9 @@ describe("PlatformAdminController open-link routes", () => {
     getOpenLink: jest.fn().mockResolvedValue(null),
     cancelOpenLink: jest.fn().mockResolvedValue({ cancelled: false }),
   };
-  const controller = new PlatformAdminController(
-    {} as any,
-    {} as any,
-    billing as any,
-    {} as any,
-    {} as any,
-    {} as any,
+  const controller: PlatformAdminController = Object.assign(
+    Object.create(PlatformAdminController.prototype),
+    { billingService: billing },
   );
 
   it("the class guard list includes SuperAdminGuard", () => {

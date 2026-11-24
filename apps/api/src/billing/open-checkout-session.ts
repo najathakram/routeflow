@@ -7,7 +7,11 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { LockTimeoutError, LockUnavailableError, withAdvisoryLock } from "../common/db-locks";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { StripeService } from "./stripe.service";
-import { TENANT_PRICE_LOCK_FAMILY, TENANT_PRICE_LOCK_WAIT_MS } from "./price-lock";
+import {
+  TENANT_PRICE_LOCK_FAMILY,
+  TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
+  TENANT_PRICE_LOCK_WAIT_MS,
+} from "./price-lock";
 import {
   checkoutStartFromSession,
   checkoutUiMode,
@@ -73,14 +77,18 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const subIdOf = (v: unknown) => (typeof v === "string" ? v : ((v as { id?: string })?.id ?? null));
 
 /** Run `fn` under the tenant-price lock; a timeout or an unreachable lock is the one coded 503 and `fn` never ran. */
-export async function underSlotLock<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
+export async function underSlotLock<T>(
+  tenantId: string,
+  fn: () => Promise<T>,
+  waitMs = TENANT_PRICE_LOCK_WAIT_MS,
+): Promise<T> {
   try {
     const r = await withAdvisoryLock(
       {
         family: TENANT_PRICE_LOCK_FAMILY,
         key: tenantId,
         mode: "wait",
-        waitMs: TENANT_PRICE_LOCK_WAIT_MS,
+        waitMs,
       },
       fn,
     );
@@ -168,28 +176,33 @@ export async function openCheckoutSession(
       checkoutUiMode(a.surface),
     ]),
   ).slice(0, 32);
-  return underSlotLock(a.tenantId, async () => {
-    const sessions = await tenantSessions(d, a.tenantId, a.customerId);
-    if (hasUnapplied(sessions, await readRow(d, a.tenantId))) throw inProgress();
-    const live = sessions.find(
-      (s) =>
-        s.status === "open" &&
-        !!s.url &&
-        s.expires_at * 1000 > Date.now() &&
-        s.metadata?.termsHash === hash,
-    );
-    if (live) return checkoutStartFromSession({ id: live.id, url: live.url });
-    await closeOpen(d, a.tenantId, sessions);
-    const session = await d.stripe.client.checkout.sessions.create(
-      withCheckoutPolicy(
-        { ...a.params, metadata: { ...a.params.metadata, termsHash: hash } },
-        { surface: a.surface },
-      ),
-      { idempotencyKey: `rf-slot-${sha(`${hash}:${sessions[0]?.id ?? "none"}`)}` },
-    );
-    logger.log(`session ${session.id} opened for tenant ${a.tenantId}`);
-    return checkoutStartFromSession(session);
-  });
+  return underSlotLock(
+    a.tenantId,
+    async () => {
+      const sessions = await tenantSessions(d, a.tenantId, a.customerId);
+      if (hasUnapplied(sessions, await readRow(d, a.tenantId))) throw inProgress();
+      const live = sessions.find(
+        (s) =>
+          s.status === "open" &&
+          !!s.url &&
+          s.expires_at * 1000 > Date.now() &&
+          s.metadata?.termsHash === hash,
+      );
+      if (live) return checkoutStartFromSession({ id: live.id, url: live.url });
+      await closeOpen(d, a.tenantId, sessions);
+      const session = await d.stripe.client.checkout.sessions.create(
+        withCheckoutPolicy(
+          { ...a.params, metadata: { ...a.params.metadata, termsHash: hash } },
+          { surface: a.surface },
+        ),
+        { idempotencyKey: `rf-slot-${sha(`${hash}:${sessions[0]?.id ?? "none"}`)}` },
+      );
+      logger.log(`session ${session.id} opened for tenant ${a.tenantId}`);
+      return checkoutStartFromSession(session);
+    },
+    // the tenant's own click waits briefly (the pool is small), the admin link waits as every admin price writer does
+    a.surface === "TENANT_SELF" ? TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS : undefined,
+  );
 }
 
 /**
