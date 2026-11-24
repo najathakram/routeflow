@@ -57,6 +57,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
+import { underSlotLock } from "./open-checkout-session";
 import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { PLAN_CHANGE_ADDONS_CHANGED } from "./plan-change-stripe";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -4405,6 +4406,35 @@ describe("W-1338 L14 - a plan change closes the open payment link first", () => 
       (svc) => svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY", addons: [] }, "admin"),
     ],
   ];
+
+  // R-88 F5: the lock must span the plan WRITE, not only the expire, or a Pay now in the gap opens a session at the old terms.
+  it.each(changes.filter(([n]) => n !== "upgrade"))(
+    "%s keeps the price lock until the plan write has committed",
+    async (_n, run) => {
+      const f = fakeStripe([]);
+      const { svc, prisma, tx } = make({ sub: { ...sub, planKey: "BUSINESS" }, stripe: f.stripe });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let writing!: () => void;
+      const inWrite = new Promise<void>((r) => (writing = r));
+      prisma.$transaction.mockImplementationOnce(async (fn: any) => {
+        writing();
+        await gate;
+        return fn(tx);
+      });
+      const running = run(svc);
+      await inWrite;
+      const probe = jest.fn();
+      const payNow = underSlotLock("t1", async () => probe());
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(probe).not.toHaveBeenCalled();
+      release();
+      await running;
+      await payNow;
+      expect(probe).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it.each(changes)("%s expires the open session before it commits", async (_n, run) => {
     const f = fakeStripe([session({})]);

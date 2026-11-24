@@ -24,12 +24,16 @@ import {
  * Under the tenant-price lock the tenant's sessions are listed from Stripe (filtered on `metadata.tenantId`): an open,
  * unexpired, hosted one with the same terms (a hash in its metadata) is reused; any other open one is expired; a
  * complete one the webhook has not applied is "Payment in progress"; a list failure or lock timeout is one coded 503.
- * The idempotency key is the terms plus the newest session id, so a retried create replays but a cancel starts fresh.
+ * The idempotency key is the business, its Stripe customer, the terms and the newest session id: a retried create
+ * replays, a cancel starts fresh, and two businesses never share a key (Stripe scopes keys to the account).
  * URLs are re-read from Stripe: never stored, logged, audited or put in an error.
  */
 
 const logger = new Logger("OpenCheckoutSession");
 const DAY_S = 86_400;
+const LIST_PAGE = 100;
+/** Pages read per customer (500 sessions). A customer with more fails closed (503): a blind spot is never a green light. */
+const LIST_MAX_PAGES = 5;
 
 export interface SlotDeps {
   prisma: PrismaService;
@@ -39,6 +43,8 @@ export interface SessionTerms {
   planKey: string;
   unitAmount: number;
   addonSkus: string[];
+  /** The add-on lines as billed (amount and quantity), so a price change under the same SKU is a new term. */
+  addonLines: { unitAmount: number; quantity: number }[];
   anchorAt: Date;
 }
 export interface OpenLink {
@@ -111,7 +117,7 @@ const readRow = (d: SlotDeps, tenantId: string) =>
     },
   }) as Promise<SubRow | null>;
 
-/** The business's own sessions, newest first. Fails closed: a list error is the coded 503. */
+/** The business's own sessions, newest first, every page up to the cap. Fails closed: a list error or overflow is the coded 503. */
 async function tenantSessions(
   d: SlotDeps,
   tenantId: string,
@@ -119,12 +125,20 @@ async function tenantSessions(
   status?: "open",
 ): Promise<Sess[]> {
   try {
-    const page = await d.stripe.client.checkout.sessions.list({
-      customer: customerId,
-      limit: 100,
-      ...(status ? { status } : {}),
-    });
-    return (page.data as Sess[]).filter((s) => s.metadata?.tenantId === tenantId);
+    const all: Sess[] = [];
+    let after: string | undefined;
+    for (let n = 0; n < LIST_MAX_PAGES; n++) {
+      const page = await d.stripe.client.checkout.sessions.list({
+        customer: customerId,
+        limit: LIST_PAGE,
+        ...(status ? { status } : {}),
+        ...(after ? { starting_after: after } : {}),
+      });
+      all.push(...(page.data as Sess[]));
+      if (!page.has_more) return all.filter((s) => s.metadata?.tenantId === tenantId);
+      after = page.data[page.data.length - 1].id;
+    }
+    throw new Error(`more than ${LIST_MAX_PAGES * LIST_PAGE} sessions on one customer`);
   } catch (err) {
     logger.error(`tenant ${tenantId}: session list failed: ${(err as Error)?.message}`);
     throw unavailable();
@@ -172,6 +186,7 @@ export async function openCheckoutSession(
       terms.planKey,
       terms.unitAmount,
       [...terms.addonSkus].sort(),
+      terms.addonLines.map((l) => [l.unitAmount, l.quantity]).sort(),
       terms.anchorAt.getTime(),
       checkoutUiMode(a.surface),
     ]),
@@ -195,7 +210,11 @@ export async function openCheckoutSession(
           { ...a.params, metadata: { ...a.params.metadata, termsHash: hash } },
           { surface: a.surface },
         ),
-        { idempotencyKey: `rf-slot-${sha(`${hash}:${sessions[0]?.id ?? "none"}`)}` },
+        {
+          idempotencyKey: `rf-slot-${sha(
+            `${a.tenantId}:${a.customerId}:${hash}:${sessions[0]?.id ?? "none"}`,
+          )}`,
+        },
       );
       logger.log(`session ${session.id} opened for tenant ${a.tenantId}`);
       return checkoutStartFromSession(session);
@@ -207,8 +226,10 @@ export async function openCheckoutSession(
 
 /**
  * Expire the business's open sessions before a plan or price change commits. The CALLER holds the tenant-price lock
- * (upgrade and the fee save already do; subscribe and downgrade take {@link underSlotLock}). A complete-but-unapplied
- * session or a failed expire refuses the change with a code: completion writes `planKey` from the session's metadata.
+ * ACROSS the whole change (upgrade, subscribe, downgrade and the fee save all take it before this call and keep it
+ * through their write), so a Pay now cannot open a session at the old terms between the expire and the commit. A
+ * complete-but-unapplied session or a failed expire refuses the change with a code: completion writes `planKey`
+ * from the session's metadata. The unapplied check stays closed for the 24 h a session can still complete in.
  */
 export async function expireOpenCheckoutSessions(
   d: SlotDeps,

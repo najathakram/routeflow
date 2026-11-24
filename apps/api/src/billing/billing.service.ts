@@ -684,6 +684,10 @@ export class BillingService {
           planKey: pricing.planKey,
           unitAmount: priceData.unit_amount,
           addonSkus: addons.skus,
+          addonLines: addons.lineItems.map((l) => ({
+            unitAmount: l.price_data.unit_amount,
+            quantity: l.quantity,
+          })),
           anchorAt: anchor.anchorAt,
         },
         params: {

@@ -38,11 +38,17 @@ jest.mock("../common/db-locks", () => {
 
 function fakeStripe(customerId = "cus_1") {
   const sessions: any[] = [];
-  const replay = new Map<string, any>();
+  // Stripe replays a key only for the SAME parameters; the same key with other parameters is an error.
+  const replay = new Map<string, { body: string; session: any }>();
   let n = 0;
   const create = jest.fn(async (params: any, opts?: { idempotencyKey?: string }) => {
     const key = opts?.idempotencyKey;
-    if (key && replay.has(key)) return replay.get(key);
+    const body = JSON.stringify(params);
+    if (key && replay.has(key)) {
+      const hit = replay.get(key)!;
+      if (hit.body !== body) throw new Error("idempotency_error: key reused with other parameters");
+      return hit.session;
+    }
     n += 1;
     const s = {
       id: `cs_${n}`,
@@ -56,14 +62,19 @@ function fakeStripe(customerId = "cus_1") {
       managed: params.managed_payments,
     };
     sessions.unshift(s);
-    if (key) replay.set(key, s);
+    if (key) replay.set(key, { body, session: s });
     return s;
   });
-  const list = jest.fn(async (p: { customer?: string; status?: string }) => ({
-    data: sessions.filter(
-      (s) => (!p.customer || s.customer === p.customer) && (!p.status || s.status === p.status),
-    ),
-  }));
+  const list = jest.fn(
+    async (p: { customer?: string; status?: string; limit?: number; starting_after?: string }) => {
+      const all = sessions.filter(
+        (s) => (!p.customer || s.customer === p.customer) && (!p.status || s.status === p.status),
+      );
+      const from = p.starting_after ? all.findIndex((s) => s.id === p.starting_after) + 1 : 0;
+      const limit = p.limit ?? 10;
+      return { data: all.slice(from, from + limit), has_more: from + limit < all.length };
+    },
+  );
   const expire = jest.fn(async (id: string) => {
     const s = sessions.find((x) => x.id === id);
     if (!s || s.status !== "open") throw new Error("session is not open");
@@ -88,6 +99,7 @@ function make(
     unpriced?: boolean;
     stripeState?: ReturnType<typeof fakeStripe>;
     tenantId?: string;
+    addon?: { amount: number };
   } = {},
 ) {
   const tenantId = opts.tenantId ?? "t1";
@@ -134,7 +146,16 @@ function make(
     }),
   };
   const mutations: any = {
-    checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [] })),
+    checkoutAddonLines: jest.fn(async () =>
+      opts.addon
+        ? {
+            lineItems: [
+              { price_data: { unit_amount: opts.addon.amount, product: "prod_a" }, quantity: 1 },
+            ],
+            skus: ["REGULATED_ITEMS"],
+          }
+        : { lineItems: [], skus: [] },
+    ),
   };
   const billing = new BillingService(
     prisma,
@@ -303,5 +324,191 @@ describe("W-1338 PR-1 — the one open-session slot", () => {
     await h.billing.cancelOpenLink("t1");
     expect(h.expire).toHaveBeenCalledWith("cs_1");
     expect(await h.billing.getOpenLink("t1")).toBeNull();
+  });
+
+  it("F1: two businesses with identical terms never share an idempotency key or each other's session", async () => {
+    const a = make();
+    const b = make({ stripeState: a.fake, tenantId: "t2" });
+    const first: any = await a.billing.createCheckoutSession("t1", admin);
+    const second: any = await b.billing.createCheckoutSession("t2", admin);
+    const keys = a.create.mock.calls.map((c: any[]) => c[1].idempotencyKey);
+    expect(new Set(keys).size).toBe(2);
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect(a.sessions.find((x) => x.id === second.sessionId).metadata.tenantId).toBe("t2");
+    expect(a.sessions.find((x) => x.id === first.sessionId).status).toBe("open");
+  });
+
+  it("F1: the same business and terms replay the same key after a failed first attempt", async () => {
+    const h = make();
+    h.create.mockRejectedValueOnce(new Error("socket hang up"));
+    await expect(h.billing.createCheckoutSession("t1", admin)).rejects.toThrow("socket hang up");
+    await h.billing.createCheckoutSession("t1", admin);
+    const [k1, k2] = h.create.mock.calls.map((c: any[]) => c[1].idempotencyKey);
+    expect(k1).toBe(k2);
+  });
+
+  it("F3: an add-on price change under the same SKU expires the old session and opens a new one", async () => {
+    const addon = { amount: 1000 };
+    const h = make({ addon });
+    await h.billing.createCheckoutSession("t1", admin);
+    addon.amount = 1500;
+    const second: any = await h.billing.createCheckoutSession("t1", admin);
+    expect(h.expire).toHaveBeenCalledWith("cs_1");
+    expect(h.create).toHaveBeenCalledTimes(2);
+    expect(second.sessionId).toBe("cs_2");
+    expect(h.create.mock.calls[1][0].line_items[1].price_data.unit_amount).toBe(1500);
+  });
+
+  it("F6: another business's open session on the same customer is never reused or expired", async () => {
+    const h = make();
+    const other = make({ stripeState: h.fake, tenantId: "t2" });
+    await other.billing.createCheckoutSession("t2", admin);
+    const mine: any = await h.billing.createCheckoutSession("t1", admin);
+    expect(mine.sessionId).toBe("cs_2");
+    expect(h.expire).not.toHaveBeenCalled();
+    expect(h.sessions.find((x) => x.id === "cs_1").status).toBe("open");
+  });
+
+  it("F6: a session with no tenant metadata on the same customer is never reused or expired", async () => {
+    const h = make();
+    h.sessions.push({
+      id: "cs_stray",
+      url: "https://pay.test/stray",
+      status: "open",
+      customer: "cus_1",
+      metadata: {},
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      created: Math.floor(Date.now() / 1000),
+      subscription: null,
+    });
+    const made: any = await h.billing.createCheckoutSession("t1", admin);
+    expect(made.sessionId).not.toBe("cs_stray");
+    expect(h.expire).not.toHaveBeenCalledWith("cs_stray");
+  });
+
+  it("F6: cancel never touches another business's open session", async () => {
+    const h = make();
+    const other = make({ stripeState: h.fake, tenantId: "t2" });
+    await other.billing.createCheckoutSession("t2", admin);
+    expect(await h.billing.cancelOpenLink("t1")).toEqual({ cancelled: false });
+    expect(h.expire).not.toHaveBeenCalled();
+  });
+
+  it("F6: a live session that cannot be expired refuses with CHECKOUT_LINK_NOT_EXPIRED and creates nothing", async () => {
+    const h = make({ unitAmount: 9900 });
+    await h.billing.createCheckoutSession("t1", admin);
+    h.price.unit = 12345;
+    h.expire.mockRejectedValueOnce(new Error("stripe down"));
+    await expect(h.billing.createCheckoutSession("t1", admin)).rejects.toMatchObject({
+      status: 409,
+      response: { code: API_ERROR_CODES.CHECKOUT_LINK_NOT_EXPIRED },
+    });
+    expect(h.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("F6: a session already past its expiry is not a refusal when expire fails", async () => {
+    const h = make();
+    await h.billing.createCheckoutSession("t1", admin);
+    h.price.unit = 12345;
+    h.sessions[0].expires_at = Math.floor(Date.now() / 1000) - 5;
+    h.expire.mockRejectedValueOnce(new Error("session is not open"));
+    await expect(h.billing.createCheckoutSession("t1", admin)).resolves.toMatchObject({
+      sessionId: "cs_2",
+    });
+  });
+
+  it("F6: the catch_up claim's session is shown as kind catch_up, and only for its own business", async () => {
+    const claim = { catchupState: "SESSION_OPEN", catchupSessionId: "cs_cu" };
+    const h = make({ sub: claim });
+    const cu = (tenantId: string) => ({
+      id: "cs_cu",
+      url: "https://pay.test/cu",
+      status: "open",
+      customer: "cus_elsewhere", // not in the card list: only the claim's id finds it
+      metadata: { tenantId },
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+      created: Math.floor(Date.now() / 1000),
+      subscription: null,
+    });
+    h.sessions.push(cu("t1"));
+    expect(await h.billing.getOpenLink("t1")).toEqual({
+      kind: "catch_up",
+      url: "https://pay.test/cu",
+      expiresAt: new Date(h.sessions[0].expires_at * 1000).toISOString(),
+    });
+    h.sessions[0] = cu("t2");
+    expect(await h.billing.getOpenLink("t1")).toBeNull();
+  });
+
+  describe("F6: more than 100 sessions on one customer", () => {
+    const old = (i: number, over: Record<string, unknown> = {}) => ({
+      id: `cs_old${i}`,
+      url: null,
+      status: "expired",
+      customer: "cus_1",
+      metadata: { tenantId: "t1" },
+      expires_at: 1,
+      created: 1,
+      subscription: null,
+      ...over,
+    });
+
+    it("an open session beyond the first page is still found and expired", async () => {
+      const h = make();
+      const now = Math.floor(Date.now() / 1000);
+      for (let i = 0; i < 130; i++) h.sessions.push(old(i));
+      h.sessions[110] = old(110, {
+        status: "open",
+        url: "https://pay.test/o",
+        expires_at: now + 3600,
+      });
+      await h.billing.createCheckoutSession("t1", admin);
+      expect(h.expire).toHaveBeenCalledWith("cs_old110");
+    });
+
+    it("a paid, unapplied session beyond the first page still refuses", async () => {
+      const h = make();
+      const now = Math.floor(Date.now() / 1000);
+      for (let i = 0; i < 130; i++) h.sessions.push(old(i));
+      h.sessions[120] = old(120, {
+        status: "complete",
+        subscription: "sub_paid",
+        created: now - 60,
+      });
+      await expect(h.billing.createCheckoutSession("t1", admin)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS },
+      });
+    });
+
+    it("a customer with more sessions than the read cap fails closed with the 503", async () => {
+      const h = make();
+      for (let i = 0; i < 700; i++) h.sessions.push(old(i));
+      await expect(h.billing.createCheckoutSession("t1", admin)).rejects.toMatchObject({
+        status: 503,
+        response: { code: API_ERROR_CODES.CHECKOUT_SLOT_UNAVAILABLE },
+      });
+      expect(h.create).not.toHaveBeenCalled();
+    });
+  });
+
+  it("F2: a paid session blocks for 24 h only, and fails closed while it does", async () => {
+    const h = make();
+    const base = {
+      url: null,
+      status: "complete",
+      customer: "cus_1",
+      metadata: { tenantId: "t1" },
+      expires_at: 1,
+      subscription: "sub_gone",
+    };
+    const now = Math.floor(Date.now() / 1000);
+    h.sessions.push({ ...base, id: "cs_recent", created: now - 23 * 3600 });
+    await expect(h.billing.createCheckoutSession("t1", admin)).rejects.toMatchObject({
+      response: { code: API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS },
+    });
+    h.sessions[0].created = now - 25 * 3600;
+    await expect(h.billing.createCheckoutSession("t1", admin)).resolves.toMatchObject({
+      sessionId: "cs_1",
+    });
   });
 });
