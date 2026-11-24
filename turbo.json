@@ -205,9 +205,12 @@
     },
     // The api check-types heap override (scripts/lib/check-types-ratchet-core.mjs chooseHeapMb):
     // strict env mode drops an undeclared variable, so declare it here or it never reaches the task.
+    // RF_HEAVY_SLOT_TOKEN / RF_HEAVY_SLOT pass through (not env: the token must stay out of the cache key) so the
+    // ratchet inside the verify hold sees the token and does not queue for a second slot (R-78 F1).
     "@routeflow/api#check-types": {
       "dependsOn": ["^build", "^check-types"],
       "env": ["CHECK_TYPES_HEAP_MB"],
+      "passThroughEnv": ["RF_HEAVY_SLOT_TOKEN", "RF_HEAVY_SLOT"],
       "outputs": []
     },
     // apps/web's typecheck walks the apps/mobile files such a spec imports (see the

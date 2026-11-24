@@ -2292,6 +2292,25 @@ check(
   );
 }
 
+// T3: the turbo hop. Turbo 2 strict env mode drops undeclared variables, so the api check-types task must pass the
+// holder's token and the off switch through, or T2's re-entrancy never reaches the ratchet (R-78 F1). passThroughEnv,
+// not env, keeps the token out of the cache key. turbo.json is JSONC (comments), so strip them before parsing.
+{
+  const raw = readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "turbo.json"),
+    "utf8",
+  );
+  const task = JSON.parse(raw.replace(/^\s*\/\/.*$/gm, ""))?.tasks?.["@routeflow/api#check-types"];
+  check(
+    "T3 turbo.json @routeflow/api#check-types passes RF_HEAVY_SLOT_TOKEN and RF_HEAVY_SLOT through (passThroughEnv, not env)",
+    {
+      pass: [...(task?.passThroughEnv ?? [])].sort(),
+      inEnv: (task?.env ?? []).filter((n) => n.startsWith("RF_HEAVY_SLOT")),
+    },
+    { pass: ["RF_HEAVY_SLOT", "RF_HEAVY_SLOT_TOKEN"], inEnv: [] },
+  );
+}
+
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 console.log(`heavy-slot self-test: ${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
