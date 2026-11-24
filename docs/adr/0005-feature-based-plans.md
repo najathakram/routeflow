@@ -12,7 +12,10 @@
 ## Context
 
 Today's plans (catalog v13) are Starter $99, Growth $249 and Scale $499. They differ only by how many
-customers they include: 100, 250 and 500. Every plan has every feature, as the pricing page says. The
+customers they include: 100, 250 and 500. The pricing page says every plan has every feature, but
+Starter does not: its catalog lacks reports, supplier bills, credit limits, price levels, analytics
+and store ordering, and production enforces plan flags (owner, 2026-11-24; claims register, section
+B). The
 plan definitions also carry user counts (`seatsIncluded`), but nothing enforces them (B1371,
 `apps/api/src/billing/entitlements.service.ts:279`).
 
@@ -22,8 +25,9 @@ That shape has three problems:
    store, even if it uses nothing new. The buyers we talk to hear it as a penalty for growing.
 2. **It cannot fund new features.** When we ship QuickBooks sync or several warehouses, nothing in a
    customer-count ladder lets the price follow the feature.
-3. **It invites false claims.** With every feature on every plan, no document has to say which plan
-   has what, and marketing drifted from the code. An earlier sales-copy draft made nine claims the
+3. **It invites false claims.** With plans sold as "every feature on every plan", no document had to
+   say which plan has what, and marketing drifted from the code; the pricing page's "every plan
+   includes" line is false for Starter today. An earlier sales-copy draft made nine claims the
    product does not support.
 
 ## Options considered

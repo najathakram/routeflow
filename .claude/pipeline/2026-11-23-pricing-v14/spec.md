@@ -12,13 +12,15 @@ never committed). The decisions with dates: [`docs/product/billing-plans.md`](..
 
 ## 1. Why
 
-Today's plans (v13) differ only by customers included, and every plan has every feature. The owner
+Today's plans (v13) are sold as differing only by customers included, with every feature on every
+plan; in production Starter lacks six of them (claims register, section B). The owner
 decided on feature-based plans: Essentials $99, Growth $199 and Pro $349, with no customer or user
 limit. Prices then follow features, and a price can rise when a named feature ships
 (`docs/product/pricing-roadmap.md`).
 
 If we ship nothing, the public page keeps selling customer tiers, and no feature can move a price.
-The "every plan includes" promise also stays kept by a kill switch rather than by the catalog (claims
+The pricing page's "every plan includes" line also stays false for Starter: `PLAN_FLAG_ENFORCEMENT`
+is on in production and stays on (owner, 2026-11-24), and Starter's catalog lacks those flags (claims
 register, section B).
 
 Success signal: a v14 catalog is published, and the ladder spec is green on it. A new account can buy
@@ -174,7 +176,7 @@ Phase 3: missing features, in order.
 - Program / train: pricing v14 (owner 2026-11-23, corrections 2026-11-24); re-rules SA-1204; folds F-12 and F-13.
 - Exists today: `apps/api/prisma/plan-catalog-v13.definitions.ts:30`, `apps/api/src/billing/feature-registry.ts:153`, `apps/api/src/billing/plan-flag-policy.ts:13`, `apps/api/src/billing/plan-catalog.constants.ts:173`, `apps/api/prisma/schema/tenancy.prisma:94`, `apps/api/prisma/schema/platform.prisma:120`.
 - Decision: extend the plans-as-data catalog with a new version; the one source of truth is the published PlanVersion plus `feature-registry.ts`; no parallel plan system.
-- Facts: v13 carries v11's plan rows (`plan-catalog-v13.definitions.ts:30`, `plan-catalog-v12.definitions.ts:62-69`); CORE and ALL_IN exist and are unused (`tenancy.prisma:31-32`); seats are never enforced (`apps/api/src/billing/entitlements.service.ts:279`); card-first is off (`subscription-mutation.service.ts:426`); `PLAN_FLAG_ENFORCEMENT` was deleted in production on 2026-09-17 (bug record B473).
+- Facts: v13 carries v11's plan rows (`plan-catalog-v13.definitions.ts:30`, `plan-catalog-v12.definitions.ts:62-69`); CORE and ALL_IN exist and are unused (`tenancy.prisma:31-32`); seats are never enforced (`apps/api/src/billing/entitlements.service.ts:279`); card-first is off (`subscription-mutation.service.ts:426`); `PLAN_FLAG_ENFORCEMENT` is on in production and stays on (owner, 2026-11-24; supersedes bug record B473's 2026-09-17 deletion).
 
 ### Area sweep
 | Source | Query run | Open ids in this area | Fixed here (own commit + red test) | Deferred (row + reason) |
