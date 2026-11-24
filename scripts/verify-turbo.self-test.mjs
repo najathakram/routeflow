@@ -2854,5 +2854,18 @@ check(
   Object.keys(cleanVerifyEnv({ RF_VERIFY_LANE: "static", KEEP_ME: "1" })),
   ["KEEP_ME"],
 );
+// R-28 M1: pin the wiring. Deleting the laneRefusal call from main() leaves LN6-LN8 green, so run the real entry point.
+{
+  const r = spawnSync(process.execPath, [join(ROOT, "scripts", "verify-turbo.mjs")], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: { ...cleanVerifyEnv(), RF_VERIFY_LANE: "static" },
+  });
+  check(
+    "LN9 verify-turbo main() refuses RF_VERIFY_LANE without CI (exit 1, is CI-only)",
+    [r.status, /is CI-only/.test(r.stderr)],
+    [1, true],
+  );
+}
 console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);
