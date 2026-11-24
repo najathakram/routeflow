@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { API_ERROR_CODES, PLAN_KEYS } from "@routeflow/types";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { planLabel } from "../../../../_components/AdminBadge";
+import { fallbackPlanKeys } from "../../../../_components/usePlanOptions";
 import {
   fetchEntitlementsMode,
   fetchFeatureRegistry,
@@ -268,9 +269,10 @@ export function FeatureConsole({
 
   // PLAN_KEYS (@routeflow/types) is the canonical tier list; a tenant already sitting on a
   // legacy/off-catalog plan (e.g. "PROFESSIONAL", predates LITE) still needs its own current
-  // tier selectable and visibly current, so it's appended when missing.
+  // tier selectable and visibly current, so it's appended when missing. A key no published catalog
+  // holds yet is never offered (SA-1254 V2): previewing it shows no plan flags, and the change is refused.
   const tierOptions = React.useMemo(() => {
-    const keys: string[] = [...PLAN_KEYS];
+    const keys: string[] = fallbackPlanKeys({ includeLite: true });
     if (!keys.includes(currentPlan)) keys.push(currentPlan);
     return keys;
   }, [currentPlan]);

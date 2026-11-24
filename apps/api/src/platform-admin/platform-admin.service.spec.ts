@@ -1779,6 +1779,37 @@ describe("PlatformAdminService — audit provenance", () => {
     expect(billingEventService.emit).not.toHaveBeenCalled();
   });
 
+  // SA-1254 V2 (P-41): the DTOs now accept CORE and ALL_IN (V1), so this is the guard that keeps
+  // them unselectable. The published catalog (v13 today) has no row for either key.
+  it.each(["CORE", "ALL_IN"])(
+    "SA-1254 V2: updatePlan refuses %s while no published catalog row holds it, without writing",
+    async (plan) => {
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        plan: "STARTER",
+        status: "ACTIVE",
+      } as any);
+      planCatalogService.getPublishedVersion.mockResolvedValue({
+        id: "v13",
+        definitions: [
+          { planKey: "STARTER", monthlyPrice: 99 },
+          { planKey: "GROWTH", monthlyPrice: 249 },
+          { planKey: "SCALE", monthlyPrice: 499 },
+          { planKey: "ENTERPRISE", monthlyPrice: null },
+        ],
+      });
+
+      await expect(service.updatePlan(TENANT_ID, { plan } as any, ADMIN_ID)).rejects.toThrow(
+        `Plan "${plan}" is not in the published plan catalog`,
+      );
+
+      expect(prisma.tenant.update).not.toHaveBeenCalled();
+      expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      expect(billingEventService.emit).not.toHaveBeenCalled();
+    },
+  );
+
   // ADMIN-UPDATEPLAN-1: updatePlan() never computed or surfaced a mid-cycle prorated amount,
   // and applied every change — upgrade AND downgrade — instantly, unlike the tenant-facing
   // path (subscribe()/upgrade()/downgrade()), which schedules a downgrade at period end with
