@@ -24,6 +24,7 @@ export const VALID_RETURN_REASONS = [
 // Reasons where the returned goods are physically unsellable never restock by
 // default; the rest go back into stock unless the caller says otherwise.
 export const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
+import { numberYear } from "../common/number-year";
 import { MovementType, Prisma } from "@prisma/client";
 import { lockProductsForStock } from "../common/product-locks";
 import { applyStockMovements } from "../inventory/stock-movements";
@@ -291,8 +292,8 @@ export class ReturnsService {
   // `create()`'s `tenantTransaction`, and reserving standalone here would be
   // a nested transaction (numbering.service.ts's `reserveNext` doc comment).
   private async generateReturnNumber(tx: Prisma.TransactionClient): Promise<string> {
-    const year = new Date().getFullYear();
     const tenantId = this.prisma.getTenantId() ?? undefined;
+    const year = await numberYear(tx, tenantId);
     return this.numbering.reserveNext("RETURN", { year, tenantId, tx });
   }
 

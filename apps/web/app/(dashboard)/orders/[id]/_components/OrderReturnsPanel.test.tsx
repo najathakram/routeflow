@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { renderWithProviders, screen, within } from "@/test-utils/render";
 import { OrderReturnsPanel } from "./OrderReturnsPanel";
 import type { Return } from "@/lib/api/returns";
 
@@ -112,7 +112,7 @@ describe("OrderReturnsPanel (#2406)", () => {
     createdAt: "2026-09-03",
     updatedAt: "2026-09-03",
   };
-  it("W21b: a store-credit inline return reads 'Store credit', not 'Refunded'", () => {
+  it("W21b: a store-credit inline return reads 'Credit', not 'Refunded'", () => {
     mockReturns = [
       {
         ...base,
@@ -127,7 +127,8 @@ describe("OrderReturnsPanel (#2406)", () => {
     ];
     renderWithProviders(<OrderReturnsPanel orderId="o1" />);
     const row = screen.getByTestId("order-return-row");
-    expect(row).toHaveTextContent("Store credit");
+    expect(within(row).getByText("Credit", { exact: true })).toBeInTheDocument();
+    expect(within(row).queryByText("Store credit")).toBeNull();
     expect(row).not.toHaveTextContent(/refunded/i);
   });
   it("W21b: a store-credit return with only a credit note id (no method) is store credit", () => {
@@ -141,7 +142,9 @@ describe("OrderReturnsPanel (#2406)", () => {
       } as unknown as Return,
     ];
     renderWithProviders(<OrderReturnsPanel orderId="o1" />);
-    expect(screen.getByTestId("order-return-row")).toHaveTextContent("Store credit");
+    const row = screen.getByTestId("order-return-row");
+    expect(within(row).getByText("Credit", { exact: true })).toBeInTheDocument();
+    expect(within(row).queryByText("Store credit")).toBeNull();
   });
   it("W21b: a cash/card/check refund (EXTERNAL_REFUND) keeps 'Refunded'", () => {
     mockReturns = [
@@ -158,6 +161,6 @@ describe("OrderReturnsPanel (#2406)", () => {
     renderWithProviders(<OrderReturnsPanel orderId="o1" />);
     const row = screen.getByTestId("order-return-row");
     expect(row).toHaveTextContent("Refunded");
-    expect(row).not.toHaveTextContent("Store credit");
+    expect(row).not.toHaveTextContent("Credit");
   });
 });

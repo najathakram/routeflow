@@ -12,6 +12,7 @@ import { unitPriceNote } from "@/lib/line-unit-price-note";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { RestrictionOverrideNote } from "@/components/RestrictionOverrideNote";
+import { LineNote } from "@/components/LineNote";
 import { displayLineStatus } from "./line-status";
 import { lineDisplayPack } from "@/lib/line-own-pack";
 import { ComponentSubLines } from "@/components/ComponentSubLines";
@@ -220,11 +221,7 @@ function TableBody({
                         }}
                       />
                     )}
-                    {li.notes && (
-                      <p className="mt-0.5 whitespace-pre-line text-xs italic text-navy/60">
-                        {li.notes}
-                      </p>
-                    )}
+                    {li.notes && <LineNote note={li.notes} className="text-xs text-navy/60" />}
                     <ComponentSubLines components={li.components} />
                     <RestrictionOverrideNote line={li} />
                   </div>

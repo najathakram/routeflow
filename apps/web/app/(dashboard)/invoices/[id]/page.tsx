@@ -148,6 +148,7 @@ import {
 } from "@/lib/use-payment-status-check";
 import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
+import { LineNote } from "@/components/LineNote";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -2663,9 +2664,7 @@ export default function InvoiceDetailPage() {
                         <td className="px-8 py-3 font-medium text-navy">
                           {item.description}
                           {item.notes && (
-                            <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
-                              {item.notes}
-                            </p>
+                            <LineNote note={item.notes} className="text-xs text-navy/60" />
                           )}
                           {/* The component rows replace the "(included)" sub-lines in the components layout. */}
                           {display.layout !== "components" && (

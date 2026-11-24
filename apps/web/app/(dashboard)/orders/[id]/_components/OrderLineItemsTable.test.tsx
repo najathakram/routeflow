@@ -82,6 +82,16 @@ describe("OrderLineItemsTable — columns and a plain line", () => {
     expect(screen.getByText("leave at dock")).toBeInTheDocument();
   });
 
+  it("a comma list note prints one entry per line", () => {
+    renderTable([line({ notes: "ACME MINT 20 BOX, ACME CHERRY - 14, ACME ICE 10" })]);
+    const items = within(rowFor("Sample Cola 12oz")).getAllByRole("listitem");
+    expect(items.map((li) => li.textContent)).toEqual([
+      "ACME MINT 20 BOX",
+      "ACME CHERRY - 14",
+      "ACME ICE 10",
+    ]);
+  });
+
   it("a multi-line note keeps its line breaks (whitespace-pre-line, not collapsed to a space)", () => {
     renderTable([line({ notes: "leave at dock\nring bell twice\nask for Sam" })]);
     const note = screen.getByText(

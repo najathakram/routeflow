@@ -28,7 +28,7 @@ import {
   type PurchaseOrder,
   type Supplier,
 } from "../../inventory/_components/purchase-orders-shared";
-import { poActions } from "./po-detail-logic";
+import { createBillAction, poActions } from "./po-detail-logic";
 
 const errorStatus = (e: unknown): number | undefined =>
   (e as { response?: { status?: number } } | null)?.response?.status;
@@ -47,6 +47,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const closePO = useClosePurchaseOrder();
   const [editing, setEditing] = React.useState(false);
   const [receiving, setReceiving] = React.useState(false);
+  const [justReceived, setJustReceived] = React.useState(false);
 
   React.useEffect(() => {
     setTitle(po?.poNumber ?? "Purchase Order");
@@ -109,6 +110,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const actions = poActions(po.status);
   const bill = po.vendorBill ?? null;
   const canOpenBill = !!bill && planFlagVisible(billsFlag);
+  const billAction = createBillAction(po, planFlagVisible(billsFlag));
   const receipts = po.receipts ?? [];
   // A boxed product's cost is per PIECE: show it at 4dp like the lines table does.
   const boxedProductIds = new Set(
@@ -226,9 +228,29 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             ) : (
               <span className="text-navy/70">No bill yet</span>
             )}
+            {billAction && (
+              <Link
+                href={billAction.href}
+                className="mt-1 inline-flex items-center gap-1 text-brand-500 hover:underline"
+              >
+                <FileText className="h-4 w-4" /> {billAction.label}
+              </Link>
+            )}
           </dd>
         </div>
       </dl>
+
+      {justReceived && billAction && (
+        <div
+          data-testid="po-received-strip"
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
+        >
+          Received.
+          <Link href={billAction.href} className="font-medium underline">
+            {billAction.label}
+          </Link>
+        </div>
+      )}
 
       {po.notes && (
         <p className="text-sm text-navy/70">
@@ -292,7 +314,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         />
       )}
       {receiving && (
-        <ReceivePOModal po={po} products={products} onClose={() => setReceiving(false)} />
+        <ReceivePOModal
+          po={po}
+          products={products}
+          onReceived={() => setJustReceived(true)}
+          onClose={() => setReceiving(false)}
+        />
       )}
     </div>
   );

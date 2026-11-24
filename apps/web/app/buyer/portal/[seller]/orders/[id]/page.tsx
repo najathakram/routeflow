@@ -55,6 +55,7 @@ import { useOrderLineOrder } from "@/lib/use-order-line-order";
 import { DeliveryTrackingCard } from "./_components/DeliveryTrackingCard";
 import { ShipmentCard } from "./_components/ShipmentCard";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import { LineNote } from "@/components/LineNote";
 import {
   NO_FLEET_STEP_LABELS,
   PICKUP_STEP_LABELS,
@@ -1164,9 +1165,7 @@ export default function BuyerOrderDetailPage() {
                             )}
                           </p>
                           {li.notes?.trim() && (
-                            <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
-                              {li.notes}
-                            </p>
+                            <LineNote note={li.notes} className="text-xs text-navy/60" />
                           )}
                           <ComponentSubLines components={li.components} />
                         </td>

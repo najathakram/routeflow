@@ -186,7 +186,7 @@ const API_NAME = "@routeflow/api";
  *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
  *    api itself is excluded. `note` is set when no call is left at all.
  */
-export function planTurboCalls({
+function planAll({
   scope,
   excluded = [],
   splitJest,
@@ -241,6 +241,27 @@ export function planTurboCalls({
       ? null
       : `nothing left to verify after the exclusions (${excluded.join(", ")}) — no turbo calls`,
   };
+}
+
+/**
+ * SA-1250 `RF_VERIFY_LANE`: one pure input. Unset or empty = the plan above, byte-identical. "static" (the `chain`
+ * CI lane) keeps only the tsc/eslint calls: no jest, pin or fs-read call, and the test tasks leave a bundled call.
+ * The jest lanes are scripts/ci-lanes.mjs's; its parity job proves together they cover the single run.
+ */
+export function planTurboCalls(opts) {
+  const lane = opts.lane ?? "";
+  if (lane === "") return planAll(opts);
+  if (lane !== "static") {
+    throw new Error(`RF_VERIFY_LANE must be unset or "static" (got "${lane}")`);
+  }
+  const plan = planAll(opts);
+  const calls = [];
+  for (const c of plan.calls) {
+    if (c.jest || c.pins || c.fsRead) continue;
+    const args = c.args.filter((a) => a !== "test" && a !== "test:repo-truth");
+    if (args.some((a) => !a.startsWith("--"))) calls.push({ ...c, args });
+  }
+  return { ...plan, calls, note: calls.length ? null : plan.note };
 }
 
 /**
@@ -556,6 +577,11 @@ export function finishRun({ fast, status, log = console.log }) {
 }
 
 export async function main() {
+  const refusal = laneRefusal(process.env.RF_VERIFY_LANE || "", process.env);
+  if (refusal) {
+    console.error(refusal);
+    process.exit(1);
+  }
   // W-1045: any pass stage already on disk was not written by THIS run; a run that then runs nothing must not inherit it.
   clearStage(process.env);
   const defaults = chooseVerifyDefaults({
@@ -671,6 +697,7 @@ export async function main() {
     scope,
     excluded,
     splitJest: Boolean(JEST_MAX_WORKERS) || failFast,
+    lane: process.env.RF_VERIFY_LANE || "",
     fast: runMode.fast,
     pins,
     fsRead,
@@ -749,4 +776,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(e?.name === "HeavySlotTimeout" ? 75 : 1);
   });
+}
+
+/** R-24 M2: RF_VERIFY_LANE plans no jest, so outside CI it would stage a pass token for a run that tested nothing. */
+export function laneRefusal(lane, env) {
+  return lane && !env.CI
+    ? `verify: RF_VERIFY_LANE=${lane} is CI-only (it plans no jest); unset it, or set CI for a CI run.`
+    : null;
 }

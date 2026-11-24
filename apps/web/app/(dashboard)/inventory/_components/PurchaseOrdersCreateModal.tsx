@@ -8,7 +8,14 @@ import { formatMoney } from "@/lib/format";
 import { useCreatePurchaseOrder } from "@/lib/api/inventory";
 import { useProducts } from "@/lib/api/products";
 import { PurchaseOrderScanBar } from "./PurchaseOrderScanBar";
-import { addEntryUnit, catalogMetaById, poSelectOptions } from "./po-scan-lines";
+import {
+  addEntryUnit,
+  catalogMetaById,
+  poSelectOptions,
+  rowMetaById,
+  rowsCarryCatalogMeta,
+  type POProductRow,
+} from "./po-scan-lines";
 import {
   emptyPOLine,
   resolvePOLine,
@@ -32,7 +39,7 @@ export function CreatePOModal({
   defaultSupplierId,
 }: {
   suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
+  products: POProductRow[];
   onClose: () => void;
   defaultSupplierId?: string;
 }) {
@@ -49,20 +56,25 @@ export function CreatePOModal({
     () => [...products, ...picked.filter((p) => !products.some((q) => q.id === p.id))],
     [products, picked],
   );
-  // Parent and kind per product (the stock list carries neither): one catalog read, for the full-name sort.
-  // The Stock tab's exact params, so the two share one cached read. Until it arrives the modal fails
-  // closed: no options (a bare variant name or a family must never be offered) and the bar is off.
+  // Parent and kind per product, for the full-name sort and to drop a family.
+  //   - The Inventory page's rows carry both (W-1299, off the stock overview): no read, ready at once.
+  //   - Rows that do not (the Purchase orders page, or an API older than W-1299) cost one catalog read.
+  //     Until it arrives the modal fails closed: no options (a bare variant name or a family must never
+  //     be offered) and the bar is off.
+  const rowsCarryMeta = rowsCarryCatalogMeta(products);
   const {
     data: catalog,
     isError: catalogError,
     isFetching: catalogFetching,
     refetch: refetchCatalog,
-  } = useProducts({ includeVariants: true, limit: 0 });
-  const catalogReady = catalog !== undefined;
-  const options = React.useMemo(
-    () => (catalogReady ? poSelectOptions(allProducts, catalogMetaById(catalog?.data ?? [])) : []),
-    [allProducts, catalog, catalogReady],
-  );
+  } = useProducts({ includeVariants: true, limit: 0 }, { enabled: !rowsCarryMeta });
+  const catalogReady = rowsCarryMeta || catalog !== undefined;
+  const options = React.useMemo(() => {
+    if (rowsCarryMeta) return poSelectOptions(allProducts, rowMetaById(allProducts));
+    return catalog !== undefined
+      ? poSelectOptions(allProducts, catalogMetaById(catalog?.data ?? []))
+      : [];
+  }, [allProducts, catalog, rowsCarryMeta]);
   /** Line numbers (0-based) submitted with a quantity but no cost. */
   const [missingCost, setMissingCost] = React.useState<number[]>([]);
   const productById = React.useMemo(
@@ -82,7 +94,14 @@ export function CreatePOModal({
     if (!productById.has(product.id))
       setPicked((l) => [
         ...l,
-        { id: product.id, name: product.name, sku: product.sku, unitsPerBox: product.unitsPerBox },
+        {
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          unitsPerBox: product.unitsPerBox,
+          kind: product.kind,
+          parentProductId: product.parentProductId ?? null,
+        },
       ]);
     setLines(next.lines);
     return { created: next.created };
