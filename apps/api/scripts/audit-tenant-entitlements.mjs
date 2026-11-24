@@ -43,9 +43,11 @@ import { createRequire } from "module";
 import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const { Client } = createRequire(import.meta.url)("pg");
 // #2700 (SA-559(2)): the ONE flags-gain-forward mirror — required, never re-derived here.
-const { effectivePlanFlagsMirror } = createRequire(import.meta.url)(
-  "./lib/feature-registry-mirror.cjs",
-);
+// SA-1204 C2b / SA-1254 V1 (P-41): the plan-key helpers come from the same one JS home. The hand
+// copies this file used to carry had drifted (no LITE, and SCALE/GROWTH/LITE read as STARTER).
+const { effectivePlanFlagsMirror, findPlanDefinition, planKeyFromEnum } = createRequire(
+  import.meta.url,
+)("./lib/feature-registry-mirror.cjs");
 
 /**
  * Resolve a connection string. Railway's `postgres` service publishes only its
@@ -84,45 +86,7 @@ const client = new Client({ connectionString: url });
 const q = async (sql, params) => (await client.query(sql, params)).rows;
 
 // ─── plan-catalog.constants.ts mirror (keep in lock-step; see file header) ───
-
-const PLAN_KEYS = ["STARTER", "GROWTH", "SCALE", "ENTERPRISE"];
-
-/** Historical plan keys from catalog versions published before the rename. */
-const LEGACY_PLAN_KEY_ALIASES = {
-  TEAM: "GROWTH",
-  BUSINESS: "SCALE",
-  PROFESSIONAL: "SCALE",
-};
-
-/** Mirrors `normalizePlanKey` — map any historical or current plan key onto a current one. */
-function normalizePlanKey(planKey) {
-  if (!planKey) return null;
-  if (PLAN_KEYS.includes(planKey)) return planKey;
-  return Object.hasOwn(LEGACY_PLAN_KEY_ALIASES, planKey) ? LEGACY_PLAN_KEY_ALIASES[planKey] : null;
-}
-
-/** Mirrors `findPlanDefinition` — normalize both sides before comparing. */
-function findPlanDefinition(definitions, planKey) {
-  if (!planKey) return undefined;
-  const want = normalizePlanKey(planKey) ?? planKey;
-  return definitions.find((d) => (normalizePlanKey(d.planKey) ?? d.planKey) === want);
-}
-
-/** Mirrors `planKeyFromEnum` — legacy `Tenant.plan` enum → current planKey. */
-function planKeyFromEnum(plan) {
-  switch (plan) {
-    case "TEAM":
-      return "GROWTH";
-    case "BUSINESS":
-    case "PROFESSIONAL":
-      return "SCALE";
-    case "ENTERPRISE":
-      return "ENTERPRISE";
-    case "STARTER":
-    default:
-      return "STARTER";
-  }
-}
+// findPlanDefinition and planKeyFromEnum (and the PLAN_KEYS they read): required above.
 
 /** Mirrors `LEGACY_ADDON_KEY_TO_SKU` — the pre-SKU free-text addonKey bridge. */
 const LEGACY_ADDON_KEY_TO_SKU = {
