@@ -338,6 +338,8 @@ model StockMovement {
   // a tiebreaker. Replay, point-in-time cost and every "when did this happen" read order/filter by
   // (effectiveAt, createdAt, id).
   effectiveAt   DateTime     @default(now())
+  // SA-1215 set 3: the receipt line this movement came from. Null on every row today; no reader or writer yet.
+  receiptLineId String?
   createdAt     DateTime     @default(now())
   tenantId      String?
 
@@ -345,6 +347,7 @@ model StockMovement {
   tenant      Tenant?   @relation(fields: [tenantId], references: [id])
   supplier    Supplier? @relation(fields: [supplierId], references: [id])
   performedBy User?     @relation(fields: [performedById], references: [id])
+  receiptLine PurchaseOrderReceiptLine? @relation(fields: [receiptLineId], references: [id], onDelete: SetNull)
 
   @@index([productId])
   @@index([type])
@@ -373,6 +376,8 @@ model PurchaseOrder {
   tenant     Tenant?             @relation(fields: [tenantId], references: [id])
   items      PurchaseOrderItem[]
   vendorBill VendorBill?
+  receipts   PurchaseOrderReceipt[]
+  charges    PurchaseOrderCharge[]
 
   @@unique([tenantId, poNumber])
   @@index([supplierId])
@@ -402,6 +407,8 @@ model PurchaseOrderItem {
   po      PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
   tenant  Tenant?       @relation(fields: [tenantId], references: [id])
   product Product       @relation(fields: [productId], references: [id])
+  receiptLines PurchaseOrderReceiptLine[]
+  chargeAllocations PurchaseOrderChargeAllocation[]
 
   @@index([poId])
   @@index([productId])
@@ -419,6 +426,123 @@ model PurchaseOrderItem {
 
   @@index([familyGroupId])
   @@index([familyProductId])
+}
+
+// ─── PO receipts and PO charges (SA-1215 sets 3-4, P-85) ────────────────────────────────────────
+// Tables only: no reader and no writer yet. The PO aggregate cascades as one (F6); new tables are tenant-required.
+// CHECK constraints live in the migration SQL (Prisma does not model them); the shape specs pin their text.
+
+enum PurchaseOrderChargeKind {
+  ESTIMATE
+  ACTUAL
+}
+
+enum PurchaseOrderChargeBasis {
+  VALUE
+  QUANTITY
+}
+
+// One receiving event on a PO. A reversal is a new header whose lines mirror the original's with negated quantities.
+model PurchaseOrderReceipt {
+  id               String   @id @default(uuid())
+  tenantId         String
+  poId             String
+  receivedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+  receivedById     String?
+  vendorReference  String?
+  notes            String?
+  // Null only on reversals the edit path writes. CHECK: (idempotencyKey IS NULL) = (requestHash IS NULL).
+  idempotencyKey   String?
+  requestHash      String?
+  result           Json?
+  // One reversal per receipt (@unique). CHECK: not itself; a reversal carries no key.
+  reversesReceiptId String? @unique
+
+  tenant     Tenant                 @relation(fields: [tenantId], references: [id])
+  po         PurchaseOrder          @relation(fields: [poId], references: [id], onDelete: Cascade)
+  receivedBy User?                  @relation("PoReceiptReceivedBy", fields: [receivedById], references: [id], onDelete: SetNull)
+  reverses   PurchaseOrderReceipt?  @relation("PoReceiptReversal", fields: [reversesReceiptId], references: [id], onDelete: Restrict)
+  reversedBy PurchaseOrderReceipt?  @relation("PoReceiptReversal")
+  lines      PurchaseOrderReceiptLine[]
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, poId])
+  @@index([poId])
+  @@index([receivedById])
+}
+
+model PurchaseOrderReceiptLine {
+  id                  String  @id @default(uuid())
+  tenantId            String
+  receiptId           String
+  purchaseOrderItemId String
+  // CHECK: non-zero, same sign as qtyDamaged, |qtyDamaged| <= |qtyArriving|.
+  qtyArriving         Decimal @db.Decimal(10, 3)
+  qtyDamaged          Decimal @default(0) @db.Decimal(10, 3)
+
+  tenant         Tenant               @relation(fields: [tenantId], references: [id])
+  receipt        PurchaseOrderReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Cascade)
+  stockMovements StockMovement[]
+
+  @@unique([receiptId, purchaseOrderItemId])
+  @@index([purchaseOrderItemId])
+  @@index([tenantId])
+}
+
+// A document row on the PO (freight, duty). A charge writes no stock movement. Live = voidedAt IS NULL and no row's
+// reversesChargeId points at it.
+model PurchaseOrderCharge {
+  id               String                   @id @default(uuid())
+  tenantId         String
+  poId             String
+  // CHECK: (kind = 'ACTUAL') = (vendorBillId IS NOT NULL).
+  vendorBillId     String?
+  kind             PurchaseOrderChargeKind
+  basis            PurchaseOrderChargeBasis @default(VALUE)
+  label            String?
+  // CHECK: amount > 0, taxAmount >= 0, reversesChargeId <> id.
+  amount           Decimal                  @db.Decimal(10, 2)
+  taxAmount        Decimal                  @default(0) @db.Decimal(10, 2)
+  effectiveAt      DateTime                 @default(now())
+  reversesChargeId String?                  @unique
+  voidedAt         DateTime?
+  voidedById       String?
+  createdById      String?
+  createdAt        DateTime                 @default(now())
+
+  tenant      Tenant                @relation(fields: [tenantId], references: [id])
+  po          PurchaseOrder         @relation(fields: [poId], references: [id], onDelete: Cascade)
+  vendorBill  VendorBill?           @relation(fields: [vendorBillId], references: [id], onDelete: Restrict)
+  reverses    PurchaseOrderCharge?  @relation("PoChargeReversal", fields: [reversesChargeId], references: [id], onDelete: Restrict)
+  reversedBy  PurchaseOrderCharge?  @relation("PoChargeReversal")
+  voidedBy    User?                 @relation("PoChargeVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  createdBy   User?                 @relation("PoChargeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  allocations PurchaseOrderChargeAllocation[]
+
+  @@index([tenantId, poId])
+  @@index([poId])
+  @@index([vendorBillId])
+  @@index([voidedById])
+  @@index([createdById])
+}
+
+model PurchaseOrderChargeAllocation {
+  id                  String  @id @default(uuid())
+  tenantId            String
+  chargeId            String
+  purchaseOrderItemId String
+  // CHECK: amount >= 0 (a largest-remainder share can be 0).
+  amount              Decimal @db.Decimal(10, 2)
+
+  tenant            Tenant              @relation(fields: [tenantId], references: [id])
+  charge            PurchaseOrderCharge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem   @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Cascade)
+
+  @@unique([chargeId, purchaseOrderItemId])
+  @@index([purchaseOrderItemId])
+  @@index([tenantId])
 }
 
 // ─── Multi-level units + purchase-order supplier mapping (2026-09-19) ─────────

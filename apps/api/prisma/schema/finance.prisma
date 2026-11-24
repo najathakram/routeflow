@@ -912,6 +912,7 @@ model VendorBill {
   tenant        Tenant?          @relation(fields: [tenantId], references: [id])
   payments      BillPayment[]
   items         VendorBillItem[]
+  poCharges     PurchaseOrderCharge[]
   scans         InvoiceScan[]
   purchaseOrder PurchaseOrder?   @relation(fields: [purchaseOrderId], references: [id], onDelete: SetNull)
 
