@@ -20,7 +20,7 @@ import {
   withinStaffOverrideTolerance,
   type DiscountTaxBase,
 } from "@routeflow/pricing";
-import { ESTIMATE_MOVES, canMoveEstimate, type EstimateAction } from "@routeflow/types";
+import { ESTIMATE_MOVES, canMoveEstimate, type EstimateAction } from "./estimate-moves";
 import { loadMsrpMap } from "../common/msrp";
 import { discountModeOf, newDocumentDiscountMode } from "../common/discount-tax-mode";
 import { configuredTaxRateFraction } from "../common/tax-rate";
