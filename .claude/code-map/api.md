@@ -150,3 +150,4 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-23-w41.md](api/landing-2026-11-23-w41.md) | Window 41: PO lot lines in whole packs (create, edit, receive), the one available-credit helper and its readers, buyer credit total |
 | [api/landing-2026-11-23-w42.md](api/landing-2026-11-23-w42.md) | Window 42: receipt tag on the payments list, buyer invoice account rows, counter return proof on Postgres, ops-monitor comments and inbox |
 | [api/landing-2026-11-24-w43.md](api/landing-2026-11-24-w43.md) | Window 43: alias pack memory and void date columns, receipt reader pins, local mail TLS generated, fleet CLI |
+| [api/landing-2026-11-24-w44.md](api/landing-2026-11-24-w44.md) | Window 44: verify fail-fast switch, test-assertion edit flagger (root tooling) |
