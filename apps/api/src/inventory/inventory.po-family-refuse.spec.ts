@@ -144,3 +144,74 @@ describe("PO writers refuse a FAMILY product (W-1318)", () => {
     );
   });
 });
+
+// R-60 F2: web and mobile send every PO line, zeros included. A legacy FAMILY line at qty 0 receives nothing,
+// so it is skipped like any qty-0 line and the rest of the PO receives; only a FAMILY line with qty > 0 is refused.
+describe("receive: a FAMILY line is refused only when it receives stock (W-1318, R-60 F2)", () => {
+  const VARIANT = { id: "var-1", name: "Soda Cola", kind: "VARIANT" };
+  const line = (id: string, productId: string) => ({
+    id,
+    productId,
+    qtyOrdered: D(6),
+    qtyReceived: D(0),
+    unitCost: D(2),
+    packSize: null,
+    unitLabel: null,
+  });
+
+  async function receiveMixed(variantQty: number, familyQty: number) {
+    const prisma = createMockPrisma();
+    wireStockHelper(prisma);
+    const items = [line("poi-v", VARIANT.id), line("poi-f", FAMILY.id)];
+    const po = {
+      id: "po-1",
+      poNumber: "PO-2026-0001",
+      supplierId: "sup-1",
+      status: "SENT",
+      items,
+    };
+    prisma.purchaseOrder.findUnique.mockResolvedValueOnce(po).mockResolvedValue(po);
+    prisma.purchaseOrder.update.mockResolvedValue({ id: "po-1", status: "PARTIAL" });
+    prisma.purchaseOrderItem.update.mockResolvedValue({});
+    prisma.product.findUnique.mockImplementation(async (a: any) => ({
+      ...(a.where.id === FAMILY.id ? FAMILY : VARIANT),
+      currentStock: D(0),
+      averageCost: null,
+      costingMethod: "AVCO",
+      unitsPerBox: null,
+    }));
+    const service = await build(prisma);
+    const e = await service
+      .receivePurchaseOrder(
+        "po-1",
+        {
+          items: [
+            { id: "poi-v", receivedQty: variantQty },
+            { id: "poi-f", receivedQty: familyQty },
+          ],
+        } as any,
+        "u1",
+      )
+      .catch((x) => x);
+    return {
+      code: e?.getResponse?.()?.code,
+      lots: prisma.stockLot.create.mock.calls.length,
+      updatedItemIds: prisma.purchaseOrderItem.update.mock.calls.map((c: any) => c[0].where.id),
+    };
+  }
+
+  it("a FAMILY line at qty 0 is skipped and the variant line still receives", async () => {
+    expect(await receiveMixed(5, 0)).toEqual({
+      code: undefined,
+      lots: 1,
+      updatedItemIds: ["poi-v"],
+    });
+  });
+
+  it("a FAMILY line at qty > 0 is still refused: 400 FAMILY_NOT_SELLABLE, and the PO fails as a whole", async () => {
+    const r = await receiveMixed(5, 3);
+    expect(r.code).toBe("FAMILY_NOT_SELLABLE");
+    // the variant line ran first in the same transaction; the throw rolls it back (the tx helper is mocked here)
+    expect(r.updatedItemIds).toEqual(["poi-v"]);
+  });
+});

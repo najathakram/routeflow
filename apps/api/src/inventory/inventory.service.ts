@@ -1788,8 +1788,6 @@ export class InventoryService {
         }
 
         const prod = await tx.product.findUnique({ where: { id: item.productId } });
-        // W-1318: a PO line written before the create guard must not post stock against a FAMILY container.
-        if (prod) assertSellableLines([prod]);
 
         // Boxed payloads convert to pieces up front; a bare receivedQty/
         // qtyReceived KEEPS meaning pieces (existing callers must be
@@ -1818,6 +1816,8 @@ export class InventoryService {
         const outstanding = item.qtyOrdered.minus(item.qtyReceived);
         const actualQty = receivedQty;
         if (actualQty <= 0) continue;
+        // W-1318: a legacy FAMILY line must not post stock; a qty-0 line (clients send every line) is skipped above.
+        if (prod) assertSellableLines([prod]);
         // SA-1227 MEDIUM-2: a lot line is received in whole packs (pieces here, packs in the check).
         assertWholeLotReceive(
           {
