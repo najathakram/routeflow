@@ -377,4 +377,13 @@ describe("W-1316 PR-1: an old sale's return credit is capped at its last paid pr
     const q = await quote(1);
     expect(q.chunks[0]).toMatchObject({ subtotal: 2, priceSource: "SOURCE_INVOICE" });
   });
+
+  it("H5 (R-74 F1): a line sold as 1 box of 12 for 24.00 while the product's pack is now 24: the line's pack wins, 1 piece back credits 2.00", async () => {
+    await setup(BOXED);
+    db.invoiceItem.findFirst.mockResolvedValue(
+      soldOn([{ id: "u-pack12", qty: 1, subtotal: 24, unitsPerBox: 12 }]),
+    );
+    const q = await quote(1);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 2, priceSource: "SOURCE_INVOICE" });
+  });
 });
