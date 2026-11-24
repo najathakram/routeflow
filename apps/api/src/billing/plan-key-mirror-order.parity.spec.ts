@@ -63,6 +63,26 @@ const PROBES: Array<string | null> = [
 
 const label = (v: string | null) => (v === null ? "null" : JSON.stringify(v));
 
+/**
+ * T27 / C2b inventory patterns: each one is a sign that a file hand-types the plan-key helpers.
+ * Only lib/feature-registry-mirror.cjs may match them.
+ */
+const INVENTORY_PATTERNS: Array<[string, RegExp]> = [
+  ['case "TEAM"', /case\s+["']TEAM["']/],
+  // the TEAM alias, with the key bare or quoted (R-56 F1)
+  ['TEAM: "GROWTH"', /\bTEAM["']?\s*:\s*["']GROWTH["']/],
+  ["function planKeyFromEnum", /function\s+planKeyFromEnum\b/],
+  ["const PLAN_KEYS =", /\bconst\s+PLAN_KEYS\s*=/],
+  // the ladder order under any name: a list where STARTER is followed by CORE or GROWTH (R-56 F1)
+  ["a plan-key order array", /["']STARTER["']\s*,[^\]]*?["'](?:CORE|GROWTH)["']/],
+];
+// .ts too: the script trees hold a few TypeScript files (R-56 F1)
+const INVENTORY_FILE = /\.(c|m)?[jt]s$/;
+
+function inventoryHits(src: string): string[] {
+  return INVENTORY_PATTERNS.filter(([, re]) => re.test(src)).map(([name]) => name);
+}
+
 function runModule(source: string): Record<string, unknown> {
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", source], {
     cwd: API_DIR,
@@ -124,20 +144,29 @@ describe("SA-1254 V1: the five plan-key mirrors keep one order (T13)", () => {
    * T27 / C2b inventory: only the JS mirror may type the plan-key helpers. A script that needs
    * them requires lib/feature-registry-mirror.cjs. Scans apps/api/scripts and scripts.
    */
+  it("the inventory sees a hand copy however its alias map and key order are spelled (R-56 F1)", () => {
+    const QUOTED_ALIAS = 'const ALIASES = { "TEAM": "GROWTH", BUSINESS: "SCALE" };';
+    const RENAMED_ORDER =
+      'const PROBE_ORDER = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"];';
+    const SINGLE_QUOTED = "const ORDER = ['STARTER', 'CORE', 'GROWTH'];";
+    expect(inventoryHits(QUOTED_ALIAS)).toContain('TEAM: "GROWTH"');
+    expect(inventoryHits(RENAMED_ORDER)).toContain("a plan-key order array");
+    expect(inventoryHits(SINGLE_QUOTED)).toContain("a plan-key order array");
+    expect(INVENTORY_FILE.test("copy.ts")).toBe(true);
+    // one key alone, or keys out of ladder order, is not a copy of the order
+    expect(inventoryHits('if (key === "STARTER") return "GROWTH";')).toEqual([]);
+    expect(inventoryHits('const OUT = ["SCALE", "STARTER"];')).toEqual([]);
+  });
+
   it("only lib/feature-registry-mirror.cjs types the plan-key helpers under the script trees", () => {
-    const PATTERNS: Array<[string, RegExp]> = [
-      ['case "TEAM"', /case\s+["']TEAM["']/],
-      ['TEAM: "GROWTH"', /\bTEAM\s*:\s*["']GROWTH["']/],
-      ["function planKeyFromEnum", /function\s+planKeyFromEnum\b/],
-      ["const PLAN_KEYS =", /\bconst\s+PLAN_KEYS\s*=/],
-    ];
+    const PATTERNS = INVENTORY_PATTERNS;
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         if (name === "node_modules" || name.startsWith(".")) continue;
         const full = path.join(dir, name);
         if (statSync(full).isDirectory()) walk(full);
-        else if (/\.(c|m)?js$/.test(name)) files.push(full);
+        else if (INVENTORY_FILE.test(name)) files.push(full);
       }
     };
     walk(path.join(API_DIR, "scripts"));

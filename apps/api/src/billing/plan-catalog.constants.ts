@@ -16,8 +16,9 @@
 //
 // WP1 (lite-L2, R1.1-R1.4): LITE is an invite-only tier ranked BELOW every existing plan, so it
 // leads the array. `planRank()` below derives a plan's ordinal from `PLAN_KEYS.indexOf(...)`, so
-// this is an ORDER PIN, not a set of hardcoded indices — LITE=0, STARTER=1, GROWTH=2, SCALE=3,
-// ENTERPRISE=4, and any future re-tiering only needs to reorder this array.
+// this is an ORDER PIN, not a set of hardcoded indices — since P-41: LITE=0, STARTER=1, CORE=2,
+// GROWTH=3, ALL_IN=4, SCALE=5, ENTERPRISE=6, and any future re-tiering only needs to reorder
+// this array.
 //
 // SA-1254 (b) 6 / SA-1261 rule 9 (P-41): CORE (Essentials, $99) and ALL_IN (Pro, $349) join the
 // ladder by price, so the order is LITE, STARTER, CORE, GROWTH, ALL_IN, SCALE, ENTERPRISE. This
@@ -179,7 +180,7 @@ export function normalizePlanKey(planKey: string | null | undefined): PlanKey | 
   return Object.hasOwn(LEGACY_PLAN_KEY_ALIASES, planKey) ? LEGACY_PLAN_KEY_ALIASES[planKey] : null;
 }
 
-/** Ordinal rank of a plan key (LITE=0 … ENTERPRISE=4); -1 if unknown. Upgrade/downgrade direction. */
+/** Ordinal rank of a plan key (LITE=0 … ENTERPRISE=6); -1 if unknown. Upgrade/downgrade direction. */
 export function planRank(planKey: string): number {
   const normalized = normalizePlanKey(planKey);
   return normalized ? PLAN_KEYS.indexOf(normalized) : -1;
