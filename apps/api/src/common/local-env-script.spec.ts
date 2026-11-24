@@ -147,6 +147,13 @@ describe("local-env.mjs contract (F10)", () => {
     expect(res.status).toBe(0);
   }, 10_000);
 
+  it("--smtp-specs ensures the generated TLS pair first and says so on stderr", () => {
+    const res = run(["--smtp-specs", "--", shim("smtp-specs")], scrubbedEnv());
+
+    expect(res.stderr).toMatch(/mailpit tls: (kept|generated)/);
+    expect(res.stderr).not.toContain("PRIVATE KEY");
+  }, 60_000);
+
   it("--smtp-specs keeps an already-exported target (other ports) but always sets the CA", () => {
     const res = run(
       ["--smtp-specs", "--", shim("smtp-specs")],
