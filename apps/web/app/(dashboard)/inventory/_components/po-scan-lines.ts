@@ -21,6 +21,35 @@ export function catalogMetaById(rows: readonly any[]): Map<string, CatalogMeta> 
   return out;
 }
 
+/**
+ * A product row handed to Create purchase order. `kind` and `parentProductId` are present when the
+ * caller's list already carries the family facts (the Inventory page's stock overview, W-1299).
+ */
+export interface POProductRow {
+  id: string;
+  name: string;
+  sku?: string;
+  unitsPerBox?: number | null;
+  kind?: string | null;
+  parentProductId?: string | null;
+}
+
+/**
+ * True when EVERY row says its kind, so the rows alone answer "is this a family" and "whose variant is
+ * this" and no catalog read is needed. One row without it (an older API, or a caller that does not send
+ * it) means the answer is not known: the caller must read the catalog and fail closed until it arrives.
+ */
+export function rowsCarryCatalogMeta(rows: readonly POProductRow[]): boolean {
+  return rows.every((r) => typeof r.kind === "string");
+}
+
+/** id -> parent/kind, from rows that carry them (see `rowsCarryCatalogMeta`). */
+export function rowMetaById(rows: readonly POProductRow[]): Map<string, CatalogMeta> {
+  return new Map(
+    rows.map((r) => [r.id, { kind: r.kind ?? null, parentProductId: r.parentProductId ?? null }]),
+  );
+}
+
 export interface POSelectProduct {
   id: string;
   name: string;

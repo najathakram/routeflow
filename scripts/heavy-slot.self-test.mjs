@@ -33,7 +33,7 @@ import {
   formatStatus,
   formatWaitLine,
   historyRecord,
-  nextGrant,
+  nextGrant as nextGrantRaw,
   parsePriority,
   isCappedLabel,
   parseCappedMax,
@@ -140,6 +140,8 @@ const deadPid = (() => {
   return r.pid;
 })();
 const NO_LOG = { log: () => {} };
+// nextGrant requires `now` (M2); the older cases do not use the age term, so they pass 0.
+const nextGrant = (a) => nextGrantRaw({ now: 0, ...a });
 const cleanEnv = () => {
   const env = { ...process.env };
   for (const k of ["CI", "RF_HEAVY_SLOT", "RF_HEAVY_SLOT_TOKEN", "RF_HEAVY_SLOTS"]) delete env[k];
@@ -1964,6 +1966,73 @@ check(
     "Q9 the ticket records priority only when the env switch is high",
     [pHigh, pNone],
     ["high", undefined],
+  );
+}
+
+{
+  // Q10-Q13: the 120-minute age cap (SA-1230 M1 option A). Age comes from the ticket NAME ms, never the JSON field.
+  const NOW = 1_000_000_000_000;
+  const nm = (m) => ticketName(NOW - m * 60_000, 1, "aa");
+  const g = (order, myName, high) =>
+    nextGrant({ order, myName, freeSlots: 1, high, now: NOW }).grant;
+  const oldN = nm(121);
+  const hiNew = nm(1);
+  check(
+    "Q10 a normal ticket older than 120 min is granted ahead of a newer high ticket; the high one waits",
+    [g([oldN, hiNew], oldN, new Set([hiNew])), g([oldN, hiNew], hiNew, new Set([hiNew]))],
+    [true, false],
+  );
+  const youngN = nm(119);
+  check(
+    "Q11 a normal ticket at 119 min still defers to a high ticket",
+    [g([youngN, hiNew], youngN, new Set([hiNew])), g([youngN, hiNew], hiNew, new Set([hiNew]))],
+    [false, true],
+  );
+  const oldHigh = nm(130);
+  check(
+    "Q12 an aged normal ticket joins the high group in queue order: an older high ticket is never jumped",
+    [g([oldHigh, oldN], oldHigh, new Set([oldHigh])), g([oldHigh, oldN], oldN, new Set([oldHigh]))],
+    [true, false],
+  );
+  check(
+    "Q13 nextGrant without a finite `now` throws (the age term must never be silently dropped)",
+    [undefined, NaN, "5"].map((now) => {
+      try {
+        nextGrantRaw({ order: [oldN], myName: oldN, freeSlots: 1, now });
+        return "no throw";
+      } catch (e) {
+        return /nextGrant: `now` must be a finite number/.test(String(e.message));
+      }
+    }),
+    [true, true, true],
+  );
+  // Q14: on disk. An aged normal ticket whose JSON is truncated (mid-write) is still promoted by its NAME: a high
+  // waiter queued behind it sees position 2 of 2 (without the cap it would be 1 of 2).
+  const dirA = mkTmp();
+  ghost(dirA, {}, 0);
+  mkdirSync(path.join(dirA, "queue"), { recursive: true });
+  writeFileSync(
+    path.join(dirA, "queue", ticketName(Date.now() - 121 * 60_000, 1, "aa")),
+    '{"pid":1,"lab',
+  );
+  const logA = [];
+  await withHeavySlot(
+    {
+      label: "wt-db-1",
+      branch: "b",
+      dir: dirA,
+      env: { RF_HEAVY_SLOT_PRIORITY: "high" },
+      slots: 1,
+      maxWaitMs: 300,
+      ...FAST,
+      log: (m) => logA.push(m),
+    },
+    async () => {},
+  ).catch(() => {});
+  check(
+    "Q14 an aged ticket with an unreadable body still counts as promoted: the high waiter is position 2 of 2",
+    /position 2 of 2/.test(logA.find((l) => /position/.test(l)) ?? ""),
+    true,
   );
 }
 

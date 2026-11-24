@@ -58,6 +58,7 @@ function newItem(id, fields, ts) {
     statusText: fields.statusText ?? null,
     harm: fields.harm ?? null,
     lane: fields.lane ?? null,
+    role: fields.role ?? null,
     train: fields.train ?? null,
     area: fields.area ?? null,
     parent: fields.parent ?? null,
@@ -78,9 +79,19 @@ function newItem(id, fields, ts) {
     solution: fields.solution ?? null,
     ownerAsk: fields.ownerAsk ?? null,
     summaryDraft: fields.summaryDraft ?? false,
+    // Tester intake (a draft bug): repro steps, the screen, a link to a screenshot or recording.
+    steps: fields.steps ?? null,
+    screen: fields.screen ?? null,
+    evidence: fields.evidence ?? null,
+    reportedBy: null, // the actor of the item.new (a member id, a lane, or machine:folder)
     answeredAt: null,
     children: [],
     claimedBy: null,
+    assignee: null, // the member it was handed to (rf assign), else null
+    assignedBy: null,
+    assignedAt: null,
+    claimedActor: null, // the name the claim was written under (a member, a lane, a hook)
+    claimedMember: null, // the member who holds it (claims are per member), or null for a lane session
     claimedAt: null,
     claimConflict: null,
     blocked: null,
@@ -91,6 +102,22 @@ function newItem(id, fields, ts) {
   };
 }
 
+/**
+ * True when (lane, member) holds the item's claim. Claims are held per member: two members on one
+ * lane are two holders, and a lane session (no member) is a holder of its own. Old claims carry no
+ * member, so they keep the lane rule.
+ */
+export function holdsClaim(it, lane, member) {
+  return (
+    Boolean(it?.claimedBy) &&
+    it.claimedBy === lane &&
+    (it.claimedMember ?? null) === (member ?? null)
+  );
+}
+
+/** "qa (alex)" for a member's claim, "qa" for a lane session's. */
+export const holderLabel = (lane, member) => (member ? `${lane} (${member})` : lane);
+
 export function fold(events, { bugs = new Map() } = {}) {
   const state = {
     items: new Map(),
@@ -99,9 +126,11 @@ export function fold(events, { bugs = new Map() } = {}) {
     rulings: [],
     notes: [],
     comments: [], // { id, ts, item, text, to, replyTo, actor, lane, machine }, fold order
+    assignments: [], // { id, ts, item, to, note, actor, lane, machine }, fold order (rf assign)
     pushes: [],
     prEvents: [],
-    anomalies: [],
+    anomalies: [], // { kind, eventId, item, detail, ts, acked: { at, by, note } | null }
+    retiredLanes: new Map(), // lane -> { lane, at, by, note } (rf lane retire; unretire deletes)
     eventCount: 0,
     lastEventAt: null,
     machines: {},
@@ -115,6 +144,8 @@ export function fold(events, { bugs = new Map() } = {}) {
       detail,
       ts: Number.isFinite(ts) ? ts : null,
     });
+
+  const acks = new Map(); // anomaly event id -> { at, by, note } (rf anomaly ack)
 
   const valid = [];
   for (const ev of events) {
@@ -194,6 +225,8 @@ export function fold(events, { bugs = new Map() } = {}) {
     it.status = status;
     if (DONE_STATUSES.includes(status)) {
       it.claimedBy = null;
+      it.claimedActor = null;
+      it.claimedMember = null;
       it.claimedAt = null;
       it.claimConflict = null;
     }
@@ -228,6 +261,7 @@ export function fold(events, { bugs = new Map() } = {}) {
       state.notes,
       state.decisions,
       state.comments,
+      state.assignments,
     ])
       for (const rec of list) if (rec.item === from) rec.item = to;
   };
@@ -254,6 +288,7 @@ export function fold(events, { bugs = new Map() } = {}) {
           anomaly("duplicate-item", ev.id, ev.item, `item.new for existing item ${ev.item}`, ts);
         } else {
           it = newItem(ev.item, d, ts);
+          it.reportedBy = ev.actor ?? null;
           if (isRegisterFields(d)) recordRegisterFields(it, d);
           state.items.set(ev.item, it);
           touched = true;
@@ -311,17 +346,33 @@ export function fold(events, { bugs = new Map() } = {}) {
       case "claim": {
         it = resolve(ev.item, ev);
         if (!it) break;
-        if (it.claimedBy && it.claimedBy !== ev.lane && !d.steal) {
-          it.claimConflict = [it.claimedBy, ev.lane];
+        const member = d.member ?? null;
+        const mine = holdsClaim(it, ev.lane, member);
+        if (it.claimedBy && !mine && !d.steal) {
+          it.claimConflict = [
+            holderLabel(it.claimedBy, it.claimedMember),
+            holderLabel(ev.lane, member),
+          ];
           anomaly(
             "claim-conflict",
             ev.id,
             ev.item,
-            `${ev.lane} claimed ${ev.item} held by ${it.claimedBy}`,
+            `${holderLabel(ev.lane, member)} claimed ${ev.item} held by ${holderLabel(it.claimedBy, it.claimedMember)}`,
             ts,
           );
         } else {
+          // A steal between members leaves a trace; lane sessions stealing from each other do not.
+          if (it.claimedBy && !mine && (member || it.claimedMember))
+            anomaly(
+              "claim-steal",
+              ev.id,
+              ev.item,
+              `${member ?? ev.lane} took ${ev.item} from ${holderLabel(it.claimedBy, it.claimedMember)} (--steal)`,
+              ts,
+            );
           it.claimedBy = ev.lane;
+          it.claimedActor = ev.actor;
+          it.claimedMember = member;
           it.claimedAt = ts;
           it.claimConflict = null;
           if (d.branch) mergeLinks(it.links, { branches: [d.branch] });
@@ -332,11 +383,16 @@ export function fold(events, { bugs = new Map() } = {}) {
       case "release": {
         it = resolve(ev.item, ev);
         if (!it) break;
-        if (it.claimedBy === ev.lane) {
+        if (holdsClaim(it, ev.lane, d.member ?? null)) {
           it.claimedBy = null;
+          it.claimedActor = null;
+          it.claimedMember = null;
           it.claimedAt = null;
           it.claimConflict = null;
-        } else if (it.claimConflict && it.claimConflict[1] === ev.lane) {
+        } else if (
+          it.claimConflict &&
+          it.claimConflict[1] === holderLabel(ev.lane, d.member ?? null)
+        ) {
           it.claimConflict = null; // the loser backed off
         }
         touched = true;
@@ -458,6 +514,26 @@ export function fold(events, { bugs = new Map() } = {}) {
         touched = true;
         break;
       }
+      case "assign": {
+        it = resolve(ev.item, ev);
+        if (!it) break;
+        it.assignee = d.to ?? null;
+        it.assignedBy = d.to ? ev.actor : null;
+        it.assignedAt = d.to ? ts : null;
+        if (d.to)
+          state.assignments.push({
+            id: ev.id,
+            ts,
+            item: it.id,
+            to: d.to,
+            note: d.note ?? null,
+            actor: ev.actor,
+            lane: ev.lane,
+            machine: ev.machine,
+          });
+        touched = true;
+        break;
+      }
       case "push": {
         if (ev.item) {
           it = resolve(ev.item, ev);
@@ -520,6 +596,18 @@ export function fold(events, { bugs = new Map() } = {}) {
         touched = !!it;
         break;
       }
+      case "lane.retire": {
+        state.retiredLanes.set(d.lane, { lane: d.lane, at: ts, by: ev.actor, note: d.note });
+        break;
+      }
+      case "lane.unretire": {
+        state.retiredLanes.delete(d.lane);
+        break;
+      }
+      case "anomaly.ack": {
+        if (!acks.has(d.eventId)) acks.set(d.eventId, { at: ts, by: ev.actor, note: d.note });
+        break;
+      }
       default:
         break;
     }
@@ -536,6 +624,7 @@ export function fold(events, { bugs = new Map() } = {}) {
     }
   }
 
+  for (const a of state.anomalies) a.acked = (a.eventId && acks.get(a.eventId)) || null;
   for (const l of state.lanes.values()) l.claims = [];
   for (const it of state.items.values()) {
     it.children = [];

@@ -27,9 +27,12 @@ const mockCatalogRows = [
   { id: "v1", name: "Mint", kind: "VARIANT", parentProductId: "fam", unitsPerBox: 10 },
 ];
 let mockCatalogState: "ready" | "loading" | "error" = "ready";
+const mockRefetch = jest.fn();
+let mockCatalogFetching = false;
 const mockUseProducts = jest.fn();
 jest.mock("@/lib/api/products", () => ({
-  useProducts: (params: { limit?: number }) => mockUseProducts(params),
+  useProducts: (params: { limit?: number }, options?: { enabled?: boolean }) =>
+    mockUseProducts(params, options),
 }));
 const mockResolve = jest.fn();
 jest.mock("@/lib/barcode-resolve", () => ({
@@ -66,11 +69,18 @@ const optionLabels = () =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockCatalogState = "ready";
+  mockCatalogFetching = false;
   mockUseProducts.mockImplementation((params: { limit?: number }) => {
     if (params?.limit !== 0) return { data: { data: [] }, isFetching: false };
     if (mockCatalogState === "loading")
       return { data: undefined, isLoading: true, isFetching: true };
-    if (mockCatalogState === "error") return { data: undefined, isError: true, isFetching: false };
+    if (mockCatalogState === "error")
+      return {
+        data: undefined,
+        isError: true,
+        isFetching: mockCatalogFetching,
+        refetch: mockRefetch,
+      };
     return { data: { data: mockCatalogRows }, isFetching: false };
   });
 });
@@ -90,7 +100,7 @@ describe("product select", () => {
 
   it.each([
     ["loading", "Loading products…"],
-    ["error", "Couldn't load products. Reopen this window to try again."],
+    ["error", "Couldn't load products."],
   ] as const)(
     "fails closed while the catalog is %s: no bare variant names, no family, the bar is off",
     (state, hint) => {
@@ -101,6 +111,36 @@ describe("product select", () => {
       expect(screen.getByText(hint)).toBeInTheDocument();
     },
   );
+
+  it("W-1319: a failed catalog read shows Try again; one click reads again and the options appear", () => {
+    mockCatalogState = "error";
+    const view = open();
+    expect(screen.queryByText(/Reopen this window/)).not.toBeInTheDocument();
+    mockRefetch.mockImplementation(() => {
+      mockCatalogState = "ready";
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(mockRefetch).toHaveBeenCalledTimes(1);
+    view.rerender(<CreatePOModal suppliers={suppliers} products={products} onClose={jest.fn()} />);
+    expect(bar()).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(optionLabels()).toContain("Widget (W-1)");
+  });
+
+  it("W-1319: while a retry is reading (error and fetching) it says Loading and offers no Try again", () => {
+    mockCatalogState = "error";
+    mockCatalogFetching = true;
+    open();
+    expect(screen.getByText("Loading products…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(bar()).toBeDisabled();
+  });
+
+  it("W-1319: no Try again while the catalog is loading", () => {
+    mockCatalogState = "loading";
+    open();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
 });
 
 describe("line fields", () => {
@@ -229,5 +269,111 @@ describe("the code's level decides what a scan adds (SA-1218)", () => {
     scan("111");
     await waitFor(() => expect(boxes()).toHaveValue(1));
     expect(pieces()).toHaveValue(null);
+  });
+});
+
+// W-1299: the Inventory page hands over rows that already say their kind and parent (off the stock
+// overview), so the window needs no catalog read of its own. The catalog stays "loading" in these tests:
+// a window that still waited on it would show no options and a disabled bar.
+describe("rows that carry kind and parent need no catalog read (W-1299)", () => {
+  const rows = [
+    {
+      id: "z",
+      name: "Zed Gadget",
+      sku: "Z-1",
+      unitsPerBox: 12,
+      kind: "STANDARD",
+      parentProductId: null,
+    },
+    { id: "fam", name: "Acme Vape", unitsPerBox: null, kind: "FAMILY", parentProductId: null },
+    // The Inventory page sends a variant's FULL name; it must not be doubled.
+    {
+      id: "v1",
+      name: "Acme Vape - Mint",
+      unitsPerBox: 10,
+      kind: "VARIANT",
+      parentProductId: "fam",
+    },
+    // A row that still holds the bare label is composed here.
+    { id: "v2", name: "Berry", unitsPerBox: 10, kind: "VARIANT", parentProductId: "fam" },
+    {
+      id: "w",
+      name: "Widget",
+      sku: "W-1",
+      unitsPerBox: null,
+      kind: "STANDARD",
+      parentProductId: null,
+    },
+  ];
+  const openWith = (products: object[]) =>
+    render(
+      <CreatePOModal suppliers={suppliers} products={products as never} onClose={jest.fn()} />,
+    );
+
+  /** The whole-catalog read's calls only (`limit: 0`); the scan bar's live search is a different read. */
+  const catalogCalls = () =>
+    mockUseProducts.mock.calls.filter(([params]) => params?.limit === 0) as [
+      object,
+      { enabled?: boolean } | undefined,
+    ][];
+
+  beforeEach(() => {
+    mockCatalogState = "loading";
+  });
+
+  it("is ready at once: full names sorted, no family, the bar on, and the catalog read switched off", () => {
+    openWith(rows);
+
+    expect(optionLabels()).toEqual([
+      "Select…",
+      "Acme Vape - Berry",
+      "Acme Vape - Mint",
+      "Widget (W-1)",
+      "Zed Gadget (Z-1)",
+    ]);
+    expect(bar()).not.toBeDisabled();
+    expect(screen.queryByText("Loading products…")).not.toBeInTheDocument();
+    expect(catalogCalls().length).toBeGreaterThan(0);
+    for (const [, options] of catalogCalls()) expect(options).toEqual({ enabled: false });
+  });
+
+  it("one row without a kind means not known: it reads the catalog and fails closed until it arrives", () => {
+    openWith([...rows, { id: "q", name: "Quiet Row", unitsPerBox: null }]);
+
+    expect(optionLabels()).toEqual(["Select…"]);
+    expect(bar()).toBeDisabled();
+    expect(screen.getByText("Loading products…")).toBeInTheDocument();
+    expect(catalogCalls().length).toBeGreaterThan(0);
+    for (const [params, options] of catalogCalls()) {
+      expect(params).toEqual({ includeVariants: true, limit: 0 });
+      expect(options).toEqual({ enabled: true });
+    }
+  });
+
+  it("a scanned variant the rows lack joins the list under its family's name", async () => {
+    openWith(rows);
+    mockResolve.mockResolvedValue(
+      hit({ id: "v9", name: "Lime", kind: "VARIANT", parentProductId: "fam", unitsPerBox: null }),
+    );
+    scan("999");
+
+    await waitFor(() => expect(selects()[1]).toHaveValue("v9"));
+    expect(optionLabels()).toContain("Acme Vape - Lime");
+  });
+
+  it("still never adds a scanned family", async () => {
+    openWith(rows);
+    mockResolve.mockResolvedValue(hit({ id: "fam", name: "Acme Vape", kind: "FAMILY" }));
+    scan("333");
+
+    expect(await screen.findByText("Pick a flavour: Acme Vape has variants")).toBeInTheDocument();
+    expect(selects()[1]).toHaveValue("");
+  });
+
+  it("an empty list is ready too (nothing to ask the catalog about)", () => {
+    openWith([]);
+
+    expect(optionLabels()).toEqual(["Select…"]);
+    expect(bar()).not.toBeDisabled();
   });
 });

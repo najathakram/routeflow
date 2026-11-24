@@ -1,8 +1,8 @@
 import {
   billLinesFromPO,
+  billPlanFromPO,
   buildPOLine,
   isWholeCents,
-  poLinesNotPrefilled,
   roundMoney,
 } from "@routeflow/pricing";
 import { Prisma } from "@prisma/client";
@@ -251,8 +251,8 @@ describe("SA-1207 P2a: a bill filled from a PO passes the PO check; a line 0.02 
         const n = (1 + rand(99_999)) / 1000;
         const frac = Number.isInteger(n) ? n + 0.001 : n;
         const lines = billLinesFromPO([po], [frac]);
-        const listed = poLinesNotPrefilled([po], [frac]);
-        if (lines.length > 0 || listed.length !== 1 || listed[0] !== po.id)
+        const listed = billPlanFromPO([po], [frac]).byHand;
+        if (lines.length > 0 || listed.length !== 1 || listed[0] !== 0)
           bad.push(`${cellName(c)} n ${frac} lines ${lines.length} listed ${listed.length}`);
       }
       expect(sample(bad)).toEqual(NONE);
@@ -272,7 +272,8 @@ describe("SA-1207 P2a: a bill filled from a PO passes the PO check; a line 0.02 
 
     it("a whole bill of whole quantities lists nothing", () => {
       const bad: string[] = [];
-      for (const c of sub) if (poLinesNotPrefilled([poLineOf(c)]).length > 0) bad.push(cellName(c));
+      for (const c of sub)
+        if (billPlanFromPO([poLineOf(c)]).byHand.length > 0) bad.push(cellName(c));
       expect(sample(bad)).toEqual(NONE);
     });
   });

@@ -1,10 +1,13 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { numberYear } from "../common/number-year";
 import {
   STOCK_TX_OPTIONS,
   lockProductsForStock,
   setStockLockTimeout,
 } from "../common/product-locks";
 import { productNameViolation } from "../common/text-cell-guards";
+import { IdempotencyService } from "../common/idempotency.service";
+import { createPurchaseOrderGuarded } from "./po-create-guard";
 import {
   BadRequestException,
   ConflictException,
@@ -156,6 +159,8 @@ export class InventoryService {
     @Optional() private readonly audit?: AuditService,
     // #2717 M2 (SA-574 Q2): the `mixed_packs` mode read; absent = "off" (today's behavior).
     @Optional() private readonly featureConfig?: FeatureConfigService,
+    // SA-1222: the PO create replays an Idempotency-Key (global CommonModule); absent in a unit test = no key guard.
+    @Optional() private readonly idempotency?: IdempotencyService,
   ) {}
 
   /**
@@ -218,11 +223,25 @@ export class InventoryService {
   }
 
   async getStockOverview() {
+    // W-1299: the Inventory page needs five family facts per row (kind, variant name, parent id, family
+    // name, "has variants"). It used to read the WHOLE catalog a second time for them (every column,
+    // barcodes, each variant twice, one signed image link per product); they ride on this read instead.
+    // The rules are the list's own: a variant counts only when active and in this tenant, and a parent
+    // from another tenant is never followed (B1211). `kind` lets Create purchase order drop a FAMILY
+    // (a container, never a line) without its own catalog read.
+    const tenantId = this.prisma.getTenantId();
     const products = await this.prisma.forTenant().product.findMany({
       orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
+        kind: true,
+        variantName: true,
+        parentProductId: true,
+        parent: { select: { name: true, tenantId: true } },
+        _count: {
+          select: { variants: { where: { isActive: true, ...(tenantId ? { tenantId } : {}) } } },
+        },
         sku: true,
         category: true,
         unit: true,
@@ -238,11 +257,15 @@ export class InventoryService {
       },
     });
 
-    return products.map((p) => {
+    return products.map(({ _count, parent, ...p }) => {
       const stock = Number(p.currentStock);
       const { unitCost, value } = this.effectiveValue(p);
       return {
         ...p,
+        variantName: p.variantName ?? null,
+        parentProductId: p.parentProductId ?? null,
+        parent: tenantSafeParentView(parent, tenantId),
+        hasVariants: (_count?.variants ?? 0) > 0,
         currentStock: stock,
         averageCost: unitCost,
         costingMethod: p.costingMethod,
@@ -1419,9 +1442,12 @@ export class InventoryService {
 
   // ── Purchase Orders ──
   private async nextPoNumber(
-    client: Pick<Prisma.TransactionClient, "purchaseOrder"> = this.prisma.forTenant() as never,
+    client: Pick<
+      Prisma.TransactionClient,
+      "purchaseOrder" | "tenantConfig"
+    > = this.prisma.forTenant() as never,
   ): Promise<string> {
-    const year = new Date().getFullYear();
+    const year = await numberYear(client, this.prisma.getTenantId());
     const prefix = `PO-${year}-`;
     const last = await client.purchaseOrder.findFirst({
       where: { poNumber: { startsWith: prefix } },
@@ -1520,7 +1546,7 @@ export class InventoryService {
     });
   }
 
-  async createPurchaseOrder(dto: any, userId: string) {
+  async createPurchaseOrder(dto: any, userId: string, idempotencyKey?: string) {
     if (!dto.supplierId) throw new BadRequestException("supplierId is required");
     if (!dto.items || dto.items.length === 0)
       throw new BadRequestException("At least one item is required");
@@ -1552,29 +1578,51 @@ export class InventoryService {
         ...(line.packSize !== null ? { packSize: line.packSize } : {}),
       };
     });
-    return this.prisma.forTenant().purchaseOrder.create({
-      data: {
-        poNumber: await this.nextPoNumber(),
-        supplierId: dto.supplierId,
-        status: "DRAFT",
-        expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
-        notes: dto.notes,
-        totalAmount,
-        // B571: explicit tenantId on the nested lines - the tenant proxy only stamps the
-        // top-level create, and a tenant-less PurchaseOrderItem is invisible to the
-        // tenant-scoped item update receivePurchaseOrder performs.
-        items: {
-          create: itemsData.map((i: Record<string, unknown>) => ({
-            ...i,
-            tenantId: this.prisma.getTenantId(),
-          })),
-        },
+    // SA-1222: one transaction (number + PO + lines) with a P2002 retry, an Idempotency-Key replay and the builder-draft consume.
+    const include = {
+      supplier: { select: { id: true, name: true } },
+      items: {
+        include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
       },
-      include: {
-        supplier: { select: { id: true, name: true } },
-        items: {
-          include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
-        },
+    };
+    const tenantId = this.prisma.getTenantId();
+    return createPurchaseOrderGuarded({
+      prisma: this.prisma,
+      idempotency: this.idempotency,
+      tenantId,
+      userId,
+      key: idempotencyKey,
+      draftId: dto.draftId,
+      body: {
+        supplierId: dto.supplierId,
+        expectedDate: dto.expectedDate,
+        notes: dto.notes,
+        items: dto.items,
+      },
+      write: async (tx) =>
+        tx.purchaseOrder.create({
+          data: {
+            poNumber: await this.nextPoNumber(tx),
+            supplierId: dto.supplierId,
+            status: "DRAFT",
+            expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
+            notes: dto.notes,
+            totalAmount,
+            // B571: explicit tenantId on the nested lines - the tenant proxy only stamps the
+            // top-level create, and a tenant-less PurchaseOrderItem is invisible to the
+            // tenant-scoped item update receivePurchaseOrder performs.
+            items: {
+              create: itemsData.map((i: Record<string, unknown>) => ({ ...i, tenantId })),
+            },
+          },
+          include,
+        }),
+      load: async (id) => {
+        const po = await this.prisma
+          .forTenant()
+          .purchaseOrder.findUnique({ where: { id }, include });
+        if (!po) throw new NotFoundException("Purchase order not found");
+        return po;
       },
     });
   }

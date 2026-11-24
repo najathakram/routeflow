@@ -6,8 +6,8 @@ import { IsIn, IsISO8601, IsObject, IsOptional, IsString } from "class-validator
  */
 export class SaveDraftDto {
   @IsOptional()
-  @IsIn(["ORDER", "INVOICE"])
-  kind?: "ORDER" | "INVOICE";
+  @IsIn(["ORDER", "INVOICE", "PURCHASE_ORDER"])
+  kind?: "ORDER" | "INVOICE" | "PURCHASE_ORDER";
 
   @IsOptional()
   @IsString()

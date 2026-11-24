@@ -74,70 +74,90 @@ const packOf = (line: PoLineForBill): number | null => {
   return pack > 1 ? pack : null;
 };
 
-const notPrefilled = (line: PoLineForBill, n: number): boolean =>
+/** A quantity that cannot be billed: not a number, infinite, or below 0 (never silently dropped). */
+const badQuantity = (n: number): boolean => !Number.isFinite(n) || n < 0;
+
+/** A PO line whose own money is not a number cannot be filled from. */
+const badMoney = (line: PoLineForBill): boolean =>
+  ![line.qtyOrdered, line.unitCost, line.totalCost].every((v) => Number.isFinite(Number(v)));
+
+/** A fractional quantity on a boxed line (one with a pack): neither a piece line nor a lot. */
+const fractionalOnBoxed = (line: PoLineForBill, n: number): boolean =>
   n > 0 && !Number.isInteger(n) && packOf(line) !== null;
 
-/**
- * SA-1207 A3: a fractional quantity on a boxed line (one with a pack) is never prefilled. It is neither a piece
- * line at the 4 dp cost nor a lot (a lot writes `packSize` = the pieces, an Int column). A piece line (no pack)
- * keeps `n x unitCost`. Returns the `poItemId` (the index when the id is null) of each such line, for the
- * caller to show as "Enter this line by hand". `piecesToBill` defaults to `billQuantitiesFromPO`.
- */
-export function poLinesNotPrefilled(
-  poLines: readonly PoLineForBill[],
-  piecesToBill: readonly number[] = billQuantitiesFromPO(poLines),
-): string[] {
-  return poLines.flatMap((line, i) => {
-    const n = Number(piecesToBill[i] ?? 0);
-    return notPrefilled(line, n) ? [line.id ?? String(i)] : [];
+/** SA-1207 P2b F1: one PO line, filled in its own unit, or why not. */
+function fillLine(
+  line: PoLineForBill,
+  quantity: number | undefined,
+): BillLineFromPO | "zero" | "byHand" {
+  const n = quantity === undefined || quantity === null ? Number.NaN : Number(quantity);
+  if (n === 0) return "zero";
+  if (badQuantity(n) || badMoney(line) || fractionalOnBoxed(line, n)) return "byHand";
+  const ordered = Number(line.qtyOrdered);
+  const total = Number(line.totalCost);
+  const unit = Number(line.unitCost);
+  const pack = packOf(line);
+  const base = { poItemId: line.id ?? null, productId: line.productId, sku: line.sku ?? null };
+  const piece = (qty: number, unitCost: number): BillLineFromPO => ({
+    ...base,
+    qty,
+    unitCost,
+    packSize: null,
+    unitLabel: null,
   });
+  const target =
+    n === ordered || !(ordered > 0) ? roundMoney(total) : roundMoney((total * n) / ordered);
+
+  // A fractional quantity on a piece line (a weighed item) cannot be a lot: the pack is a whole number of pieces.
+  // A fractional quantity on a boxed line never gets here (fractionalOnBoxed).
+  if (!Number.isInteger(n)) return piece(n, unit);
+
+  if (pack && n % pack === 0) {
+    const boxes = n / pack;
+    const caseCost = derivedCaseCost(unit, pack, { totalCost: total, qtyOrdered: ordered });
+    if (n4(caseCost) * boxes === n4(target)) {
+      return { ...base, qty: boxes, unitCost: caseCost, packSize: pack, unitLabel: null };
+    }
+  } else if (!pack && n4(unit) * n === n4(target)) {
+    return piece(n, unit);
+  }
+  if (n === 1) return piece(1, target);
+  return { ...base, qty: 1, unitCost: target, packSize: n, unitLabel: lotUnitLabel(n, pack) };
 }
 
-/** Pure. `piecesToBill` is per PO line, in pieces; it defaults to `billQuantitiesFromPO`. Lines of 0 are left out, and so are those `poLinesNotPrefilled` lists. */
+/** SA-1207 P2b F1/F2: every PO line is accounted for in ONE call, keyed by INDEX (ids can be null or repeat). */
+export interface BillPlanFromPO {
+  lines: BillLineFromPO[];
+  /** `lineIndex[k]` = the index in `poLines` that `lines[k]` came from. */
+  lineIndex: number[];
+  /** Indexes to enter by hand: a fractional boxed quantity, or a quantity or money that is not a number. */
+  byHand: number[];
+  /** Indexes whose quantity to bill is exactly 0. */
+  zero: number[];
+}
+
+/** Pure. `piecesToBill` is per PO line, in pieces; it defaults to `billQuantitiesFromPO`. prefilled + byHand + zero = every line, once. */
+export function billPlanFromPO(
+  poLines: readonly PoLineForBill[],
+  piecesToBill: readonly number[] = billQuantitiesFromPO(poLines),
+): BillPlanFromPO {
+  const plan: BillPlanFromPO = { lines: [], lineIndex: [], byHand: [], zero: [] };
+  poLines.forEach((line, i) => {
+    const r = fillLine(line, piecesToBill[i]);
+    if (r === "zero") plan.zero.push(i);
+    else if (r === "byHand") plan.byHand.push(i);
+    else {
+      plan.lines.push(r);
+      plan.lineIndex.push(i);
+    }
+  });
+  return plan;
+}
+
+/** Pure. Lines of 0 are left out, and so are those `billPlanFromPO` lists for hand entry. */
 export function billLinesFromPO(
   poLines: readonly PoLineForBill[],
   piecesToBill: readonly number[] = billQuantitiesFromPO(poLines),
 ): BillLineFromPO[] {
-  const out: BillLineFromPO[] = [];
-  poLines.forEach((line, i) => {
-    const n = Number(piecesToBill[i] ?? 0);
-    if (!(n > 0) || notPrefilled(line, n)) return;
-    const ordered = Number(line.qtyOrdered);
-    const total = Number(line.totalCost);
-    const unit = Number(line.unitCost);
-    const pack = packOf(line);
-    const base = { poItemId: line.id ?? null, productId: line.productId, sku: line.sku ?? null };
-    const piece = (qty: number, unitCost: number): BillLineFromPO => ({
-      ...base,
-      qty,
-      unitCost,
-      packSize: null,
-      unitLabel: null,
-    });
-    const target =
-      n === ordered || !(ordered > 0) ? roundMoney(total) : roundMoney((total * n) / ordered);
-
-    // A fractional quantity on a piece line (a weighed item) cannot be a lot: the pack is a whole number of pieces.
-    // A fractional quantity on a boxed line never gets here (poLinesNotPrefilled).
-    if (!Number.isInteger(n)) return void out.push(piece(n, unit));
-
-    if (pack && n % pack === 0) {
-      const boxes = n / pack;
-      const caseCost = derivedCaseCost(unit, pack, { totalCost: total, qtyOrdered: ordered });
-      if (n4(caseCost) * boxes === n4(target)) {
-        return void out.push({
-          ...base,
-          qty: boxes,
-          unitCost: caseCost,
-          packSize: pack,
-          unitLabel: null,
-        });
-      }
-    } else if (!pack && n4(unit) * n === n4(target)) {
-      return void out.push(piece(n, unit));
-    }
-    if (n === 1) return void out.push(piece(1, target));
-    out.push({ ...base, qty: 1, unitCost: target, packSize: n, unitLabel: lotUnitLabel(n, pack) });
-  });
-  return out;
+  return billPlanFromPO(poLines, piecesToBill).lines;
 }
