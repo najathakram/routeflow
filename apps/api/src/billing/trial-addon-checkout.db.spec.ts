@@ -27,6 +27,7 @@ import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
 import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { pinWallClock } from "../testing/pin-clock";
+import { strictFake } from "../testing/strict-fake";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -46,6 +47,12 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
   const tenantIds: string[] = [];
   let seq = 0;
   let createdVersionId: string | undefined;
+  /** W-1338: every member the rig's Stripe fakes were asked for and lack (see strict-fake.ts). */
+  const fakeMisses: string[] = [];
+  afterEach(() => {
+    // A missing fake member is named here, not read as a 503 from fail-closed code three frames later.
+    expect(fakeMisses.splice(0)).toEqual([]);
+  });
   /** Catalog monthly prices, read back (a pre-existing published catalog is reused untouched). */
   const price: Record<string, number> = {};
 
@@ -257,51 +264,63 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
         }),
       },
       invoiceItems: { list: jest.fn().mockResolvedValue({ data: [] }) },
+      // W-1338: subscribe/upgrade/downgrade expire the business's open payment link first (open-checkout-session.ts);
+      // this rig's businesses have none, so the list is empty and nothing is expired.
+      checkout: {
+        sessions: {
+          list: jest.fn().mockResolvedValue({ data: [], has_more: false }),
+          expire: jest.fn(async (id: string) => ({ id, status: "expired" })),
+        },
+      },
     };
-    const stripe = {
-      isConfigured: true,
-      client: stripeClient,
-      getSubscription: jest.fn(async (id: string) => {
-        const sub = subs[id];
-        if (!sub) throw missing(`subscription: ${id}`);
-        return {
+    const stripe = strictFake(
+      {
+        isConfigured: true,
+        client: stripeClient,
+        getSubscription: jest.fn(async (id: string) => {
+          const sub = subs[id];
+          if (!sub) throw missing(`subscription: ${id}`);
+          return {
+            id,
+            object: "subscription",
+            status: sub.status,
+            customer: sub.customer,
+            latest_invoice: sub.latestInvoice,
+            items: { object: "list", data: sub.items.map((i) => ({ ...i })) },
+          };
+        }),
+        // SA-736r: the coupon sync's two Stripe reads - inert (no discount; no upcoming invoice -> nothing written).
+        retrieveSubscriptionWithDiscounts: jest.fn(async (id: string) => ({
           id,
-          object: "subscription",
-          status: sub.status,
-          customer: sub.customer,
-          latest_invoice: sub.latestInvoice,
-          items: { object: "list", data: sub.items.map((i) => ({ ...i })) },
-        };
-      }),
-      // SA-736r: the coupon sync's two Stripe reads - inert (no discount; no upcoming invoice -> nothing written).
-      retrieveSubscriptionWithDiscounts: jest.fn(async (id: string) => ({
-        id,
-        status: "active",
-        discounts: [],
-      })),
-      previewNextInvoice: jest.fn(async () => null),
-      getSubscriptionPaymentState: jest.fn(async (id: string) => {
-        const sub = subs[id];
-        if (!sub) return { status: null, paymentProcessing: false };
-        return { status: sub.status, paymentProcessing: sub.paymentProcessing ?? false };
-      }),
-      cancelSubscription: jest.fn(async (id: string) => {
-        if (cancelFailures > 0) {
-          cancelFailures -= 1;
-          throw Object.assign(new Error("Stripe API error (500)"), { type: "StripeAPIError" });
-        }
-        if (subs[id]) subs[id].status = "canceled";
-        return { id, object: "subscription", status: "canceled" };
-      }),
-      getInvoice: jest.fn(async (id: string) => {
-        if (!invoices[id]) throw missing(`invoice: ${id}`);
-        return { ...invoices[id] };
-      }),
-      voidInvoice: jest.fn(async (id: string) => {
-        invoices[id].status = "void";
-        return { ...invoices[id] };
-      }),
-    } as any;
+          status: "active",
+          discounts: [],
+        })),
+        previewNextInvoice: jest.fn(async () => null),
+        getSubscriptionPaymentState: jest.fn(async (id: string) => {
+          const sub = subs[id];
+          if (!sub) return { status: null, paymentProcessing: false };
+          return { status: sub.status, paymentProcessing: sub.paymentProcessing ?? false };
+        }),
+        cancelSubscription: jest.fn(async (id: string) => {
+          if (cancelFailures > 0) {
+            cancelFailures -= 1;
+            throw Object.assign(new Error("Stripe API error (500)"), { type: "StripeAPIError" });
+          }
+          if (subs[id]) subs[id].status = "canceled";
+          return { id, object: "subscription", status: "canceled" };
+        }),
+        getInvoice: jest.fn(async (id: string) => {
+          if (!invoices[id]) throw missing(`invoice: ${id}`);
+          return { ...invoices[id] };
+        }),
+        voidInvoice: jest.fn(async (id: string) => {
+          invoices[id].status = "void";
+          return { ...invoices[id] };
+        }),
+      } as any,
+      "stripe",
+      fakeMisses,
+    );
 
     const events = new BillingEventService(prisma as any);
     const mutations = new SubscriptionMutationService(
@@ -1705,6 +1724,11 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
           "admin-1",
         );
 
+        // W-1338: the plan pick looked for the business's open payment link on its own customer, found none.
+        expect(r.stripeClient.checkout.sessions.list).toHaveBeenCalledWith(
+          expect.objectContaining({ customer: "cus_qa" }),
+        );
+        expect(r.stripeClient.checkout.sessions.expire).not.toHaveBeenCalled();
         expect((await r.rows()).map((x) => [x.sku, x.active, x.stripeItemId, x.quantity])).toEqual([
           ["CUSTOMER_PACK_100", true, null, 2],
           ["FORECASTING", true, null, 1],
