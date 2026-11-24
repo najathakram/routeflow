@@ -491,6 +491,7 @@ export function applyCreditOverride(
   }
   if (override.unitPrice > defaultPerUnit) return { overCap: true, defaultUnitPrice };
   // SA-1244 A2: never above the default subtotal, whatever a rounded per-unit figure multiplies to
+  // Unreachable guard (R-42 proof): an override that gets here is at most D/u - 0.005 and computeLineSubtotal rounds once, so it is below D.
   const subtotal = Math.min(
     priceSellingUnitChunk(override.unitPrice, defaultChunk.pieces, basis.unitsPerBox),
     defaultChunk.subtotal,

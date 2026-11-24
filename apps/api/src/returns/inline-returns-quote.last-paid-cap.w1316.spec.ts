@@ -2,7 +2,8 @@
  * W-1316 PR-1 (a sold item's return credit never tops its last paid price): a chunk of a product the customer WAS sold, but
  * outside the matching window (or past what the window holds), credits the lower of today's price and the figure the customer
  * last paid, taken from `refundableLineShare` (never `qty * unitPrice`). A matched chunk and a never-sold chunk are unchanged.
- * The real-Postgres proof is the D8 DB spec; this file pins the quote on a mock (a mock accepts any `where`, so the
+ * The real-Postgres proof is `inline-returns-never-sold.a4.db.spec.ts` and `orders/counter-sale/counter-returns-proof.db.spec.ts`
+ * (`npm run local:test:db`); this file pins the quote on a mock (a mock accepts any `where`, so the
  * newest-first `orderBy` is asserted on the call, the figures on the rows the mock returns).
  */
 import { operatorWithRights } from "../common/testing/operator-with-rights";
@@ -26,6 +27,7 @@ interface SoldLine {
   id: string;
   qty: number;
   subtotal: number;
+  productId?: string;
   boxes?: number | null;
   unitsPerBox?: number | null;
 }
@@ -40,7 +42,7 @@ const soldOn = (lines: SoldLine[], rowId: string = lines[0].id) => {
       discount: 0,
       items: lines.map((l) => ({
         id: l.id,
-        productId: "prod-1",
+        productId: l.productId ?? "prod-1",
         boxes: l.boxes ?? null,
         unitsPerBox: l.unitsPerBox ?? null,
         systemKind: null,
@@ -332,5 +334,47 @@ describe("W-1316 PR-1: an old sale's return credit is capped at its last paid pr
     db.invoiceItem.findFirst.mockResolvedValue(soldOn([{ id: "u-two", qty: 2, subtotal: 150 }]));
     const q = await quote(3);
     expect(q.chunks[0]).toMatchObject({ subtotal: 36, priceSource: "BASE" });
+  });
+
+  // F1 (R-42): each row pins one filter of the pool in `lastPaidCapOf` (inline-returns-pricing.ts); each is red against its mutant.
+  const BOXED = { ...price(60), unitsPerBox: 24 };
+
+  it("H1: the newest invoice also carries another product's line: it never joins the pool, 10 pcs back credit 100.00", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(
+      soldOn([PAID, { id: "u-other", productId: "prod-2", qty: 10, subtotal: 1 }], "u-paid"),
+    );
+    const q = await quote(10);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 100, priceSource: "SOURCE_INVOICE" });
+  });
+
+  it("H2: the last sale was a box split (6 pieces for 12.00, qty already pieces), 1 piece back: 2.00, never qty x pack", async () => {
+    await setup(BOXED);
+    db.invoiceItem.findFirst.mockResolvedValue(
+      soldOn([{ id: "u-split", qty: 6, subtotal: 12, boxes: 0, unitsPerBox: 24 }]),
+    );
+    const q = await quote(1);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 2, priceSource: "SOURCE_INVOICE" });
+  });
+
+  it("H3: lines of the product with qty 0 and qty -2 are not live: they never join the pool, 10 pcs back credit 100.00", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(
+      soldOn(
+        [PAID, { id: "u-zero", qty: 0, subtotal: 40 }, { id: "u-neg", qty: -2, subtotal: -20 }],
+        "u-paid",
+      ),
+    );
+    const q = await quote(10);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 100, priceSource: "SOURCE_INVOICE" });
+  });
+
+  it("H4: a stored line with no pack on a boxed product (1 for 48.00) takes the product's pack of 24: 1 piece back credits 2.00", async () => {
+    await setup(BOXED);
+    db.invoiceItem.findFirst.mockResolvedValue(
+      soldOn([{ id: "u-nopack", qty: 1, subtotal: 48, unitsPerBox: null }]),
+    );
+    const q = await quote(1);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 2, priceSource: "SOURCE_INVOICE" });
   });
 });
