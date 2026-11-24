@@ -6,9 +6,11 @@ import { join, relative, sep } from "path";
 
 /**
  * P-64 census: every whole-catalog read (`limit: 0`, the server's fetch-all sentinel, capped at 10,000 rows
- * with one presigned image URL per row) in the web app code. A new one fails this test. The 16 call sites
+ * with one presigned image URL per row) in the web app code. A new one fails this test. The 15 call sites
  * below are known and owned by other work (P-09, P-10, P-21); this test only counts them, it fixes none.
- * Tests and comments are not counted. To remove a site, lower its number here in the same diff.
+ * Tests and comments are not counted. The numbers are CEILINGS, not exact counts: a site removed by another
+ * PR never turns this test red (that made it order-dependent on merge), and the lower number can be written
+ * in at any later time.
  */
 const WEB_ROOT = join(__dirname, "..");
 const SCANNED = ["app", "lib", "components"];
@@ -18,7 +20,6 @@ const WHOLE_CATALOG = /\blimit:\s*0(?![\w.])/g;
 
 /** path (posix, from apps/web) -> number of `limit: 0` code occurrences. */
 const KNOWN: Record<string, number> = {
-  "app/(dashboard)/inventory/page.tsx": 1,
   "app/(dashboard)/inventory/_components/PurchaseOrdersCreateModal.tsx": 1,
   "app/(dashboard)/products/[id]/page.tsx": 1,
   "app/(dashboard)/promotions/page.tsx": 2,
@@ -63,7 +64,9 @@ export function censusOf(files: string[]): Record<string, number> {
 }
 
 describe("whole-catalog reads (limit: 0) in apps/web", () => {
-  const found = censusOf(SCANNED.flatMap((d) => walk(join(WEB_ROOT, d), [])));
+  const files = SCANNED.flatMap((d) => walk(join(WEB_ROOT, d), []));
+  const scanned = files.length;
+  const found = censusOf(files);
 
   it("has no whole-catalog read beyond the known ones", () => {
     const extra = Object.entries(found)
@@ -78,12 +81,12 @@ describe("whole-catalog reads (limit: 0) in apps/web", () => {
     }
   });
 
-  it("counts exactly 16 whole-catalog call lines in 14 files", () => {
-    expect(Object.values(found).reduce((a, b) => a + b, 0)).toBe(16);
-    expect(Object.keys(found)).toHaveLength(14);
+  it("is at or below the known ceiling of 15 call lines in 13 files", () => {
+    expect(Object.values(found).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(15);
+    expect(Object.keys(found).length).toBeLessThanOrEqual(13);
   });
 
-  it("matches the known per-file counts (a removed site must lower its number here)", () => {
-    expect(found).toEqual(KNOWN);
+  it("scans the real app (vacuity guard: more than 1,000 source files)", () => {
+    expect(scanned).toBeGreaterThan(1000);
   });
 });

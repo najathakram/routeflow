@@ -59,11 +59,18 @@ const productRow = (i: number): Row => ({
   id: `p${i}`,
   name: `Acme Item ${i}`,
   sku: `ACME-${i}`,
-  imageKeys: [],
+  imageKeys: [`p${i}/front.jpg`],
   barcode: null,
-  unitsPerBox: null,
-  parent: null,
-  barcodes: [],
+  unitsPerBox: 24,
+  parent: {
+    id: "fam",
+    name: "Acme Family",
+    kind: "FAMILY",
+    portalVisible: true,
+    category: null,
+    tenantId: "tenant-1",
+  },
+  barcodes: [{ id: `b${i}`, level: "unit", code: `100${i}` }],
 });
 const stockRow = (i: number): Row => ({
   id: `p${i}`,
@@ -76,8 +83,8 @@ const stockRow = (i: number): Row => ({
 const customerRow = (i: number): Row => ({
   id: `c${i}`,
   businessName: `Acme Store ${i}`,
-  addresses: [],
-  tagAssignments: [],
+  addresses: [{ id: `a${i}` }],
+  tagAssignments: [{ id: `t${i}`, tag: { id: "tag", name: "Acme" } }],
   user: null,
   _count: { authorizations: 0 },
 });
@@ -90,7 +97,15 @@ const invoiceRow = (i: number): Row => ({
   discount: 0,
   issueDate: new Date("2026-11-01T00:00:00Z"),
   dueDate: new Date("2026-12-01T00:00:00Z"),
-  payments: [],
+  payments: [
+    {
+      id: `pay${i}`,
+      status: "PAID",
+      method: "CASH",
+      amount: 10,
+      createdAt: new Date("2026-11-02T00:00:00Z"),
+    },
+  ],
   customer: { id: "c1", businessName: "Acme Store" },
   order: null,
 });
