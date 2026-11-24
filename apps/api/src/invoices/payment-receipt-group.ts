@@ -12,6 +12,7 @@ import {
 } from "@routeflow/pricing";
 import type {
   PaymentListReceipt,
+  PaymentStatus,
   ReceiptApplication,
   ReceiptGroupView,
   ReceiptHeader,
@@ -72,7 +73,7 @@ export type ReceiptRow = {
   id: string;
   amount: unknown;
   method: string;
-  status: string;
+  status: PaymentStatus;
   reference: string | null;
   paymentNumber: string | null;
   paymentGroupId: string | null;
