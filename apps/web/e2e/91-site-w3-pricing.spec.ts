@@ -114,6 +114,16 @@ test.describe("T46b three key presses to the first plan (F04)", () => {
     expect(link, "the wide page has a skip link to #plans").not.toBeNull();
     expect(link?.text).toBe("Skip to plans");
     expect(link?.target, "#plans is the start-trial button").toBe(true);
+    // C9: the button must also be drawn at this width (a later rule hiding .pg-cta must turn this red)
+    const drawn = await page.evaluate(() => {
+      const el = document.getElementById("plans");
+      return {
+        rects: el ? el.getClientRects().length : 0,
+        display: el ? getComputedStyle(el).display : "none",
+      };
+    });
+    expect(drawn.rects, "#plans is drawn on the wide page").toBeGreaterThan(0);
+    expect(drawn.display, "#plans is not display:none on the wide page").not.toBe("none");
     await open(page, 393, 844);
     const shown = await page.evaluate(
       () =>
