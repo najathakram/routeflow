@@ -120,9 +120,7 @@ describe("TenantPricingCard: the card payment link block", () => {
     expect(
       screen.getByText("1 open RouteFlow invoice is closed when they pay"),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Create checkout session" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create link" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Billing interval")).not.toBeInTheDocument();
 
     // the confirm repeats the amount and the date before anything is posted
@@ -202,9 +200,7 @@ describe("TenantPricingCard: the card payment link block", () => {
       await screen.findByText(/manual activation recorded without a paid period/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create payment link" })).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Create checkout session" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create link" })).not.toBeInTheDocument();
     expect(catchupPosts()).toBe(0);
   });
 
@@ -228,9 +224,7 @@ describe("TenantPricingCard: the card payment link block", () => {
   it("a pilot-shaped business (Stripe subscription) keeps the ordinary Checkout and makes zero catch-up POSTs", async () => {
     mockFetchPlan.mockResolvedValue(stripeBilled());
     renderCard();
-    expect(
-      await screen.findByRole("button", { name: "Create checkout session" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Create link" })).toBeInTheDocument();
     expect(screen.queryByTestId("card-payment-link")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create payment link" })).not.toBeInTheDocument();
     expect(catchupPosts()).toBe(0);
@@ -242,16 +236,12 @@ describe("TenantPricingCard: the card payment link block", () => {
     expect(
       await screen.findByText("Couldn't check how this business pays. Try again."),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Create checkout session" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create link" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("card-payment-link")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Billing interval")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(
-      await screen.findByRole("button", { name: "Create checkout session" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Create link" })).toBeInTheDocument();
     expect(mockFetchPlan).toHaveBeenCalledTimes(2);
   });
 
@@ -260,13 +250,9 @@ describe("TenantPricingCard: the card payment link block", () => {
     mockFetchPlan.mockReturnValue(new Promise((r) => (resolve = r)));
     renderCard();
     expect(await screen.findByText("Checking how this business pays…")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Create checkout session" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create link" })).not.toBeInTheDocument();
     resolve(stripeBilled());
-    expect(
-      await screen.findByRole("button", { name: "Create checkout session" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Create link" })).toBeInTheDocument();
   });
 
   it("CATCHUP_AMOUNT_CHANGED re-reads the plan, shows the new amount, and never re-posts", async () => {
