@@ -120,7 +120,7 @@ export { errorMessage as platformPricingErrorMessage };
 const TENANT_LOCKED_BY_ADMIN_COPY = "This tenant is locked by an admin; change its status first.";
 
 /** Fixed copy for an admin-created checkout refused in the window before the 1st (the API's CHECKOUT_ANCHOR_WINDOW). */
-const CHECKOUT_REOPENS_SOON_COPY = "Checkout reopens in a few minutes.";
+const CHECKOUT_REOPENS_SOON_COPY = "Payment opens again in a few minutes.";
 
 /**
  * The admin "Create checkout session" failure: the anchor window gets FIXED copy plus the browser-local time of the
@@ -133,7 +133,7 @@ export function tenantCheckoutErrorMessage(err: unknown): string {
     const retryAt = new Date(typeof body.retryAt === "string" ? body.retryAt : NaN);
     return Number.isNaN(retryAt.getTime())
       ? CHECKOUT_REOPENS_SOON_COPY
-      : `Checkout reopens at ${retryAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      : `Payment opens again at ${retryAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   }
   if (body?.code === API_ERROR_CODES.TENANT_ADMIN_LOCKED) return TENANT_LOCKED_BY_ADMIN_COPY;
   return errorMessage(err, "Failed to create checkout session");
