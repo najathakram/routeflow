@@ -1,5 +1,5 @@
 import * as React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { TenantPricingCard } from "./TenantPricingCard";
 
@@ -34,7 +34,10 @@ const pricing = {
 async function openAndSubmit() {
   mockFetchPricing.mockResolvedValue(pricing);
   render(<TenantPricingCard tenantId="tenant-1" />);
-  fireEvent.click(await screen.findByRole("button", { name: "Create checkout session" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Create link" }));
+  fireEvent.click(
+    within(await screen.findByRole("dialog")).getByRole("button", { name: "Create link" }),
+  );
 }
 
 beforeEach(() => {
@@ -43,7 +46,7 @@ beforeEach(() => {
 });
 
 describe("admin checkout refused with CHECKOUT_ANCHOR_WINDOW", () => {
-  it("shows fixed 'reopens at <local time>' copy, never the server's message", async () => {
+  it("shows fixed 'opens again at <local time>' copy, never the server's message", async () => {
     mockCheckout.mockRejectedValue({
       response: {
         status: 409,
@@ -55,7 +58,7 @@ describe("admin checkout refused with CHECKOUT_ANCHOR_WINDOW", () => {
       },
     });
     await openAndSubmit();
-    expect(await screen.findByText(/Checkout reopens at/)).toBeInTheDocument();
+    expect(await screen.findByText(/Payment opens again at/)).toBeInTheDocument();
     expect(screen.queryByText(/raw server text/)).not.toBeInTheDocument();
   });
 
@@ -67,11 +70,11 @@ describe("admin checkout refused with CHECKOUT_ANCHOR_WINDOW", () => {
       },
     });
     await openAndSubmit();
-    expect(await screen.findByText(/Checkout reopens in a few minutes/)).toBeInTheDocument();
+    expect(await screen.findByText(/Payment opens again in a few minutes/)).toBeInTheDocument();
   });
 });
 
-// SA-832b: the back-office "Create checkout session" (POST /platform-admin/tenants/:id/billing/checkout) is used by a
+// SA-832b: the back-office "Create link" (POST /platform-admin/tenants/:id/billing/checkout) is used by a
 // super admin. A tenant a payment may not reinstate is refused with TENANT_ADMIN_LOCKED; the admin gets ADMIN-facing
 // copy (what to do), never the tenant's "contact support" sentence and never the server's raw text.
 describe("admin checkout refused with TENANT_ADMIN_LOCKED", () => {
