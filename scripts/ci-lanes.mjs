@@ -58,9 +58,11 @@ const OWN_WORKFLOW = ["@routeflow/control"];
  * those two configs' own `testRegex`, never typed, so the list moves only with the configs (SA-1250 A1-3 a).
  */
 const requireCfg = createRequire(import.meta.url);
-export const NOT_IN_VERIFY = ["jest.db.config.js", "jest.smtp.config.js"].map(
-  (f) => new RegExp(requireCfg(path.join(ROOT, "apps", "api", f)).testRegex),
-);
+// Literal paths, so a script scanner can follow the load (a computed require reads as a hidden DB client).
+export const NOT_IN_VERIFY = [
+  requireCfg("../apps/api/jest.db.config.js"),
+  requireCfg("../apps/api/jest.smtp.config.js"),
+].map((cfg) => new RegExp(cfg.testRegex));
 
 // -- parity ----------------------------------------------------------------------------------------
 /** expected: [file]; lanes: { id: [file] }. Red when a file is in zero lanes, two lanes, or a lane lists an unexpected one. */
