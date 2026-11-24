@@ -4,6 +4,7 @@ import * as React from "react";
 import type { UnitWords } from "@routeflow/pricing";
 import { cn } from "@routeflow/ui/web";
 import { heldNote, useHeldQty, type QtyEntry } from "./use-held-qty";
+import { useSumQty } from "./use-sum-qty";
 
 /**
  * #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
@@ -60,6 +61,8 @@ export interface CasesPiecesInputProps {
   touchTargets?: boolean;
   /** SA-1262: hold both fields' text until Enter, Tab or blur (the counter only). Absent = a commit per keystroke. */
   qtyEntry?: QtyEntry;
+  /** SA-1256: both fields work out a typed sum (`2*3`). The order builder's main list only; absent = number fields. */
+  acceptSums?: boolean;
 }
 
 /**
@@ -84,12 +87,27 @@ export function CasesPiecesInput({
   inputClassName = DEFAULT_INPUT,
   touchTargets = false,
   qtyEntry,
+  acceptSums,
 }: CasesPiecesInputProps) {
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(pieces);
   const boxesField = useTypedNumber(boxes, onSetBoxes);
   const piecesField = useTypedNumber(pieces, onSetPieces);
   const heldBoxes = useHeldQty(boxes ?? 0, onSetBoxes, qtyEntry);
   const heldPieces = useHeldQty(pieces ?? 0, onSetPieces, qtyEntry);
+  const sum = { min: 0, disabled, line: `${boxes}/${pieces}` };
+  const sumBoxes = useSumQty(acceptSums, {
+    ...sum,
+    committed: boxes ?? 0,
+    commit: onSetBoxes,
+    plain: boxesField,
+  });
+  const sumPieces = useSumQty(acceptSums, {
+    ...sum,
+    committed: pieces ?? 0,
+    commit: onSetPieces,
+    plain: piecesField,
+    stepMax: unitsPerBox - 1,
+  });
   // F10: the "+ pieces" button unmounts when it opens the field, so focus would fall to the page top; follow it.
   const piecesRef = React.useRef<HTMLInputElement>(null);
   const focusPiecesNext = React.useRef(false);
@@ -112,6 +130,7 @@ export function CasesPiecesInput({
           onFocus={(e) => e.target.select()}
           data-qty-box=""
           {...heldBoxes}
+          {...sumBoxes.input}
           className={inputClassName}
           title={`Number of whole ${w.pack.lowerOther}`}
         />
@@ -123,6 +142,8 @@ export function CasesPiecesInput({
         </span>
       </span>
       {heldNote(heldBoxes, heldPieces)}
+      {sumBoxes.note}
+      {sumPieces.note}
       {showLooseUnits ? (
         <span className="flex items-center gap-1.5 whitespace-nowrap">
           <span className="text-xs text-navy/30">+</span>
@@ -138,6 +159,7 @@ export function CasesPiecesInput({
             onFocus={(e) => e.target.select()}
             data-qty-box=""
             {...heldPieces}
+            {...sumPieces.input}
             className={inputClassName}
             title={`Extra ${w.base.lowerOther} (less than a full ${w.pack.lower})`}
             aria-label={`Extra ${w.base.lowerOther}`}
