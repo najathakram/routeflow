@@ -89,6 +89,7 @@ to, never restated: overlap (§6), deploy day and the gate-key table (§7), roll
 - **List every planned program that touches the area:** units, permissions, billing, settings IA, POS WOW, tenancy,
   order-screen steps, staff PIN switch, multi-branch, or whatever else the plan shows. For each one, ask whether it
   would replace or rework this work.
+- **A replacement names how the old user-facing controls are retired:** the PR that ships a new model hides or retires the old controls, or names the dated PR that will (TEMPLATES.md line (g); owner 11-22, "Variant of" beside "Family").
 - **If it would,** build the **final shape now**, or a **clean seam** that it plugs into. An interim (device-local
   business state, a display-only read, a single-till table) ships only with an **owner-approved expiry** (a date or a
   trigger), an ACTION-ITEMS row naming the final shape, and the conditions that keep it safe meanwhile. SA-740's
