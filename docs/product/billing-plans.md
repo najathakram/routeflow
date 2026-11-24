@@ -5,8 +5,9 @@ and the platform-admin/Stripe machinery behind it._
 
 ## Pricing v14: decided, not live (2026-11-24)
 
-> **Decided is not live.** The catalog on sale is still **v13** (Starter $99, Growth $249, Scale $499,
-> Enterprise custom; `apps/api/prisma/plan-catalog-v13.definitions.ts`). Everything in this section is
+> **Decided is not live.** The catalog on sale is still **v13**. On public sale: Starter $99, Growth
+> $249, Scale $499, Enterprise custom; Lite ($99) is invite-only
+> (`apps/api/prisma/plan-catalog-v13.definitions.ts`, Lite from `plan-catalog-v12.definitions.ts`). Everything in this section is
 > the standing spec for the next catalog. It goes live only in the steps named in
 > `.claude/pipeline/2026-11-23-pricing-v14/plan.md`, each with the owner's go-ahead, after the
 > architect's ruling. Why plans change shape: [ADR 0005](../adr/0005-feature-based-plans.md). Which

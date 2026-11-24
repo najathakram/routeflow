@@ -259,7 +259,8 @@ How a gate decides:
 ## D. Things we do not have (do not claim)
 
 Until its row here says `live`, no page, deck, email or post claims any of these. The honest pages name
-some of them on purpose; those sentences are listed, one by one, in the guarded-phrase ledger test.
+some of them on purpose. A guarded-phrase ledger test that lists those sentences one by one is to be
+built: it is in the Phase 1 tests PR (branch `test/pricing-v14-static-pins`), not merged.
 
 | Capability                                           | Status                                                 | Where the site says so                 |
 | ---------------------------------------------------- | ------------------------------------------------------ | -------------------------------------- |

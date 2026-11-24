@@ -48,8 +48,11 @@ live in one place that the whole team and every store can see.
 8. **A price rises only when a feature ships**, only for new accounts, and never without the notice
    periods in `billing-plans.md` ([pricing-roadmap.md](../product/pricing-roadmap.md)).
 9. **Prices on a page come from the catalog on sale.** The site reads one price object
-   (`apps/web/public/site/js/prices.js`), and a static test pins it and every price on the page to the
-   catalog on sale. A new plan is not shown in public before its catalog is on sale.
+   (`apps/web/public/site/js/prices.js`). No test on master pins those prices to the catalog yet. The
+   pin, `apps/web/app/(marketing)/site-pricing-catalog.static.test.ts`, is to be built: it is in the
+   Phase 1 tests PR (branch `test/pricing-v14-static-pins`), not merged. Until it lands, check every
+   price by hand against the catalog on sale. A new plan is not shown in public before its catalog is
+   on sale.
 10. **Motion on the marketing site** follows the standing ruling of 2026-11-03 and
     `site-motion-always.static.test.ts`. Pricing and copy work does not change it.
 11. **No new brand name in public text** until the owner and the lead say the rename ships. Use
@@ -58,8 +61,10 @@ live in one place that the whole team and every store can see.
 ## The "does and doesn't" list
 
 This list is public on purpose (`apps/web/public/site/does-and-doesnt.html`). Saying plainly what the
-product does not do is part of the message. A guarded-phrase test lists every sentence on the site
-that names one of these things. A new sentence needs a ledger entry and a reviewer.
+product does not do is part of the message. A new sentence that names one of these things needs a
+reviewer. A guarded-phrase test that lists every such sentence is to be built: it is in the Phase 1
+tests PR (branch `test/pricing-v14-static-pins`, `site-guarded-phrases.static.test.ts` and its
+ledger), not merged. Once it lands, a new sentence also needs a ledger entry.
 
 **What it does:** sell (orders, prices, promotions, estimates), let stores order online at their own
 prices, get paid (bills, payments, returns), buy and keep stock (suppliers and one count per product),
@@ -86,6 +91,7 @@ numbers (sales, profit, who owes you), and sell regulated items such as tobacco.
 
 1. Find its row in the claims register. If there is none, add one with a code path or test as proof.
 2. If the row is not `live`, change or cut the sentence.
-3. If the sentence names something in the "does not do" list, add it to the guarded-phrase ledger in
-   the same PR, with its page and exact wording.
+3. If the sentence names something in the "does not do" list, get a review. Once the guarded-phrase
+   ledger lands (Phase 1 tests PR, not merged), also add the sentence to it in the same PR, with its
+   page and exact wording.
 4. If the sentence has a price in it, the price comes from the catalog on sale.

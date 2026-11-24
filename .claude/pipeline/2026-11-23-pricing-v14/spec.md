@@ -288,7 +288,7 @@ marked _(PLUS only)_ drop out, or lose their PLUS part, under K5.
 | R14 | a self-serve pick without a payment stays not active | red on ACTIVE before payment | ACTIVE at `:883` |
 | R15 | the publisher's dry run is read-only and lists the protection end date | red on any write | n/a |
 | R17 | every LITE account's v14 flags are a superset of its v13 flags | red on a LITE account losing a flag | n/a |
-| R19 | `site-pricing-catalog.static.test.ts` (Phase 1) follows `ON_SALE_VERSION` | red when the page shows a price the catalog on sale does not sell | pinned to 13 |
+| R19 | `site-pricing-catalog.static.test.ts` (Phase 1 tests PR, not merged) follows `ON_SALE_VERSION` | red when the page shows a price the catalog on sale does not sell | pinned to 13 |
 
 Fix-revert probes (binding on the PRs that carry them):
 
@@ -346,7 +346,7 @@ Fix-revert probes (binding on the PRs that carry them):
 | F-18 QuickBooks sync, F-20 multi-warehouse | each adds a $49 add-on and moves Pro to $449 | seam: one catalog value per price plus the ladder spec, so a move is a new version and one line |
 | The rename and site rebrand | display names and the site change | no conflict: names come from one display-name helper (V7); the site pricing step waits for the rebrand |
 | SA-1204 PR-2..PR-6 | superseded by SA-1254 | not built; re-specified here |
-- Interim: the pricing page stays on v13 until v14 is on sale; the static pin test holds it there. The single inclusion threshold has a test (V3) that fails the day it stops being enough.
+- Interim: the pricing page stays on v13 until v14 is on sale; the static pin test (to be built in the Phase 1 tests PR, not merged) holds it there once it lands. The single inclusion threshold has a test (V3) that fails the day it stops being enough.
 
 ### G4 Class, not instance
 - Class: (1) every public price and plan fact comes from the catalog on sale; (2) a plan key is never read back as another plan, one key per meaning per version (V1, A1); (3) a pinned account is never billed at a new price (V4).
