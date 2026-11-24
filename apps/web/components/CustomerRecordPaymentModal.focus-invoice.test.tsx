@@ -95,4 +95,11 @@ describe("CustomerRecordPaymentModal: focusInvoiceId (row 661)", () => {
     await waitFor(() => expect(numbers()).toEqual(["INV-A", "INV-B", "INV-C"]));
     expect((screen.getAllByPlaceholderText("0.00")[0] as HTMLInputElement).value).toBe("");
   });
+
+  it("P-30 invoiceIds: only the ticked invoices are offered, oldest first", async () => {
+    renderWithProviders(
+      <CustomerRecordPaymentModal customerId="c1" invoiceIds={["c", "a"]} onClose={jest.fn()} />,
+    );
+    await waitFor(() => expect(numbers()).toEqual(["INV-A", "INV-C"]));
+  });
 });

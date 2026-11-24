@@ -540,12 +540,14 @@ function stubKeyToPrismaEnumName(key: string): string {
  * generated Prisma `TenantPlan` enum doesn't contain `"LITE"` yet.
  */
 describe("WP1 T2: LITE PLAN_KEYS (5 members) + FLAG_KEYS (21 keys) parity, Prisma TenantPlan has LITE", () => {
-  it("API PLAN_KEYS (5 members) is set-equal to the shared package's PLAN_KEYS (REG-743-F4, now with LITE)", () => {
+  // SA-1254 V1 (P-41): 7 members now, with CORE and ALL_IN. The order is pinned by
+  // billing/plan-key-mirror-order.parity.spec.ts.
+  it("API PLAN_KEYS (7 members) is set-equal to the shared package's PLAN_KEYS (REG-743-F4, now with LITE, CORE, ALL_IN)", () => {
     const shared = Array.isArray((SHARED as Record<string, unknown>)["PLAN_KEYS"])
       ? ((SHARED as Record<string, unknown>)["PLAN_KEYS"] as unknown[])
       : [];
     expect(new Set(API_PLAN_KEYS)).toEqual(new Set(shared));
-    expect(shared.length).toBe(5);
+    expect(shared.length).toBe(7);
   });
 
   it("API FLAG_KEYS (21 keys) is set-equal to the shared package's FLAG_KEYS", () => {

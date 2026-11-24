@@ -411,8 +411,25 @@ export type CrmHandoffStatus = (typeof CRM_HANDOFF_STATUS_VALUES)[number];
 // WP1 (lite-L2, REG-743-F4): LITE is an invite-only tier ranked below every existing plan, so it
 // leads the array — order pin, not hardcoded indices; keep set-equal to the API's local mirror
 // (see `apps/api/src/common/enum-parity.spec.ts`'s REG-743-F4 case).
-export const PLAN_KEYS = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
+//
+// SA-1254 V1 (P-41): CORE (Essentials) and ALL_IN (Pro) join by price. The order must equal the
+// API's, not only the set (plan-key-mirror-order.parity.spec.ts).
+export const PLAN_KEYS = [
+  "LITE",
+  "STARTER",
+  "CORE",
+  "GROWTH",
+  "ALL_IN",
+  "SCALE",
+  "ENTERPRISE",
+] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
+
+// SA-1254 V2 (P-41): keys in the vocabulary that no published catalog version holds yet. The
+// server refuses them on every write until a published row exists. This list keeps the admin
+// plan pickers from offering them on their catalog-unavailable fallback, or in the tier preview.
+// The v14 publish PR empties it in the same diff that publishes the rows.
+export const PLAN_KEYS_AWAITING_CATALOG: readonly PlanKey[] = ["CORE", "ALL_IN"] as const;
 
 // REG-743-N6: pinned set-equal to the generated Prisma `TenantClass` enum (see
 // `enum-parity.spec.ts`'s `ENUM_TABLE` row) — consumed by `create-tenant.dto.ts`'s `@IsIn` and

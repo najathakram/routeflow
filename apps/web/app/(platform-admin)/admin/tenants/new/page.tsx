@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { API_ERROR_CODES, PLAN_KEYS, type ManualActivationAddons } from "@routeflow/types";
+import { API_ERROR_CODES, type ManualActivationAddons } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 import {
@@ -27,7 +27,7 @@ import {
 import { profileErrorCopy } from "../[id]/_features/profile-errors";
 import { planLabel } from "../../../_components/AdminBadge";
 import { ActivationAddonChecklist } from "../../../_components/ActivationAddonChecklist";
-import { selectablePlanKeys } from "../../../_components/usePlanOptions";
+import { fallbackPlanKeys, selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { TimeZoneInput } from "@/components/TimeZoneInput";
 import {
   SUGGESTED_TIME_ZONE,
@@ -251,7 +251,8 @@ export default function AdminCreateTenantPage() {
   // only accepts a PLAN_KEYS member (create-tenant.dto.ts's @IsIn(PLAN_KEYS)) — a legacy or
   // not-yet-launched catalog row (e.g. TEAM/BUSINESS) would 400 if offered here, so the catalog
   // is filtered to PLAN_KEYS members before rendering. A failed fetch or a catalog with no
-  // PLAN_KEYS-eligible row degrades to the full PLAN_KEYS list so the form stays submittable.
+  // PLAN_KEYS-eligible row degrades to the PLAN_KEYS list so the form stays submittable, minus
+  // the keys no published catalog holds yet (SA-1254 V2, `fallbackPlanKeys`).
   React.useEffect(() => {
     let cancelled = false;
     fetchPlanCatalog()
@@ -970,7 +971,7 @@ export default function AdminCreateTenantPage() {
                   </option>
                 ))
               ) : (
-                PLAN_KEYS.map((p) => (
+                fallbackPlanKeys({ includeLite: true }).map((p) => (
                   <option key={p} value={p}>
                     {planLabel(p)}
                   </option>

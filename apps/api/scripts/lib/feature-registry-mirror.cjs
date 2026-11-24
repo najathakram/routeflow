@@ -197,7 +197,13 @@ function isAlwaysEnforcedPlan(planKey) {
   return planKey != null && ALWAYS_ENFORCED_PLAN_KEYS.has(planKey);
 }
 
-const PLAN_KEYS = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"];
+/**
+ * Mirrors PLAN_KEYS, in the same order (SA-1254 V1). This file is the ONE JS home of the plan-key
+ * helpers (SA-1204 C2b): audit-tenant-entitlements.mjs, report-noop-addons.mjs and
+ * backfill-subscription-reconciliation.mjs require them from here. Pinned by
+ * plan-key-mirror-order.parity.spec.ts.
+ */
+const PLAN_KEYS = ["LITE", "STARTER", "CORE", "GROWTH", "ALL_IN", "SCALE", "ENTERPRISE"];
 
 /** Mirrors LEGACY_PLAN_KEY_ALIASES. */
 const LEGACY_PLAN_KEY_ALIASES = { TEAM: "GROWTH", BUSINESS: "SCALE", PROFESSIONAL: "SCALE" };
@@ -255,6 +261,10 @@ function planKeyFromEnum(plan) {
       return "ENTERPRISE";
     case "LITE":
       return "LITE";
+    case "CORE":
+      return "CORE";
+    case "ALL_IN":
+      return "ALL_IN";
     case "STARTER":
     default:
       return "STARTER";
