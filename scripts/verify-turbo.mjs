@@ -42,6 +42,13 @@ import {
   wantsFastVerify,
 } from "./lib/verify-scope.mjs";
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
+import {
+  PHASE0_PREBUILD,
+  failureReport,
+  isFailFast,
+  notRunLines,
+  phase0Call,
+} from "./lib/verify-fail-fast.mjs";
 import { createRequire } from "node:module";
 
 const { workspacesWithScript, findCrossWorkspaceSpecs, findSameWorkspaceReaders } = createRequire(
@@ -90,8 +97,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
  * recovery note depends on — is never silently dropped, which is the property that actually
  * matters and the one a code change could accidentally break.
  */
-export function buildTurboFlags(verifyConcurrency) {
-  return [`--concurrency=${verifyConcurrency || "2"}`, "--continue=dependencies-successful"];
+export function buildTurboFlags(verifyConcurrency, summarize = false) {
+  const flags = [`--concurrency=${verifyConcurrency || "2"}`, "--continue=dependencies-successful"];
+  return summarize ? [...flags, "--summarize"] : flags;
 }
 
 /** `[]` (byte-identical to no passthrough at all) when unset; `["--", "--maxWorkers=<n>"]`
@@ -178,7 +186,7 @@ const API_NAME = "@routeflow/api";
  *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
  *    api itself is excluded. `note` is set when no call is left at all.
  */
-export function planTurboCalls({
+function planAll({
   scope,
   excluded = [],
   splitJest,
@@ -233,6 +241,27 @@ export function planTurboCalls({
       ? null
       : `nothing left to verify after the exclusions (${excluded.join(", ")}) — no turbo calls`,
   };
+}
+
+/**
+ * SA-1250 `RF_VERIFY_LANE`: one pure input. Unset or empty = the plan above, byte-identical. "static" (the `chain`
+ * CI lane) keeps only the tsc/eslint calls: no jest, pin or fs-read call, and the test tasks leave a bundled call.
+ * The jest lanes are scripts/ci-lanes.mjs's; its parity job proves together they cover the single run.
+ */
+export function planTurboCalls(opts) {
+  const lane = opts.lane ?? "";
+  if (lane === "") return planAll(opts);
+  if (lane !== "static") {
+    throw new Error(`RF_VERIFY_LANE must be unset or "static" (got "${lane}")`);
+  }
+  const plan = planAll(opts);
+  const calls = [];
+  for (const c of plan.calls) {
+    if (c.jest || c.pins || c.fsRead) continue;
+    const args = c.args.filter((a) => a !== "test" && a !== "test:repo-truth");
+    if (args.some((a) => !a.startsWith("--"))) calls.push({ ...c, args });
+  }
+  return { ...plan, calls, note: calls.length ? null : plan.note };
 }
 
 /**
@@ -515,12 +544,16 @@ export function planFsReadSpecs({ fast, files, scope, excluded = [], readers, wo
 }
 
 /**
- * Runs every planned call in order (never short-circuits); the first non-zero status is the run's. A status that is not
+ * Runs every planned call in order (never short-circuits unless `failFast`, the local hook's switch, which stops at the
+ * first non-zero call); the first non-zero status is the run's. A status that is not
  * a number (null from a signal) is a failure, never a pass: `null ?? 0` used to read as green (W-1045). `ran` receives
  * every status so the caller can prove all planned calls finished green.
  */
-export async function executePlan(calls, runCall, ran = []) {
-  for (const c of calls) ran.push(await runCall(c));
+export async function executePlan(calls, runCall, ran = [], failFast = false) {
+  for (const c of calls) {
+    ran.push(await runCall(c));
+    if (failFast && ran[ran.length - 1] !== 0) break;
+  }
   const i = ran.findIndex((s) => s !== 0); // not find(): an undefined status must not look like "none"
   return i === -1 ? 0 : typeof ran[i] === "number" ? ran[i] : 1;
 }
@@ -544,6 +577,11 @@ export function finishRun({ fast, status, log = console.log }) {
 }
 
 export async function main() {
+  const refusal = laneRefusal(process.env.RF_VERIFY_LANE || "", process.env);
+  if (refusal) {
+    console.error(refusal);
+    process.exit(1);
+  }
   // W-1045: any pass stage already on disk was not written by THIS run; a run that then runs nothing must not inherit it.
   clearStage(process.env);
   const defaults = chooseVerifyDefaults({
@@ -554,7 +592,8 @@ export async function main() {
   if (defaults.message) console.log(defaults.message);
   const JEST_MAX_WORKERS = defaults.jestMaxWorkers;
   const VERIFY_CONCURRENCY = defaults.verifyConcurrency;
-  const TURBO_FLAGS = buildTurboFlags(VERIFY_CONCURRENCY);
+  const failFast = isFailFast(process.env);
+  const TURBO_FLAGS = buildTurboFlags(VERIFY_CONCURRENCY, failFast);
 
   // Awaited async spawns (not spawnSync): the heavy-slot heartbeat is a timer and must keep firing
   // for the whole turbo run, or a long verify would look dead and lose its slot.
@@ -630,7 +669,7 @@ export async function main() {
     }
   }
 
-  // Every planned call always runs (never `A() || B()`) so a check-types/lint failure can't skip
+  // (RF_VERIFY_FAIL_FAST=1, the local hook only, supersedes this: it stops at the first failing call.) Every planned call always runs (never `A() || B()`) so a check-types/lint failure can't skip
   // the jest run and hide its results from one push's report — a single bundled invocation gives the
   // unsplit path that property by itself. With JEST_MAX_WORKERS set the calls are split so the
   // --maxWorkers passthrough only ever reaches jest, never tsc/eslint. Exit = first non-zero status.
@@ -657,7 +696,8 @@ export async function main() {
   const plan = planTurboCalls({
     scope,
     excluded,
-    splitJest: Boolean(JEST_MAX_WORKERS),
+    splitJest: Boolean(JEST_MAX_WORKERS) || failFast,
+    lane: process.env.RF_VERIFY_LANE || "",
     fast: runMode.fast,
     pins,
     fsRead,
@@ -677,20 +717,39 @@ export async function main() {
     console.error(prisma.message);
     process.exit(1);
   }
+  // Fail-fast phase 0 (hook only): lint is the cheapest step, so it runs BEFORE queueing for the slot. A failure here
+  // never takes a lease. Not planned when the caller already holds the slot (lint then runs inside it, as before).
+  const phase0 = phase0Call(plan.calls, { env: process.env });
+  if (phase0) {
+    const since = Date.now() - 1000;
+    const st = (await turbo(PHASE0_PREBUILD.args)) || (await turbo(phase0.args));
+    if (st !== 0) {
+      console.log(failureReport(ROOT, since).join("\n"));
+      process.exit(typeof st === "number" ? st : 1);
+    }
+  }
   // The whole turbo step is ONE heavy-slot hold (scripts/lib/heavy-slot.mjs): one verify at a time
   // per host, FIFO, fail closed when the wait cap passes. Calls run strictly in order, awaited.
   const ran = [];
   const status = await withHeavySlot({ label: "verify" }, async () => {
+    let since = Date.now();
     const planned = await executePlan(
       plan.calls,
-      (c) =>
-        c.jest
+      (c) => {
+        since = Date.now() - 1000;
+        return c.jest
           ? turboJest(c.args, c.changedSince ? runMode.changedSince : undefined)
           : c.pins || c.fsRead
             ? pinJest(c)
-            : turbo(c.args),
+            : turbo(c.args);
+      },
       ran,
+      failFast,
     );
+    if (failFast && planned !== 0) {
+      console.log(failureReport(ROOT, since).join("\n"));
+      for (const line of notRunLines(plan.calls, ran)) console.log(line);
+    }
     if (!settlesReports({ fast: runMode.fast, status: planned, env: process.env })) return planned;
     const settled = await spawnAsync(
       process.execPath,
@@ -717,4 +776,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(e?.name === "HeavySlotTimeout" ? 75 : 1);
   });
+}
+
+/** R-24 M2: RF_VERIFY_LANE plans no jest, so outside CI it would stage a pass token for a run that tested nothing. */
+export function laneRefusal(lane, env) {
+  return lane && !env.CI
+    ? `verify: RF_VERIFY_LANE=${lane} is CI-only (it plans no jest); unset it, or set CI for a CI run.`
+    : null;
 }

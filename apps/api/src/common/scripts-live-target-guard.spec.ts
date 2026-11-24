@@ -89,6 +89,7 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/lib/report-db-url.mjs": "not-a-db-client",
   "apps/api/scripts/link-google.js": "platform-users",
   "apps/api/scripts/order-invoice-divergence-report.mjs": "read-only",
+  "apps/api/scripts/prod-migrate-resolve.mjs": "schema-only",
   "apps/api/scripts/prod-migrate.mjs": "schema-only",
   "apps/api/scripts/prod-readonly-audit.mjs": "read-only",
   "apps/api/scripts/purge-live-svg-xss.js": "test-slug-only",

@@ -1,6 +1,6 @@
 import type { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { calendarDayOf } from "./settled-date-filter";
-import { overdueCutoff } from "../common/calendar-date";
+import { addCalendarDays, overdueCutoff, tenantTodayDay } from "../common/calendar-date";
 import { type RawSqlDb, overdueInvoiceIds } from "./invoice-balance-sql";
 import { OPEN_INVOICE_STATUSES } from "./invoice-status-sets";
 import { TO_COLLECT_WHERE } from "./to-collect";
@@ -37,6 +37,26 @@ export function applyInvoiceStatusFilters(
     // RF-204: normalize "VOIDED" → "VOID" for single-status filter
     where.status = (status as string) === "VOIDED" ? "VOID" : status;
   }
+}
+
+/**
+ * P-30 / SA-1264 "Due soon": open invoices due from the TENANT's today through today + `dueWithinDays` (0 = due
+ * today), on the tenant's calendar (`tenantTodayDay`), the same day `isOverdue` ends on. `dueDate` is a UTC-midnight
+ * calendar stamp, so the bounds are literal day stamps. Merges into any `dueDate` clause already set and keeps an
+ * explicit status filter; with none it reads the open set. Runs after the status filters.
+ */
+export function applyDueWithinDays(
+  where: any,
+  query: ListInvoicesDto,
+  timeZone?: string | null,
+  now: Date = new Date(),
+): void {
+  const days = query.dueWithinDays;
+  if (days === undefined || days === null) return;
+  const today = new Date(`${tenantTodayDay(timeZone, now)}T00:00:00.000Z`);
+  const last = addCalendarDays(today, days).toISOString().slice(0, 10);
+  where.dueDate = { ...(where.dueDate ?? {}), gte: today, lte: new Date(`${last}T23:59:59.999Z`) };
+  if (!where.status) where.status = { in: [...OPEN_INVOICE_STATUSES] };
 }
 
 /**

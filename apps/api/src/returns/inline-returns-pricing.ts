@@ -17,10 +17,14 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   computeLineSubtotal,
   normalizeBoxesPieces,
+  refundableInvoiceOf,
   refundableLineShare,
   roundMoney,
   type RefundableInvoice,
+  type StoredInvoice,
   type RefundableInvoiceLine,
+  lastPaidCapSubtotal,
+  type StoredInvoiceItem,
 } from "@routeflow/pricing";
 
 export type ReturnPriceSource = "SOURCE_INVOICE" | "CUSTOMER_PRICE" | "TIER" | "BASE" | "MANUAL";
@@ -91,7 +95,11 @@ export interface UnreferencedPriceContext {
    * canonical SELLING-UNIT price (one BOX when unitsPerBox > 1, matching @routeflow/pricing's
    * own convention), never a per-piece price. */
   unitPrice: number;
-  source: Extract<ReturnPriceSource, "CUSTOMER_PRICE" | "TIER" | "BASE">;
+  /** W-1316: SOURCE_INVOICE only when the last paid price capped a sold-before chunk. */
+  source: Extract<ReturnPriceSource, "SOURCE_INVOICE" | "CUSTOMER_PRICE" | "TIER" | "BASE">;
+  /** SA-1244 A2: the most this chunk may credit, the product's pooled price on the newest invoice that carries it
+   * (`lastPaidCapSubtotal` for the chunk's pieces); when it binds the chunk is SOURCE_INVOICE. `null`/absent = no cap. */
+  capSubtotal?: number | null;
   /** The product's box size, so a boxed product's SELLING-UNIT price is priced against whole
    * boxes (+ prorated loose pieces), never `unitPrice * chunkPieces` directly — that would
    * over-credit a boxed product by a factor of unitsPerBox (CLAUDE.md money discipline). */
@@ -371,6 +379,43 @@ export function priceMatchedChunk(
   };
 }
 
+/** W-1316: the customer's newest live sale of a product: the row the read landed on and its invoice (every line, row order). */
+export interface LastSaleItem extends StoredInvoiceItem {
+  productId?: string | null;
+  boxes?: number | null;
+  unitsPerBox?: number | null;
+}
+export interface LastSale {
+  id: string;
+  invoice: Omit<StoredInvoice, "items"> & { items?: readonly LastSaleItem[] | null };
+}
+
+/**
+ * SA-1244 A2: the cap on a return of `pieces` of the product, from that product's POOL on the sale's invoice: every live line
+ * (qty > 0) of it, paid and $0 together, each as pieces (a box split's qty is pieces; else qty x the line's pack, else the
+ * product's). The money is `lastPaidCapSubtotal` in @routeflow/pricing, never `qty * unitPrice`. `null` = no cap.
+ */
+export function lastPaidCapOf(
+  sale: LastSale,
+  productId: string,
+  productUnitsPerBox: number | null,
+): (pieces: number) => number | null {
+  if (!sale.invoice) return () => null; // a bare row (a spec mock) has no invoice to price
+  const items = sale.invoice.items ?? [];
+  const ids = items.map((it, i) => it.id ?? `~${i}`);
+  const lines = items.flatMap((it, i) => {
+    const qty = Number(it.qty);
+    if (it.productId !== productId || !(qty > 0)) return [];
+    const upb = Number(it.unitsPerBox ?? productUnitsPerBox ?? 0);
+    // the one pieces rule (B661: no second qty x pack multiply): a box split or a pack-less line is already pieces
+    const pieces =
+      it.boxes != null || !(upb > 1) ? qty : returnRequestPieces({ qty, unitsPerBox: upb });
+    return [{ id: ids[i], pieces }];
+  });
+  const invoice = refundableInvoiceOf(sale.invoice, ids);
+  return (pieces) => lastPaidCapSubtotal({ invoice, lines, pieces });
+}
+
 /** SA-1091 A-1: records a priced chunk against its invoice's shared `invoiceTaken`, so the next line priced in the same request
  * stops at what is left. A line with no shared object (a spec fixture) has nothing to record. */
 export function noteChunkTaken(
@@ -397,7 +442,11 @@ export function priceUnreferencedChunk(
   customerIsTaxExempt: boolean,
   neverSold: boolean,
 ): PricedChunk {
-  const subtotal = priceSellingUnitChunk(ctx.unitPrice, chunkPieces, ctx.unitsPerBox);
+  const today = priceSellingUnitChunk(ctx.unitPrice, chunkPieces, ctx.unitsPerBox);
+  const capped = ctx.capSubtotal != null && ctx.capSubtotal < today;
+  const subtotal = capped ? (ctx.capSubtotal as number) : today;
+  const upb = Number(ctx.unitsPerBox ?? 0);
+  const units = upb > 1 ? chunkPieces / upb : chunkPieces;
   const taxAmount = customerIsTaxExempt || neverSold ? 0 : roundMoney(subtotal * taxRate);
   return {
     sourceOrderId: null,
@@ -408,8 +457,8 @@ export function priceUnreferencedChunk(
     subtotal,
     taxAmount,
     categoryTax: 0,
-    priceSource: ctx.source,
-    unitPrice: ctx.unitPrice,
+    priceSource: capped ? "SOURCE_INVOICE" : ctx.source,
+    unitPrice: capped ? (units > 0 ? roundMoney(subtotal / units) : 0) : ctx.unitPrice,
     neverSold,
   };
 }
@@ -441,12 +490,12 @@ export function applyCreditOverride(
     return { overCap: false, chunk: defaultChunk };
   }
   if (override.unitPrice > defaultPerUnit) return { overCap: true, defaultUnitPrice };
-  const subtotal = priceSellingUnitChunk(
-    override.unitPrice,
-    defaultChunk.pieces,
-    basis.unitsPerBox,
+  // SA-1244 A2: never above the default subtotal, whatever a rounded per-unit figure multiplies to
+  // Unreachable guard (R-42 proof): an override that gets here is at most D/u - 0.005 and computeLineSubtotal rounds once, so it is below D.
+  const subtotal = Math.min(
+    priceSellingUnitChunk(override.unitPrice, defaultChunk.pieces, basis.unitsPerBox),
+    defaultChunk.subtotal,
   );
-  if (subtotal > defaultChunk.subtotal) return { overCap: true, defaultUnitPrice };
   return {
     overCap: false,
     chunk: {

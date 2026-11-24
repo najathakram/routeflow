@@ -18,14 +18,14 @@ export interface OrderReturnsPanelProps {
 }
 
 /** W21b: label a REFUNDED return by how it was resolved: a store-credit resolution (a credit note, or refundMethod
- *  CREDIT_NOTE) reads "Store credit"; a cash/card/check refund (refundMethod EXTERNAL_REFUND) keeps "Refunded". */
+ *  CREDIT_NOTE) reads "Credit"; a cash/card/check refund (refundMethod EXTERNAL_REFUND) keeps "Refunded". */
 function resolutionLabel(ret: {
   status: string;
   refundMethod?: string | null;
   creditNoteId?: string | null;
 }): string | undefined {
   if (ret.status !== "REFUNDED" || ret.refundMethod === "EXTERNAL_REFUND") return undefined;
-  return ret.refundMethod === "CREDIT_NOTE" || ret.creditNoteId ? "Store credit" : undefined;
+  return ret.refundMethod === "CREDIT_NOTE" || ret.creditNoteId ? "Credit" : undefined;
 }
 
 export function OrderReturnsPanel({ orderId }: OrderReturnsPanelProps) {

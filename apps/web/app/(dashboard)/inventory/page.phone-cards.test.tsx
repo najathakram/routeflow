@@ -37,6 +37,8 @@ const stockRows = [
     totalValue: null,
     isActive: true,
     unitsPerBox: null,
+    parentProductId: null,
+    hasVariants: false,
   },
   {
     id: "p-ok",
@@ -50,6 +52,8 @@ const stockRows = [
     totalValue: 48,
     isActive: true,
     unitsPerBox: 12,
+    parentProductId: null,
+    hasVariants: true,
   },
   {
     // low (no reorder point, 3 <= 5), no cost, has variants: all four actions apply
@@ -63,6 +67,8 @@ const stockRows = [
     totalValue: null,
     isActive: true,
     unitsPerBox: null,
+    parentProductId: null,
+    hasVariants: true,
   },
 ];
 
@@ -78,16 +84,9 @@ jest.mock("@/lib/api/inventory", () => ({
   useBulkSetCostBasis: () => ({ mutate: jest.fn(), isPending: false }),
   useRecomputeCosts: () => ({ mutate: jest.fn(), isPending: false }),
 }));
+// W-1299: "has variants" used to come from this whole-catalog read; it rides on the stock rows above now.
 jest.mock("@/lib/api/products", () => ({
-  useProducts: () => ({
-    data: {
-      data: [
-        { id: "p-out", parentProductId: null, variants: [] },
-        { id: "p-ok", parentProductId: null, variants: [{ id: "v1" }] },
-        { id: "p-all", parentProductId: null, variants: [{ id: "v2" }] },
-      ],
-    },
-  }),
+  useProducts: () => ({ data: { data: [] } }),
 }));
 
 jest.mock("@/components/InlineCreateProductModal", () => ({

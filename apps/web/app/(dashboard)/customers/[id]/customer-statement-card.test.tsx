@@ -202,4 +202,24 @@ describe("CustomerStatementCard (B1005, option A)", () => {
     expect(arg.description).toBe("Couldn't download the statement. Try again.");
     expect(JSON.stringify(arg)).not.toMatch(/went through/);
   });
+
+  it("SA-1211: an advance row's remaining reads 'credit', not 'in wallet'", () => {
+    renderCard({
+      statement: {
+        ...statement,
+        transactions: [
+          {
+            id: "t2",
+            date: "2026-08-04T00:00:00.000Z",
+            type: "ADVANCE_PAYMENT" as const,
+            description: "Advance",
+            amount: 40,
+            runningBalance: 40,
+          },
+        ],
+      },
+    });
+    expect(screen.getByText("credit", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText("in wallet")).toBeNull();
+  });
 });
