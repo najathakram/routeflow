@@ -2609,7 +2609,10 @@ describe("SubscriptionMutationService — an unrankable plan key is refused at t
     });
     // The definition exists, so the "Unknown plan" catalog check passes; only the rank check
     // catches it — `-1 >= planRank(BUSINESS)` is false, so the schedule used to be written.
-    await expect(svc.downgrade("t1", "PRO", [], "admin")).rejects.toThrow(/Unknown plan/);
+    // P-45 (R-58 F1): the off-ladder refusal prints no key.
+    await expect(svc.downgrade("t1", "PRO", [], "admin")).rejects.toThrow(
+      "This plan can't be chosen here — contact support.",
+    );
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
   });
 
@@ -4528,6 +4531,78 @@ describe("W-1338 L14 - a refused plan change leaves the open payment link alone"
       "not a downgrade",
     );
     expect(f.expire).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SA-1254 V7 (P-45): a refused business reads the plan's name, never its key. Red on master: the
+ * invitation-only errors read `Plan "LITE" ...` and the off-ladder error reads `Plan "PRO" is not a
+ * recognized plan key ...`.
+ */
+describe("SubscriptionMutationService — plan refusals name the plan, never the key (P-45)", () => {
+  type Call = (svc: SubscriptionMutationService) => Promise<unknown>;
+  const calls: ReadonlyArray<readonly [string, Call]> = [
+    ["subscribe", (svc) => svc.subscribe("t1", { planKey: "LITE", cycle: "MONTHLY" })],
+    ["upgrade", (svc) => svc.upgrade("t1", "LITE", "admin")],
+    ["downgrade", (svc) => svc.downgrade("t1", "LITE", [], "admin")],
+  ];
+
+  it.each(calls)("%s() to an invite-only plan reads 'The Lite plan ...'", async (_name, call) => {
+    const { svc } = make({ catalog: catalogWithLite() });
+    const err = await call(svc).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(
+      "The Lite plan is available by invitation only — contact us.",
+    );
+    expect((err as Error).message).not.toContain("LITE");
+  });
+
+  function offLadderCatalog(): ReturnType<typeof catalog> {
+    const v = catalog();
+    return {
+      ...v,
+      definitions: [
+        { planKey: "PRO", name: "Bad row", monthlyPrice: 199, isCustom: false, seatsIncluded: 1 },
+        ...v.definitions,
+      ],
+    } as ReturnType<typeof catalog>;
+  }
+  const OFF_LADDER = "This plan can't be chosen here — contact support.";
+
+  it("subscribe() to a published key outside the ladder prints no key", async () => {
+    const { svc } = make({ catalog: offLadderCatalog() });
+    const err = await svc
+      .subscribe("t1", { planKey: "PRO", cycle: "MONTHLY" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(OFF_LADDER);
+  });
+
+  // R-58 F1: the quote (POST /billing/quote) and the downgrade hit the same off-ladder case and
+  // printed `Unknown plan "PRO"`. Red at 8153d75368.
+  it("planChangePreview() (the quote) to a published key outside the ladder prints no key", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: offLadderCatalog(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const err = await svc.planChangePreview("t1", "PRO", "MONTHLY").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(OFF_LADDER);
+  });
+
+  it("downgrade() to a published key outside the ladder prints no key, and writes nothing", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx } = make({
+      catalog: offLadderCatalog(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const err = await svc.downgrade("t1", "PRO", [], "admin").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(OFF_LADDER);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
   });
 });
 
