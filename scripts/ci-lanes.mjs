@@ -6,9 +6,9 @@
  *   node scripts/ci-lanes.mjs --run <id>      run one lane (what ci.yml's `lanes` matrix calls)
  *   node scripts/ci-lanes.mjs --parity        every spec today's single Verify runs is in exactly ONE lane
  *
- * The matrix in ci.yml is pinned to LANES by scripts/ci-lanes.self-test.mjs. `chain` is the old single job:
- * `npm run verify` with RF_VERIFY_LANE=static (scripts/verify-turbo.mjs plans only check-types + lint). A new
- * lane is one row here plus one matrix entry.
+ * Until PR-2 lands this is the lane table and the parity check only; the ci.yml matrix that runs the lanes, and
+ * its pin to LANES, come with PR-2. `chain` will be the old single job: `npm run verify` with RF_VERIFY_LANE=static
+ * (CI only; scripts/verify-turbo.mjs plans only check-types + lint). A new lane is one row here plus one matrix entry.
  */
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -66,7 +66,7 @@ export const NOT_IN_VERIFY = [
 
 // -- parity ----------------------------------------------------------------------------------------
 /** expected: [file]; lanes: { id: [file] }. Red when a file is in zero lanes, two lanes, or a lane lists an unexpected one. */
-export function parityCheck({ expected, lanes }) {
+export function parityCheck({ expected, lanes, excluded = [] }) {
   const where = new Map();
   for (const [id, files] of Object.entries(lanes))
     for (const f of new Set(files)) where.set(f, [...(where.get(f) ?? []), id]);
@@ -78,6 +78,13 @@ export function parityCheck({ expected, lanes }) {
     if (!want.has(f))
       problems.push(`lane ${ids.join(", ")} lists a file Verify does not expect: ${f}`);
   }
+  // R-24 M1: a file the db/smtp exclusion matches is outside Verify by definition. If a lane runs it, or the expected
+  // set lists it, a config was widened and the exclusion now hides real specs: fail, naming the file.
+  for (const f of new Set([...want, ...where.keys()]))
+    if (excluded.some((r) => r.test(f)))
+      problems.push(
+        `matched by NOT_IN_VERIFY yet expected or run by a lane (widened db/smtp config?): ${f}`,
+      );
   return { ok: problems.length === 0, problems };
 }
 
@@ -121,9 +128,9 @@ function runParity() {
     encoding: "utf8",
     maxBuffer: 1 << 26,
   });
-  const census = git.stdout
-    .split(/\r?\n/)
-    .filter((f) => /\.(spec|test)\.[cm]?[tj]sx?$/.test(f) && !NOT_IN_VERIFY.some((r) => r.test(f)));
+  const specFiles = git.stdout.split(/\r?\n/).filter((f) => /\.(spec|test)\.[cm]?[tj]sx?$/.test(f));
+  const census = specFiles.filter((f) => !NOT_IN_VERIFY.some((r) => r.test(f)));
+  const excludedCount = specFiles.length - census.length;
   const expected = [
     ...new Set([
       ...listApi(base),
@@ -133,7 +140,7 @@ function runParity() {
     ]),
   ];
   const lanes = apiLaneFiles();
-  const res = parityCheck({ expected, lanes });
+  const res = parityCheck({ expected, lanes, excluded: NOT_IN_VERIFY });
   const covered = new Set(LANES.flatMap((l) => l.workspaces));
   const tested = [];
   for (const dir of ["apps", "packages"])
@@ -150,7 +157,7 @@ function runParity() {
     if (!covered.has(w)) res.problems.push(`workspace ${w} has a test script and no lane`);
   const ok = res.problems.length === 0;
   console.log(
-    `ci-lanes parity: ${expected.length} api spec files, ${Object.keys(lanes).length} api lanes, ${tested.length} workspaces with tests`,
+    `ci-lanes parity: ${expected.length} api spec files, ${Object.keys(lanes).length} api lanes, ${tested.length} workspaces with tests; ${excludedCount} spec files outside Verify by the db/smtp configs`,
   );
   for (const [id, f] of Object.entries(lanes)) console.log(`  ${id}: ${f.length} files`);
   for (const p of res.problems) console.error(`PARITY FAIL: ${p}`);

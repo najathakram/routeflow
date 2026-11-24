@@ -157,7 +157,7 @@ function main() {
   // mode is the gate before a register push and is never fast, whatever the environment says.
   // SA-1250: the `chain` CI lane (RF_VERIFY_LANE=static) runs no jest, so it has no reports to check; the jest lanes
   // run in their own jobs. Report-dependent enforcement is deferred exactly as in a fast verify.
-  const staticLane = process.env.RF_VERIFY_LANE === "static";
+  const staticLane = process.env.RF_VERIFY_LANE === "static" && Boolean(process.env.CI);
   const fastVerify = !landing && (isFastMode(process.env) || staticLane);
   if (process.env.RF_VERIFY_MODE === "fast" && !fastVerify) {
     console.error(

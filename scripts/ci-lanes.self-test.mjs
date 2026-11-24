@@ -58,6 +58,27 @@ check(
   false,
 );
 
+// -- M1 (R-24): a file the exclusion matches may not be expected or run by any lane ------------------
+const widened = [new RegExp(".*\.(db|service)\.spec\.ts$")]; // a db config widened to eat service specs
+const probe = ["a.spec.ts", "orders.service.spec.ts"];
+const wide = parityCheck({ expected: probe, lanes: { u1: probe }, excluded: widened });
+check(
+  "EX1 a widened exclusion that also matches a lane's file is red and names the file",
+  [wide.ok, has(wide, "orders.service.spec.ts")],
+  [false, true],
+);
+check(
+  "EX2 a widened exclusion that matches a file only expected (no lane runs it) is red too",
+  parityCheck({ expected: probe, lanes: { u1: ["a.spec.ts"] }, excluded: widened }).ok,
+  false,
+);
+check(
+  "EX3 the real exclusion regexes leave a clean lane set green",
+  parityCheck({ expected: ["a.spec.ts"], lanes: { u1: ["a.spec.ts"] }, excluded: NOT_IN_VERIFY })
+    .ok,
+  true,
+);
+
 // -- the lane table --------------------------------------------------------------------------------
 check("LT1 eight lanes, ids unique", [LANES.length, new Set(LANES.map((l) => l.id)).size], [8, 8]);
 check(

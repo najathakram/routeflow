@@ -82,6 +82,7 @@ import {
   planFsReadSpecs,
   planPins,
   planTurboCalls,
+  laneRefusal,
 } from "./verify-turbo.mjs";
 import { createRequire } from "node:module";
 
@@ -187,7 +188,7 @@ function isUnder(root, p, pathImpl = path) {
 // key around the whole chain too: a nested main() that inherited them would write the pass stage with the REAL nonce
 // before the real verify-turbo runs (proven on Linux, where these cases run).
 const AMBIENT_VERIFY_KNOBS =
-  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|RF_VERIFY_RESULT_FILE|RF_VERIFY_NONCE|RF_VERIFY_TREE_KEY|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
+  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|RF_VERIFY_LANE|RF_VERIFY_RESULT_FILE|RF_VERIFY_NONCE|RF_VERIFY_TREE_KEY|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
 const cleanVerifyEnv = (base = scrubbedGitEnv()) =>
   Object.fromEntries(Object.entries(base).filter(([k]) => !AMBIENT_VERIFY_KNOBS.test(k)));
 
@@ -2787,13 +2788,21 @@ check(
 // "static" = check-types + lint only (the `chain` lane), never a jest, pin or fs-read call.
 {
   const base = { scope: FULL, excluded: [CONTROL], splitJest: true };
+  const FROZEN_PRE_LANE_PLAN = JSON.stringify({
+    calls: [
+      { jest: false, args: ["check-types", "lint", NEG] },
+      { jest: true, args: ["test", "test:repo-truth", NEG] },
+    ],
+    note: null,
+  });
   check(
     "LN1 T6/P5: lane unset or empty plans byte-identically to the pre-lane planner",
     [
       JSON.stringify(planTurboCalls({ ...base, lane: undefined })),
       JSON.stringify(planTurboCalls({ ...base, lane: "" })),
     ],
-    [JSON.stringify(planTurboCalls(base)), JSON.stringify(planTurboCalls(base))],
+    // L1 (R-24): a frozen copy of the pre-lane plan, not the same function's output
+    [FROZEN_PRE_LANE_PLAN, FROZEN_PRE_LANE_PLAN],
   );
   check(
     "LN2 static, FULL split: only the check-types + lint call, negative filter kept",
@@ -2828,5 +2837,22 @@ check(
     true,
   );
 }
+// M2 (R-24): RF_VERIFY_LANE is CI-only. A stray export in a developer shell must not turn a push into a
+// lint-and-tsc-only "verified" pass.
+check(
+  "LN6 laneRefusal: a lane without CI is refused, with CI or no lane it is not",
+  [laneRefusal("static", {}) !== null, laneRefusal("static", { CI: "1" }), laneRefusal("", {})],
+  [true, null, null],
+);
+check(
+  "LN7 the pre-push hook unsets RF_VERIFY_LANE next to RF_VERIFY_MODE",
+  /unset RF_VERIFY_LANE/.test(readFileSync(join(ROOT, ".husky", "pre-push"), "utf8")),
+  true,
+);
+check(
+  "LN8 cleanVerifyEnv drops an ambient RF_VERIFY_LANE (it is a verify knob)",
+  Object.keys(cleanVerifyEnv({ RF_VERIFY_LANE: "static", KEEP_ME: "1" })),
+  ["KEEP_ME"],
+);
 console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

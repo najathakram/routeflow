@@ -565,6 +565,11 @@ export function finishRun({ fast, status, log = console.log }) {
 }
 
 export async function main() {
+  const refusal = laneRefusal(process.env.RF_VERIFY_LANE || "", process.env);
+  if (refusal) {
+    console.error(refusal);
+    process.exit(1);
+  }
   // W-1045: any pass stage already on disk was not written by THIS run; a run that then runs nothing must not inherit it.
   clearStage(process.env);
   const defaults = chooseVerifyDefaults({
@@ -739,4 +744,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(e?.name === "HeavySlotTimeout" ? 75 : 1);
   });
+}
+
+/** R-24 M2: RF_VERIFY_LANE plans no jest, so outside CI it would stage a pass token for a run that tested nothing. */
+export function laneRefusal(lane, env) {
+  return lane && !env.CI
+    ? `verify: RF_VERIFY_LANE=${lane} is CI-only (it plans no jest); unset it, or set CI for a CI run.`
+    : null;
 }
