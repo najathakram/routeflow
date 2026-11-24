@@ -4,6 +4,7 @@ import * as React from "react";
 import { X, StickyNote, Pencil } from "lucide-react";
 import { cn, type BadgeStatus } from "@routeflow/ui/web";
 import { CasesPiecesInput } from "./CasesPiecesInput";
+import { heldNote, useHeldQty, type QtyEntry } from "./use-held-qty";
 import {
   computeLineSubtotal,
   isAboveListLine,
@@ -187,6 +188,8 @@ export interface LineItemRowProps {
   flexFrom?: "sm" | "lg";
   /** The note and remove icons are full 44 px targets below `lg` (the counter is a touch till), like the qty steppers. */
   touchTargets?: boolean;
+  /** SA-1262: the counter opts in to holding qty-box text until Enter, Tab or blur. Absent = a commit per keystroke. */
+  qtyEntry?: QtyEntry;
   /** Accessible names that say which line a control belongs to. Absent = the row's titles. */
   labels?: {
     remove?: string;
@@ -272,9 +275,12 @@ export function LineItemRow({
   noteAutoFocus = false,
   hideOriginalPrice = false,
   touchTargets = false,
+  qtyEntry,
   flexFrom = "sm",
   labels,
 }: LineItemRowProps) {
+  // Unparseable text (NaN) is refused by the caller; the default mode keeps its `|| 0`.
+  const heldUnit = useHeldQty(li.qty, onSetUnitQty, qtyEntry);
   const iconTarget = touchTargets
     ? "max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center"
     : "";
@@ -290,6 +296,15 @@ export function LineItemRow({
   const qtyLocked = !!pendingUnit || locked;
   // F08: set when a typed quantity below 1 was raised to 1, so the row says so (cleared by the next valid quantity).
   const [qtyBelowMin, setQtyBelowMin] = React.useState(false);
+  // held text commits at Enter, Tab or blur: F08's "raised to 1" note is set then, as the typed path sets it per keystroke
+  const heldQty = useHeldQty(
+    li.qty,
+    (n) => {
+      setQtyBelowMin(Number.isFinite(n) && n < 1);
+      onSetQty?.(n);
+    },
+    qtyEntry,
+  );
   const showQtyNote = qtyBelowMin && !li.unitsPerBox; // only the plain (unit-sold) stepper can type a 0
   const qtyNoteId = React.useId();
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
@@ -624,6 +639,7 @@ export function LineItemRow({
                 type="number"
                 min={0}
                 value={li.qty}
+                data-qty-box=""
                 onChange={(e) => onSetUnitQty(parseInt(e.target.value, 10) || 0)}
                 onFocus={(e) => e.target.select()}
                 className={cn(
@@ -631,6 +647,7 @@ export function LineItemRow({
                   touchTargets && "w-20 max-lg:min-h-11",
                 )}
                 title={`Total ${w.base.lowerOther}`}
+                {...heldUnit}
               />
               <span
                 className="min-w-0 truncate text-xs text-navy/70"
@@ -647,10 +664,12 @@ export function LineItemRow({
               words={w}
               disabled={qtyLocked}
               touchTargets={touchTargets}
+              qtyEntry={qtyEntry}
               onSetBoxes={onSetBoxes}
               onSetPieces={onSetPieces}
             />
           )}
+          {heldNote(heldUnit)}
           <span className="text-[10px] text-navy/30">
             1 {w.pack.lower} = {li.unitsPerBox} {w.base.short.other}
             {li.qty > 0 && (
@@ -695,6 +714,7 @@ export function LineItemRow({
               disabled={qtyLocked}
               type="number"
               inputMode="numeric"
+              data-qty-box=""
               min={1}
               value={li.qty}
               onChange={(e) => {
@@ -708,6 +728,7 @@ export function LineItemRow({
               aria-label="Quantity"
               {...(labels?.qty ? { "aria-label": labels.qty } : null)}
               aria-describedby={qtyBelowMin ? qtyNoteId : undefined}
+              {...heldQty}
               className={cn(
                 "h-6 w-10 max-lg:h-11 max-lg:w-14 max-lg:text-base rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
                 // the till caps a line at 100,000 pieces: a six-digit count must fit
@@ -730,6 +751,7 @@ export function LineItemRow({
           >
             +
           </button>
+          {heldNote(heldQty)}
         </fieldset>
       )}
       {/* Line total */}

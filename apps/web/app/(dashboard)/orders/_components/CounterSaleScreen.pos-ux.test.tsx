@@ -4,6 +4,7 @@ import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { LINE_UNDO_MS } from "./useCounterLineUndo";
+import { typeQty } from "@/test-utils/type-qty";
 
 /** B1373: a till line shows its quantity in the order row's number field (no "× N" text). */
 const qtyOf = (line: HTMLElement) =>
@@ -97,7 +98,7 @@ async function buildCart() {
   await waitFor(() => expect(screen.getByText(/Water/)).toBeInTheDocument());
   // B1373: there is no one-tap piece stepper on a boxed line: open the loose-pieces field and type 3
   fireEvent.click(within(lineOf("Water")).getByRole("button", { name: /^\+ .*: add extra / }));
-  fireEvent.change(piecesField(), { target: { value: "3" } });
+  typeQty(piecesField(), "3");
 }
 const itemNames = () =>
   within(screen.getByRole("list", { name: "Items" }))
@@ -123,20 +124,20 @@ describe("typed quantity editor (steppers stay)", () => {
     const input = qtyInput("Cola");
     expect(input.type).toBe("number");
     expect(input).toHaveClass("max-lg:h-11"); // the 44 px touch floor below lg
-    fireEvent.change(input, { target: { value: "5" } });
+    typeQty(input, "5");
     expect(qtyOf(lineOf("Cola"))).toBe(5);
     expect(screen.getByTestId("running-total")).toHaveTextContent("$27.50"); // 5 x 2.50 + 15.00
     qtyInput("Cola").focus();
     fireEvent.keyDown(qtyInput("Cola"), { key: "Enter" });
     await waitFor(() => expect(screen.getByLabelText("Scan or search items")).toHaveFocus());
-    fireEvent.change(qtyInput("Cola"), { target: { value: "3" } });
+    typeQty(qtyInput("Cola"), "3");
     expect(qtyOf(lineOf("Cola"))).toBe(3);
   });
 
   it("0, negative or empty reverts (it never removes the line; x does)", async () => {
     await buildCart();
     for (const bad of ["0", "-3", ""]) {
-      fireEvent.change(qtyInput("Cola"), { target: { value: bad } });
+      typeQty(qtyInput("Cola"), bad);
       expect(qtyOf(lineOf("Cola"))).toBe(2);
       expect(qtyInput("Cola").value).toBe("2");
     }
@@ -147,14 +148,14 @@ describe("typed quantity editor (steppers stay)", () => {
     await buildCart();
     const boxes = boxesField();
     boxes.focus();
-    fireEvent.change(boxes, { target: { value: "2" } });
+    typeQty(boxes, "2");
     expect(fireEvent.keyDown(boxes, { key: "Tab" })).toBe(true);
   });
 
   it("a boxed line has box and piece inputs, normalized through normalizeBoxesPieces (42 pcs -> 3 boxes + 6 pcs)", async () => {
     await buildCart(); // Water 1 box + 3 pcs
     expect([boxesField().value, piecesField().value]).toEqual(["1", "3"]);
-    fireEvent.change(piecesField(), { target: { value: "30" } });
+    typeQty(piecesField(), "30");
     expect(boxesField().value).toBe("3");
     expect(piecesField().value).toBe("6");
     expect(screen.getByTestId("running-total")).toHaveTextContent("$47.00");
@@ -162,15 +163,15 @@ describe("typed quantity editor (steppers stay)", () => {
 
   it("a boxed line typed down to nothing (0 boxes, 0 pieces) reverts the last edit", async () => {
     await buildCart(); // Water 1 box + 3 pcs
-    fireEvent.change(piecesField(), { target: { value: "0" } });
+    typeQty(piecesField(), "0");
     expect([boxesField().value, piecesField().value]).toEqual(["1", "0"]);
-    fireEvent.change(boxesField(), { target: { value: "0" } });
+    typeQty(boxesField(), "0");
     expect(boxesField().value).toBe("1");
   });
 
   it("the typed quantity rides the ring (qty only for a plain line)", async () => {
     await buildCart();
-    fireEvent.change(qtyInput("Cola"), { target: { value: "4" } });
+    typeQty(qtyInput("Cola"), "4");
     click("Exact");
     click("Complete & show receipt");
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));

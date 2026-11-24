@@ -41,6 +41,7 @@ const NOT_SHOWN: Record<string, string> = {
   "invoices/price-adjustment-ledger.ts": "ledger lines by id",
   "invoices/split-invoice-retry.ts": "a comment names the read",
   "orders/open-order-lines.ts": "sums",
+  "returns/inline-returns-pricing.ts": "caps a return credit at the last paid price (W-1316)",
   "returns/inline-returns-quote.service.ts": "matches lines for a return",
   "returns/returns.service.ts": "headroom",
   "returns/standard-refund-pricing.ts": "prices a return",

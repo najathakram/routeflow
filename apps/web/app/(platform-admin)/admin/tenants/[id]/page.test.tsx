@@ -1,6 +1,5 @@
 import * as React from "react";
 import { render, screen, waitFor, fireEvent, within, act } from "@testing-library/react";
-import { PLAN_KEYS } from "@routeflow/types";
 import TenantDetailPage from "./page";
 import { superAdminClient } from "@/lib/admin-api";
 import { REGISTRY_FIXTURE } from "./_features/__fixtures__/registry.fixtures";
@@ -379,8 +378,9 @@ describe("REG-B857: tenant plan controls offer the published catalog, not a hard
     tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
     await gotoBillingTab();
     const select = await screen.findByRole("combobox", { name: "Plan" });
+    // SA-1254 V2 (P-41): and never a key awaiting its catalog row (CORE, ALL_IN). Literal on purpose.
     await waitFor(() =>
-      expect(optionValues(select)).toEqual(PLAN_KEYS.filter((k) => k !== "LITE")),
+      expect(optionValues(select)).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]),
     );
     expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
   });
