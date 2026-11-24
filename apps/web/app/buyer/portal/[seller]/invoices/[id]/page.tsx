@@ -36,6 +36,7 @@ import { isPaymentTermsText } from "@/lib/invoice-sale-terms";
 import { InvoiceAccountRows } from "@/components/InvoiceAccountRows";
 import { InvoiceRevisionMarks } from "@/components/InvoiceRevisionMarks";
 import { InvoiceDisplayRows, displayQtyText } from "@/components/InvoiceDisplayRows";
+import { LineNote } from "@/components/LineNote";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -382,9 +383,7 @@ export default function BuyerInvoiceDetailPage() {
                   <td className="block text-sm font-medium text-navy sm:table-cell sm:px-4 sm:py-3">
                     {item.description}
                     {item.notes?.trim() && (
-                      <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
-                        {item.notes}
-                      </p>
+                      <LineNote note={item.notes} className="text-xs text-navy/60" />
                     )}
                     {/* Today and the pieces fallback (component sums mismatch) keep the "(included)" sub-lines. */}
                     {display.layout !== "components" && (

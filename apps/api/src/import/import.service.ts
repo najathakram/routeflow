@@ -7,6 +7,7 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import { numberYear } from "../common/number-year";
 import type {
   ImportFamilyRowInfo,
   ImportFamilySummary,
@@ -1303,7 +1304,7 @@ export class ImportService {
       groups[id].push(row);
     }
 
-    const year = new Date().getFullYear();
+    const year = await numberYear(this.prisma, this.prisma.getTenantId());
 
     // B268/D4: every group carrying a source "Invoice Number" is processed BEFORE
     // any group without one (a stable partition — `filter` keeps file order inside

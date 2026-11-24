@@ -11,7 +11,6 @@ import {
   tenantCheckoutErrorMessage,
   platformPricingErrorMessage,
   type TenantPricingResponse,
-  type BillingInterval,
   type PriceOverrideEffective,
   type PriceSyncResult,
 } from "@/lib/api/platform-pricing";
@@ -271,7 +270,8 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
   const [confirmAction, setConfirmAction] = React.useState<"set" | "clear" | null>(null);
   const [msg, setMsg] = React.useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  const [billingInterval, setBillingInterval] = React.useState<BillingInterval>("month");
+  const [confirmingLink, setConfirmingLink] = React.useState(false);
+  const linkRef = React.useRef<HTMLElement | null>(null);
   const [checkoutLoading, setCheckoutLoading] = React.useState(false);
   const [checkoutUrl, setCheckoutUrl] = React.useState<string | null>(null);
 
@@ -346,11 +346,13 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
   };
 
   const doCheckout = async () => {
+    setConfirmingLink(false);
     setCheckoutLoading(true);
     setMsg(null);
     setCheckoutUrl(null);
     try {
-      const res = await createTenantCheckout(tenantId, billingInterval);
+      // Monthly only: the API refuses Annual (SA-733 D6), so no interval is offered or sent.
+      const res = await createTenantCheckout(tenantId);
       setCheckoutUrl(res.checkoutUrl);
     } catch (err) {
       setMsg({
@@ -579,42 +581,70 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
               <p className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-400">
                 Checkout
               </p>
-              <div className="flex flex-wrap items-center gap-3">
-                <select
-                  aria-label="Billing interval"
-                  value={billingInterval}
-                  onChange={(e) => setBillingInterval(e.target.value as BillingInterval)}
-                  className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-                >
-                  <option value="month">Monthly — {usd(pricing.monthly ?? 0)}/mo</option>
-                  <option value="year">Annual — {usd(pricing.annual ?? 0)}/yr</option>
-                </select>
-                <button
-                  type="button"
-                  disabled={checkoutLoading}
-                  onClick={doCheckout}
-                  className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
-                >
-                  {checkoutLoading ? "Creating…" : "Create checkout session"}
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={checkoutLoading}
+                onClick={() => setConfirmingLink(true)}
+                className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
+              >
+                {checkoutLoading ? "Creating…" : "Create link"}
+              </button>
               {checkoutUrl && (
-                <p className="mt-3 break-all text-xs text-slate-400">
-                  Checkout URL:{" "}
+                <div className="mt-3 rounded-lg bg-slate-700/30 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-white">Link ready</p>
+                    <CopyButton
+                      value={checkoutUrl}
+                      label="Copy link"
+                      failedText="Copy failed. Select the link"
+                      selectOnFail={linkRef}
+                      className="admin-tap inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/40"
+                    />
+                  </div>
                   <a
+                    ref={linkRef as React.RefObject<HTMLAnchorElement>}
                     href={checkoutUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="admin-inline text-indigo-400 hover:underline"
+                    className="admin-inline mt-2 block break-all text-xs text-indigo-400 hover:underline"
                   >
                     {checkoutUrl}
                   </a>
-                </p>
+                </div>
               )}
             </div>
           )}
         </div>
       )}
+
+      <AdminModal
+        open={confirmingLink}
+        onClose={() => setConfirmingLink(false)}
+        title="Create a payment link?"
+        footer={
+          <>
+            <button
+              type="button"
+              onClick={() => setConfirmingLink(false)}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-slate-400 hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={checkoutLoading}
+              onClick={() => void doCheckout()}
+              className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-600 disabled:opacity-50"
+            >
+              Create link
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm text-slate-300">
+          It opens Stripe&apos;s payment page. The link stops working within 24 hours.
+        </p>
+      </AdminModal>
 
       <AdminModal
         open={confirmAction !== null}

@@ -433,10 +433,12 @@ export class ProductsService {
     // NOTE: the DTO allows it from external callers too (@Min(0) — web pickers
     // relied on it); bounding that is a separate hardening change.
     // Hard-cap at 10_000 to bound memory use either way.
-    const limitRaw = Number(query.limit ?? 20);
+    // P-21: an `ids` read returns every match in one page and ignores `page` / `limit` (the DTO caps it at 200).
+    const byIds = !!query.ids?.length;
+    const limitRaw = byIds ? query.ids!.length : Number(query.limit ?? 20);
     const fetchAll = limitRaw === 0;
     const limit = fetchAll ? 10_000 : limitRaw;
-    const skip = (page - 1) * limit;
+    const skip = byIds ? 0 : (page - 1) * limit;
 
     const lowStockIds = needsLowStockIds(query) ? await lowStockProductIds(this.prisma) : undefined;
     const where: any = buildProductListWhere(query, {
@@ -512,7 +514,7 @@ export class ProductsService {
       data: enriched,
       meta: {
         total,
-        page: fetchAll ? 1 : page,
+        page: fetchAll || byIds ? 1 : page,
         limit: fetchAll ? total : limit,
         totalPages: fetchAll ? 1 : Math.ceil(total / limit),
       },

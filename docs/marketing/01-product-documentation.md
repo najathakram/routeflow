@@ -4,6 +4,27 @@ _Current-state documentation of RouteFlow, verified against the codebase on 2026
 _Written in business language for marketing, sales, onboarding, and support. Every capability
 below is shipped and working unless explicitly flagged. Section 15 lists what is **not** ready._
 
+> **Source of truth (2026-11-24):** this document was written on 2026-08-19 and is not kept current.
+> The [claims register](../product/claims-register.md) is the source of truth for what the product
+> does. Where the two disagree, the register wins. The rules for public text are in
+> [04-messaging-guardrails.md](04-messaging-guardrails.md). Statements the register marks `partly true`
+> or `not built` are struck through below and corrected in brackets. They are also listed in the table
+> that follows.
+
+### Corrections from the claims register (2026-11-24)
+
+| Where                        | What this doc said                                                                                    | What is true                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Register    |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| §3 Guards on every write     | License checks re-run on every order path                                                             | They run only for categories that require a license. Tobacco is set up not to require one, so by default a tobacco order is not checked                                                                                                                                                                                                                                                                                                                                                                                                                                                      | A1          |
+| §4 Two-way sync              | The invoice is rebuilt from what was delivered                                                        | An open draft follows the delivery. A finalized invoice is not rebuilt                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | A15         |
+| §4 Payments                  | The driver attaches a payment photo at the door                                                       | Phone app only. The web driver screen takes no photo and no payment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | A3          |
+| §6 License enforcement       | Orders with a license-requiring category are blocked                                                  | True, but tobacco does not require a license by default, so it is not blocked                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | A1          |
+| §6 Buyer self-serve licenses | A daily sweep flags lapsed licenses                                                                   | Only for categories that require a license. A tobacco license's expiry is not flagged by default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | A1          |
+| §11 Delivery                 | Driver flow with photos, signature and payment at the door                                            | Phone app only. On the web a driver starts, skips, finishes, short-delivers, refuses or undoes a stop. A stop with regulated items cannot be completed there                                                                                                                                                                                                                                                                                                                                                                                                                                 | A3          |
+| §11 Delivery                 | Delivered quantities drive the invoice                                                                | Partly: an open draft follows the delivery                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | A15         |
+| §14 Packaging                | Four plans (Starter / Team / Business / Enterprise) with portal, OCR, seat, route and message add-ons | The catalog on sale (v13) is Starter $99, Growth $249, Scale $499 and Enterprise, set by customers included. Its five add-ons are regulated items $39 and forecasting $19 (both included at Scale), the customer pack $50, and MSRP on invoices and sales agents & commissions at $0 (`apps/api/prisma/plan-catalog-v11.definitions.ts`, carried to v13). The portal, OCR, seat, route and message SKUs were retired in v11. Lite ($99) is invite-only and not on public sale. The feature-based plans of 2026-11-23 are decided, not live ([billing-plans.md](../product/billing-plans.md)) | B, C        |
+| §15                          | (missing)                                                                                             | Add: message threads with stores and drivers (A9); a self-serve plan that takes payment first (A12); tobacco license expiry flagging (A1)                                                                                                                                                                                                                                                                                                                                                                                                                                                    | A1, A9, A12 |
+
 ---
 
 ## 1. What RouteFlow is
@@ -85,8 +106,8 @@ and often standing in front of the customer.
   driver) can request add/change/remove. The operator resolves: apply at the stop, roll into the
   next delivery, or decline with a reason. Concurrency-safe; both sides get notified.
 - **Guards on every write.** Stock-availability checks (hard-block for buyers/drivers, warn for
-  operators) and a **credit-limit guard** that counts open invoices plus open orders. Regulated
-  license checks re-run on every order path (see §6).
+  operators) and a **credit-limit guard** that counts open invoices plus open orders. ~~Regulated
+  license checks re-run on every order path~~ [corrected 2026-11-24: license checks run only for categories that require a license; tobacco does not by default, claims register A1] (see §6).
 - **Backdating for real-world bookkeeping.** Staff can record an order on its true business date
   (up to 2 years back); invoice dates, due dates, and compliance filing periods follow it.
 - **Cancel with a preview.** Before cancelling, the operator sees exactly which invoices will be
@@ -120,8 +141,8 @@ whose money arrives as cash, checks, and partial payments.
 ### Two-way order ↔ invoice sync (signature capability)
 
 - Order changes rebuild the draft invoice; invoice edits rebuild the order. Nothing drifts.
-- **Delivered-quantity billing:** when a driver completes a stop, the invoice is rebuilt from
-  what was **actually delivered** — short-picks and refusals never over-bill.
+- ~~**Delivered-quantity billing:** when a driver completes a stop, the invoice is rebuilt from
+  what was **actually delivered** — short-picks and refusals never over-bill.~~ [corrected 2026-11-24: an open draft follows the delivered quantities; a finalized invoice is not rebuilt, claims register A15]
 - Post-delivery edits rebuild the existing invoice in place, keeping payments and recomputing
   balance, status, and the compliance ledger.
 - A conservative safety rule: if billing provenance is ambiguous (a line billed twice, or on a
@@ -134,8 +155,8 @@ whose money arrives as cash, checks, and partial payments.
   advance (wallet).
 - **Full check lifecycle:** recorded → deposited → cleared — or **bounced**, which voids the
   payment, reopens the invoice, and can auto-add a non-taxable NSF fee line.
-- **Payment photos.** Attach a photo of the check/cash/receipt to any payment — including at the
-  door by the driver. Grouped allocations share one photo.
+- **Payment photos.** Attach a photo of the check/cash/receipt to any payment~~ — including at the
+  door by the driver~~ [corrected 2026-11-24: at the door only in the phone app; the web driver screen takes no photo or payment, claims register A3]. Grouped allocations share one photo.
 - **Two dates, done right:** when the instrument was received vs. when the money actually landed
   (bank date, supports post-dated checks). Cash-flow reporting uses the bank date.
 - Bounced/voided payments are excluded from every receivable, statement, aging, and dashboard
@@ -205,15 +226,15 @@ class has.
   **percent-of-sale** — computed at order time, snapshotted per line, prorated onto invoices,
   and folded into totals everywhere. Tax-exempt customers owe $0 of both regular and category
   tax, recorded as $0 in the ledger. Reversals are sign-preserving.
-- **Licence enforcement at the moment of sale.** Orders containing a licence-requiring category
+- **Licence enforcement at the moment of sale.** [corrected 2026-11-24: tobacco does not require a licence by default, so a tobacco order is not blocked unless an operator turns it on for that category, claims register A1] Orders containing a licence-requiring category
   are blocked unless the customer holds a verified, unexpired licence — re-checked on edit, on
   draft promotion, on change-request approval, and again at invoicing (catches a licence that
   expired between order and invoice).
 - **"Sold under responsibility" overrides:** a seller can consciously override a block — as an
   append-only, auditable record, scoped to one order or a date, optionally city-scoped.
 - **Buyer self-serve licences.** Retailers submit and renew licences in the portal (with
-  explicit consent capture); operators approve/reject/renew; a **daily expiry sweep** flags
-  lapsed licences and warns both sides at 30/7/1 days.
+  explicit consent capture); operators approve/reject/renew; ~~a **daily expiry sweep** flags
+  lapsed licences and warns both sides at 30/7/1 days~~ [corrected 2026-11-24: the sweep and the warnings cover only categories that require a licence; a tobacco licence's expiry is not flagged by default, claims register A1].
 - **Catalog gating that never leaks.** Unlicensed buyers don't see locked categories at all —
   tiles, deep links, favourites, and even category counts are filtered.
 - **Delivery-time gates.** Regulated stops can require age check and ID check before the stop
@@ -336,7 +357,7 @@ not as fleet telematics.
 
 - Routes with stops, route templates, run creation, a **packing list / loading manifest** per
   run, dispatch calendar, and a stop map (stops colour-coded by status).
-- **Driver flow (mobile):** ordered stop list, call/text/directions per stop, per-line
+- **Driver flow (mobile)** [corrected 2026-11-24: phone app only; on the web a driver takes no photo, signature or payment and cannot complete a stop with regulated items, claims register A3]: ordered stop list, call/text/directions per stop, per-line
   full/short/refuse capture, **POD photos and on-screen signature**, skip-with-reason, regulated
   age/ID gates, returns pickup, add-on sales at the door, and **at-door payment collection**
   (cash/check/card/on-account) with a required amount for physical money and a **payment photo**
@@ -344,8 +365,8 @@ not as fleet telematics.
 - **Run settlement:** cash tally per run with variance notes; completing a route with collected
   cash is gated on the tally.
 - Route optimization via OpenRouteService (with fallback) plus an AI route-analysis assist.
-- Delivered quantities drive the invoice (see §4) — the single most distributor-shaped behavior
-  in the product.
+- ~~Delivered quantities drive the invoice (see §4) — the single most distributor-shaped behavior
+  in the product.~~ [corrected 2026-11-24: an open draft follows the delivery; a finalized invoice is not rebuilt, claims register A15]
 
 **Do not market:** live vehicle/GPS tracking on the web dashboard (driver pins exist on the
 mobile fleet screen only; no web subscriber), vehicle/fleet management (no vehicle entity), or a
@@ -410,9 +431,9 @@ builds plus a mobile-web build. Highlights beyond what's covered above:
   classified, reviewed, and posted, building your catalog, costs, and stock as it goes.
 - Migration staging with duplicate flags and a **24-hour undo**.
 
-**Packaging (as built in the platform):** four plans (Starter / Team / Business / Enterprise)
+~~**Packaging (as built in the platform):** four plans (Starter / Team / Business / Enterprise)
 with server-enforced feature flags, plus add-ons: **buyer portal, regulated items, OCR scan
-pack, forecasting, extra seats/routes, message bundle**. Metered usage never blocks mid-action.
+pack, forecasting, extra seats/routes, message bundle**.~~ [corrected 2026-11-24: the catalog on sale (v13) is Starter, Growth, Scale and Enterprise by customers included, with regulated items $39, forecasting $19, the customer pack $50, and MSRP and sales agents at $0; the portal, OCR, seat, route and message SKUs were retired in v11; see docs/product/billing-plans.md] Metered usage never blocks mid-action.
 Trials, proration, scheduled downgrades, and an append-only MRR ledger are built. _(The public
 pricing page currently shows Starter/Growth/Scale — align naming before launch; see strategy
 doc §7.)_
