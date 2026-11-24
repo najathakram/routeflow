@@ -31,7 +31,13 @@ import { useOrders, type Order } from "@/lib/api/orders";
 import { useShipSlotReserve } from "@/lib/ship-caps-hint";
 import { getTenantCookie } from "@/lib/tenant-cookie";
 import { useTenantFeatures } from "@/lib/tenant-features";
-import { TIME_ZONE_SETTINGS_HREF, isZoneUnset, useShippedWeekFrom } from "@/lib/tenant-timezone";
+import {
+  TIME_ZONE_SETTINGS_HREF,
+  isZoneUnset,
+  useShippedWeekFrom,
+  useTenantToday,
+} from "@/lib/tenant-timezone";
+import { daysPastDue } from "@/lib/days-past-due";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
@@ -173,12 +179,6 @@ function timeAgo(dateStr: string): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return m > 0 ? `${h}h ${m}m ago` : `${h}h ago`;
-}
-
-function daysOverdue(dueDateStr?: string): number {
-  if (!dueDateStr) return 0;
-  const diff = Date.now() - new Date(dueDateStr).getTime();
-  return Math.max(0, Math.floor(diff / 86_400_000));
 }
 
 function fmt(n: number): string {
@@ -402,6 +402,8 @@ function OverdueInvoicesPanel({
   failed?: boolean;
   onRetry?: () => void;
 }) {
+  // BF-5: count on the business's own calendar day (same helper as the invoices list); no day until the zone is known.
+  const tenantDay = useTenantToday();
   if (isLoading) {
     return (
       <div
@@ -459,7 +461,7 @@ function OverdueInvoicesPanel({
       ) : (
         <ul className="divide-y divide-surface-border">
           {invoices.map((inv) => {
-            const days = daysOverdue(inv.dueDate);
+            const days = tenantDay ? daysPastDue(tenantDay, inv.dueDate) : null;
             const balance = Number(inv.balanceDue ?? inv.total ?? 0);
             return (
               <li key={inv.id} className="flex items-center gap-3 px-5 py-3">
@@ -469,7 +471,7 @@ function OverdueInvoicesPanel({
                   </p>
                   <p className="mono mt-0.5 text-xs text-navy/70">#{inv.invoiceNumber}</p>
                 </div>
-                <Badge variant="danger" label={`${days}d overdue`} />
+                <Badge variant="danger" label={days === null ? "Overdue" : `${days}d overdue`} />
                 <span className="money text-sm text-navy">
                   $
                   {(Number.isFinite(balance) ? balance : 0).toLocaleString("en-US", {

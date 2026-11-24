@@ -1412,7 +1412,12 @@ export default function NewInvoicePage() {
     taxRate,
     discountBase: newDocumentDiscountBase(), // SA-1141 R7: a new invoice is stamped 'now'
   });
-  const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
+  // BF-9: the seeded blank row (qty 1) is not a line; count only rows the cashier has filled.
+  const totalQty = items.reduce(
+    (s, it) =>
+      it.productId || it.description.trim() || Number(it.unitPrice) > 0 ? s + Number(it.qty) : s,
+    0,
+  );
 
   // ── Item helpers ────────────────────────────────────────────────────────────
 

@@ -2450,7 +2450,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 className={(statement?.outstandingAmount ?? 0) > 0 ? "border-danger/40" : undefined}
               />
               <StatCard
-                label="Advance Balance"
+                label="Credit"
                 value={statementMoney(statement, statementFailed, (x) => x.advanceBalance, fmt)}
                 icon={<DollarSign className="h-5 w-5" />}
               />
@@ -3753,7 +3753,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                      Advance Balance
+                      Credit
                     </p>
                     <DollarSign className="h-4 w-4 text-success" />
                   </div>
@@ -3798,7 +3798,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                         </div>
                         <p className="mt-0.5 text-xs text-navy/70">
                           {paymentMethodLabel(ap.method)}
-                          {ap.reference ? ` \u00b7 ${ap.reference}` : ""} \u00b7{" "}
+                          {ap.reference ? ` \u00b7 ${ap.reference}` : ""} {"\u00b7"}{" "}
                           {fmtDate(ap.createdAt)}
                         </p>
                         <ReviewFlagNotice notes={ap.notes} role={user?.role} compact />
