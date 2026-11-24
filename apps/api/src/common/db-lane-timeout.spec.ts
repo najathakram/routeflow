@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 //      runs detached in its own session there, so the hangup would otherwise miss it).
 //   3. A junk or too-large RF_DB_LANE_TIMEOUT_MIN is one readable line and exit 2, never a stack
 //      trace and never a setTimeout overflow that fires at once.
-//   (CI's 25 min RF_DB_LANE_TIMEOUT_MIN on the DB-backed specs step ships separately: a workflow edit.)
+//   (CI's 40 min RF_DB_LANE_TIMEOUT_MIN on the DB-backed specs step ships separately: a workflow edit.)
 
 const API_DIR = path.resolve(__dirname, "../..");
 const REPO_ROOT = path.resolve(API_DIR, "../..");
@@ -145,7 +145,7 @@ describe("W-723 the DB-lane hard timeout", () => {
     expect(ms).toBeLessThanOrEqual(2 ** 31 - 1);
   });
 
-  it("CI's DB-backed specs step sets a 25 min ceiling", () => {
+  it("CI's DB-backed specs step sets a 40 min ceiling", () => {
     const wf = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/db-migrations.yml"), "utf8");
     const start = wf.indexOf("- name: DB-backed specs");
     expect(start).toBeGreaterThan(-1);
@@ -153,6 +153,8 @@ describe("W-723 the DB-lane hard timeout", () => {
     const next = rest.search(/\n\s*- name:/);
     const step = next === -1 ? rest : rest.slice(0, next);
     expect(step).toMatch(/run: npm run test:db -w apps\/api/);
-    expect(step).toMatch(/RF_DB_LANE_TIMEOUT_MIN:\s*["']?25["']?\s*$/m);
+    expect(step).toMatch(/RF_DB_LANE_TIMEOUT_MIN:\s*["']?40["']?\s*$/m);
+    // The job limit stays above the lane ceiling plus setup, or the job dies before the runner reports.
+    expect(Number(/timeout-minutes:\s*(\d+)/.exec(wf)?.[1])).toBe(50);
   });
 });
