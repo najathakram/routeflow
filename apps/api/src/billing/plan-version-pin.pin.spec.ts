@@ -163,7 +163,7 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
     "PIN: the scheduled downgrade's PRICE, from the subscription's own pin (no add-on inclusion)",
   "billing/scheduled-price-change.ts#applyLocked.getPublishedVersion":
     "TARGET: the version the move re-pins to when the pin lacks the plan",
-  "billing/subscription-mutation.service.ts#subscribe.getPublishedCatalog":
+  "billing/subscription-mutation.service.ts#subscribeLocked.getPublishedCatalog":
     "TARGET: the plan the pick lands on; the plan LEFT is judged by pinnedVersionOf",
   "billing/subscription-mutation.service.ts#planChangePreview.getPublishedCatalog":
     "TARGET: the previewed plan; the plan LEFT is judged by pinnedVersionOf",
@@ -173,7 +173,7 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
     "LIST: the fallback of a Customer-pack SKU the target pin predates, as entitlements resolves it (B1371 K3 allowance)",
   "billing/subscription-mutation.service.ts#upgradeLocked.getPublishedCatalog":
     "TARGET: the plan the upgrade lands on; the plan LEFT is judged by pinnedVersionOf",
-  "billing/subscription-mutation.service.ts#downgrade.getPublishedCatalog":
+  "billing/subscription-mutation.service.ts#downgradeLocked.getPublishedCatalog":
     "TARGET: the scheduled plan's price",
   "billing/subscription-mutation.service.ts#enableAddon.getPublishedCatalog":
     "LIST: existence of a self-serve SKU (and the fallback). the row's price and the included-at-plan refusal are the tenant's pinned SKU (judgeAddon)",
@@ -293,7 +293,7 @@ describe("SA-815a P3 - the named sites read through the resolver", () => {
     ).toEqual(
       [
         "billing/billing-cron.service.ts#applyScheduledDowngrades",
-        "billing/subscription-mutation.service.ts#subscribe",
+        "billing/subscription-mutation.service.ts#subscribeLocked",
         "billing/subscription-mutation.service.ts#upgradeLocked",
         "platform-admin/platform-admin.service.ts#activateManualSubscription",
         "platform-admin/platform-admin.service.ts#updatePlanLocked",

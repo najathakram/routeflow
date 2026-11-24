@@ -16,6 +16,12 @@ import { LeaderCron } from "../common/cron-lock";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import {
+  cancelOpenLink,
+  openCheckoutSession,
+  readOpenLink,
+  type SlotOffer,
+} from "./open-checkout-session";
 import { EmailService } from "../email/email.service";
 import { routeflowNotice } from "../email/routeflow-mail";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
@@ -96,12 +102,7 @@ import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./pr
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
 import { NO_LIVE_SUBSCRIPTION, stopBillingIncludedAddonsTx } from "./addon-inclusion";
-import {
-  assertCheckoutSurface,
-  checkoutStartFromSession,
-  withCheckoutPolicy,
-  type CheckoutSurface,
-} from "./checkout-session-params";
+import { assertCheckoutSurface, type CheckoutSurface } from "./checkout-session-params";
 import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
 import {
@@ -653,9 +654,8 @@ export class BillingService {
     // pilot's) is billed on THIS checkout as one extra line. The live-subscription guard above runs
     // first (a tenant that cannot check out never has its add-on rows read); an annual checkout with
     // such an add-on is refused (409, ADDON_ANNUAL_NOT_SUPPORTED) before the customer or the session
-    // is created. (The add-on lines are built first, which ensures their owned Stripe products; that is the one
-    // Stripe write ahead of the refusal.)
-    const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
+    // is created. A read-only gate (no Stripe call, value unbound): the lines billed are read again under the slot's lock.
+    await this.mutations.checkoutAddonLines(tenantId, interval, { readOnly: true });
 
     // SA-733 D6: a new subscription is MONTHLY only - an anchored annual checkout would bill a prorated slice of
     // the YEAR now (10-03 ruling: annual Stripe subscriptions are not offered). Refused before the customer or the session is created.
@@ -666,55 +666,86 @@ export class BillingService {
       });
     }
 
-    // F3: planned BEFORE any Stripe call - inside the window before the 1st it throws the coded 409.
-    const anchor = planCheckoutAnchor(new Date());
+    // F3: the 91-minute 409 ahead of any Stripe write (the slot plans the anchor again under its lock).
+    planCheckoutAnchor(new Date());
 
+    // W-1338 (W9): an unpriceable business never gets a Stripe customer (throws BadRequest). Gate only: no Stripe call,
+    // value unbound; the price billed is read under the slot's lock. The customer id is identity, not a term.
+    await this.pricing.checkoutPriceData(tenantId, interval, undefined, { readOnly: true });
     const customerId = await this.ensureStripeCustomer(tenantId);
-    // Throws BadRequestException when neither an override nor a catalog price
-    // exists for this tenant's plan (e.g. Enterprise with no custom fee yet).
+
+    // W-1338: ONE slot for the admin link and Pay now; it reads the terms (checkoutOffer) only while it holds the lock.
+    return openCheckoutSession(
+      { prisma: this.prisma, stripe: this.stripe },
+      {
+        tenantId,
+        customerId,
+        surface: opts.surface,
+        readOffer: () => this.checkoutOffer(tenantId, tenant.slug, customerId, interval),
+      },
+    );
+  }
+
+  /**
+   * The terms and body of a new subscription session. Called ONLY by the slot, under the tenant-price lock.
+   * SA-733 D6 / M6: ALWAYS an explicit anchor (the next 1st, 12:00 UTC), prorations created, and a session that
+   * expires before the anchor so it can never complete after it (Stripe would then charge the full period).
+   * The inline price_data line needs no env-configured Stripe Price.
+   */
+  private async checkoutOffer(
+    tenantId: string,
+    slug: string,
+    customerId: string,
+    interval: "month",
+  ): Promise<SlotOffer> {
+    const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
+    const anchor = planCheckoutAnchor(new Date());
     const pricing = await this.pricing.resolveTenantPricing(tenantId);
     const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
-
     const baseUrl = webBaseUrl();
-    // SA-733 D6 / M6: ALWAYS an explicit anchor (the next 1st, 12:00 UTC), prorations created, and a session that
-    // expires before the anchor so it can never complete after it (Stripe would then charge the full period).
-
-    // Inline price_data line item — bypasses StripeService.createCheckoutSession
-    // (which only accepts a pre-created `priceId`) via the underlying client, since
-    // no env-configured Stripe Price exists for catalog-driven plans/tiers.
-    const session = await this.stripe.client.checkout.sessions.create(
-      withCheckoutPolicy(
-        {
-          customer: customerId,
-          mode: "subscription",
-          line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
-          success_url: billingReturnUrl(baseUrl, API_BILLING_RETURN_PATHS.plan),
-          cancel_url: billingReturnUrl(baseUrl, API_BILLING_CANCEL_PATH),
-          metadata: {
-            tenantId,
-            slug: tenant.slug,
-            planKey: pricing.planKey,
-            interval,
-            ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
-          },
-          expires_at: anchor.expiresAt,
-          subscription_data: {
-            ...checkoutAnchorParams(anchor),
-            // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
-            // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
-            ...(addons.skus.length
-              ? { metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } }
-              : {}),
-          },
+    return {
+      terms: {
+        planKey: pricing.planKey,
+        unitAmount: priceData.unit_amount,
+        addonSkus: addons.skus,
+        addonLines: addons.lineItems.map((l) => ({
+          unitAmount: l.price_data.unit_amount,
+          quantity: l.quantity,
+        })),
+        anchorAt: anchor.anchorAt,
+      },
+      params: {
+        customer: customerId,
+        mode: "subscription",
+        line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
+        success_url: billingReturnUrl(baseUrl, API_BILLING_RETURN_PATHS.plan),
+        cancel_url: billingReturnUrl(baseUrl, API_BILLING_CANCEL_PATH),
+        metadata: {
+          tenantId,
+          slug,
+          planKey: pricing.planKey,
+          interval,
+          ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
         },
-        { surface: opts.surface },
-      ),
-    );
+        expires_at: anchor.expiresAt,
+        subscription_data: {
+          ...checkoutAnchorParams(anchor),
+          // The SKUs also ride the subscription itself, so a later reader of the subscription (not just
+          // the session) can see which add-ons its first invoice billed. A plan-only checkout sends none.
+          ...(addons.skus.length
+            ? { metadata: { tenantId, [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } }
+            : {}),
+        },
+      },
+    };
+  }
 
-    this.logger.log(
-      `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval}, anchor ${anchor.anchorAt.toISOString()})`,
-    );
-    return checkoutStartFromSession(session);
+  getOpenLink(tenantId: string) {
+    return readOpenLink({ prisma: this.prisma, stripe: this.stripe }, tenantId);
+  }
+
+  cancelOpenLink(tenantId: string) {
+    return cancelOpenLink({ prisma: this.prisma, stripe: this.stripe }, tenantId);
   }
 
   // ─── Price sync (admin-driven price changes → live Stripe subscriptions) ──────

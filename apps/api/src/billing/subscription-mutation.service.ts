@@ -123,6 +123,7 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { CardFirstFlagService } from "./card-first-flag.service";
 import { isLinkPending } from "./link-pending";
+import { expireOpenCheckoutSessions } from "./open-checkout-session";
 import { planGateRefusal, selfServePlanGate, type PlanGateOp } from "./self-serve-plan-gate";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
 
@@ -496,10 +497,22 @@ export class SubscriptionMutationService {
     return d?.monthlyPrice != null ? Number(d.monthlyPrice) : 0;
   }
 
-  /** Commit a subscription / convert a trial by picking a plan (+ optional add-ons). */
+  /**
+   * Commit a subscription / convert a trial by picking a plan (+ optional add-ons). W-1338: the whole change runs
+   * under the `tenant-price` lock (like upgrade), so the open payment link is closed and the plan is written with
+   * no Pay now able to open a session at the old terms in between.
+   */
   async subscribe(tenantId: string, input: SubscribeInput, actorId?: string) {
+    // The card-first gate runs BEFORE the tenant-price lock (never re-take it inside).
     await this.enforceCardFirst(tenantId, "subscribe");
     await this.assertNotOverdue(tenantId, "subscribe");
+    return underTenantPriceLock(tenantId, () => this.subscribeLocked(tenantId, input, actorId), {
+      waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
+      busyMessage: UPGRADE_BUSY,
+    });
+  }
+
+  private async subscribeLocked(tenantId: string, input: SubscribeInput, actorId?: string) {
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === input.planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${input.planKey}"`);
@@ -611,6 +624,8 @@ export class SubscriptionMutationService {
       if (held) throw refusalException(held);
     }
 
+    // W-1338 L14: under the tenant-price lock; close the open payment link (completion writes planKey from its metadata).
+    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId);
     const transition = {
       tenantId,
       fromPlanKey: fromKey,
@@ -1564,6 +1579,8 @@ export class SubscriptionMutationService {
     const quotedNow =
       override != null ? 0 : this.proration.proratedDiff(sub, newMonthly - oldMonthly);
 
+    // W-1338 L14: under the tenant-price lock; close the open payment link first.
+    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId);
     const transition = {
       tenantId,
       fromPlanKey: fromKey,
@@ -1727,7 +1744,7 @@ export class SubscriptionMutationService {
     };
   }
 
-  /** Schedule a downgrade at period end (no proration/credit; nothing deleted). */
+  /** Schedule a downgrade at period end (no proration/credit; nothing deleted). Under the tenant-price lock (W-1338). */
   async downgrade(
     tenantId: string,
     targetPlanKey: string,
@@ -1736,6 +1753,19 @@ export class SubscriptionMutationService {
   ) {
     await this.enforceCardFirst(tenantId, "downgrade");
     await this.assertNotOverdue(tenantId, "downgrade");
+    return underTenantPriceLock(
+      tenantId,
+      () => this.downgradeLocked(tenantId, targetPlanKey, retainedUserIds, actorId),
+      { waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, busyMessage: UPGRADE_BUSY },
+    );
+  }
+
+  private async downgradeLocked(
+    tenantId: string,
+    targetPlanKey: string,
+    retainedUserIds: string[],
+    actorId?: string,
+  ) {
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === targetPlanKey);
     if (!def) throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);
@@ -1784,6 +1814,7 @@ export class SubscriptionMutationService {
       );
     }
 
+    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId); // W-1338 L14, under the lock
     await this.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({
