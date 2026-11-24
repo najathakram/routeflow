@@ -35,6 +35,7 @@ import { PortalSwitchLink } from "@/components/PortalSwitchLink";
 import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { BrandMark } from "@/components/brand";
 import { cn } from "@routeflow/ui/web";
+import { sellerLandingHref } from "@/lib/buyer-portal-landing";
 import {
   useResponsiveSidebar,
   SidebarCollapseToggle,
@@ -269,7 +270,7 @@ export default function BuyerPortalLayout({ children }: { children: React.ReactN
 
   const handleSellerClick = (seller: BuyerSeller) => {
     setActiveSeller(seller);
-    router.push(`/buyer/portal/${seller.tenant.slug}/dashboard`);
+    router.push(sellerLandingHref(seller.tenant.slug));
   };
 
   // Rendered twice — the desktop rail (collapsed reflects the persisted preference) and the
