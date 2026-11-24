@@ -249,7 +249,7 @@ function BuyerPaymentsPageInner() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
         <StatCard
           icon={Wallet}
-          label="Store credit"
+          label="Credit"
           value={fmt(statement?.availableCredit ?? 0)}
           sub={hasActiveCredit ? "Available" : "None available"}
           color="bg-buyer-50 text-buyer-600"
