@@ -3,7 +3,7 @@ import { checkGitHooks } from "../check-git-hooks.mjs";
 import { spawnSync } from "node:child_process";
 
 const defaultGit = () => {
-  const out = (a) => spawnSync("git", a, { encoding: "utf8" }).stdout.trim();
+  const out = (a) => spawnSync("git", a, { encoding: "utf8" }).stdout?.trim() ?? "";
   return `${out(["rev-parse", "--abbrev-ref", "HEAD"])} ${out(["rev-parse", "--short", "HEAD"])}`;
 };
 

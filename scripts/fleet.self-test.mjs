@@ -39,9 +39,24 @@ const postWith = async (over, exec) => {
     exec,
     cwd: tmp,
     loadPatterns: okPatterns,
-    matches: (r, t) => r.some((re) => re.test(t)),
+    matchesBuf: (r, b) => r.some((re) => re.test(b.toString("utf8"))),
     ...over,
   });
+};
+const realRepo = () => {
+  const repo = fs.mkdtempSync(path.join(tmp, "repo-"));
+  spawnSync("git", ["init", "-q"], { cwd: repo });
+  fs.mkdirSync(path.join(repo, ".git", "info"), { recursive: true });
+  fs.writeFileSync(
+    path.join(repo, ".git", "info", "leak-patterns"),
+    `${SECRET}
+`,
+  );
+  return { repo, cwd: repo };
+};
+const realPost = async (over, exec) => {
+  const { post } = await import("./lib/fleet/board.mjs");
+  return post({ issue: "4456", exec, ...over });
 };
 const sub = async (s) => (await import("./lib/fleet/subject.mjs")).run([s]);
 
@@ -81,16 +96,16 @@ const cases = [
     async () => {
       const r = await sub("Fix the thing");
       assert.equal(r.code, 1);
-      console.log("   T4 rules:", r.lines.map((l) => l.split(":")[0]).join(","));
-      assert.ok(
-        r.lines.some((l) => l.startsWith("subject-case")) ||
-          r.lines.some((l) => l.startsWith("type-empty")),
-      );
+      assert.deepEqual(r.lines.map((l) => l.split(":")[0]).sort(), ["subject-empty", "type-empty"]);
+      const c = await sub("feat: Fix The Thing");
+      assert.equal(c.code, 1);
+      assert.ok(c.lines.some((l) => l.startsWith("subject-case")));
     },
   ],
   [
     "T5 subject too long",
     async () => {
+      assert.equal((await sub("feat: " + "a".repeat(72))).code, 0);
       const r = await sub("feat: " + "a".repeat(73));
       assert.equal(r.code, 1);
       assert.ok(r.lines.some((l) => l.startsWith("subject-max-length")));
@@ -164,6 +179,50 @@ const cases = [
       const exec = ghExec({ api: countOk(1) });
       const r = await postWith({ bodyFile: emptyFile }, exec);
       assert.equal(r.code, 2);
+    },
+  ],
+  [
+    "T15 real wiring (no injected patterns or matcher): utf-8 match refuses",
+    async () => {
+      const { repo, cwd } = realRepo();
+      const exec = ghExec({ api: countOk(1) });
+      const f = path.join(repo, "b.md");
+      fs.writeFileSync(f, `x ${SECRET} y`);
+      const r = await realPost({ bodyFile: f, cwd }, exec);
+      assert.equal(r.code, 4);
+      assert.equal(commented(exec), 0);
+      assert.ok(!r.lines.join(" ").includes(SECRET));
+      fs.writeFileSync(f, "clean text");
+      assert.equal((await realPost({ bodyFile: f, cwd }, ghExec({ api: countOk(1) }))).code, 0);
+    },
+  ],
+  [
+    "T16 real wiring: UTF-16 body with a match refuses (H1)",
+    async () => {
+      const { repo, cwd } = realRepo();
+      const exec = ghExec({ api: countOk(1) });
+      const f = path.join(repo, "u16.md");
+      const bytes = Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from(`x ${SECRET}`, "utf16le"),
+      ]);
+      fs.writeFileSync(f, bytes);
+      const r = await realPost({ bodyFile: f, cwd }, exec);
+      assert.equal(r.code, 4);
+      assert.equal(commented(exec), 0);
+      assert.ok(!r.lines.join(" ").includes(SECRET));
+    },
+  ],
+  [
+    "T17 real wiring: UTF-16 body with no match still refuses (fail closed)",
+    async () => {
+      const { repo, cwd } = realRepo();
+      const exec = ghExec({ api: countOk(1) });
+      const f = path.join(repo, "u16b.md");
+      fs.writeFileSync(f, Buffer.from("clean text", "utf16le"));
+      const r = await realPost({ bodyFile: f, cwd }, exec);
+      assert.equal(r.code, 4);
+      assert.equal(commented(exec), 0);
     },
   ],
   [

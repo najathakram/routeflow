@@ -1,7 +1,11 @@
 // Posts a comment to the team board after a leak check and a comment-count check.
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
-import { HOWTO, loadPatterns as realLoad, matches as realMatches } from "../leak-patterns.mjs";
+import {
+  HOWTO,
+  loadPatterns as realLoad,
+  matchesBuf as realMatchesBuf,
+} from "../leak-patterns.mjs";
 
 export const COMMENT_CAP = 2300; // GitHub refuses above 2,500; roll over with 200 of margin.
 
@@ -27,7 +31,7 @@ export async function post({
   repo,
   cwd = process.cwd(),
   loadPatterns = realLoad,
-  matches = realMatches,
+  matchesBuf = realMatchesBuf,
 }) {
   const n = String(issue ?? "");
   if (!/^\d+$/.test(n) || !bodyFile)
@@ -35,13 +39,13 @@ export async function post({
       code: 2,
       lines: ["usage: node scripts/fleet.mjs post --issue <n> --body-file <path>"],
     };
-  let body = "";
+  let buf = Buffer.alloc(0);
   try {
-    body = fs.readFileSync(bodyFile, "utf8");
+    buf = fs.readFileSync(bodyFile);
   } catch {
     /* treated as empty */
   }
-  if (!body.trim())
+  if (!buf.toString("utf8").trim())
     return {
       code: 2,
       lines: [`body file ${bodyFile} is empty or unreadable; write the post first`],
@@ -53,8 +57,22 @@ export async function post({
       code: 4,
       lines: [`no leak patterns loaded; fail-closed. ${loaded.message ?? ""} ${HOWTO}`.trim()],
     };
-  if (matches(loaded.regexes, body))
+  // Scan the raw bytes (UTF-16 and NUL forms included), then refuse anything that is not UTF-8 text.
+  if (matchesBuf(loaded.regexes, buf))
     return { code: 4, lines: ["body matches a leak pattern; reword it and post again"] };
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buf);
+  } catch {
+    return {
+      code: 4,
+      lines: ["body is not UTF-8 text, so it cannot be checked; save it as UTF-8 and post again"],
+    };
+  }
+  if (buf.includes(0))
+    return {
+      code: 4,
+      lines: ["body contains NUL bytes, so it cannot be checked; save it as UTF-8 and post again"],
+    };
 
   const slug = repo ?? resolveRepo(exec);
   if (!slug) return { code: 3, lines: ["repo name unreadable; run `gh auth status`, then retry"] };
