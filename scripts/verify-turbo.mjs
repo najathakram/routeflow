@@ -42,7 +42,13 @@ import {
   wantsFastVerify,
 } from "./lib/verify-scope.mjs";
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
-import { failureReport, isFailFast, notRunLines, phase0Call } from "./lib/verify-fail-fast.mjs";
+import {
+  PHASE0_PREBUILD,
+  failureReport,
+  isFailFast,
+  notRunLines,
+  phase0Call,
+} from "./lib/verify-fail-fast.mjs";
 import { createRequire } from "node:module";
 
 const { workspacesWithScript, findCrossWorkspaceSpecs, findSameWorkspaceReaders } = createRequire(
@@ -689,7 +695,7 @@ export async function main() {
   const phase0 = phase0Call(plan.calls, { env: process.env });
   if (phase0) {
     const since = Date.now() - 1000;
-    const st = await turbo(phase0.args);
+    const st = (await turbo(PHASE0_PREBUILD.args)) || (await turbo(phase0.args));
     if (st !== 0) {
       console.log(failureReport(ROOT, since).join("\n"));
       process.exit(typeof st === "number" ? st : 1);

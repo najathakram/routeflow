@@ -84,6 +84,7 @@ import {
   planTurboCalls,
 } from "./verify-turbo.mjs";
 import {
+  PHASE0_PREBUILD,
   failedTasks,
   failureReport,
   isFailFast,
@@ -196,7 +197,7 @@ function isUnder(root, p, pathImpl = path) {
 // key around the whole chain too: a nested main() that inherited them would write the pass stage with the REAL nonce
 // before the real verify-turbo runs (proven on Linux, where these cases run).
 const AMBIENT_VERIFY_KNOBS =
-  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|RF_VERIFY_RESULT_FILE|RF_VERIFY_NONCE|RF_VERIFY_TREE_KEY|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
+  /^(CI|RF_VERIFY_FAIL_FAST|FULL_VERIFY|RF_VERIFY_MODE|RF_VERIFY_RESULT_FILE|RF_VERIFY_NONCE|RF_VERIFY_TREE_KEY|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
 const cleanVerifyEnv = (base = scrubbedGitEnv()) =>
   Object.fromEntries(Object.entries(base).filter(([k]) => !AMBIENT_VERIFY_KNOBS.test(k)));
 
@@ -2989,6 +2990,21 @@ check(
     "FF16 P4 phase 0 runs before the heavy slot is taken",
     vt.indexOf("phase0Call(") > 0 && vt.indexOf("phase0Call(") < vt.indexOf("withHeavySlot({"),
     true,
+  );
+  check(
+    "FF18 M1 phase 0 builds the packages (not the apps) before it lints, so a cold tree has the types scanning needs",
+    [
+      PHASE0_PREBUILD.args,
+      vt.includes("turbo(PHASE0_PREBUILD.args)) || (await turbo(phase0.args)"),
+    ],
+    [["build", "--filter=./packages/*"], true],
+  );
+  check(
+    "FF19 H1 a spawned fixture never inherits the hook's switch",
+    Object.keys(cleanVerifyEnv({ ...scrubbedGitEnv(), RF_VERIFY_FAIL_FAST: "1" })).includes(
+      "RF_VERIFY_FAIL_FAST",
+    ),
+    false,
   );
   check(
     "FF17 the split follows the switch",

@@ -7,9 +7,18 @@ export const FAIL_FAST_ENV = "RF_VERIFY_FAIL_FAST";
 export const TAIL_LINES = 40;
 
 /**
- * Workspaces whose lint peak RSS is above 2 GB keep their lint inside the heavy slot (phase 0 skips them).
+ * Workspaces whose lint peak RSS is above 2 GB keep their lint inside the heavy slot (phase 0 skips them). Phase 0 itself
+ * adds about 1 GB outside the slot (web lint max RSS 1.00 GB, measured by the R-25 read; the 0.36 GB first figure
+ * was a sampling undercount), at verify concurrency 1.
  * { "<workspace name>": "<measured peak RSS>" }. Measured once on the PC (2026-11-23).
  */
+/**
+ * Phase 0 builds the workspace packages first, then lints. A package's tsc-lint (scanning) needs another package's built
+ * types, which the slot's bundled call gets through turbo's `^build` edge; a bare `turbo run lint` on a tree with no
+ * package `dist` fails with a false TS2307. Packages only (tsc builds, cached): never the apps' builds.
+ */
+export const PHASE0_PREBUILD = { jest: false, args: ["build", "--filter=./packages/*"] };
+
 export const LINT_IN_SLOT = { "@routeflow/api": "3.64 GB" };
 
 export const isFailFast = (env) => env[FAIL_FAST_ENV] === "1";
