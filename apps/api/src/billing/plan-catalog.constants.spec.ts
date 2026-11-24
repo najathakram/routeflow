@@ -83,13 +83,77 @@ describe("planKeyToEnum", () => {
 });
 
 /**
+ * SA-1254 V1 + (b) 6 (P-41, the census-independent half). CORE (Essentials) and ALL_IN (Pro)
+ * identity-map in both directions, and the ladder is ranked by price. PLUS is not here: it joins
+ * between CORE and GROWTH only if the census is above zero (SA-1254 A1). Red on master: PLAN_KEYS
+ * has 5 members there, planKeyFromEnum("CORE") reads "STARTER" (T1), and planKeyToEnum("CORE")
+ * throws (T2).
+ */
+describe("SA-1254 V1: CORE and ALL_IN in the plan vocabulary (P-41)", () => {
+  it("PLAN_KEYS is the price ladder LITE, STARTER, CORE, GROWTH, ALL_IN, SCALE, ENTERPRISE", () => {
+    expect(PLAN_KEYS).toEqual([
+      "LITE",
+      "STARTER",
+      "CORE",
+      "GROWTH",
+      "ALL_IN",
+      "SCALE",
+      "ENTERPRISE",
+    ]);
+  });
+
+  it.each(["CORE", "ALL_IN"])("T1/T2: %s maps to itself in every helper", (key) => {
+    expect(planKeyFromEnum(key)).toBe(key);
+    expect(planKeyToEnum(key)).toBe(key);
+    expect(normalizePlanKey(key)).toBe(key);
+  });
+
+  it("T3: GROWTH still writes TEAM, and TEAM still reads GROWTH", () => {
+    expect(planKeyToEnum("GROWTH")).toBe("TEAM");
+    expect(planKeyFromEnum("TEAM")).toBe("GROWTH");
+  });
+
+  it("every PLAN_KEYS member round-trips through the enum and back to itself", () => {
+    for (const key of PLAN_KEYS) {
+      expect(`${key} -> ${planKeyFromEnum(planKeyToEnum(key))}`).toBe(`${key} -> ${key}`);
+    }
+  });
+
+  it("every selectable DTO value reads back as a PLAN_KEYS member that writes without throwing", () => {
+    expect(SELECTABLE_TENANT_PLANS).toEqual(expect.arrayContaining(["CORE", "ALL_IN"]));
+    for (const value of SELECTABLE_TENANT_PLANS) {
+      const key = planKeyFromEnum(value);
+      expect(PLAN_KEYS).toContain(key);
+      expect(() => planKeyToEnum(key)).not.toThrow();
+    }
+  });
+
+  it("T4: the ranks follow the price ladder", () => {
+    const order = ["LITE", "STARTER", "CORE", "GROWTH", "ALL_IN", "SCALE", "ENTERPRISE"];
+    for (let i = 1; i < order.length; i += 1) {
+      expect(`${order[i - 1]} < ${order[i]}: ${planRank(order[i - 1]) < planRank(order[i])}`).toBe(
+        `${order[i - 1]} < ${order[i]}: true`,
+      );
+    }
+    expect(planRank("CORE")).toBeGreaterThanOrEqual(0);
+    expect(planRank("ALL_IN")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("no PLUS yet: it waits for the census (SA-1254 A1)", () => {
+    expect(normalizePlanKey("PLUS")).toBeNull();
+    expect(() => planKeyToEnum("PLUS")).toThrow(UnknownPlanKeyError);
+  });
+});
+
+/**
  * T1 (WP1, lite-L2 plan): LITE plan-vocabulary coverage. `PLAN_KEYS` would have 4 members and
  * `planKeyToEnum("LITE")` would throw `UnknownPlanKeyError` until LITE lands — this suite is
  * RED against today's `plan-catalog.constants.ts`.
  */
 describe("LITE plan vocabulary (WP1 T1)", () => {
-  it("PLAN_KEYS deep-equals the 5-member vocabulary with LITE first (order pin, not indices)", () => {
-    expect(PLAN_KEYS).toEqual(["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"]);
+  // Superseded by SA-1254 (b) 6 (P-41): the order pin is the 7-member ladder in the suite below.
+  it("PLAN_KEYS keeps LITE first (order pin, not indices)", () => {
+    expect(PLAN_KEYS[0]).toBe("LITE");
   });
 
   it("planRank ranks LITE below every existing plan and preserves their relative order", () => {
