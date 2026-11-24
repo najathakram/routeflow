@@ -45,7 +45,7 @@ import { DEAD_RETURN_STATUSES } from "./return-statuses";
 import {
   allocateReturnedPieces,
   applyCreditOverride,
-  lastPaidPerSellingUnit,
+  lastPaidCapOf,
   noteChunkTaken,
   priceMatchedChunk,
   priceUnreferencedChunk,
@@ -476,11 +476,14 @@ export class InlineReturnsQuoteService {
             ],
           },
         },
-        orderBy: [{ invoice: { issueDate: "desc" } }, { id: "desc" }],
+        // SA-1244 A2: the INVOICE is chosen (date, created, id), then the pool takes every line of the product on it
+        orderBy: [
+          { invoice: { issueDate: "desc" } },
+          { invoice: { createdAt: "desc" } },
+          { invoice: { id: "desc" } },
+        ],
         select: {
           id: true,
-          boxes: true,
-          unitsPerBox: true,
           invoice: {
             select: {
               taxAmount: true,
@@ -489,6 +492,9 @@ export class InlineReturnsQuoteService {
                 orderBy: [{ createdAt: "asc" }, { id: "asc" }],
                 select: {
                   id: true,
+                  productId: true,
+                  boxes: true,
+                  unitsPerBox: true,
                   systemKind: true,
                   description: true,
                   qty: true,
@@ -627,9 +633,8 @@ export class InlineReturnsQuoteService {
       const neverSold = allocated.some((c) => !c.line) ? lastSale == null : false;
       // The pack an unreferenced chunk is priced (and so overridden) against.
       const unreferencedUpb = product?.unitsPerBox ?? null;
-      // W-1316: a sold-before chunk never credits more than the customer last paid (the lower of today's price and that).
-      const lastPaid = lastSale ? lastPaidPerSellingUnit(lastSale, unreferencedUpb) : null;
-      const capped = lastPaid != null && lastPaid < unreferencedPrice;
+      // SA-1244 A2: a sold-before chunk never credits more than the product's pooled price on its newest invoice.
+      const capOf = lastSale ? lastPaidCapOf(lastSale, item.productId, unreferencedUpb) : null;
       const chunks: PricedChunk[] = allocated.map((chunk) => {
         const priced = chunk.line
           ? priceMatchedChunk(chunk.line, chunk.pieces, customer.isTaxExempt)
@@ -637,8 +642,9 @@ export class InlineReturnsQuoteService {
               item.productId,
               chunk.pieces,
               {
-                unitPrice: capped ? lastPaid : unreferencedPrice,
-                source: capped ? ("SOURCE_INVOICE" as const) : unreferencedSource,
+                unitPrice: unreferencedPrice,
+                source: unreferencedSource,
+                capSubtotal: capOf ? capOf(chunk.pieces) : null,
                 unitsPerBox: unreferencedUpb,
               },
               fallbackTaxRate,

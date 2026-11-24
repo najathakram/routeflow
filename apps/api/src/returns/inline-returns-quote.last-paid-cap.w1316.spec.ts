@@ -22,27 +22,39 @@ const OPERATOR = {
   status: "ACTIVE",
 } as JwtPayload;
 
-/** The customer's newest live sale of the product, as the last-sale read returns it. */
-const lastSale = (o: { qty?: number; subtotal: number; unitsPerBox?: number | null }) => ({
-  id: "item-old",
-  boxes: null,
-  unitsPerBox: o.unitsPerBox ?? null,
-  invoice: {
-    taxAmount: 0,
-    discount: 0,
-    items: [
-      {
-        id: "item-old",
+interface SoldLine {
+  id: string;
+  qty: number;
+  subtotal: number;
+  boxes?: number | null;
+  unitsPerBox?: number | null;
+}
+
+/** The customer's newest live sale of the product, as the last-sale read returns it: the row the read landed on (`rowId`) and its
+ * whole invoice, every line of the product on it. */
+const soldOn = (lines: SoldLine[], rowId: string = lines[0].id) => {
+  return {
+    id: rowId,
+    invoice: {
+      taxAmount: 0,
+      discount: 0,
+      items: lines.map((l) => ({
+        id: l.id,
+        productId: "prod-1",
+        boxes: l.boxes ?? null,
+        unitsPerBox: l.unitsPerBox ?? null,
         systemKind: null,
         description: null,
-        qty: o.qty ?? 1,
-        subtotal: o.subtotal,
+        qty: l.qty,
+        subtotal: l.subtotal,
         taxRate: 0,
         categoryTaxAmount: 0,
-      },
-    ],
-  },
-});
+      })),
+    },
+  };
+};
+const lastSale = (o: { qty?: number; subtotal: number; unitsPerBox?: number | null }) =>
+  soldOn([{ id: "item-old", qty: o.qty ?? 1, subtotal: o.subtotal, unitsPerBox: o.unitsPerBox }]);
 
 const windowInvoice = (unitPrice: number) => ({
   orderId: "ord-1",
@@ -150,7 +162,8 @@ describe("W-1316 PR-1: an old sale's return credit is capped at its last paid pr
     const q = await quote(1);
     expect(db.invoiceItem.findFirst.mock.calls[0][0].orderBy).toEqual([
       { invoice: { issueDate: "desc" } },
-      { id: "desc" },
+      { invoice: { createdAt: "desc" } },
+      { invoice: { id: "desc" } },
     ]);
     expect(q.chunks[0]).toMatchObject({ subtotal: 11, unitPrice: 11 });
   });
@@ -221,5 +234,103 @@ describe("W-1316 PR-1: an old sale's return credit is capped at its last paid pr
     db.invoice.findMany.mockResolvedValue([windowInvoice(0)]);
     const q = await quote(1);
     expect(q.chunks[0]).toMatchObject({ sourceOrderId: "ord-1", subtotal: 0 });
+  });
+
+  // SA-1244 A2: the cap is the product's POOLED price on the newest invoice (SA-970), never one line picked by uuid.
+  const PAID = { id: "u-paid", qty: 10, subtotal: 100 };
+  const FREE = { id: "u-free", qty: 2, subtotal: 0 };
+  const price = (n: number) => ({
+    pricePerUnit: n,
+    priceTier2: n,
+    priceTier3: n,
+    priceTier4: n,
+    priceTier5: n,
+  });
+
+  it("G1: newest invoice 10 pcs paid at 100.00 + 2 free, today 12.00 a piece, 1 piece back: 8.33 from the invoice", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(soldOn([PAID, FREE], "u-paid"));
+    const q = await quote(1);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 8.33, priceSource: "SOURCE_INVOICE" });
+  });
+
+  it("G2: newest invoice two lines, 1 pc at 100.00 and 1 pc at 50.00, today 120.00, 1 piece back: 75.00", async () => {
+    await setup(price(120));
+    db.invoiceItem.findFirst.mockResolvedValue(
+      soldOn([
+        { id: "u-dear", qty: 1, subtotal: 100 },
+        { id: "u-cheap", qty: 1, subtotal: 50 },
+      ]),
+    );
+    const q = await quote(1);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 75, priceSource: "SOURCE_INVOICE" });
+  });
+
+  it("G3: the product's only lines on the newest invoice are all 0.00: the credit is 0.00, accepted, no hold", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(
+      soldOn([
+        { id: "u-a", qty: 1, subtotal: 0 },
+        { id: "u-b", qty: 2, subtotal: 0 },
+      ]),
+    );
+    const q = await quote(1);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 0, taxAmount: 0, priceSource: "SOURCE_INVOICE" });
+    expect(q.total).toBe(0);
+  });
+
+  it("G4: G1 with the two line uuids swapped (the read lands on the free line): the same 8.33", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(soldOn([FREE, PAID], "u-free"));
+    const q = await quote(1);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 8.33, priceSource: "SOURCE_INVOICE" });
+  });
+
+  it("G5: two invoices on the same day, created a minute apart: the read orders by createdAt then id, and the newer one's $11 prices", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(lastSale({ subtotal: 11 })); // the newer by createdAt; the older was $9
+    const q = await quote(1);
+    expect(db.invoiceItem.findFirst.mock.calls[0][0].orderBy).toEqual([
+      { invoice: { issueDate: "desc" } },
+      { invoice: { createdAt: "desc" } },
+      { invoice: { id: "desc" } },
+    ]);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 11 });
+  });
+
+  // a pack-less line of 6 pieces for 10.00, 4 back: ONE rounding (6.67), never 1.67 x 4 = 6.68
+  const SIX = [{ id: "u-six", qty: 6, subtotal: 10 }];
+
+  it("G6: 6 pieces sold for 10.00, 4 back: 6.67 (one rounding), not 6.68", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(soldOn(SIX));
+    const q = await quote(4);
+    expect(q.chunks[0]).toMatchObject({
+      subtotal: 6.67,
+      unitPrice: 1.67,
+      priceSource: "SOURCE_INVOICE",
+    });
+  });
+
+  it("G7: G6 with an override at the shown per-piece default 1.67 x 4: credited 6.67, never 6.68", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(soldOn(SIX));
+    const q = await quote(4, { creditUnitPrice: 1.67, overrideReason: "Dented" });
+    expect(q.chunks[0].subtotal).toBe(6.67);
+    expect(q.total).toBe(q.chunks[0].subtotal + q.chunks[0].taxAmount);
+  });
+
+  it("G8: 3 back, the newest pool holds 2 for 150.00 in all, today 100.00: roundMoney(150 x 3 / 2) = 225.00 wins over 300.00", async () => {
+    await setup(price(100));
+    db.invoiceItem.findFirst.mockResolvedValue(soldOn([{ id: "u-two", qty: 2, subtotal: 150 }]));
+    const q = await quote(3);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 225, priceSource: "SOURCE_INVOICE" });
+  });
+
+  it("G8b: the same pool, today 12.00: today's 36.00 is lower and wins, today's source", async () => {
+    await setup();
+    db.invoiceItem.findFirst.mockResolvedValue(soldOn([{ id: "u-two", qty: 2, subtotal: 150 }]));
+    const q = await quote(3);
+    expect(q.chunks[0]).toMatchObject({ subtotal: 36, priceSource: "BASE" });
   });
 });
