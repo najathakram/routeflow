@@ -24,6 +24,7 @@
  * (see `issueCreditInTx`'s doc comment and `sumInlineReturnCredit`'s), HIGH-3 moves approve's
  * body onto a validated DTO, MED-5/6/7 are documented at their own call sites below.
  */
+import { numberYear } from "../common/number-year";
 import {
   INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
   assertReplayItems,
@@ -293,10 +294,9 @@ export class InlineReturnsService {
    */
   reserveCreditNoteNumber(): Promise<string> {
     const tenantId = this.prisma.getTenantId();
-    return this.numbering.reserveNext("CREDIT_NOTE", {
-      year: new Date().getFullYear(),
-      tenantId: tenantId ?? undefined,
-    });
+    return numberYear(this.prisma, tenantId).then((year) =>
+      this.numbering.reserveNext("CREDIT_NOTE", { year, tenantId: tenantId ?? undefined }),
+    );
   }
 
   /**
@@ -479,7 +479,7 @@ export class InlineReturnsService {
     const arHeld = alreadyReturned.held && priced.total > 0.001;
     const overCap = driverCap || arHeld;
 
-    const year = new Date().getFullYear();
+    const year = await numberYear(tx, tenantId);
     const returnNumber = await this.numbering.reserveNext("RETURN", {
       year,
       tenantId: tenantId ?? undefined,
@@ -1234,7 +1234,7 @@ export class InlineReturnsService {
   ): Promise<any> {
     if (!(amount > 0.001)) return null;
 
-    const year = new Date().getFullYear();
+    const year = await numberYear(tx, tenantId);
     // #2094: an order create reserves the number ONCE before its P2002 retry loop and reuses it
     // across attempts; every other caller reserves here, on its own tx.
     const creditNoteNumber =

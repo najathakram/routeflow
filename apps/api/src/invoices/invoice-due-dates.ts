@@ -1,7 +1,9 @@
-import { calendarFieldStamp, tenantTodayDay } from "../common/calendar-date";
-import { tenantTimeZone } from "../common/tenant-time-zone";
+import { calendarFieldStamp } from "../common/calendar-date";
 
 export { calendarFieldStamp };
+
+/** W-1199: `numberYear` lives in `common/number-year.ts` (every document number shares it); re-exported so callers are unchanged. */
+export { numberYear } from "../common/number-year";
 
 /**
  * #2256: an optional client due date → the UTC-midnight stamp of the literal day it names (the
@@ -18,14 +20,4 @@ export function dueDateStamps(d: { dueDate?: string | null; depositDueDate?: str
     dueDate: dueStamp(d.dueDate, "dueDate"),
     depositDueDate: dueStamp(d.depositDueDate, "depositDueDate"),
   };
-}
-
-/**
- * W-1188: the year segment of an invoice number is the tenant's calendar year at mint time (entry sequence, entry
- * year; never the issue year). Read through the caller's tx when it has one, so this never asks the pool for a second
- * connection while that tx holds one.
- */
-export async function numberYear(db: any, tenantId?: string | null): Promise<number> {
-  const zone = await tenantTimeZone(db, { tenantId: tenantId ?? null });
-  return Number(tenantTodayDay(zone).slice(0, 4));
 }

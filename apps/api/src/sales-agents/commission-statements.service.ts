@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { numberYear } from "../common/number-year";
 import { PrismaService } from "../prisma/prisma.service";
 import { roundMoney } from "@routeflow/pricing";
 import { COMMISSION_EPS } from "./commission-math";
@@ -68,7 +69,7 @@ export class CommissionStatementsService {
 
   /** Same max+1 scan class as B100 (fixed for invoices in #F16b); statement numbering is tracked as its own registry row. */
   private async nextStatementNumber(db: any): Promise<string> {
-    const year = new Date().getFullYear();
+    const year = await numberYear(db, this.prisma.getTenantId());
     const prefix = `CST-${year}-`;
     const last = await db.commissionStatement.findFirst({
       where: { statementNumber: { startsWith: prefix } },
