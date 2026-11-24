@@ -75,6 +75,14 @@ describe("SA-1215 set 3 migration folder (PO receipts)", () => {
     );
   });
 
+  it("guards both NUMERIC columns against NaN (SA-816 (d)1), which the sign CHECKs let through", () => {
+    for (const col of ["qtyArriving", "qtyDamaged"]) {
+      expect(flat).toContain(
+        `CONSTRAINT "PurchaseOrderReceiptLine_${col}_not_nan" CHECK ("${col}" <> 'NaN'::numeric)`,
+      );
+    }
+  });
+
   it("adds the unique indexes: one key per tenant, one reversal per receipt, one line per item per receipt", () => {
     expect(flat).toContain(
       'CREATE UNIQUE INDEX "PurchaseOrderReceipt_tenantId_idempotencyKey_key" ON "PurchaseOrderReceipt"("tenantId", "idempotencyKey")',
@@ -117,6 +125,14 @@ describe("SA-1215 set 3 migration folder (PO receipts)", () => {
     // every statement on StockMovement: the column, the FK, the validate; and no index on it
     expect((executable.match(/ALTER TABLE "StockMovement"/g) ?? []).length).toBe(3);
     expect(executable).not.toMatch(/CREATE (UNIQUE )?INDEX[^;]*ON "StockMovement"/);
+    // the StockMovement lock is held to COMMIT, so its three statements are the last three before COMMIT
+    const stmts = executable
+      .split(";")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const last = stmts.slice(-4);
+    expect(last.slice(0, 3).every((x) => x.startsWith('ALTER TABLE "StockMovement"'))).toBe(true);
+    expect(last[3]).toBe("COMMIT");
   });
 
   it("is additive: nothing dropped, rewritten or backfilled, no NOT NULL or default added to an existing table", () => {

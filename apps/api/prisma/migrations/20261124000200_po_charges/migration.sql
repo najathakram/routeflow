@@ -11,6 +11,9 @@
 --     "PurchaseOrderCharge_tax_nonneg"        "taxAmount" >= 0
 --     "PurchaseOrderCharge_not_self"          "reversesChargeId" <> "id"
 --     "PurchaseOrderChargeAllocation_amount_nonneg"  "amount" >= 0
+--     SA-816 (d)1 NaN guards, one per NUMERIC column (Postgres sorts NaN above every number, so the sign CHECKs above let it through):
+--     "PurchaseOrderCharge_amount_not_nan", "PurchaseOrderCharge_taxAmount_not_nan", "PurchaseOrderChargeAllocation_amount_not_nan"
+--     each CHECK ("<col>" <> 'NaN'::numeric), as ALTER TABLE ... ADD CONSTRAINT right after CREATE TABLE (the tables are new and empty, so nothing is scanned).
 --   Unique: "reversesChargeId"; ("chargeId","purchaseOrderItemId").
 --
 -- Additive only: new enums and new empty tables; no existing table is touched. No default that changes behaviour, no backfill.
@@ -55,6 +58,11 @@ CREATE TABLE "PurchaseOrderCharge" (
     CONSTRAINT "PurchaseOrderCharge_not_self" CHECK ("reversesChargeId" <> "id")
 );
 
+-- SA-816 (d)1: NaN guards (the sign CHECKs let NaN through); the table is new and empty, so nothing is scanned
+ALTER TABLE "PurchaseOrderCharge"
+  ADD CONSTRAINT "PurchaseOrderCharge_amount_not_nan" CHECK ("amount" <> 'NaN'::numeric),
+  ADD CONSTRAINT "PurchaseOrderCharge_taxAmount_not_nan" CHECK ("taxAmount" <> 'NaN'::numeric);
+
 -- CreateTable
 CREATE TABLE "PurchaseOrderChargeAllocation" (
     "id" TEXT NOT NULL,
@@ -66,6 +74,10 @@ CREATE TABLE "PurchaseOrderChargeAllocation" (
     CONSTRAINT "PurchaseOrderChargeAllocation_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "PurchaseOrderChargeAllocation_amount_nonneg" CHECK ("amount" >= 0)
 );
+
+-- SA-816 (d)1: NaN guards (the sign CHECKs let NaN through); the table is new and empty, so nothing is scanned
+ALTER TABLE "PurchaseOrderChargeAllocation"
+  ADD CONSTRAINT "PurchaseOrderChargeAllocation_amount_not_nan" CHECK ("amount" <> 'NaN'::numeric);
 
 -- CreateIndex
 CREATE UNIQUE INDEX "PurchaseOrderCharge_reversesChargeId_key" ON "PurchaseOrderCharge"("reversesChargeId");

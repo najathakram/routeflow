@@ -91,6 +91,16 @@ describe("SA-1215 set 4 migration folder (PO charges)", () => {
     );
   });
 
+  it("guards every NUMERIC column against NaN (SA-816 (d)1), which the sign CHECKs let through", () => {
+    for (const [t, col] of [
+      ["PurchaseOrderCharge", "amount"],
+      ["PurchaseOrderCharge", "taxAmount"],
+      ["PurchaseOrderChargeAllocation", "amount"],
+    ]) {
+      expect(flat).toContain(`CONSTRAINT "${t}_${col}_not_nan" CHECK ("${col}" <> 'NaN'::numeric)`);
+    }
+  });
+
   it("adds the unique indexes: one replacement per charge, one share per charge per item", () => {
     expect(flat).toContain(
       'CREATE UNIQUE INDEX "PurchaseOrderCharge_reversesChargeId_key" ON "PurchaseOrderCharge"("reversesChargeId")',

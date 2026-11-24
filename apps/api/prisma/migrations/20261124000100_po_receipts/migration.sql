@@ -10,12 +10,20 @@
 --     "PurchaseOrderReceipt_not_self"           "reversesReceiptId" <> "id"
 --     "PurchaseOrderReceipt_reversal_keyless"   a reversal carries no idempotency key
 --     "PurchaseOrderReceiptLine_qty_sign"       non-zero, one sign, |damaged| <= |arriving|
+--     SA-816 (d)1 NaN guards: "PurchaseOrderReceiptLine_qtyArriving_not_nan", "PurchaseOrderReceiptLine_qtyDamaged_not_nan", each
+--     CHECK ("<col>" <> 'NaN'::numeric) (NaN sorts above every number, so qty_sign alone lets it through); ALTER TABLE right after CREATE TABLE, new empty table.
 --   Unique: ("tenantId","idempotencyKey") (Postgres lets several NULLs through); "reversesReceiptId" (one reversal per receipt).
 --
 -- Additive only: new empty tables, one nullable column (metadata-only ADD COLUMN, no rewrite). Nothing dropped, rewritten or backfilled.
--- LOCK PROFILE: ONE transaction. A brief ACCESS EXCLUSIVE on "StockMovement" for the ADD COLUMN, then SHARE ROW EXCLUSIVE on "Tenant",
--- "PurchaseOrder", "PurchaseOrderItem", "User" and "StockMovement" for the foreign keys; the new tables are empty, so their FKs and CHECKs
--- validate nothing. `SET LOCAL lock_timeout = '5s'` bounds every wait; a timeout rolls the whole file back (recorded FAILED; recover with
+-- LOCK PROFILE: ONE transaction. SHARE ROW EXCLUSIVE on "Tenant", "PurchaseOrder", "PurchaseOrderItem" and "User" for the foreign keys of the
+-- empty new tables (each held to COMMIT). The three "StockMovement" statements run LAST, in this order: ALTER TABLE ADD COLUMN takes ACCESS EXCLUSIVE
+-- (blocks every read and write of stock movements), ADD CONSTRAINT ... FOREIGN KEY NOT VALID takes SHARE ROW EXCLUSIVE, VALIDATE CONSTRAINT takes
+-- SHARE UPDATE EXCLUSIVE and seq-scans the table. ALL of these locks are held until COMMIT, NOT "brief": NOT VALID then VALIDATE in one
+-- transaction gives no lock relief. Because these run last, "StockMovement" is blocked from the ADD COLUMN until COMMIT, which is the VALIDATE scan plus the
+-- COMMIT: measured by two readers on copies at 109 ms (2M rows) and 173 ms (3M rows, 543 MB, warm cache), a cold or loaded table scans longer. The only wait on
+-- "StockMovement" is the one for the ADD COLUMN lock, bounded by lock_timeout 5s (readers queue behind it while it waits). Had these run first, the lock
+-- would also have covered every later FK lock wait (up to 5 s each, about 20 s). The sitting reads the real row count and runs this in a quiet window. A timeout rolls the
+-- whole file back (recorded FAILED; recover with
 -- `prisma migrate resolve --rolled-back 20261124000100_po_receipts` from apps/api, then re-run; NEVER `--applied`).
 -- DEPLOY ORDER (L-184): the generated client selects "StockMovement"."receiptLineId" on every stock movement read, so merge only after the
 -- owner sitting: fresh backup, `prod-migrate.mjs`, `schema-drift.mjs` exit 0, THEN merge.
@@ -24,9 +32,6 @@
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
-
--- AlterTable
-ALTER TABLE "StockMovement" ADD COLUMN     "receiptLineId" TEXT;
 
 -- CreateTable
 CREATE TABLE "PurchaseOrderReceipt" (
@@ -62,6 +67,11 @@ CREATE TABLE "PurchaseOrderReceiptLine" (
     CONSTRAINT "PurchaseOrderReceiptLine_qty_sign" CHECK ("qtyArriving" <> 0 AND (("qtyArriving" > 0 AND "qtyDamaged" >= 0 AND "qtyDamaged" <= "qtyArriving") OR ("qtyArriving" < 0 AND "qtyDamaged" <= 0 AND "qtyDamaged" >= "qtyArriving")))
 );
 
+-- SA-816 (d)1: NaN guards (the sign CHECKs let NaN through); the table is new and empty, so nothing is scanned
+ALTER TABLE "PurchaseOrderReceiptLine"
+  ADD CONSTRAINT "PurchaseOrderReceiptLine_qtyArriving_not_nan" CHECK ("qtyArriving" <> 'NaN'::numeric),
+  ADD CONSTRAINT "PurchaseOrderReceiptLine_qtyDamaged_not_nan" CHECK ("qtyDamaged" <> 'NaN'::numeric);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "PurchaseOrderReceipt_reversesReceiptId_key" ON "PurchaseOrderReceipt"("reversesReceiptId");
 
@@ -87,12 +97,6 @@ CREATE INDEX "PurchaseOrderReceiptLine_tenantId_idx" ON "PurchaseOrderReceiptLin
 CREATE UNIQUE INDEX "PurchaseOrderReceiptLine_receiptId_purchaseOrderItemId_key" ON "PurchaseOrderReceiptLine"("receiptId", "purchaseOrderItemId");
 
 -- AddForeignKey
-ALTER TABLE "StockMovement" ADD CONSTRAINT "StockMovement_receiptLineId_fkey" FOREIGN KEY ("receiptLineId") REFERENCES "PurchaseOrderReceiptLine"("id") ON DELETE SET NULL ON UPDATE CASCADE NOT VALID;
-
--- ValidateForeignKey (every value is NULL, so the scan writes nothing)
-ALTER TABLE "StockMovement" VALIDATE CONSTRAINT "StockMovement_receiptLineId_fkey";
-
--- AddForeignKey
 ALTER TABLE "PurchaseOrderReceipt" ADD CONSTRAINT "PurchaseOrderReceipt_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -112,5 +116,15 @@ ALTER TABLE "PurchaseOrderReceiptLine" ADD CONSTRAINT "PurchaseOrderReceiptLine_
 
 -- AddForeignKey
 ALTER TABLE "PurchaseOrderReceiptLine" ADD CONSTRAINT "PurchaseOrderReceiptLine_purchaseOrderItemId_fkey" FOREIGN KEY ("purchaseOrderItemId") REFERENCES "PurchaseOrderItem"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- StockMovement LAST: every statement below takes a lock on "StockMovement" that is held until COMMIT, so they run after all the other work.
+-- AlterTable
+ALTER TABLE "StockMovement" ADD COLUMN     "receiptLineId" TEXT;
+
+-- AddForeignKey
+ALTER TABLE "StockMovement" ADD CONSTRAINT "StockMovement_receiptLineId_fkey" FOREIGN KEY ("receiptLineId") REFERENCES "PurchaseOrderReceiptLine"("id") ON DELETE SET NULL ON UPDATE CASCADE NOT VALID;
+
+-- ValidateForeignKey (every value is NULL, so the scan writes nothing)
+ALTER TABLE "StockMovement" VALIDATE CONSTRAINT "StockMovement_receiptLineId_fkey";
 
 COMMIT;

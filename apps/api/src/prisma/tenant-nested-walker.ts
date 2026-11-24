@@ -44,6 +44,8 @@ const OWNING_WITH_OTHER_FK_NAME: ReadonlySet<string> = new Set([
   "Order.orderTemplate", // FK scalar: templateId
   "CommissionStatementLine.carriedFrom", // FK scalar: carriedFromStatementId
   "BuyerMergeRequest.initiatingTenant", // FK scalar: initiatedByTenantId
+  "PurchaseOrderReceipt.reverses", // FK scalar: reversesReceiptId
+  "PurchaseOrderCharge.reverses", // FK scalar: reversesChargeId
 ]);
 
 function holdsFk(m: Prisma.DMMF.Model, f: Prisma.DMMF.Field): boolean {
