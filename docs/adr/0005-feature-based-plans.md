@@ -46,9 +46,11 @@ Plans differ by **what a business does**, never by how many customers it has or 
   store with a $79 add-on on Essentials.
 - **The database values are reused** (correction 2026-11-24): `CORE` is Essentials and `ALL_IN` is Pro.
   These `TenantPlan` values were added by PR #4401 and applied in production on 2026-11-21, but no
-  account uses them yet. The new $199 Growth gets **its own internal plan key, `PLUS`** (SA-1254). It
-  never reuses today's `GROWTH` key (today's Growth accounts, $249 and 250 customers, keep their plan)
-  or `TEAM` (which live $249 Growth rows already hold).
+  account uses them yet. The new $199 Growth's key depends on a read-only production census (SA-1254
+  A1). If no account holds `GROWTH` or `TEAM`, v14 reuses the `GROWTH` key for the $199 plan. A key is
+  scoped to its catalog version, so the old $249 rows keep their meaning. Otherwise the new plan gets a
+  new key, `PLUS`, and today's Growth accounts ($249, 250 customers) keep theirs. It never reuses
+  `TEAM`, which reads as the old Growth.
 - **Paying accounts are protected** (correction 2026-11-24): accounts on Starter, Growth and Scale keep
   every feature and their price for 12 months, from one date for everyone: the day v14 is published.
   After that comes a review with 90 days' written notice. This replaces the 2026-11-07 "grandfathered
