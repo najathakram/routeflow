@@ -10,7 +10,9 @@ import { classifyInvoiceBalance } from "./invoice-balance-classify";
 import { listRowFlags } from "./invoice-row-flags";
 import { splitConfirmed } from "./payment-predicates";
 import { overpaidByOf } from "./invoice-status";
+import { pendingAmountOf } from "./invoice-pending-amount";
 import {
+  applyDueWithinDays,
   applyInvoiceSearchAndDateFilters,
   applyInvoiceStatusFilters,
   applyOverdueBalanceFilter,
@@ -40,6 +42,7 @@ export async function listInvoices(
   // isOverdue flag end the due day in it (one cutoff, so the list and its filter always agree).
   const tz = (await deps.resolveTenantInvoiceDefaults()).timezone;
   applyInvoiceStatusFilters(where, query, tz, user?.role);
+  applyDueWithinDays(where, query, tz);
   if (user?.role === UserRole.CUSTOMER) {
     const customer = await deps.prisma
       .forTenant()
@@ -119,6 +122,7 @@ export async function listInvoices(
     return {
       ...inv,
       balanceDue,
+      pendingAmount: pendingAmountOf(inv.payments), // P-30: shown beside balanceDue, never subtracted
       overpaidBy: overpaidByOf(inv.total, paidAmount), // SA-763r P-3
       revisedAt: revisedAt.get(inv.id) ?? null,
       paidAmount,

@@ -269,6 +269,8 @@ export interface Invoice {
   payments?: InvoicePayment[];
   /** Server-computed balance due — 0 for PAID/VOID/WRITTEN_OFF regardless of payment records */
   balanceDue?: number;
+  /** P-30: PENDING money on file (a post-dated check); shown BESIDE balanceDue, never subtracted. Staff reads only. */
+  pendingAmount?: number;
   /** SA-1197: the server's account rows (open balance on the statement's basis); printed as given, never summed. */
   accountBlock?: InvoiceAccountRow[];
   /**
@@ -341,6 +343,8 @@ export function useInvoices(
     isOverdue?: boolean;
     /** SA-1026: only invoices that read To collect (a check not received yet); staff only, honoured by the server. */
     toCollect?: boolean;
+    /** P-30: open invoices due from the tenant's today through today + N days (0 = due today). */
+    dueWithinDays?: number;
   },
   options?: { refetchInterval?: number; enabled?: boolean },
 ) {
