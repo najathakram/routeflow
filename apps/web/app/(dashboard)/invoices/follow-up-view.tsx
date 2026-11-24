@@ -6,6 +6,7 @@ import { Button, cn, useToast } from "@routeflow/ui/web";
 import { useInvoices, useSendInvoiceReminder, type Invoice } from "@/lib/api/invoices";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { useAuth } from "@/lib/auth-context";
+import { WriteButton } from "@/lib/read-only-gate";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 
@@ -151,9 +152,9 @@ export function FollowUpView({ onExit }: { onExit: () => void }) {
             ))}
           </select>
         </div>
-        <Button size="sm" disabled={picked.length === 0} onClick={() => setPaying(true)}>
+        <WriteButton size="sm" disabled={picked.length === 0} onClick={() => setPaying(true)}>
           Record payment
-        </Button>
+        </WriteButton>
       </div>
 
       {!isLoading && rows.length === 0 ? (

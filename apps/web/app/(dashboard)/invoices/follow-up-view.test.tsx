@@ -1,6 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen, fireEvent, within } from "@/test-utils/render";
 import { seedSession } from "@/test-utils/session";
+import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
 import { FollowUpView, FOLLOW_UP_BATCH_KEY } from "./follow-up-view";
 
 /**
@@ -174,5 +175,19 @@ describe("FollowUpView Record payment (F-R4)", () => {
     expect(modalProps).toHaveBeenLastCalledWith(
       expect.objectContaining({ customerId: "c1", invoiceIds: ["a", "b", "c"] }),
     );
+  });
+
+  it("a read-only tenant gets Record payment disabled even with invoices ticked", () => {
+    mockRows = [row("a", "c1")];
+    renderWithProviders(
+      <ReadOnlyGateProvider view={{ status: "READ_ONLY" } as never}>
+        <FollowUpView onExit={jest.fn()} />
+      </ReadOnlyGateProvider>,
+    );
+    pick("a");
+    const button = screen.getByRole("button", { name: "Record payment" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(modalProps).not.toHaveBeenCalled();
   });
 });
