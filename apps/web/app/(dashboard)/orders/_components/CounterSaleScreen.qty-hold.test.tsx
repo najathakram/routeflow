@@ -231,6 +231,16 @@ describe("the counter holds qty-box text until Enter, Tab or blur (SA-1262 PR A)
     expect(screen.queryByText("press Enter")).toBeNull();
   });
 
+  it("C19: a refused code, Enter then blur, asks setLineQty once (the number does not change)", async () => {
+    await colaTill();
+    qty().focus();
+    typeIn(qty(), "012345678905");
+    fireEvent.keyDown(qty(), { key: "Enter" });
+    fireEvent.blur(qty());
+    expect(await screen.findByText(QTY_TOO_LARGE_COPY)).toBeInTheDocument();
+    expect(asked.map((t) => t.qty)).toEqual(["12345678905"]);
+  });
+
   it("C10 (jsdom half): a scanned 12-digit code in a qty box is refused whole at Enter", async () => {
     await colaTill();
     qty().focus();
