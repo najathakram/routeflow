@@ -10,7 +10,7 @@ import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { usePlanFlag } from "@/lib/api/plan-flags";
 import { planFlagVisible } from "@/lib/plan-gated-nav";
-import { useProducts } from "@/lib/api/products";
+import { useProducts, useProductsByIds } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { sellableOnly } from "@/lib/product-search-groups";
 import {
@@ -30,6 +30,17 @@ import {
 } from "../../inventory/_components/purchase-orders-shared";
 import { createBillAction, poActions } from "./po-detail-logic";
 
+/** A product row as a PO line picker and the receive modal read it. A FAMILY is a container, never a line (B1215 C7);
+ *  a variant reads "<Parent> - <Variant>". */
+const toPoProducts = (rows: unknown[] | undefined) =>
+  sellableOnly<any>(rows ?? []).map((p: any) => ({
+    id: p.id as string,
+    name: displayProductName(p),
+    sku: p.sku,
+    unitsPerBox: p.unitsPerBox ?? null,
+    currentStock: p.currentStock ?? null,
+  }));
+
 const errorStatus = (e: unknown): number | undefined =>
   (e as { response?: { status?: number } } | null)?.response?.status;
 
@@ -41,7 +52,6 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const { data, isLoading, isError, error, refetch } = usePurchaseOrder(id);
   const po = data as PurchaseOrder | undefined;
   const { data: suppliers = [] } = useSuppliers();
-  const { data: productsData } = useProducts({ isActive: true, limit: 0 });
   const billsFlag = usePlanFlag("flag.ap_bills");
   const sendPO = useSendPurchaseOrder();
   const closePO = useClosePurchaseOrder();
@@ -53,18 +63,22 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     setTitle(po?.poNumber ?? "Purchase Order");
   }, [setTitle, po?.poNumber]);
 
-  // A FAMILY is a container, never a purchasable line (B1215 C7); a variant reads "<Parent> - <Variant>".
-  const products = sellableOnly<any>(productsData?.data ?? []).map((p: any) => ({
-    id: p.id,
-    name: displayProductName(p),
-    sku: p.sku,
-    unitsPerBox: p.unitsPerBox ?? null,
-    currentStock: p.currentStock ?? null,
-  }));
+  // P-21: the screen reads the products of its OWN lines by id, deactivated ones included. The whole catalog is
+  // read only once Edit is open: its add-line picker is still a list of every active product.
+  const lineProductIds = (po?.items ?? []).map((i) => i.productId);
+  const { data: lineRows } = useProductsByIds(lineProductIds);
+  const { data: catalogData } = useProducts({ isActive: true, limit: 0 }, { enabled: editing });
+  const products = toPoProducts(lineRows);
+  const editProducts = React.useMemo(() => {
+    if (!catalogData?.data) return [];
+    const lines = toPoProducts(lineRows);
+    const seen = new Set(lines.map((p) => p.id));
+    return [...lines, ...toPoProducts(catalogData.data).filter((p) => !seen.has(p.id))];
+  }, [catalogData, lineRows]);
   const catalogById = React.useMemo(
-    () => new Map(products.map((p: { id: string }) => [p.id, p])),
+    () => new Map(products.map((p) => [p.id, p])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [productsData],
+    [lineRows],
   ) as Map<
     string,
     { id: string; name?: string; unitsPerBox?: number | null; currentStock?: number | null }
@@ -309,7 +323,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         <PurchaseOrdersEditModal
           po={po}
           suppliers={suppliers as Supplier[]}
-          products={products}
+          products={editProducts}
           onClose={() => setEditing(false)}
         />
       )}

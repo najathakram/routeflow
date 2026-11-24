@@ -107,6 +107,8 @@ const ALLOWED: Record<string, string> = {
   // Aliased or indirect readers, found once the scan matched the bare name.
   // The resolver itself, and the one writer that hands its requireProxy result to Prisma.
   "lib/railway-db-url.mjs": "the resolver: the fallback it implements",
+  "prod-migrate-resolve.mjs":
+    "passes resolveDatabaseUrl(requireProxy) to the Prisma child as DATABASE_URL",
   "prod-migrate.mjs": "passes resolveDatabaseUrl(requireProxy) to the Prisma child as DATABASE_URL",
   // Already on resolveDatabaseUrl; the name appears only in help, log or error text.
   "backfill-legacy-tenant-ids.mjs": "uses resolveDatabaseUrl; help text only",
