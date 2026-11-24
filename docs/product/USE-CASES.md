@@ -62,23 +62,35 @@ driver app (see section 5 for its gate).
 
 **Status.**
 
-| Status                       | Means                                                                                                                                  |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `LIVE`                       | On master and reachable. No plan or add-on gate in the way. Roles, permission groups and business settings still apply.                |
-| `LIVE, gated <key>`          | Reachable only for a business whose plan, add-on or a Platform Admin grant carries the key. The gate is enforced.                      |
-| `DARK-OPEN <key>`            | The gate is in the code but ships dark, so today every business is served (see below).                                                 |
-| `DARK-HIDDEN developer_mode` | The screens exist but only a business with the internal `developer_mode` switch sees them. Off by default; RouteFlow staff turn it on. |
-| `PLANNED`                    | Named as planned on the roadmap or in the feature registry; not built. Only in the planned section.                                    |
+| Status                       | Means                                                                                                                                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LIVE`                       | On master and reachable. No plan or add-on gate in the way. Roles, permission groups and business settings still apply.                                                                                           |
+| `LIVE, gated <key>`          | Reachable only for a business whose plan, add-on or a Platform Admin grant carries the key. The gate is enforced.                                                                                                 |
+| `DARK-OPEN <key>`            | The gate ships dark and does not depend on any server switch: every business except a `LITE` one or one with a DENY override is served (see below).                                                               |
+| `DARK-SWITCH <key>`          | A dark plan flag whose answer depends on the server's `PLAN_FLAG_ENFORCEMENT` switch. Its production value is unknown (see below).                                                                                |
+| `DARK-HIDDEN developer_mode` | The screens exist but only a business with the internal `developer_mode` switch sees them. Off by default; RouteFlow staff turn it on. The native driver gate fails open when the read does not land (section 5). |
+| `PLANNED`                    | Named as planned on the roadmap or in the feature registry; not built. Only in the planned section.                                                                                                               |
 
-How a `DARK-OPEN` gate decides (`apps/api/src/billing/plan-flag-policy.ts`, `feature-registry.ts`):
+How a dark gate decides:
 
-- An add-on gate in the `dark` state never denies; it logs one "would deny" line.
-- A plan flag in `DARK_PLAN_FLAGS` is served to every business while the server's
-  `PLAN_FLAG_ENFORCEMENT` switch is not `on`, and is always enforced on the `LITE` plan.
-- Five of those flags (`flag.estimates`, `flag.recurring_invoices`, `flag.credit_notes`,
-  `flag.suppliers`, `flag.messaging`) stay served even with the switch on, until the plan catalog is
-  re-pinned with them (still `LITE`-enforced).
+- **`DARK-OPEN`, add-on gates** in state `dark` (`email.connected_mailbox`, `crm_gohighlevel`, `ocr`):
+  the request is served and one "would deny" line is logged, unless the business is on an
+  always-enforced plan (`LITE`) or holds a DENY override (`apps/api/src/billing/addon-access.ts:48-51`,
+  `feature-registry.ts:1504`).
+- **`DARK-OPEN`, pre-pin plan flags** (`flag.estimates`, `flag.recurring_invoices`, `flag.credit_notes`,
+  `flag.suppliers`, `flag.messaging`): served to every non-`LITE` business whatever the switch says,
+  until the plan catalog is re-pinned with them (`plan-flag-policy.ts:37-43`, `:51`, `:63`).
+- **`DARK-SWITCH`, the other eight `DARK_PLAN_FLAGS`** (`flag.analytics`, `flag.ap_bills`,
+  `flag.import_integrations`, `flag.forecasting`, `flag.pricing_tiers`, `flag.reports`, `flag.returns`,
+  `addon.buyer_portal`; `plan-flag-policy.ts:14-20`, `:26`): served to every non-`LITE` business **only
+  while `PLAN_FLAG_ENFORCEMENT` is not `on`** (`:46-47`, `:51`, `:63`). With it `on`, only a plan that
+  carries the flag (or a GRANT override) gets the feature. The repo does not hold the production value;
+  a comment at `plan-flag-policy.ts:30` records production switching it on on 2026-09-17. So this doc
+  cannot say every business has a `DARK-SWITCH` feature in production today.
 - The web menu hides a plan-gated page the plan does not carry (`apps/web/lib/plan-gated-nav.ts`).
+- The API's delivery gates accept any of `recurring_routes`, `order_delivery` or `developer_mode`
+  (`apps/api/src/routes/routes.controller.ts:53`). The web menu reads only the first two
+  (`apps/web/lib/api/addons.ts` `useRoutesAccess`, `useDeliveryAccess`).
 
 **Money rules that apply everywhere.** Line, tax and total math is `@routeflow/pricing`
 (`packages/pricing`): `computeLineSubtotal` for boxed lines, `normalizeBoxesPieces`, `roundMoney` on every
@@ -87,16 +99,16 @@ monetary write. Products can be sold by piece, box, case or pallet; a boxed line
 
 ## Counts
 
-| Actor                   | Use cases |    LIVE | DARK-OPEN | DARK-HIDDEN |
-| ----------------------- | --------: | ------: | --------: | ----------: |
-| Business owner / admin  |        24 |      19 |         5 |           0 |
-| Office staff            |        40 |      33 |         7 |           0 |
-| Warehouse and inventory |        17 |      14 |         3 |           0 |
-| Counter (POS) staff     |         6 |       6 |         0 |           0 |
-| Driver                  |        12 |       4 |         0 |           8 |
-| Buyer (customer portal) |        15 |      15 |         0 |           0 |
-| Super admin (platform)  |        14 |      14 |         0 |           0 |
-| **Total**               |   **128** | **105** |    **15** |       **8** |
+| Actor                   | Use cases |    LIVE | DARK-OPEN | DARK-SWITCH | DARK-HIDDEN |
+| ----------------------- | --------: | ------: | --------: | ----------: | ----------: |
+| Business owner / admin  |        24 |      19 |         2 |           3 |           0 |
+| Office staff            |        40 |      33 |         3 |           4 |           0 |
+| Warehouse and inventory |        17 |      14 |         1 |           2 |           0 |
+| Counter (POS) staff     |         6 |       6 |         0 |           0 |           0 |
+| Driver                  |        12 |       4 |         0 |           0 |           8 |
+| Buyer (customer portal) |        15 |      15 |         0 |           0 |           0 |
+| Super admin (platform)  |        14 |      14 |         0 |           0 |           0 |
+| **Total**               |   **128** | **105** |     **6** |       **9** |       **8** |
 
 Planned: 9 items. Server capabilities with no screen: 8 items (not counted as use cases).
 
@@ -105,32 +117,32 @@ Planned: 9 items. Server capabilities with no screen: 8 items (not counted as us
 Actor: `TENANT_ADMIN`. Most settings live under **Settings** (`apps/web/app/(dashboard)/settings/page.tsx`,
 groups in `_components/settings-groups.ts`).
 
-| Id        | Use case                                                   | Status                               |
-| --------- | ---------------------------------------------------------- | ------------------------------------ |
-| UC-ADM-1  | Sign up a new business                                     | LIVE                                 |
-| UC-ADM-2  | Follow the getting-started checklist and sign off set-up   | LIVE                                 |
-| UC-ADM-3  | Choose, change or cancel the RouteFlow plan                | LIVE                                 |
-| UC-ADM-4  | Pay a RouteFlow bill that is due                           | LIVE                                 |
-| UC-ADM-5  | Add staff and set what each one may do                     | LIVE                                 |
-| UC-ADM-6  | Set the business profile, logo and menu layout             | LIVE                                 |
-| UC-ADM-7  | Choose how orders go out (delivery, carrier, pickup)       | LIVE                                 |
-| UC-ADM-8  | Set invoice numbering, layout, terms and how customers pay | LIVE                                 |
-| UC-ADM-9  | Connect a card-payment account                             | LIVE                                 |
-| UC-ADM-10 | Set up email sending (SMTP or a sending domain)            | LIVE                                 |
-| UC-ADM-11 | Send email from the business's own mailbox                 | DARK-OPEN `email.connected_mailbox`  |
-| UC-ADM-12 | Turn customer notifications on or off and edit their text  | LIVE                                 |
-| UC-ADM-13 | Name price tiers and set margin and costing rules          | LIVE                                 |
-| UC-ADM-14 | Rename or archive unit names                               | LIVE, gated `flag.units_settings_v1` |
-| UC-ADM-15 | Manage product categories                                  | LIVE                                 |
-| UC-ADM-16 | Set out-of-stock and oversell rules                        | LIVE                                 |
-| UC-ADM-17 | Switch on selling restrictions and the address policy      | LIVE                                 |
-| UC-ADM-18 | Import data from files                                     | LIVE                                 |
-| UC-ADM-19 | Move over from another system in one guided import         | DARK-OPEN `flag.import_integrations` |
-| UC-ADM-20 | Sync with GoHighLevel CRM                                  | DARK-OPEN `crm_gohighlevel`          |
-| UC-ADM-21 | See the analytics dashboard                                | DARK-OPEN `flag.analytics`           |
-| UC-ADM-22 | Look up one product's sales insights                       | DARK-OPEN `flag.analytics`           |
-| UC-ADM-23 | Pay sales agents commission                                | LIVE, gated `flag.sales_agents`      |
-| UC-ADM-24 | Get the mobile app                                         | LIVE                                 |
+| Id        | Use case                                                   | Status                                 |
+| --------- | ---------------------------------------------------------- | -------------------------------------- |
+| UC-ADM-1  | Sign up a new business                                     | LIVE                                   |
+| UC-ADM-2  | Follow the getting-started checklist and sign off set-up   | LIVE                                   |
+| UC-ADM-3  | Choose, change or cancel the RouteFlow plan                | LIVE                                   |
+| UC-ADM-4  | Pay a RouteFlow bill that is due                           | LIVE                                   |
+| UC-ADM-5  | Add staff and set what each one may do                     | LIVE                                   |
+| UC-ADM-6  | Set the business profile, logo and menu layout             | LIVE                                   |
+| UC-ADM-7  | Choose how orders go out (delivery, carrier, pickup)       | LIVE                                   |
+| UC-ADM-8  | Set invoice numbering, layout, terms and how customers pay | LIVE                                   |
+| UC-ADM-9  | Connect a card-payment account                             | LIVE                                   |
+| UC-ADM-10 | Set up email sending (SMTP or a sending domain)            | LIVE                                   |
+| UC-ADM-11 | Send email from the business's own mailbox                 | DARK-OPEN `email.connected_mailbox`    |
+| UC-ADM-12 | Turn customer notifications on or off and edit their text  | LIVE                                   |
+| UC-ADM-13 | Name price tiers and set margin and costing rules          | LIVE                                   |
+| UC-ADM-14 | Rename or archive unit names                               | LIVE, gated `flag.units_settings_v1`   |
+| UC-ADM-15 | Manage product categories                                  | LIVE                                   |
+| UC-ADM-16 | Set out-of-stock and oversell rules                        | LIVE                                   |
+| UC-ADM-17 | Switch on selling restrictions and the address policy      | LIVE                                   |
+| UC-ADM-18 | Import data from files                                     | LIVE                                   |
+| UC-ADM-19 | Move over from another system in one guided import         | DARK-SWITCH `flag.import_integrations` |
+| UC-ADM-20 | Sync with GoHighLevel CRM                                  | DARK-OPEN `crm_gohighlevel`            |
+| UC-ADM-21 | See the analytics dashboard                                | DARK-SWITCH `flag.analytics`           |
+| UC-ADM-22 | Look up one product's sales insights                       | DARK-SWITCH `flag.analytics`           |
+| UC-ADM-23 | Pay sales agents commission                                | LIVE, gated `flag.sales_agents`        |
+| UC-ADM-24 | Get the mobile app                                         | LIVE                                   |
 
 ### UC-ADM-1 Sign up a new business
 
@@ -314,7 +326,7 @@ groups in `_components/settings-groups.ts`).
 - **Steps:** Settings → Migration; create a migration; stage it; confirm; undo if needed.
 - **Rules:** admin-only.
 - **Where:** web `(dashboard)/settings/migration`; api `import/migration.controller.ts`.
-- **Status:** DARK-OPEN `flag.import_integrations`.
+- **Status:** DARK-SWITCH `flag.import_integrations` (gate `import/migration.controller.ts:26`; `plan-flag-policy.ts:16`; served to every non-`LITE` business only while `PLAN_FLAG_ENFORCEMENT` is not `on`).
 
 ### UC-ADM-20 Sync with GoHighLevel CRM
 
@@ -333,7 +345,7 @@ groups in `_components/settings-groups.ts`).
   price and cost history.
 - **Rules:** needs `REPORTS` (cost history also `PRICING`).
 - **Where:** web `(dashboard)/analytics`; api `analytics/analytics.controller.ts`.
-- **Status:** DARK-OPEN `flag.analytics`.
+- **Status:** DARK-SWITCH `flag.analytics` (gate `analytics/analytics.controller.ts:17`; `plan-flag-policy.ts:14`; served to every non-`LITE` business only while `PLAN_FLAG_ENFORCEMENT` is not `on`).
 
 ### UC-ADM-22 Look up one product's sales insights
 
@@ -342,7 +354,7 @@ groups in `_components/settings-groups.ts`).
 - **Rules:** products only; needs `REPORTS`.
 - **Where:** web `(dashboard)/insights`, `(dashboard)/insights/products/[id]`; api
   `sales-facts/product-insights.controller.ts`.
-- **Status:** DARK-OPEN `flag.analytics`.
+- **Status:** DARK-SWITCH `flag.analytics` (gate `sales-facts/product-insights.controller.ts:59`; `plan-flag-policy.ts:14`; served to every non-`LITE` business only while `PLAN_FLAG_ENFORCEMENT` is not `on`).
 
 ### UC-ADM-23 Pay sales agents commission
 
@@ -377,15 +389,15 @@ Actor: `OPERATOR` (and `TENANT_ADMIN`). The group needed is named in each row.
 | UC-OFF-7  | Save an unfinished order and come back to it      | LIVE                                               |
 | UC-OFF-8  | Set up a standing order for a customer            | LIVE                                               |
 | UC-OFF-9  | Quote a customer with an estimate                 | DARK-OPEN `flag.estimates`                         |
-| UC-OFF-10 | Handle a customer return                          | DARK-OPEN `flag.returns`                           |
+| UC-OFF-10 | Handle a customer return                          | DARK-SWITCH `flag.returns`                         |
 | UC-OFF-11 | Take a return while entering a new order          | LIVE, gated `orders_inline_returns`                |
 | UC-OFF-12 | Ship orders by carrier and print packing slips    | LIVE                                               |
 | UC-OFF-13 | Send a receipt for an order                       | LIVE                                               |
 | UC-OFF-14 | Add and look after customers                      | LIVE                                               |
 | UC-OFF-15 | Send a customer their statement                   | LIVE                                               |
 | UC-OFF-16 | Take a deposit and use it later                   | LIVE                                               |
-| UC-OFF-17 | Give one customer their own prices                | DARK-OPEN `flag.pricing_tiers`                     |
-| UC-OFF-18 | Invite a customer to the buyer portal             | DARK-OPEN `addon.buyer_portal`                     |
+| UC-OFF-17 | Give one customer their own prices                | DARK-SWITCH `flag.pricing_tiers`                   |
+| UC-OFF-18 | Invite a customer to the buyer portal             | DARK-SWITCH `addon.buyer_portal`                   |
 | UC-OFF-19 | Make an invoice                                   | LIVE                                               |
 | UC-OFF-20 | Send an invoice or a reminder                     | LIVE                                               |
 | UC-OFF-21 | Record a payment                                  | LIVE                                               |
@@ -395,7 +407,7 @@ Actor: `OPERATOR` (and `TENANT_ADMIN`). The group needed is named in each row.
 | UC-OFF-25 | Approve a payment a buyer sent                    | LIVE                                               |
 | UC-OFF-26 | Record expenses and receipts                      | LIVE                                               |
 | UC-OFF-27 | See the money at a glance                         | LIVE                                               |
-| UC-OFF-28 | Run a finance report                              | DARK-OPEN `flag.reports`                           |
+| UC-OFF-28 | Run a finance report                              | DARK-SWITCH `flag.reports`                         |
 | UC-OFF-29 | Build a recurring delivery route                  | LIVE, gated `recurring_routes`                     |
 | UC-OFF-30 | Put today's stops in the best order               | LIVE, gated `recurring_routes`                     |
 | UC-OFF-31 | Send a route out with a driver                    | LIVE, gated `recurring_routes`                     |
@@ -429,8 +441,10 @@ Actor: `OPERATOR` (and `TENANT_ADMIN`). The group needed is named in each row.
 - **Rules:** needs `ORDERS`. Prices come from the customer's price layer and the money rules above.
   Editing a line price needs `PRICING` (`EDIT_LINE_PRICE`); dating a sale is `SET_ORDER_DATE`. A
   restricted product shows a warning that staff may override with a reason
-  (`OVERRIDE_SELLING_RESTRICTION`). A credit-limit block on order edits exists as `flag.credit_limits`
-  (dark). Merges are serialized per customer (`common/db-locks.ts` `withAdvisoryLock`).
+  (`OVERRIDE_SELLING_RESTRICTION`). An order edit that would push a customer over their credit limit
+  is blocked (`orders.service.ts` `assertWithinCreditLimit`). With `PLAN_FLAG_ENFORCEMENT` off the check
+  runs for every business; with it `on`, only for plans carrying `flag.credit_limits`
+  (`billing/feature-registry.ts:977-994`). Merges are serialized per customer (`common/db-locks.ts` `withAdvisoryLock`).
 - **Where:** web `(dashboard)/orders/new`, `(dashboard)/orders` (`_components/CreateOrderModal.tsx`); api
   `orders/orders.controller.ts`, `customers/customer-order-suggestions.controller.ts`,
   `customers/customer-price-layer.controller.ts`.
@@ -509,7 +523,7 @@ Actor: `OPERATOR` (and `TENANT_ADMIN`). The group needed is named in each row.
   Resolve parked restocks the system could not classify.
 - **Rules:** needs `ORDERS` (refund also `FINANCE`). Stages are `enum ReturnStatus`.
 - **Where:** web `(dashboard)/returns`, `(dashboard)/returns/[id]`; api `returns/returns.controller.ts`.
-- **Status:** DARK-OPEN `flag.returns`.
+- **Status:** DARK-SWITCH `flag.returns` (gate `returns/returns.controller.ts:64`; `plan-flag-policy.ts:20`; served to every non-`LITE` business only while `PLAN_FLAG_ENFORCEMENT` is not `on`).
 
 ### UC-OFF-11 Take a return while entering a new order
 
@@ -577,7 +591,7 @@ Actor: `OPERATOR` (and `TENANT_ADMIN`). The group needed is named in each row.
 - **Rules:** writes need `PRICING`; the customer's own price overrides the catalog price.
 - **Where:** web `(dashboard)/customers/[id]`; api `customers/customers.controller.ts`
   (`upsertCustomerPrice`), `customers/customer-unit-prices.controller.ts`.
-- **Status:** DARK-OPEN `flag.pricing_tiers` (per-unit customer prices: LIVE, gated `flag.units_prices_v2`).
+- **Status:** DARK-SWITCH `flag.pricing_tiers` (gate `customers/customers.controller.ts:303,312,325`; `plan-flag-policy.ts:18`; served to every non-`LITE` business only while `PLAN_FLAG_ENFORCEMENT` is not `on`) (per-unit customer prices: LIVE, gated `flag.units_prices_v2`).
 
 ### UC-OFF-18 Invite a customer to the buyer portal
 
@@ -587,7 +601,7 @@ Actor: `OPERATOR` (and `TENANT_ADMIN`). The group needed is named in each row.
 - **Rules:** needs `CUSTOMERS`.
 - **Where:** web `(dashboard)/customers/[id]`, `(dashboard)/customers`; api `customers/customers.controller.ts`
   (`sendPortalInvite` and siblings).
-- **Status:** DARK-OPEN `addon.buyer_portal`.
+- **Status:** DARK-SWITCH `addon.buyer_portal` (gate `customers/customers.controller.ts:123,431-475`; `plan-flag-policy.ts:26`; served to every non-`LITE` business only while `PLAN_FLAG_ENFORCEMENT` is not `on`).
 
 ### UC-OFF-19 Make an invoice
 
@@ -681,7 +695,7 @@ Actor: `OPERATOR` (and `TENANT_ADMIN`). The group needed is named in each row.
 - **Rules:** needs `REPORTS`.
 - **Where:** web `(dashboard)/finance/reports` (`bookkeeping` and `finance/customers` redirect there);
   api `bookkeeping/bookkeeping.controller.ts`.
-- **Status:** DARK-OPEN `flag.reports`.
+- **Status:** DARK-SWITCH `flag.reports` (gate `bookkeeping/bookkeeping.controller.ts:207-377`; `plan-flag-policy.ts:19`; served to every non-`LITE` business only while `PLAN_FLAG_ENFORCEMENT` is not `on`).
 
 ### UC-OFF-29 Build a recurring delivery route
 
@@ -813,10 +827,10 @@ Actor: `OPERATOR` with `CATALOG` (prices: `PRICING`).
 | UC-WH-10 | Set cost and see stock value                | LIVE                               |
 | UC-WH-11 | Order from a supplier with a purchase order | LIVE                               |
 | UC-WH-12 | Keep a supplier list                        | DARK-OPEN `flag.suppliers`         |
-| UC-WH-13 | Enter and pay supplier bills                | DARK-OPEN `flag.ap_bills`          |
+| UC-WH-13 | Enter and pay supplier bills                | DARK-SWITCH `flag.ap_bills`        |
 | UC-WH-14 | Check a supplier statement                  | LIVE                               |
 | UC-WH-15 | Import a stack of purchase invoices         | LIVE                               |
-| UC-WH-16 | Get told when to reorder                    | DARK-OPEN `flag.forecasting`       |
+| UC-WH-16 | Get told when to reorder                    | DARK-SWITCH `flag.forecasting`     |
 | UC-WH-17 | Look up a product by barcode                | LIVE                               |
 
 ### UC-WH-1 Add and edit products
@@ -932,7 +946,7 @@ Actor: `OPERATOR` with `CATALOG` (prices: `PRICING`).
 - **Rules:** needs `FINANCE`. Scanning is also `DARK-OPEN ocr`.
 - **Where:** web `(dashboard)/vendor-bills`, `(dashboard)/vendor-bills/[id]` (`purchases` redirects there);
   api `vendor-bills/vendor-bills.controller.ts`.
-- **Status:** DARK-OPEN `flag.ap_bills`.
+- **Status:** DARK-SWITCH `flag.ap_bills` (gate `vendor-bills/vendor-bills.controller.ts:42`; `plan-flag-policy.ts:15`; served to every non-`LITE` business only while `PLAN_FLAG_ENFORCEMENT` is not `on`).
 
 ### UC-WH-14 Check a supplier statement
 
@@ -959,7 +973,7 @@ Actor: `OPERATOR` with `CATALOG` (prices: `PRICING`).
 - **Rules:** needs `CATALOG`.
 - **Where:** web `(dashboard)/inventory` (Forecasting tab); api `inventory/inventory.controller.ts`
   (`getForecasting`, `setReorderPoint`).
-- **Status:** DARK-OPEN `flag.forecasting`.
+- **Status:** DARK-SWITCH `flag.forecasting` (gate `inventory/inventory.controller.ts:283,290`; `plan-flag-policy.ts:17`; served to every non-`LITE` business only while `PLAN_FLAG_ENFORCEMENT` is not `on`).
 
 ### UC-WH-17 Look up a product by barcode
 
@@ -1040,26 +1054,32 @@ has a counter (`capabilities.fulfilment.counter` `optional` or `always`, read by
 
 Actor: `DRIVER`, or staff with `canActAsDriver` ("My Routes" in the Dispatch menu). Two surfaces:
 
-- **Web "Today's route"** (`(dashboard)/routes/my-runs`), on any phone browser. Open to every business
-  with a delivery add-on. It records deliveries and settles the run; it never takes money.
-- **The native driver app** (`apps/mobile/app/(driver)/`). The app's root gate sends a pure driver of a
-  business without `developer_mode` to a "Desktop Only" screen (`apps/mobile/app/_layout.tsx`, the
-  `activeRole === "driver"` branch), so every native-only flow below is `DARK-HIDDEN developer_mode`.
+- **Web "Today's route"** (`(dashboard)/routes/my-runs`), on any phone browser. The web menu shows it to
+  a business with `recurring_routes` or `order_delivery`; the API behind it (`routes.controller.ts:53`,
+  `getMyRuns` at `:164`) also admits `developer_mode`. It records deliveries and settles the run; it never
+  takes money.
+- **The native driver app** (`apps/mobile/app/(driver)/`). Once the `developer_mode` read has landed and
+  says off, the app's root gate sends a pure driver to a "Desktop Only" screen
+  (`apps/mobile/app/_layout.tsx:255-269`, `(auth)/operator-blocked.tsx:14`). The gate fails open: when the
+  read does not land (offline, timeout, server error), the driver is let through ("Block only on a
+  positively-read flag", `_layout.tsx:257-262`). So every native-only flow below is
+  `DARK-HIDDEN developer_mode`. It is hidden whenever the business is read as not having the switch, not
+  in every case.
 
-| Id        | Use case                                  | Status                                             |
-| --------- | ----------------------------------------- | -------------------------------------------------- |
-| UC-DRV-1  | See today's route on the web              | LIVE, gated `recurring_routes` or `order_delivery` |
-| UC-DRV-2  | Mark a stop delivered, refused or skipped | LIVE, gated `recurring_routes` or `order_delivery` |
-| UC-DRV-3  | Get directions to a stop                  | LIVE, gated `recurring_routes` or `order_delivery` |
-| UC-DRV-4  | Settle my run at the end                  | LIVE, gated `recurring_routes` or `order_delivery` |
-| UC-DRV-5  | Run my route in the driver app            | DARK-HIDDEN `developer_mode`                       |
-| UC-DRV-6  | Collect payment at the door               | DARK-HIDDEN `developer_mode`                       |
-| UC-DRV-7  | Capture a signature or photo as proof     | DARK-HIDDEN `developer_mode`                       |
-| UC-DRV-8  | Change an order at the door               | DARK-HIDDEN `developer_mode`                       |
-| UC-DRV-9  | Take a return at the stop                 | DARK-HIDDEN `developer_mode`                       |
-| UC-DRV-10 | Split an order's invoice at the stop      | DARK-HIDDEN `developer_mode`                       |
-| UC-DRV-11 | Take a new order on the road              | DARK-HIDDEN `developer_mode`                       |
-| UC-DRV-12 | Leave a note on a stop                    | DARK-HIDDEN `developer_mode`                       |
+| Id        | Use case                                  | Status                                                                                |
+| --------- | ----------------------------------------- | ------------------------------------------------------------------------------------- |
+| UC-DRV-1  | See today's route on the web              | LIVE, gated `recurring_routes` or `order_delivery` (API also admits `developer_mode`) |
+| UC-DRV-2  | Mark a stop delivered, refused or skipped | LIVE, gated `recurring_routes` or `order_delivery` (API also admits `developer_mode`) |
+| UC-DRV-3  | Get directions to a stop                  | LIVE, gated `recurring_routes` or `order_delivery` (API also admits `developer_mode`) |
+| UC-DRV-4  | Settle my run at the end                  | LIVE, gated `recurring_routes` or `order_delivery` (API also admits `developer_mode`) |
+| UC-DRV-5  | Run my route in the driver app            | DARK-HIDDEN `developer_mode`                                                          |
+| UC-DRV-6  | Collect payment at the door               | DARK-HIDDEN `developer_mode`                                                          |
+| UC-DRV-7  | Capture a signature or photo as proof     | DARK-HIDDEN `developer_mode`                                                          |
+| UC-DRV-8  | Change an order at the door               | DARK-HIDDEN `developer_mode`                                                          |
+| UC-DRV-9  | Take a return at the stop                 | DARK-HIDDEN `developer_mode`                                                          |
+| UC-DRV-10 | Split an order's invoice at the stop      | DARK-HIDDEN `developer_mode`                                                          |
+| UC-DRV-11 | Take a new order on the road              | DARK-HIDDEN `developer_mode`                                                          |
+| UC-DRV-12 | Leave a note on a stop                    | DARK-HIDDEN `developer_mode`                                                          |
 
 ### UC-DRV-1 See today's route on the web
 
@@ -1067,7 +1087,7 @@ Actor: `DRIVER`, or staff with `canActAsDriver` ("My Routes" in the Dispatch men
 - **Steps:** sign in; open Today's route; see the run, its stops and what is left to deliver.
 - **Rules:** a driver sees only their own runs (`getMyRuns`).
 - **Where:** web `(dashboard)/routes/my-runs`; api `routes/routes.controller.ts`.
-- **Status:** LIVE, gated `recurring_routes` or `order_delivery`.
+- **Status:** LIVE, gated `recurring_routes` or `order_delivery` (API also admits `developer_mode`).
 
 ### UC-DRV-2 Mark a stop delivered, refused or skipped
 
@@ -1078,14 +1098,14 @@ Actor: `DRIVER`, or staff with `canActAsDriver` ("My Routes" in the Dispatch men
   Refused. No payment is taken here.
 - **Where:** web `(dashboard)/routes/my-runs/StopSheet.tsx`; api `routes/routes.controller.ts`
   (`completeStop`, `reopenStop`).
-- **Status:** LIVE, gated `recurring_routes` or `order_delivery`.
+- **Status:** LIVE, gated `recurring_routes` or `order_delivery` (API also admits `developer_mode`).
 
 ### UC-DRV-3 Get directions to a stop
 
 - **Goal:** Open my maps app to drive to the customer.
 - **Steps:** tap Navigate on a stop.
 - **Where:** web `(dashboard)/routes/my-runs/StopSheet.tsx`; native `(driver)/map.tsx`.
-- **Status:** LIVE, gated `recurring_routes` or `order_delivery` (the native map is `DARK-HIDDEN developer_mode`).
+- **Status:** LIVE, gated `recurring_routes` or `order_delivery` (API also admits `developer_mode`) (the native map is `DARK-HIDDEN developer_mode`).
 
 ### UC-DRV-4 Settle my run at the end
 
@@ -1096,7 +1116,7 @@ Actor: `DRIVER`, or staff with `canActAsDriver` ("My Routes" in the Dispatch men
   still be settled.
 - **Where:** web `(dashboard)/routes/my-runs/RunSettleFooter.tsx`; native `(driver)/route/settlement.tsx`;
   api `routes/routes.controller.ts` (`settleRun`).
-- **Status:** LIVE, gated `recurring_routes` or `order_delivery`.
+- **Status:** LIVE, gated `recurring_routes` or `order_delivery` (API also admits `developer_mode`).
 
 ### UC-DRV-5 Run my route in the driver app
 
@@ -1173,7 +1193,7 @@ Not use cases: the native Cash tab and Messages screen show an honest "not live 
 
 Actor: a buyer account (its own sign-in, separate from staff). One buyer can buy from several sellers;
 each seller's portal is `buyer/portal/[seller]`. On staff endpoints the portal is `addon.buyer_portal`
-(DARK-OPEN); a seller's paused state is the one thing a buyer learns (`acceptingOrders`,
+(DARK-SWITCH); a seller's paused state is the one thing a buyer learns (`acceptingOrders`,
 `buyer/buyer-capabilities.controller.ts`).
 
 | Id        | Use case                                          | Status |
@@ -1500,8 +1520,10 @@ Named as planned in `.claude/roadmap/features.jsonl` (status `planned`) or as "N
 
 - **The production value of `PLAN_FLAG_ENFORCEMENT`.** It decides whether the `DARK_PLAN_FLAGS` rows
   are enforced for non-`LITE` plans, and it is not in the repo. A comment in
-  `apps/api/src/billing/plan-flag-policy.ts` records that production switched it on on 2026-09-17. If so,
-  the `DARK-OPEN` plan flags other than the five pre-pin flags are enforced there.
+  `apps/api/src/billing/plan-flag-policy.ts:30` records that production switched it on on 2026-09-17. If
+  so, the nine `DARK-SWITCH` rows (eight plan flags) and the credit-limit check in UC-OFF-2 are enforced
+  there for every non-`LITE` business whose plan does not carry the flag. The six `DARK-OPEN` rows do not
+  depend on it.
 - **Per-business grants.** Which businesses hold which add-on or override lives in the database, not
   in code.
 - **The ops board.** The Plane boards (OPS, ROAD) are not readable from the repo; the planned list uses
