@@ -60,6 +60,7 @@ async function harness(opts: {
       order: prisma.order,
       customer: prisma.customer,
       $executeRaw: jest.fn().mockResolvedValue(0),
+      tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) },
       $queryRaw: jest.fn(),
     }),
   );

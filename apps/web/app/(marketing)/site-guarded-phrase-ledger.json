@@ -1,0 +1,344 @@
+{
+  "definition": "A guarded phrase names something the claims register (docs/product/claims-register.md, section D) marks not built. Every sentence on a site page that holds one is a row here, with its page and exact wording (whitespace collapsed, entities decoded), and a reason it is allowed. Added 2026-11-24 (pricing v14 Phase 1).",
+  "phrases": [
+    {
+      "id": "live-map",
+      "pattern": "live map|on a map",
+      "register": "D"
+    },
+    {
+      "id": "signature",
+      "pattern": "signature",
+      "register": "D"
+    },
+    {
+      "id": "photo",
+      "pattern": "photo",
+      "register": "D"
+    },
+    {
+      "id": "pay-at-the-door",
+      "pattern": "(pay|payment|money) at the door",
+      "register": "D"
+    },
+    {
+      "id": "accounting-tools",
+      "pattern": "QuickBooks|Xero|Zoho",
+      "register": "D"
+    },
+    {
+      "id": "text-messages",
+      "pattern": "text messages?|\\bSMS\\b",
+      "register": "D"
+    },
+    {
+      "id": "warehouses",
+      "pattern": "warehouses?",
+      "register": "D"
+    },
+    {
+      "id": "edi",
+      "pattern": "\\bEDI\\b",
+      "register": "D"
+    },
+    {
+      "id": "two-step-login",
+      "pattern": "two-step|two-factor|\\b2FA\\b",
+      "register": "D"
+    },
+    {
+      "id": "lots-expiry-bins",
+      "pattern": "expiry dates?|lot numbers?|\\blots?,? (?:and|or) expiry|\\bbins\\b",
+      "register": "D"
+    },
+    {
+      "id": "api-webhooks",
+      "pattern": "\\ban API\\b|\\bAPIs?\\b|webhooks?",
+      "register": "D"
+    }
+  ],
+  "rows": [
+    {
+      "phrase": "api-webhooks",
+      "page": "data-in-and-out.html",
+      "sentence": "There is no API.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "api-webhooks",
+      "page": "data-in-and-out.html",
+      "sentence": "It has no API.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "photo",
+      "page": "data-in-and-out.html",
+      "sentence": "Delivery photos",
+      "why": "Listed under \"What can't I download in bulk?\": photos cannot be bulk-exported."
+    },
+    {
+      "phrase": "accounting-tools",
+      "page": "data-in-and-out.html",
+      "sentence": "QuickBooks, Xero, or Zoho",
+      "why": "Listed under \"RouteFlow doesn't connect to\" (data-in-and-out) or in the does-not-do table (does-and-doesnt)."
+    },
+    {
+      "phrase": "edi",
+      "page": "data-in-and-out.html",
+      "sentence": "EDI",
+      "why": "Listed under \"RouteFlow doesn't connect to\" (data-in-and-out) or in the does-not-do table (does-and-doesnt)."
+    },
+    {
+      "phrase": "api-webhooks",
+      "page": "data-in-and-out.html",
+      "sentence": "Is there an API?",
+      "why": "FAQ question; its answer on the same page says there is no API."
+    },
+    {
+      "phrase": "api-webhooks",
+      "page": "data-in-and-out.html",
+      "sentence": "There’s no API, and there are no webhooks you set up.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "warehouses",
+      "page": "does-and-doesnt.html",
+      "sentence": "Separate warehouses",
+      "why": "A row of the public does-not-do table."
+    },
+    {
+      "phrase": "lots-expiry-bins",
+      "page": "does-and-doesnt.html",
+      "sentence": "Lots, expiry dates, and bins",
+      "why": "A row of the public does-not-do table."
+    },
+    {
+      "phrase": "edi",
+      "page": "does-and-doesnt.html",
+      "sentence": "EDI",
+      "why": "Listed under \"RouteFlow doesn't connect to\" (data-in-and-out) or in the does-not-do table (does-and-doesnt)."
+    },
+    {
+      "phrase": "edi",
+      "page": "does-and-doesnt.html",
+      "sentence": "RouteFlow doesn’t connect by EDI.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "accounting-tools",
+      "page": "does-and-doesnt.html",
+      "sentence": "No connection to QuickBooks, Xero, or Zoho.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "live-map",
+      "page": "does-and-doesnt.html",
+      "sentence": "A live map of your drivers",
+      "why": "A row of the public does-not-do table."
+    },
+    {
+      "phrase": "live-map",
+      "page": "does-and-doesnt.html",
+      "sentence": "You don’t see the driver’s truck on a map.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "text-messages",
+      "page": "does-and-doesnt.html",
+      "sentence": "Text messages",
+      "why": "A row of the public does-not-do table."
+    },
+    {
+      "phrase": "two-step-login",
+      "page": "does-and-doesnt.html",
+      "sentence": "Two-step login, company single sign-on, an API, or webhooks you set up",
+      "why": "A row of the public does-not-do table."
+    },
+    {
+      "phrase": "api-webhooks",
+      "page": "does-and-doesnt.html",
+      "sentence": "Two-step login, company single sign-on, an API, or webhooks you set up",
+      "why": "A row of the public does-not-do table."
+    },
+    {
+      "phrase": "warehouses",
+      "page": "does-and-doesnt.html",
+      "sentence": "Several warehouses",
+      "why": "Listed under \"When is it the wrong choice?\": needs the product does not meet."
+    },
+    {
+      "phrase": "edi",
+      "page": "does-and-doesnt.html",
+      "sentence": "EDI customers",
+      "why": "Listed under \"When is it the wrong choice?\": needs the product does not meet."
+    },
+    {
+      "phrase": "lots-expiry-bins",
+      "page": "does-and-doesnt.html",
+      "sentence": "Lot or expiry tracking",
+      "why": "Listed under \"When is it the wrong choice?\": needs the product does not meet."
+    },
+    {
+      "phrase": "warehouses",
+      "page": "does-and-doesnt.html",
+      "sentence": "It often covers books, warehouses, and EDI.",
+      "why": "Describes what a big business system covers, in contrast with this product."
+    },
+    {
+      "phrase": "edi",
+      "page": "does-and-doesnt.html",
+      "sentence": "It often covers books, warehouses, and EDI.",
+      "why": "Describes what a big business system covers, in contrast with this product."
+    },
+    {
+      "phrase": "accounting-tools",
+      "page": "home.html",
+      "sentence": "RouteFlow doesn’t connect to QuickBooks, Xero, or Zoho.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "warehouses",
+      "page": "home.html",
+      "sentence": "It doesn’t keep stock in separate warehouses, keep a general ledger, or connect by EDI.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "edi",
+      "page": "home.html",
+      "sentence": "It doesn’t keep stock in separate warehouses, keep a general ledger, or connect by EDI.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "accounting-tools",
+      "page": "pricing.html",
+      "sentence": "RouteFlow doesn’t connect to QuickBooks, Xero, or Zoho.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "warehouses",
+      "page": "pricing.html",
+      "sentence": "It doesn’t keep stock in separate warehouses, keep a general ledger, or connect by EDI.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "edi",
+      "page": "pricing.html",
+      "sentence": "It doesn’t keep stock in separate warehouses, keep a general ledger, or connect by EDI.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "live-map",
+      "page": "product.html",
+      "sentence": "There’s no live map of your drivers on the web.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "pay-at-the-door",
+      "page": "product.html",
+      "sentence": "Drivers can’t take payment at the door.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "signature",
+      "page": "product.html",
+      "sentence": "There’s no proof photo or signature.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "photo",
+      "page": "product.html",
+      "sentence": "There’s no proof photo or signature.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "signature",
+      "page": "product.html",
+      "sentence": "Take a photo or a signature",
+      "why": "Listed under the web driver's \"Can't do\"; true on the web (claims register D)."
+    },
+    {
+      "phrase": "photo",
+      "page": "product.html",
+      "sentence": "Take a photo or a signature",
+      "why": "Listed under the web driver's \"Can't do\"; true on the web (claims register D)."
+    },
+    {
+      "phrase": "pay-at-the-door",
+      "page": "product.html",
+      "sentence": "Take payment at the door",
+      "why": "Listed under the web driver's \"Can't do\"; true on the web (claims register D)."
+    },
+    {
+      "phrase": "lots-expiry-bins",
+      "page": "product.html",
+      "sentence": "There’s no FIFO or LIFO, no lot numbers, no expiry dates, and no bins.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "warehouses",
+      "page": "product.html",
+      "sentence": "Keep stock in separate warehouses",
+      "why": "Listed under \"Where does it stop? RouteFlow doesn't:\"."
+    },
+    {
+      "phrase": "edi",
+      "page": "product.html",
+      "sentence": "Connect by EDI",
+      "why": "Listed under \"Where does it stop? RouteFlow doesn't:\"."
+    },
+    {
+      "phrase": "accounting-tools",
+      "page": "product.html",
+      "sentence": "Connect to QuickBooks, Xero, or Zoho",
+      "why": "Listed under \"Where does it stop? RouteFlow doesn't:\"."
+    },
+    {
+      "phrase": "live-map",
+      "page": "product.html",
+      "sentence": "Show drivers on a live map on the web",
+      "why": "Listed under \"Where does it stop? RouteFlow doesn't:\"."
+    },
+    {
+      "phrase": "text-messages",
+      "page": "product.html",
+      "sentence": "Send text messages.",
+      "why": "Listed under \"Where does it stop? RouteFlow doesn't:\"."
+    },
+    {
+      "phrase": "warehouses",
+      "page": "product.html",
+      "sentence": "It’s the wrong choice if you need several warehouses, EDI customers, a general ledger, or lot and expiry tracking.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "edi",
+      "page": "product.html",
+      "sentence": "It’s the wrong choice if you need several warehouses, EDI customers, a general ledger, or lot and expiry tracking.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "lots-expiry-bins",
+      "page": "product.html",
+      "sentence": "It’s the wrong choice if you need several warehouses, EDI customers, a general ledger, or lot and expiry tracking.",
+      "why": "Says plainly the product does not do this (claims register D)."
+    },
+    {
+      "phrase": "photo",
+      "page": "security.html",
+      "sentence": "Photos and files open through private links that expire.",
+      "why": "Says how stored files are served (private links that expire); claims no photo capture on the web."
+    },
+    {
+      "phrase": "two-step-login",
+      "page": "security.html",
+      "sentence": "Two-step login",
+      "why": "Listed under \"What don't you have?\" on the security page."
+    },
+    {
+      "phrase": "api-webhooks",
+      "page": "security.html",
+      "sentence": "An API, or webhooks you set up",
+      "why": "Listed under \"What don't you have?\" on the security page."
+    }
+  ]
+}

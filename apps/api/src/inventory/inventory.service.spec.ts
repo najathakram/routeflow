@@ -1269,6 +1269,141 @@ describe("InventoryService", () => {
       });
       expect(row.trackedCategoryId).toBe("sec-1");
     });
+
+    // W-1299: the Stock tab read the whole catalog a second time only for these four facts.
+    describe("family and variant facts (W-1299)", () => {
+      it("asks for the kind, the variant name, the parent and a count of ACTIVE same-tenant variants", async () => {
+        prisma.product.findMany.mockResolvedValue([product()]);
+
+        await service.getStockOverview();
+
+        expect(prisma.product.findMany.mock.calls[0][0].select).toMatchObject({
+          kind: true,
+          variantName: true,
+          parentProductId: true,
+          parent: { select: { name: true, tenantId: true } },
+          _count: {
+            select: { variants: { where: { isActive: true, tenantId: "test-tenant" } } },
+          },
+        });
+      });
+
+      it("a variant row carries its family's name, and never the parent's tenant", async () => {
+        prisma.product.findMany.mockResolvedValue([
+          product({
+            id: "v-1",
+            name: "Blueberry",
+            variantName: "Blueberry",
+            parentProductId: "fam-1",
+            parent: { name: "Acme Vape", tenantId: "test-tenant" },
+            _count: { variants: 0 },
+          }),
+        ]);
+
+        const [row] = await service.getStockOverview();
+
+        expect(row.variantName).toBe("Blueberry");
+        expect(row.parentProductId).toBe("fam-1");
+        expect(row.parent).toEqual({ name: "Acme Vape" });
+        expect(row.hasVariants).toBe(false);
+      });
+
+      it("drops a parent that belongs to another tenant (B1211)", async () => {
+        prisma.product.findMany.mockResolvedValue([
+          product({
+            id: "v-1",
+            name: "Blueberry",
+            variantName: "Blueberry",
+            parentProductId: "fam-x",
+            parent: { name: "Other Tenant Family", tenantId: "another-tenant" },
+            _count: { variants: 0 },
+          }),
+        ]);
+
+        const [row] = await service.getStockOverview();
+
+        expect(row.parent).toBeNull();
+        expect(row.parentProductId).toBe("fam-x");
+      });
+
+      it("hasVariants follows the active-variant count, and the raw count is not sent", async () => {
+        prisma.product.findMany.mockResolvedValue([
+          product({ id: "fam-1", name: "Acme Vape", parent: null, _count: { variants: 2 } }),
+          product({ id: "solo", name: "Acme Lighter", parent: null, _count: { variants: 0 } }),
+        ]);
+
+        const [family, solo] = await service.getStockOverview();
+
+        expect(family.hasVariants).toBe(true);
+        expect(solo.hasVariants).toBe(false);
+        expect(family).not.toHaveProperty("_count");
+      });
+
+      it("sends the kind, so a FAMILY can be told from a product that can be a line", async () => {
+        prisma.product.findMany.mockResolvedValue([
+          product({ id: "fam-1", kind: "FAMILY", parent: null, _count: { variants: 1 } }),
+          product({ id: "v-1", kind: "VARIANT", parentProductId: "fam-1", parent: null }),
+          product({ id: "solo", kind: "STANDARD", parent: null }),
+        ]);
+
+        const rows = await service.getStockOverview();
+
+        expect(rows.map((r) => r.kind)).toEqual(["FAMILY", "VARIANT", "STANDARD"]);
+      });
+
+      it("a standalone product reads parent null and no variant name", async () => {
+        prisma.product.findMany.mockResolvedValue([
+          product({
+            variantName: null,
+            parentProductId: null,
+            parent: null,
+            _count: { variants: 0 },
+          }),
+        ]);
+
+        const [row] = await service.getStockOverview();
+
+        expect(row.parent).toBeNull();
+        expect(row.parentProductId).toBeNull();
+        expect(row.variantName).toBeNull();
+        expect(row.hasVariants).toBe(false);
+      });
+
+      it("keeps every field the stock count tab and the mobile app already read", async () => {
+        prisma.product.findMany.mockResolvedValue([
+          product({
+            sku: "F-25",
+            category: "Baking",
+            unit: "bag",
+            unitsPerBox: 4,
+            reorderPoint: 3,
+            reorderQty: 12,
+            trackedCategoryId: null,
+            parent: null,
+            _count: { variants: 0 },
+          }),
+        ]);
+
+        const [row] = await service.getStockOverview();
+
+        expect(row).toMatchObject({
+          id: "prod-1",
+          name: "Flour 25lb",
+          sku: "F-25",
+          category: "Baking",
+          unit: "bag",
+          currentStock: 10,
+          averageCost: 2,
+          costingMethod: "AVCO",
+          isActive: true,
+          unitsPerBox: 4,
+          reorderPoint: 3,
+          reorderQty: 12,
+          trackedCategoryId: null,
+          totalValue: 20,
+        });
+      });
+    });
   });
 
   // ─── commitStockCount — idempotency ───────────────────────────────────────────
