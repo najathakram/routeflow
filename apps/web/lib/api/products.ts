@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ProductKind, FamilyMovePreviewDto } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
@@ -28,6 +28,40 @@ export function useProducts(
     queryFn: () => apiClient.get("/products", { params }).then((r) => r.data),
     ...options,
     enabled: options?.enabled ?? true,
+  });
+}
+
+/** The most ids one `GET /products?ids=` accepts (the API's `PRODUCT_IDS_QUERY_MAX`). */
+export const PRODUCTS_BY_IDS_CHUNK = 200;
+
+/** Splits a list into runs of at most `size`, keeping the order. */
+export function chunkIds(ids: string[], size = PRODUCTS_BY_IDS_CHUNK): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
+/**
+ * P-21 (573): read exactly these products, not the whole catalog. Dedupes and sorts the ids (so the same set in any
+ * order is one cache entry), asks for them 200 at a time and returns one merged list. Inactive products are
+ * included (an old purchase order must still name its product); an id the server does not return is absent. With no
+ * ids nothing is requested. Cached under `["products", "ids", chunk]`, so `invalidateProductSet` refreshes it.
+ */
+export function useProductsByIds(ids: readonly string[]) {
+  const chunks = chunkIds([...new Set(ids.filter(Boolean))].sort());
+  return useQueries({
+    queries: chunks.map((chunk) => ({
+      queryKey: ["products", "ids", chunk],
+      queryFn: () =>
+        apiClient
+          .get("/products", { params: { ids: chunk.join(",") } })
+          .then((r) => (r.data?.data ?? []) as any[]),
+    })),
+    combine: (results) => ({
+      data: results.flatMap((r) => r.data ?? []),
+      isLoading: results.some((r) => r.isLoading),
+      isError: results.some((r) => r.isError),
+    }),
   });
 }
 

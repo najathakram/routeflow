@@ -1,6 +1,9 @@
 import { BadRequestException } from "@nestjs/common";
-import { packFromOwnSplit } from "@routeflow/pricing";
+import { packFromOwnSplit, roundMoney } from "@routeflow/pricing";
+import { decideTierOverride } from "../orders/staff-override";
+import type { LineOverrideCtx } from "../invoices/invoice-line-override";
 import type { ManualLineItem } from "../invoices/manual-invoice-lines";
+import { tenantTodayDay } from "../common/calendar-date";
 
 /** The EstimateItem fields the conversion reads. */
 export interface ConvertibleEstimateItem {
@@ -139,5 +142,59 @@ export function estimateConvertLineItems(
       taxRate: lineTaxRate,
       packSnapshot: pack,
     } as ManualLineItem;
+  });
+}
+
+/**
+ * SA-1260 section 1: the day the customer accepted the quote, as the tenant's calendar day (YYYY-MM-DD in the
+ * tenant's zone, never the UTC date: an evening acceptance must not read as the next day). `Estimate` has no
+ * `acceptedAt` column and SA-1182 K2 rules out a migration, so the date is `updatedAt` read at the convert
+ * pre-flight, BEFORE the CONVERTED claim moves it; only an ACCEPTED row is read that way (accept() writes
+ * nothing for a repeat accept, so it stays the first acceptance). null for any other status.
+ * If an `acceptedAt` column is ever added, it replaces this one function body. The invoice PDF's own date
+ * formatter (invoices/invoice-pdf-template.tsx:205) is UTC-anchored and takes no zone, so it cannot serve
+ * an instant; this is the ISO form of SA-1260 G9.
+ */
+export function estimateAcceptedOn(
+  existing: { status: string; updatedAt: Date },
+  timezone: string | null | undefined,
+): string | null {
+  if (existing.status !== "ACCEPTED") return null;
+  return tenantTodayDay(timezone, existing.updatedAt);
+}
+
+/**
+ * W-1266 / SA-1182 K2: a converted line's QUOTED price judged again by the one staff-override rule
+ * (`decideTierOverride` -> `decideStaffOverride`, @routeflow/pricing) against the customer's price TODAY (tier or
+ * customer layer, the same baseline POST /invoices uses). A real override (DISCOUNTED or MANUAL) stamps the built
+ * line: `priceType`, `originalPrice` (the list price), `overrideReason` and `overriddenBy` (the converting user).
+ * A price at the customer's own price, a line with no catalog product, and a layer echo (not a staff override) get
+ * no stamp. Only the four price columns are written: `unitPrice` and `subtotal` stay the quote's (B659). Convert
+ * is a copy site: it never asks the price-edit right (SA-1034 rule 4), so this only reads.
+ */
+export function stampConvertedLinePrices(
+  itemsData: Array<Record<string, unknown>>,
+  lines: ReadonlyArray<{ productId?: string | null; unitPrice: number }>,
+  productMap: ReadonlyMap<string, any>,
+  ctx: Pick<LineOverrideCtx, "tierOf" | "layerOf"> & { reason: string; actorId: string | null },
+): void {
+  lines.forEach((line, idx) => {
+    const product = line.productId ? productMap.get(line.productId) : undefined;
+    if (!product) return;
+    // The accepted quote is the reason (SA-1182 K2), so the decision is never refused for a missing one.
+    const d = decideTierOverride(
+      product,
+      ctx.tierOf(product.id),
+      roundMoney(line.unitPrice),
+      ctx.reason,
+      ctx.layerOf?.(product, null),
+    );
+    if (!d.overridden) return; // the customer's own price, or a layer echo: no stamp
+    Object.assign(itemsData[idx], {
+      priceType: d.priceType,
+      originalPrice: d.originalPrice == null ? null : roundMoney(d.originalPrice),
+      overrideReason: ctx.reason,
+      overriddenBy: ctx.actorId,
+    });
   });
 }
