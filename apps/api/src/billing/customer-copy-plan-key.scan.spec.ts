@@ -21,26 +21,55 @@ import * as path from "path";
 
 const SRC_ROOT = path.resolve(__dirname, "..");
 
-/** `file|literal` (interpolations shown as `${}`, cut at 80 characters) -> why it may stay. */
-const ALLOWED: Readonly<Record<string, string>> = {
-  'billing/proration.service.ts|Unknown plan "${}"':
-    "echoes a key the caller sent that no published plan holds; there is no name to show",
-  'billing/subscription-mutation.service.ts|Unknown plan "${}"':
-    "echoes a key the caller sent that no published plan holds; there is no name to show",
+/**
+ * A ledger row: how many sites print this text, and why each may stay. The count is exact, so a
+ * new copy of an allowed line (the same text at another site) fails until someone reviews it
+ * (R-58 F2a: one `file|literal` row used to cover every site with that text).
+ */
+interface LedgerRow {
+  sites: number;
+  reason: string;
+}
+
+/** `file|literal` (interpolations shown as `${}`, cut at 80 characters) -> its reviewed row. */
+const ALLOWED: Readonly<Record<string, LedgerRow>> = {
+  'billing/proration.service.ts|Unknown plan "${}"': {
+    sites: 1,
+    reason: "after `if (!def)`: echoes a key the caller sent that no published plan holds",
+  },
+  'billing/subscription-mutation.service.ts|Unknown plan "${}"': {
+    sites: 3,
+    reason:
+      "subscribe, upgrade and downgrade, each after `if (!def)`: echoes a key the caller sent that no published plan holds. The off-ladder case (a published key outside PLAN_KEYS) reads OFF_LADDER_PLAN_MESSAGE",
+  },
   'platform-admin/platform-admin.service.ts|Plan "${}" is not in the published plan catalog — publish it before assigning te':
-    "super-admin console text (platform-admin routes); operators work in plan keys",
-  'platform-admin/platform-admin.service.ts|Unknown plan key "${}"':
-    "super-admin console text (platform-admin routes); operators work in plan keys",
-  "platform-admin/platform-admin.service.ts|Plan ${} not found in the current catalog version":
-    "super-admin console text (platform-admin routes); operators work in plan keys",
+    {
+      sites: 1,
+      reason: "super-admin console text (platform-admin routes); operators work in plan keys",
+    },
+  'platform-admin/platform-admin.service.ts|Unknown plan key "${}"': {
+    sites: 1,
+    reason: "super-admin console text (platform-admin routes); operators work in plan keys",
+  },
+  "platform-admin/platform-admin.service.ts|Plan ${} not found in the current catalog version": {
+    sites: 1,
+    reason: "super-admin console text (platform-admin routes); operators work in plan keys",
+  },
 };
 
 /** Offenders that are named follow-ups (not fixed here). Each needs its own reworded text. */
-const KNOWN_OPEN: Readonly<Record<string, string>> = {
+const KNOWN_OPEN: Readonly<Record<string, LedgerRow>> = {
   "billing/platform-pricing.service.ts|No monthly price is resolvable for tenant ${} on plan ${}.":
-    "operator wording (names the tenant id too) that a custom-plan checkout can surface; reword with the P-45 screens",
-  "billing/platform-pricing.service.ts|No price is resolvable for tenant ${} on plan ${}.":
-    "operator wording (names the tenant id too) that a custom-plan checkout can surface; reword with the P-45 screens",
+    {
+      sites: 1,
+      reason:
+        "W-1341: operator wording (names the tenant id too) that a custom-plan checkout can surface",
+    },
+  "billing/platform-pricing.service.ts|No price is resolvable for tenant ${} on plan ${}.": {
+    sites: 1,
+    reason:
+      "W-1341: operator wording (names the tenant id too) that a custom-plan checkout can surface",
+  },
 };
 
 const PLAN_KEY_EXPR = /plankey/i;
@@ -89,27 +118,39 @@ function literalId(literal: string): string {
   return body.slice(0, 80);
 }
 
-/** Every literal in `text` that prints a plan-key expression not passed through a name helper. */
-function rawPlanKeyLiterals(text: string): string[] {
-  const out: string[] = [];
-  for (const literal of text.match(TEMPLATE_LITERAL) ?? []) {
+/**
+ * Every literal in `text` that prints a plan-key expression not passed through a name helper, as
+ * [its offset in the file, its id]. The offset lets two scans of one literal count once.
+ */
+function rawPlanKeyLiterals(text: string, base: number): Array<[number, string]> {
+  const out: Array<[number, string]> = [];
+  for (const m of text.matchAll(TEMPLATE_LITERAL)) {
+    const literal = m[0];
     const raw = interpolations(literal).some((e) => PLAN_KEY_EXPR.test(e) && !NAMED_EXPR.test(e));
-    if (raw) out.push(literalId(literal));
+    if (raw) out.push([base + (m.index ?? 0), literalId(literal)]);
   }
   return out;
 }
 
-/** The scanner over one file's text; exported shape kept local so the fixtures below prove it. */
+/** The scanner over one file's text: one id per site (the same text at two sites gives two). */
 function scanSource(rel: string, source: string): string[] {
-  const found = new Set<string>();
+  const sites = new Map<number, string>();
   if (rel.endsWith(".templates.ts")) {
-    for (const id of rawPlanKeyLiterals(source)) found.add(`${rel}|${id}`);
+    for (const [at, id] of rawPlanKeyLiterals(source, 0)) sites.set(at, `${rel}|${id}`);
   }
   for (const m of source.matchAll(EXCEPTION_CALL)) {
     const open = (m.index ?? 0) + m[0].length - 1;
-    for (const id of rawPlanKeyLiterals(callText(source, open))) found.add(`${rel}|${id}`);
+    for (const [at, id] of rawPlanKeyLiterals(callText(source, open), open)) {
+      sites.set(at, `${rel}|${id}`);
+    }
   }
-  return [...found];
+  return [...sites.entries()].sort((a, b) => a[0] - b[0]).map(([, id]) => id);
+}
+
+function countIds(ids: readonly string[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const id of ids) counts[id] = (counts[id] ?? 0) + 1;
+  return counts;
 }
 
 function scanTree(): string[] {
@@ -122,17 +163,23 @@ function scanTree(): string[] {
 }
 
 describe("SA-1254 V7: no customer text prints a raw plan key (P-45)", () => {
-  const offenders = scanTree();
+  const found = countIds(scanTree());
+  const ledger: Record<string, number> = {};
+  for (const [id, row] of [...Object.entries(ALLOWED), ...Object.entries(KNOWN_OPEN)]) {
+    ledger[id] = row.sites;
+  }
 
   it("every exception message and email template names a plan through planDisplayName", () => {
-    const unexplained = offenders.filter((id) => !(id in ALLOWED) && !(id in KNOWN_OPEN));
+    const unexplained = Object.entries(found)
+      .filter(([id, n]) => n > (ledger[id] ?? 0))
+      .map(([id, n]) => `${id} (${n} sites, ledger ${ledger[id] ?? 0})`);
     expect(unexplained).toEqual([]);
   });
 
-  it("the ledger only shrinks: every ALLOWED and KNOWN_OPEN entry still matches a line", () => {
-    const stale = [...Object.keys(ALLOWED), ...Object.keys(KNOWN_OPEN)].filter(
-      (id) => !offenders.includes(id),
-    );
+  it("the ledger only shrinks: every ALLOWED and KNOWN_OPEN row matches its exact site count", () => {
+    const stale = Object.entries(ledger)
+      .filter(([id, n]) => (found[id] ?? 0) < n)
+      .map(([id, n]) => `${id} (${found[id] ?? 0} sites, ledger ${n})`);
     expect(stale).toEqual([]);
   });
 
@@ -149,6 +196,17 @@ describe("SA-1254 V7: no customer text prints a raw plan key (P-45)", () => {
       ].join("\n");
       expect(scanSource("a.ts", src)).toEqual([
         'a.ts|Plan "${}" is available by invitation only — contact us.',
+      ]);
+    });
+
+    it("counts the same text at two sites twice (R-58 F2a)", () => {
+      const src = [
+        'if (!def) throw new BadRequestException(`Unknown plan "${planKey}"`);',
+        'if (!toKey) throw new BadRequestException(`Unknown plan "${planKey}"`);',
+      ].join("\n");
+      expect(scanSource("c.ts", src)).toEqual([
+        'c.ts|Unknown plan "${}"',
+        'c.ts|Unknown plan "${}"',
       ]);
     });
 

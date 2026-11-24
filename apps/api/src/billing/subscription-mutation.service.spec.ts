@@ -2606,7 +2606,10 @@ describe("SubscriptionMutationService — an unrankable plan key is refused at t
     });
     // The definition exists, so the "Unknown plan" catalog check passes; only the rank check
     // catches it — `-1 >= planRank(BUSINESS)` is false, so the schedule used to be written.
-    await expect(svc.downgrade("t1", "PRO", [], "admin")).rejects.toThrow(/Unknown plan/);
+    // P-45 (R-58 F1): the off-ladder refusal prints no key.
+    await expect(svc.downgrade("t1", "PRO", [], "admin")).rejects.toThrow(
+      "This plan can't be chosen here — contact support.",
+    );
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
   });
 
@@ -4384,20 +4387,51 @@ describe("SubscriptionMutationService — plan refusals name the plan, never the
     expect((err as Error).message).not.toContain("LITE");
   });
 
-  it("subscribe() to a published key outside the ladder prints no key", async () => {
+  function offLadderCatalog(): ReturnType<typeof catalog> {
     const v = catalog();
-    const offLadder = {
+    return {
       ...v,
       definitions: [
         { planKey: "PRO", name: "Bad row", monthlyPrice: 199, isCustom: false, seatsIncluded: 1 },
         ...v.definitions,
       ],
     } as ReturnType<typeof catalog>;
-    const { svc } = make({ catalog: offLadder });
+  }
+  const OFF_LADDER = "This plan can't be chosen here — contact support.";
+
+  it("subscribe() to a published key outside the ladder prints no key", async () => {
+    const { svc } = make({ catalog: offLadderCatalog() });
     const err = await svc
       .subscribe("t1", { planKey: "PRO", cycle: "MONTHLY" })
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(BadRequestException);
-    expect((err as Error).message).toBe("This plan can't be chosen here — contact support.");
+    expect((err as Error).message).toBe(OFF_LADDER);
+  });
+
+  // R-58 F1: the quote (POST /billing/quote) and the downgrade hit the same off-ladder case and
+  // printed `Unknown plan "PRO"`. Red at 8153d75368.
+  it("planChangePreview() (the quote) to a published key outside the ladder prints no key", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: offLadderCatalog(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const err = await svc.planChangePreview("t1", "PRO", "MONTHLY").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(OFF_LADDER);
+  });
+
+  it("downgrade() to a published key outside the ladder prints no key, and writes nothing", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx } = make({
+      catalog: offLadderCatalog(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const err = await svc.downgrade("t1", "PRO", [], "admin").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(OFF_LADDER);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
   });
 });

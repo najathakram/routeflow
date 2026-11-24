@@ -1129,7 +1129,8 @@ export class SubscriptionMutationService {
     // on the paths that actually RANK. Refusing above the branch took the whole /billing/quote
     // down for every tenant on that card, including the fresh-subscribe path, which never ranks
     // and prices the definition correctly from the published catalog.
-    if (!toKey) throw new BadRequestException(`Unknown plan "${planKey}"`);
+    // P-45 (R-58 F1): this is the off-ladder case, so the refusal prints no key.
+    if (!toKey) throw new BadRequestException(OFF_LADDER_PLAN_MESSAGE);
 
     // Same-plan compares NORMALIZED keys on both sides: a tenant whose stored key is a legacy
     // alias (v7 BUSINESS) IS on the plan the catalog now lists as SCALE, so re-picking it is
@@ -1745,7 +1746,8 @@ export class SubscriptionMutationService {
     // every plan and schedules a downgrade the cron applies with a NULL base price (free
     // tenant). Refuse it here rather than letting -1 read as "the lowest plan".
     if (planRank(targetPlanKey) < 0) {
-      throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);
+      // P-45 (R-58 F1): the off-ladder case, so the refusal prints no key.
+      throw new BadRequestException(OFF_LADDER_PLAN_MESSAGE);
     }
     // S5/WP3a: same invite-only gate as subscribe()/upgrade() — a downgrade landing ON LITE is
     // still a self-service pick of an invite-only plan and must be refused the same way.
