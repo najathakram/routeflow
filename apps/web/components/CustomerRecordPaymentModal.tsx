@@ -63,6 +63,8 @@ export interface CustomerRecordPaymentModalProps {
    * every row stays editable. An id that is not among the open invoices is ignored (no amount is invented).
    */
   focusInvoiceId?: string;
+  /** P-30 Follow up: pay only these invoices (the rows the person ticked), oldest first. */
+  invoiceIds?: string[];
 }
 
 /**
@@ -81,6 +83,7 @@ export function CustomerRecordPaymentModal({
   onClose,
   onSuccess,
   focusInvoiceId,
+  invoiceIds,
 }: CustomerRecordPaymentModalProps) {
   const { toast } = useToast();
   const router = useRouter();
@@ -132,7 +135,10 @@ export function CustomerRecordPaymentModal({
   // IS the pre-fill allocation order.
   const openInvoices = React.useMemo(() => {
     const rows = (invoicesData?.data ?? []).filter(
-      (inv) => isOpenInvoiceStatus(inv.status) && (inv.balanceDue ?? 0) > 0.001,
+      (inv) =>
+        isOpenInvoiceStatus(inv.status) &&
+        (inv.balanceDue ?? 0) > 0.001 &&
+        (!invoiceIds || invoiceIds.includes(inv.id)),
     );
     const oldestFirst = [...rows].sort((a, b) => {
       const ad = a.issueDate ?? "";
@@ -142,7 +148,7 @@ export function CustomerRecordPaymentModal({
     });
     const focus = focusInvoiceId ? oldestFirst.find((inv) => inv.id === focusInvoiceId) : undefined;
     return focus ? [focus, ...oldestFirst.filter((inv) => inv !== focus)] : oldestFirst;
-  }, [invoicesData, focusInvoiceId]);
+  }, [invoicesData, focusInvoiceId, invoiceIds]);
 
   // Row 661: the amount starts at the focused invoice's balance, once, when it first loads (a later edit is the user's).
   const focusSeeded = React.useRef(false);
