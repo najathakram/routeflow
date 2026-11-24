@@ -9,7 +9,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   HEAP_MB,
   classifyWorkerExit,
@@ -18,6 +18,7 @@ import {
   evaluate,
   lowerBaseline,
 } from "./lib/check-types-ratchet-core.mjs";
+import { RATCHET_SLOT_LABEL, needsHeavySlot } from "./lib/check-types-slot.mjs";
 
 const API_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG = path.join(API_DIR, "tsconfig.spec.json");
@@ -29,6 +30,23 @@ if (!["check", "--lower-baseline", "--init-baseline"].includes(mode)) {
     `check-types (api): unknown argument "${mode}" (expected --lower-baseline or --init-baseline).`,
   );
   process.exit(2);
+}
+
+// Queue behind the machine-wide heavy slot (a 12 GB heap peaks outside it otherwise). Not in CI, not with RF_HEAVY_SLOT=off, and not
+// when a holder (the pre-push verify) already exports RF_HEAVY_SLOT_TOKEN: then this process just runs. Otherwise re-run this same
+// script inside the slot; the child inherits the token, so it takes the plain path below.
+if (needsHeavySlot(process.env)) {
+  const { spawnAsync, withHeavySlot } = await import(
+    pathToFileURL(path.resolve(API_DIR, "../../scripts/lib/heavy-slot.mjs")).href
+  );
+  const code = await withHeavySlot({ label: RATCHET_SLOT_LABEL }, async () => {
+    const r = await spawnAsync(process.execPath, [
+      fileURLToPath(import.meta.url),
+      ...process.argv.slice(2),
+    ]);
+    return r.status ?? 1;
+  });
+  process.exit(code);
 }
 
 const heapFlag = `--max-old-space-size=${HEAP_MB}`;

@@ -20,6 +20,7 @@ import os, { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { afterRun, main as cliMain } from "./heavy-slot.mjs";
+import { needsHeavySlot } from "../apps/api/scripts/lib/check-types-slot.mjs";
 import {
   DEFAULT_SLOTS,
   GRANT_RULE,
@@ -39,6 +40,7 @@ import {
   parseCappedMax,
   inspectSlotsFile,
   inspectMaxCpuFile,
+  inspectMaxMemFile,
   readSlotsFile,
   cpuPctFromTimes,
   loadOverReason,
@@ -807,7 +809,7 @@ const t=setInterval(()=>{let n=[];try{n=fs.readdirSync(q)}catch{}if(n.length||Da
 {
   // The 'exit' path: a job that calls process.exit() mid-hold still releases and records.
   const dir = mkTmp();
-  const code = `import(${JSON.stringify(LIB_URL)}).then(m=>m.withHeavySlot({label:"exiter",branch:"t",dir:${JSON.stringify(dir)},env:{},pollMs:10},async()=>{process.exit(3)}))`;
+  const code = `import(${JSON.stringify(LIB_URL)}).then(m=>m.withHeavySlot({label:"exiter",branch:"t",dir:${JSON.stringify(dir)},env:{},pollMs:10,sampleLoad:async()=>({cpuPct:0,memPct:0})},async()=>{process.exit(3)}))`;
   const r = spawnSync(process.execPath, ["-e", code], { env: cleanEnv(), encoding: "utf8" });
   check(
     "C3 process.exit() inside the job releases the lock and records the exit code",
@@ -2143,6 +2145,150 @@ check(
       /max-cpu file: none/.test(st(null)),
     ],
     [true, true, true],
+  );
+}
+
+{
+  // S: a machine-wide <dir>/max-mem file (same format and rules as max-cpu) overrides every waiter's own memory cap,
+  // re-read on every poll, so a change reaches the waiters that are already queued (measured 2026-11-24: ten pushes
+  // kept their start-time 80% after the owner raised the cap to 85).
+  const dir = mkTmp();
+  const f = path.join(dir, "max-mem");
+  const read = (txt) => {
+    if (txt === null) rmSync(f, { force: true });
+    else writeFileSync(f, txt);
+    return inspectMaxMemFile(dir);
+  };
+  check(
+    "S1 inspectMaxMemFile: valid, invalid and absent (same rules as max-cpu)",
+    [read("85"), read(" 95\n"), read("96"), read("0"), read("8.5"), read("hot"), read(null)],
+    [
+      { state: "ok", value: 85 },
+      { state: "ok", value: 95 },
+      { state: "invalid", reason: "96 is outside 1..95" },
+      { state: "invalid", reason: "0 is outside 1..95" },
+      { state: "invalid", reason: 'not a plain decimal integer: "8.5"' },
+      { state: "invalid", reason: 'not a plain decimal integer: "hot"' },
+      { state: "absent" },
+    ],
+  );
+  // S2: the file overrides the waiter's own cap (env 80), a bad or absent file falls back to it with ONE warning.
+  const attempt = async (txt) => {
+    const d = mkTmp();
+    if (txt !== null) writeFileSync(path.join(d, "max-mem"), txt);
+    const lines = [];
+    let ran = false;
+    await withHeavySlot(
+      {
+        label: "mem",
+        branch: "b",
+        dir: d,
+        env: {},
+        ...FAST,
+        maxWaitMs: 300,
+        maxCpuPct: 100,
+        maxMemPct: 80,
+        log: (m) => lines.push(m),
+        sampleLoad: async () => ({ cpuPct: 10, memPct: 84 }),
+      },
+      async () => void (ran = true),
+    ).catch(() => {});
+    return { ran, warn: lines.filter((l) => l.includes("max-mem")).length };
+  };
+  const ok = await attempt("85");
+  const bad = await attempt("junk");
+  const none = await attempt(null);
+  check(
+    "S2 the file's 85 lets 84% memory start; a bad file keeps the own 80 with one warning; no file keeps 80 silently",
+    [ok.ran, bad.ran, bad.warn, none.ran, none.warn],
+    [true, false, 1, false, 0],
+  );
+  // S3: a change made WHILE a waiter is queued is picked up on its next poll.
+  const d = mkTmp();
+  let ran = false;
+  const w = withHeavySlot(
+    {
+      label: "mid",
+      branch: "b",
+      dir: d,
+      env: {},
+      ...FAST,
+      ...NO_LOG,
+      maxCpuPct: 100,
+      maxMemPct: 80,
+      maxWaitMs: 4000,
+      sampleLoad: async () => ({ cpuPct: 10, memPct: 84 }),
+    },
+    async () => void (ran = true),
+  ).catch(() => {});
+  await sleep(120);
+  const before = ran;
+  writeFileSync(path.join(d, "max-mem"), "90");
+  const after = await until(() => ran, 3000);
+  await w;
+  check(
+    "S3 raising max-mem while a waiter is queued frees it within a poll",
+    [before, after],
+    [false, true],
+  );
+  // S4: status prints the max-mem file: value, invalid, none.
+  const d4 = mkTmp();
+  const st = (txt) => {
+    if (txt === null) rmSync(path.join(d4, "max-mem"), { force: true });
+    else writeFileSync(path.join(d4, "max-mem"), txt);
+    return formatStatus(d4);
+  };
+  check(
+    "S4 status names the max-mem file: value, invalid, none",
+    [
+      /max-mem file: .* = 85%/.test(st("85")),
+      /max-mem file: .*INVALID/.test(st("x")),
+      /max-mem file: none/.test(st(null)),
+    ],
+    [true, true, true],
+  );
+}
+{
+  // T: the api type ratchet takes a heavy slot (label api-ratchet) unless it is already inside one.
+  const bare = {};
+  check(
+    "T1 needsHeavySlot: bare env yes; CI, RF_HEAVY_SLOT=off and an inherited token no",
+    [
+      needsHeavySlot(bare),
+      needsHeavySlot({ CI: "true" }),
+      needsHeavySlot({ RF_HEAVY_SLOT: "off" }),
+      needsHeavySlot({ RF_HEAVY_SLOT_TOKEN: "abc" }),
+    ],
+    [true, false, false, false],
+  );
+  // T2: inside a held slot (the pre-push verify) the ratchet path does not take a second one: the env the holder
+  // exports says no slot is needed, and a withHeavySlot call with that token is re-entrant (one lock, no deadlock).
+  const dir = mkTmp();
+  let inner = null;
+  await withHeavySlot(
+    { label: "push", branch: "b", dir, env: {}, ...FAST, ...NO_LOG },
+    async (h) => {
+      const env = { RF_HEAVY_SLOT_TOKEN: h.token };
+      const need = needsHeavySlot(env);
+      let reentrant = null;
+      await withHeavySlot(
+        { label: "api-ratchet", branch: "b", dir, env, ...FAST, ...NO_LOG },
+        async (r) => {
+          reentrant = r.reentrant === true;
+        },
+      );
+      inner = {
+        need,
+        reentrant,
+        locks: [0, 1].filter((i) => existsSync(lockFile(dir, i))).length,
+        queue: queued(dir).length,
+      };
+    },
+  );
+  check(
+    "T2 inside a held slot: no second acquire (needsHeavySlot false, inner call re-entrant, one lock, empty queue)",
+    inner,
+    { need: false, reentrant: true, locks: 1, queue: 0 },
   );
 }
 
