@@ -1,9 +1,13 @@
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -17,7 +21,34 @@ export enum StockStatusFilter {
   OUT_OF_STOCK = "OUT_OF_STOCK",
 }
 
+/** The most ids one `GET /products?ids=` reads (same cap as the portal-visibility ids). A caller with more sends several requests. */
+export const PRODUCT_IDS_QUERY_MAX = 200;
+
 export class ListProductsDto {
+  /**
+   * P-21 (573): read exactly these products, comma-separated. 1..200 unique UUIDs; it ignores `page`, applies no
+   * default `isActive` (a deactivated product on an old PO must still show its name) and, like every list read,
+   * only ever sees the caller's tenant: an id from another tenant is simply absent.
+   */
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === "string"
+      ? [
+          ...new Set(
+            value
+              .split(",")
+              .map((v) => v.trim())
+              .filter((v) => v !== ""),
+          ),
+        ]
+      : value,
+  )
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(PRODUCT_IDS_QUERY_MAX)
+  @IsUUID("all", { each: true })
+  ids?: string[];
+
   @IsOptional() @IsString() search?: string;
   /** Scanned code for the resolve ladder's fallback rung: expanded server-side
    *  via normalizeScanCode so the contains-search is decoder-independent
