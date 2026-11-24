@@ -15,6 +15,7 @@ const mockOpen = jest.fn();
 jest.mock("@/lib/api/platform-pricing", () => ({
   ...jest.requireActual("@/lib/api/platform-pricing"),
   fetchTenantPricing: (id: string) => mockFetchPricing(id),
+  fetchOpenPaymentLink: () => Promise.resolve(null),
   createTenantCheckout: (...a: unknown[]) => mockCheckout(...a),
 }));
 jest.mock("@/lib/api/platform-catchup", () => ({
@@ -134,7 +135,7 @@ describe("TenantPricingCard: the card payment link block", () => {
     await waitFor(() => expect(mockOpen).toHaveBeenCalledTimes(1));
     expect(mockOpen).toHaveBeenCalledWith(TENANT_ID, 6125);
     expect(await screen.findByText("Payment link ready")).toBeInTheDocument();
-    expect(screen.getByText("Copy it now. It can't be shown again.")).toBeInTheDocument();
+    expect(screen.queryByText("Copy it now. It can't be shown again.")).not.toBeInTheDocument();
     expect(mockCheckout).not.toHaveBeenCalled();
   });
 
@@ -240,7 +241,7 @@ describe("TenantPricingCard: the card payment link block", () => {
     expect(screen.queryByTestId("card-payment-link")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Billing interval")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("button", { name: "Create link" })).toBeInTheDocument();
     expect(mockFetchPlan).toHaveBeenCalledTimes(2);
   });

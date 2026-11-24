@@ -4,6 +4,7 @@ import { renderWithProviders, screen, waitFor, fireEvent, within } from "@/test-
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { LINE_UNDO_MS } from "./useCounterLineUndo";
+import { typeQty } from "@/test-utils/type-qty";
 
 /**
  * POS-3: per-line editing, the two-column layout, 44 px touch targets and the timed "Removed <name>. Undo" bar. The API is
@@ -95,7 +96,7 @@ async function buildCart() {
   await waitFor(() => expect(screen.getByText(/Water/)).toBeInTheDocument());
   // B1373: no one-tap piece stepper on a boxed line: open the loose-pieces field and type 3
   fireEvent.click(within(lineOf("Water")).getByRole("button", { name: /^\+ .*: add extra / }));
-  fireEvent.change(piecesField("Water"), { target: { value: "3" } });
+  typeQty(piecesField("Water"), "3");
 }
 const itemNames = () =>
   within(screen.getByRole("list", { name: "Items" }))

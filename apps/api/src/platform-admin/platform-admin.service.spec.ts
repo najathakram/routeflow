@@ -34,6 +34,7 @@ import { MeterService } from "../billing/meter.service";
 import { MrrService } from "../billing/mrr.service";
 import { FeatureOverrideService } from "../billing/feature-override.service";
 import { PlanTransitionConfigService } from "../billing/plan-transition-config.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { StripeService } from "../billing/stripe.service";
 import { fakeStripeSubscription } from "../testing/fake-stripe-subscription";
 import { ScheduledPriceChangeService } from "../billing/scheduled-price-change";
@@ -2161,6 +2162,47 @@ describe("PlatformAdminService — audit provenance", () => {
       expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
       expect(billingEventService.emit).not.toHaveBeenCalled();
     });
+
+    it("E6: a refused plan change (cancellation pending) leaves the open payment link alone", async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const expire = jest.fn().mockResolvedValue({});
+      (stripeMock as any).client = {
+        checkout: {
+          sessions: {
+            list: jest.fn().mockResolvedValue({
+              data: [
+                {
+                  id: "cs_open",
+                  status: "open",
+                  url: "https://pay.test/1",
+                  created: now,
+                  expires_at: now + 3600,
+                  metadata: { tenantId: TENANT_ID },
+                  subscription: null,
+                },
+              ],
+              has_more: false,
+            }),
+            expire,
+          },
+        },
+      };
+      (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+        planKey: "STARTER",
+        basePriceSnapshot: 99,
+        priceOverrideMonthly: null,
+        discount: null,
+        cycle: "MONTHLY",
+        periodStart,
+        periodEnd,
+        cancelAtPeriodEnd: true,
+        stripeCustomerId: "cus_1",
+      });
+      await expect(
+        service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID),
+      ).rejects.toThrow(/cancellation pending/i);
+      expect(expire).not.toHaveBeenCalled();
+    });
   });
 
   // FINDING-2 (MUST-FIX, money, round 2 review): the scheduling branch guarded periodEnd but not
@@ -2321,6 +2363,53 @@ describe("PlatformAdminService — audit provenance", () => {
         { family: "tenant-price", key: TENANT_ID, mode: "wait", waitMs: 20_000 },
         expect.any(Function),
       );
+    });
+
+    describe("W-1338 L14: the open payment link (E5)", () => {
+      const now = Math.floor(Date.now() / 1000);
+      const open = () => {
+        const expire = jest.fn().mockResolvedValue({});
+        stripe.client = {
+          ...stripe.client,
+          checkout: {
+            sessions: {
+              list: jest.fn().mockResolvedValue({
+                data: [
+                  {
+                    id: "cs_open",
+                    status: "open",
+                    url: "https://pay.test/1",
+                    created: now,
+                    expires_at: now + 3600,
+                    metadata: { tenantId: TENANT_ID },
+                    subscription: null,
+                  },
+                ],
+                has_more: false,
+              }),
+              expire,
+            },
+          },
+        };
+        return expire;
+      };
+
+      it("E5: a plan move expires the open session before the first Stripe write", async () => {
+        arrange({ from: "GROWTH", fromKey: "GROWTH", sub: { stripeCustomerId: "cus_1" } });
+        const expire = open();
+        await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+        expect(expire).toHaveBeenCalledWith("cs_open");
+        expect(expire.mock.invocationCallOrder[0]).toBeLessThan(
+          stripe.updateSubscription.mock.invocationCallOrder[0],
+        );
+      });
+
+      it("E5: re-saving the same plan keeps the open session", async () => {
+        arrange({ from: "SCALE", fromKey: "SCALE", sub: { stripeCustomerId: "cus_1" } });
+        const expire = open();
+        await service.updatePlan(TENANT_ID, { plan: "PROFESSIONAL" } as any, ADMIN_ID);
+        expect(expire).not.toHaveBeenCalled();
+      });
     });
 
     it("an UPGRADE on a Stripe tenant pushes the new plan price with create_prorations, once, before the local write", async () => {
@@ -3011,6 +3100,69 @@ describe("PlatformAdminService — audit provenance", () => {
       expect(restore.mock.invocationCallOrder[0]).toBeLessThan(
         billingServiceMock.pushResolvedPriceToStripe.mock.invocationCallOrder[0],
       );
+    });
+
+    // R-88 F6 / W-1338 L14: the fee save closes the open payment link BEFORE anything is sent or written.
+    describe("open payment link", () => {
+      const now = Math.floor(Date.now() / 1000);
+      const arrangeSessions = (data: unknown[]) => {
+        const expire = jest.fn().mockResolvedValue({});
+        (stripeMock as any).client = {
+          checkout: {
+            sessions: { list: jest.fn().mockResolvedValue({ data, has_more: false }), expire },
+          },
+        };
+        (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
+          ...preRow,
+          stripeCustomerId: "cus_1",
+        });
+        return expire;
+      };
+      const session = (over: Record<string, unknown>) => ({
+        id: "cs_open",
+        status: "open",
+        url: "https://pay.test/1",
+        created: now,
+        expires_at: now + 3600,
+        metadata: { tenantId: TENANT_ID },
+        subscription: null,
+        ...over,
+      });
+
+      it("expires the open session before the price is pushed to Stripe", async () => {
+        const expire = arrangeSessions([session({})]);
+        await service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID);
+        expect(expire).toHaveBeenCalledWith("cs_open");
+        expect(expire.mock.invocationCallOrder[0]).toBeLessThan(
+          billingServiceMock.pushResolvedPriceToStripe.mock.invocationCallOrder[0],
+        );
+      });
+
+      it("refuses while a paid session is not applied, and sends and saves nothing", async () => {
+        const expire = arrangeSessions([
+          session({ id: "cs_paid", status: "complete", subscription: "sub_new" }),
+        ]);
+        await expect(
+          service.updateTenantPriceOverride(TENANT_ID, { monthly: 80 } as any, ADMIN_ID),
+        ).rejects.toMatchObject({
+          response: { code: API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS },
+        });
+        expect(expire).not.toHaveBeenCalled();
+        expect(billingServiceMock.pushResolvedPriceToStripe).not.toHaveBeenCalled();
+        expect((prisma as any).tenantSubscription.upsert).not.toHaveBeenCalled();
+      });
+
+      it("E1: clearing the fee on a plan the catalog cannot price is refused and expires nothing", async () => {
+        const expire = arrangeSessions([session({})]);
+        platformPricingService.resolveCatalogPricing = jest
+          .fn()
+          .mockRejectedValue(new Error("no catalog price")) as any;
+        await expect(
+          service.updateTenantPriceOverride(TENANT_ID, { monthly: null } as any, ADMIN_ID),
+        ).rejects.toThrow("no catalog price");
+        expect(expire).not.toHaveBeenCalled();
+        expect(billingServiceMock.pushResolvedPriceToStripe).not.toHaveBeenCalled();
+      });
     });
 
     it("review: ... and a restore that FAILS stops the override before anything else is sent or saved", async () => {

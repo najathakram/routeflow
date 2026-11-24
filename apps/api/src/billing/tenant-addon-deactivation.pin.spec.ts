@@ -5,7 +5,7 @@
  * write `active: false` on `tenantAddon` is a path where a person chose it:
  *   - `addon.service.ts#disableAddon`                      (the platform admin switched it off)
  *   - `subscription-mutation.service.ts#disableAddonLocked` (the tenant switched it off)
- *   - `subscription-mutation.service.ts#subscribe`          (the tenant's own pick dropped it: `toDisable`)
+ *   - `subscription-mutation.service.ts#subscribeLocked`    (the tenant's own pick dropped it: `toDisable`)
  * `addon-inclusion.ts` (an included add-on stops BILLING, never stops being ON) must never appear here.
  *
  * Billing state (`priceSnapshot`, `stripeItemId`) and access state (`active`) are separate fields.
@@ -38,7 +38,7 @@ export const DEACTIVATION_ALLOWLIST: readonly { file: string; fn: string; reason
   },
   {
     file: "billing/subscription-mutation.service.ts",
-    fn: "subscribe",
+    fn: "subscribeLocked",
     reason: "the tenant's own plan pick dropped it (toDisable)",
   },
 ];
