@@ -57,11 +57,15 @@ describeDb("W-1316 PR-1 - the last-paid cap through the real query, real Postgre
   });
 
   type Line = {
-    productId: string;
+    productId: string | null;
     qty: number;
     subtotal: number;
     boxes?: number | null;
     unitsPerBox?: number | null;
+    systemKind?: "NSF_FEE" | null;
+    description?: string;
+    /** Seconds after the invoice row's createdAt; default: the line's index. */
+    at?: number;
   };
 
   const newProduct = async (price: number, unitsPerBox: number | null) => {
@@ -79,7 +83,49 @@ describeDb("W-1316 PR-1 - the last-paid cap through the real query, real Postgre
   };
 
   /** A customer, and ONE PAID invoice 200 days old (outside the 90-day window) holding `items`. */
-  const soldTo = async (items: Line[]) => {
+  const soldTo = async (
+    items: Line[],
+    o: { discount?: number; daysAgo?: number; customerId?: string } = {},
+  ) => {
+    const cid = o.customerId ?? (await newCustomer());
+    const net = items.reduce((t, l) => t + l.subtotal, 0) - (o.discount ?? 0);
+    const invoice = await raw.invoice.create({
+      data: {
+        tenantId,
+        customerId: cid,
+        orderId: null,
+        invoiceNumber: `INV-W1316-${run}-${++seq}`,
+        status: "PAID" as any,
+        subtotal: items.reduce((t, l) => t + l.subtotal, 0).toFixed(2),
+        discount: (o.discount ?? 0).toFixed(2),
+        taxAmount: "0.00",
+        total: net.toFixed(2),
+        issueDate: new Date(Date.now() - (o.daysAgo ?? 200) * 86_400_000),
+      },
+    });
+    invoiceIds.push(invoice.id);
+    for (const [i, l] of items.entries()) {
+      await raw.invoiceItem.create({
+        data: {
+          createdAt: new Date(invoice.createdAt.getTime() + (l.at ?? i) * 1000),
+          tenantId,
+          invoiceId: invoice.id,
+          productId: l.productId,
+          description: l.description ?? "Widget",
+          qty: l.qty,
+          unitPrice: (l.subtotal / l.qty).toFixed(2),
+          subtotal: l.subtotal.toFixed(2),
+          taxRate: "0",
+          boxes: l.boxes ?? null,
+          unitsPerBox: l.unitsPerBox ?? null,
+          systemKind: l.systemKind ?? null,
+        },
+      });
+    }
+    return cid;
+  };
+  /** A fresh customer (its own user). */
+  const newCustomer = async () => {
     const u = await raw.user.create({
       data: {
         email: `cap-${run}-${++seq}@example.test`,
@@ -93,37 +139,6 @@ describeDb("W-1316 PR-1 - the last-paid cap through the real query, real Postgre
       data: { userId: u.id, businessName: `acme cap ${seq}`, contactName: "Cap Tester", tenantId },
     });
     customerIds.push(c.id);
-    const net = items.reduce((t, l) => t + l.subtotal, 0);
-    const invoice = await raw.invoice.create({
-      data: {
-        tenantId,
-        customerId: c.id,
-        orderId: null,
-        invoiceNumber: `INV-W1316-${run}-${++seq}`,
-        status: "PAID" as any,
-        subtotal: net.toFixed(2),
-        taxAmount: "0.00",
-        total: net.toFixed(2),
-        issueDate: new Date(Date.now() - 200 * 86_400_000),
-      },
-    });
-    invoiceIds.push(invoice.id);
-    for (const l of items) {
-      await raw.invoiceItem.create({
-        data: {
-          tenantId,
-          invoiceId: invoice.id,
-          productId: l.productId,
-          description: "Widget",
-          qty: l.qty,
-          unitPrice: (l.subtotal / l.qty).toFixed(2),
-          subtotal: l.subtotal.toFixed(2),
-          taxRate: "0",
-          boxes: l.boxes ?? null,
-          unitsPerBox: l.unitsPerBox ?? null,
-        },
-      });
-    }
     return c.id;
   };
 
@@ -212,5 +227,64 @@ describeDb("W-1316 PR-1 - the last-paid cap through the real query, real Postgre
     const p = await newProduct(12, null);
     const c = await soldTo([{ productId: p, qty: 1, subtotal: 10 }]);
     expect(await quote(c, p, 1)).toEqual({ subtotal: 10, priceSource: "SOURCE_INVOICE" });
+  }, 30_000);
+
+  const LEGACY_NSF = "NSF fee — returned check 1042";
+
+  it("N1 (description): a legacy NSF row (no systemKind) on an invoice with a 10.00 discount is no goods: 1 back credits 9.00, never 9.20", async () => {
+    const p = await newProduct(12, null);
+    const c = await soldTo(
+      [
+        { productId: p, qty: 10, subtotal: 100 },
+        { productId: null, qty: 1, subtotal: 25, description: LEGACY_NSF },
+      ],
+      { discount: 10 },
+    );
+    expect(await quote(c, p, 1)).toEqual({ subtotal: 9, priceSource: "SOURCE_INVOICE" });
+  }, 30_000);
+
+  it("N2 (systemKind): a stamped NSF row whose description has no prefix is no goods either: 1 back credits 9.00", async () => {
+    const p = await newProduct(12, null);
+    const c = await soldTo(
+      [
+        { productId: p, qty: 10, subtotal: 100 },
+        {
+          productId: null,
+          qty: 1,
+          subtotal: 25,
+          systemKind: "NSF_FEE",
+          description: "Bounced payment charge",
+        },
+      ],
+      { discount: 10 },
+    );
+    expect(await quote(c, p, 1)).toEqual({ subtotal: 9, priceSource: "SOURCE_INVOICE" });
+  }, 30_000);
+
+  it("N3 (newest invoice): one customer, 10 for 60.00 300 days ago and 10 for 100.00 200 days ago: the newest prices, 1 back credits 10.00", async () => {
+    const p = await newProduct(12, null);
+    const c = await soldTo([{ productId: p, qty: 10, subtotal: 60 }], { daysAgo: 300 });
+    await soldTo([{ productId: p, qty: 10, subtotal: 100 }], { daysAgo: 200, customerId: c });
+    expect(await quote(c, p, 1)).toEqual({ subtotal: 10, priceSource: "SOURCE_INVOICE" });
+  }, 30_000);
+
+  it("N3b (newest invoice, reversed insert order): the newer 100.00 invoice is created first: still 10.00", async () => {
+    const p = await newProduct(12, null);
+    const c = await soldTo([{ productId: p, qty: 10, subtotal: 100 }], { daysAgo: 200 });
+    await soldTo([{ productId: p, qty: 10, subtotal: 60 }], { daysAgo: 300, customerId: c });
+    expect(await quote(c, p, 1)).toEqual({ subtotal: 10, priceSource: "SOURCE_INVOICE" });
+  }, 30_000);
+
+  it("N4 (items.orderBy): the lines are read in createdAt order, not insert order: the odd cent of a 0.01 discount goes to the older line (the other product's), so 10 back credit 50.00", async () => {
+    const p = await newProduct(12, null);
+    const other = await newProduct(12, null);
+    const c = await soldTo(
+      [
+        { productId: p, qty: 10, subtotal: 50, at: 2 },
+        { productId: other, qty: 10, subtotal: 50, at: 1 },
+      ],
+      { discount: 0.01 },
+    );
+    expect(await quote(c, p, 10)).toEqual({ subtotal: 50, priceSource: "SOURCE_INVOICE" });
   }, 30_000);
 });
