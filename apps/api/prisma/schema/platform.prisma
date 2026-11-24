@@ -295,6 +295,7 @@ model PlanDefinition {
   scansIncluded     Int? // null = unlimited (Enterprise)
   msgsIncluded      Int      @default(200)
   customersIncluded Int? // null = unlimited (Enterprise)
+  storesOnlineIncluded Int? // SA-1269 P-40b: null = no cap; no reader or writer yet
   featureFlags      String[] // subset of the 16 flag keys granted at this plan
   sortOrder         Int      @default(0)
 
