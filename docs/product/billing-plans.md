@@ -3,6 +3,127 @@
 _How RouteFlow sells itself as a SaaS product — plan catalog, entitlement resolution, metering,
 and the platform-admin/Stripe machinery behind it._
 
+## Pricing v14: decided, not live (2026-11-24)
+
+> **Decided is not live.** The catalog on sale is still **v13** (Starter $99, Growth $249, Scale $499,
+> Enterprise custom; `apps/api/prisma/plan-catalog-v13.definitions.ts`). Everything in this section is
+> the standing spec for the next catalog. It goes live only in the steps named in
+> `.claude/pipeline/2026-11-23-pricing-v14/plan.md`, each with the owner's go-ahead, after the
+> architect's ruling. Why plans change shape: [ADR 0005](../adr/0005-feature-based-plans.md). Which
+> feature moves which price later: [pricing-roadmap.md](pricing-roadmap.md). Whether a feature is real
+> today: [claims-register.md](claims-register.md).
+
+### Plans
+
+|                                                     | Essentials                        | Growth (recommended)                 | Pro               |
+| --------------------------------------------------- | --------------------------------- | ------------------------------------ | ----------------- |
+| Monthly                                             | $99                               | $199                                 | $349              |
+| Yearly (ten months' price)                          | $990                              | $1,990                               | $3,490            |
+| Internal plan key                                   | `CORE` (reused)                   | a new key of its own, never `GROWTH` | `ALL_IN` (reused) |
+| Orders, invoices, payments, returns, credit notes   | yes                               | yes                                  | yes               |
+| Boxes and pieces, price levels, a store's own price | yes                               | yes                                  | yes               |
+| Credit limits, statements, who's late, reports      | yes                               | yes                                  | yes               |
+| Suppliers, stock, CSV import and export             | yes                               | yes                                  | yes               |
+| Counter sales, tobacco license records              | yes                               | yes                                  | yes               |
+| Stores ordering online                              | 25 stores                         | every store                          | every store       |
+| Supplier bills and AI bill scanning                 | no                                | yes                                  | yes               |
+| Estimates and repeat invoices                       | no                                | yes                                  | yes               |
+| Analytics (margin, dead stock, days to get paid)    | no                                | yes                                  | yes               |
+| Message threads with stores and drivers             | no                                | yes                                  | yes               |
+| Tobacco filings and compliance reports              | add-on                            | add-on                               | yes               |
+| Sales rep commissions                               | add-on                            | add-on                               | yes               |
+| Forecasting (reorder points)                        | add-on                            | add-on                               | yes               |
+| Delivery routes and drivers                         | free in early access, then add-on | same                                 | yes, for good     |
+| Customers                                           | no limit                          | no limit                             | no limit          |
+| Users                                               | no limit                          | no limit                             | no limit          |
+
+A store counts toward the 25 once it is approved for ordering, whether or not it has ordered. A store
+whose access is removed stops counting.
+
+### Add-ons
+
+| Add-on                                            | Price                                                                                        | Sold on                                     | Included in          |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------- | -------------------- |
+| Every store online (lifts the 25-store allowance) | $79 a month                                                                                  | Essentials                                  | Growth, Pro          |
+| Tobacco filings                                   | $79 a month (today's price is $39)                                                           | Essentials, Growth                          | Pro                  |
+| Delivery                                          | $0 during early access; later $49 a month flat, every driver included, with 6 months' notice | Essentials, Growth                          | Pro                  |
+| Sales commissions                                 | $29 a month (free today)                                                                     | Essentials, Growth                          | Pro                  |
+| Forecasting                                       | $19 a month (unchanged)                                                                      | Essentials, Growth                          | Pro                  |
+| Extra AI scans                                    | $29 per 250; not charged at launch                                                           | Growth, Pro (Essentials has no AI scanning) | none                 |
+| Guided move-in                                    | $299 once; free for the first 50 accounts                                                    | any                                         | Pro paid yearly only |
+| Counter sales, MSRP on invoices                   | free                                                                                         | every plan                                  | every plan           |
+
+Retired for new accounts: the $50 customer pack (`CUSTOMER_PACK_100`). Never sold as add-ons: users,
+orders, invoices, customers. Recurring add-ons paid yearly cost ten months' price, like plans.
+
+### The ladder rule
+
+Three checks keep the price ladder honest. A spec in `apps/api/src/billing/` reads the catalog and
+fails the build when one stops being true (Phase 2). Today's numbers:
+
+1. **One add-on always costs less than moving up.** The step from Essentials to Growth is $100 and from
+   Growth to Pro is $150. Every recurring add-on is below the step above each plan it is sold on: $79,
+   $79, $49, $29 and $19 are all under $100, and $79, $49, $29, $19 and $29 are all under $150. Growth
+   plus filings is $278, so that buyer correctly stays on Growth.
+2. **Pro costs less than Growth plus the add-ons Pro includes.** $199 + filings $79 + delivery $49 +
+   commissions $29 + forecasting $19 = $375, and Pro is $349. The check uses delivery's **scheduled**
+   price ($49), kept in the catalog next to the $0 early-access price with its notice date. At $0 the
+   sum is $326, which is below $349, so the check would fail on our own catalog (correction 2026-11-24).
+3. **The store add-on is a bridge to Growth, on purpose.** Essentials plus every store online is $178.
+   Growth is $199: $21 more, for five features that are not sold separately. The gap must stay between
+   $1 and $25.
+
+The rule is not "a plan always costs less than its parts". That is false for Growth on purpose, and a
+test written that way would fail on our own catalog.
+
+### Trial and yearly billing
+
+The free trial is 14 days on Pro, with no card. At the end, the account picks a plan (the Phase 2
+spec says what happens to data and features on a lower plan or on no pick). Yearly billing is ten
+months' price for plans and recurring add-ons alike (`annual-price-derivation.pin.spec.ts`).
+
+### Accounts that pay today
+
+- Accounts on Starter, Growth and Scale keep every feature they have and their current price for
+  **12 months**, then get a review with **90 days' written notice**. This replaces the 2026-11-07
+  "grandfathered forever" (correction 2026-11-24).
+- Today's Growth accounts ($249, 250 customers) keep the `GROWTH` key and price and see nothing change.
+  The display name "Growth" for new sign-ups is allowed only if a pinned old-Growth account never sees
+  the $199 plan as its own plan.
+- Accounts that hold commissions free today keep them during the 12 months.
+- A per-account custom price stays as it is (an override on that account).
+- **Founding accounts** (the first 50 under the founding offer) have plan and add-on prices locked
+  for 24 months.
+- LITE (invite-only, $99) is retired for new accounts. LITE accounts move to Essentials at the same $99
+  and gain features. None loses a feature or pays more.
+
+### Decision record
+
+| Item                                                                                                             | Decided                   |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Essentials $99, Growth $199, feature split as above                                                              | 2026-11-02 and 2026-11-11 |
+| 25 stores ordering online on Essentials                                                                          | 2026-11-02                |
+| Filings $79, commissions $29, forecasting $19, AI scan pack, delivery $49 later with 6 months' notice            | 2026-11-11                |
+| Pro at $349 with delivery included for good (replaces the $299 ruling of 2026-11-11)                             | 2026-11-23                |
+| No customer limit on any plan; fair-use line in the terms                                                        | 2026-11-23                |
+| $79 "every store online" add-on on Essentials                                                                    | 2026-11-23                |
+| A store counts toward the 25 once it is approved for ordering, whether or not it has ordered                     | 2026-11-23                |
+| Recurring add-ons paid yearly cost ten months' price                                                             | 2026-11-23                |
+| Path for Pro to $449 ([pricing-roadmap.md](pricing-roadmap.md))                                                  | 2026-11-23                |
+| Guided move-in is free with Pro only when Pro is paid yearly                                                     | 2026-11-23                |
+| Essentials replaces the invite-only LITE plan; LITE accounts move to Essentials at the same $99                  | 2026-11-23                |
+| Drivers must be able to complete a stop with regulated items before Pro is sold to tobacco wholesalers with vans | 2026-11-23                |
+| These plans replace both the live customer-count plans and the 11-21 Core / All-in idea (SA-1204)                | 2026-11-24                |
+| Reuse `CORE` for Essentials and `ALL_IN` for Pro; no new enum values for them                                    | 2026-11-24                |
+| The new $199 Growth gets its own plan key; today's Growth accounts keep theirs                                   | 2026-11-24                |
+| 12 months' protection, then a review with 90 days' notice (replaces "grandfathered forever", 2026-11-07)         | 2026-11-24                |
+| Ladder check 2 uses delivery's scheduled $49, stored with its notice date                                        | 2026-11-24                |
+| The AI scan pack is sold on Growth and Pro only                                                                  | 2026-11-24                |
+| The pricing-page test pins the page to the catalog on sale, never to v14 before it is on sale                    | 2026-11-24                |
+
+Every price above is kept as one catalog value, so a later change is one line and the ladder spec
+re-checks it.
+
 ## The problem
 
 Distribution businesses are not one size. A two-van operation coming off paper books needs order
