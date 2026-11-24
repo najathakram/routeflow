@@ -198,9 +198,13 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
   });
 
   it("a year is ten months' price (billing-math annualPrice; annual-price-derivation.pin.spec.ts)", () => {
-    expect(site.yearlyMonthsBilled).toBe(10);
+    // The ten is pinned once, on the site's own constant. Each plan's yearly figure is then checked
+    // against that constant. The derivation pin allows a hand-written "monthly times ten" only in
+    // plan-price.ts.
+    const months = site.yearlyMonthsBilled;
+    expect(months).toBe(10);
     for (const [key, p] of Object.entries(site.plans)) {
-      expect(`${key} ${p.yearly}`).toBe(`${key} ${p.monthly * 10}`);
+      expect(`${key} ${p.yearly}`).toBe(`${key} ${months * p.monthly}`);
     }
   });
 
