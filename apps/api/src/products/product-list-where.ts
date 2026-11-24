@@ -25,6 +25,12 @@ export function buildProductListWhere(
   },
 ): any {
   const where: any = {};
+  // P-21: a batch read by id. Pinned to the caller's tenant here as well as by `forTenant()`, so a caller that
+  // forgets the extension still cannot read across tenants. No isActive default: see the DTO.
+  if (query.ids) {
+    where.id = { in: query.ids };
+    if (opts?.tenantId) where.tenantId = opts.tenantId;
+  }
   if (query.search) {
     where.OR = [
       { name: { contains: query.search, mode: "insensitive" } },

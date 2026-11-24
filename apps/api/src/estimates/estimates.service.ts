@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { numberYear } from "../common/number-year";
 import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
@@ -39,7 +40,13 @@ import { buildManualInvoiceLines } from "../invoices/manual-invoice-lines";
 import { loadManualLineContext, zeroExemptCategoryTax } from "../invoices/manual-invoice-context";
 import { packAtSaleByProduct, toSaleLedgerLines } from "../invoices/pack-at-sale";
 import { resolveLineUnits } from "../products/line-units";
-import { estimateConvertLineItems } from "./estimate-convert-lines";
+import {
+  estimateAcceptedOn,
+  estimateConvertLineItems,
+  stampConvertedLinePrices,
+} from "./estimate-convert-lines";
+import { loadTierBaseline } from "../invoices/invoice-line-override";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 import { NumberingService } from "../import/numbering.service";
 import {
   assertMoneyInvariantsOrThrow,
@@ -166,11 +173,9 @@ export class EstimatesService {
    * short transaction: a rollback after this call leaves a gap in the series.
    */
   private async nextEstNumber() {
-    const year = new Date().getFullYear();
-    return this.numbering.reserveNext("ESTIMATE", {
-      year,
-      tenantId: this.prisma.getTenantId() ?? undefined,
-    });
+    const tenantId = this.prisma.getTenantId() ?? undefined;
+    const year = await numberYear(this.prisma, tenantId);
+    return this.numbering.reserveNext("ESTIMATE", { year, tenantId });
   }
 
   async create(dto: CreateEstimateDto, actor: JwtPayload) {
@@ -572,6 +577,10 @@ export class EstimatesService {
   // a laundered one, so never relax voidEstimate/send/decline's exclusion set while
   // trusting this claim alone.
   async accept(id: string) {
+    // SA-1260 (W-1266): a repeat accept of an ACCEPTED quote writes nothing, so `updatedAt` (the accept date a convert
+    // stamps, estimateAcceptedOn) stays the FIRST acceptance. The claim below is unchanged for every other status.
+    const current = await this.prisma.forTenant().estimate.findFirst({ where: { id } });
+    if (current?.status === "ACCEPTED") return current;
     await this.claimTransition(
       id,
       "ACCEPTED",
@@ -605,7 +614,9 @@ export class EstimatesService {
       where: { id },
       select: {
         id: true,
+        estimateNumber: true,
         status: true,
+        updatedAt: true, // SA-1260: the accept date, read BEFORE the CONVERTED claim moves it (estimateAcceptedOn)
         customerId: true,
         subtotal: true,
         discount: true,
@@ -661,12 +672,21 @@ export class EstimatesService {
       channel: "STAFF",
     });
 
+    // W-1266 / SA-1182 K2: the customer's price TODAY and the accept date, read once, before a number is reserved.
+    const priceBaseline = await loadTierBaseline(
+      this.prisma,
+      { customerId: existing.customerId, items: existing.items ?? [] },
+      this.entitlements,
+    );
+    const acceptedOn = estimateAcceptedOn(existing, await tenantTimeZone(this.prisma));
+    const quotedReason = `Quoted on ${existing.estimateNumber}${acceptedOn ? `, accepted on ${acceptedOn}` : ""}.`;
+
     // B100/F16b: reserved BEFORE the transaction below opens (fix-round-2.md D1).
     // reserveNext commits its own short transaction, so this one never holds the
     // NumberingSequence row lock, and it is not called from inside the transaction
     // either — that would need a second pooled connection while this one is held and
     // starves the pool under concurrent mints (REG-B100-C).
-    const year = new Date().getFullYear();
+    const year = await numberYear(this.prisma, this.prisma.getTenantId());
     const invoiceNumber = await this.numbering.reserveNext("INVOICE", { year });
     return this.prisma.tenantTransaction(async (tx) => {
       // Claim before creating anything: two concurrent converts both passed the
@@ -736,6 +756,13 @@ export class EstimatesService {
       itemsData.forEach((it, idx) => {
         const pid = lines[idx].productId;
         it.msrp = pid ? (msrpMap.get(pid) ?? null) : null;
+      });
+      // W-1266 / SA-1182 K2: the quoted price is judged again by the staff-override rule against the customer's price
+      // today; a real override records why on the line. The billed price is untouched (B659).
+      stampConvertedLinePrices(itemsData, lines, productMap, {
+        ...priceBaseline,
+        reason: quotedReason,
+        actorId: actor?.sub ?? null,
       });
       const subtotal = roundMoney(linesSubtotal);
       const isTaxExempt = !!est.customer?.isTaxExempt;

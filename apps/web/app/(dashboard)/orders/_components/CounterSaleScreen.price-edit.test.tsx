@@ -4,6 +4,7 @@ import { apiClient } from "@/lib/api-client";
 import { cartTotals } from "@/lib/counter-sale";
 import { renderTill } from "@/test-utils/render-till";
 import { CounterSaleScreen } from "./CounterSaleScreen";
+import { typeQty } from "@/test-utils/type-qty";
 
 /**
  * POS-5 / SA-762r: price edit at the counter. ONE gate (`staffMay(role, "EDIT_LINE_PRICE")`: OPERATOR and TENANT_ADMIN): a
@@ -145,9 +146,7 @@ const lineOf = (name: string) =>
 const struckOf = (li: HTMLElement) => li.querySelector(".line-through");
 const addPieces = (name: string, n: number) => {
   fireEvent.click(within(lineOf(name)).getByRole("button", { name: /^\+ .*: add extra / }));
-  fireEvent.change(within(lineOf(name)).getByRole("spinbutton", { name: /^Extra / }), {
-    target: { value: String(n) },
-  });
+  typeQty(within(lineOf(name)).getByRole("spinbutton", { name: /^Extra / }), String(n));
 };
 
 /** Opens the dialog for `name`, picks a mode, types the number (and a reason) and presses Apply. */

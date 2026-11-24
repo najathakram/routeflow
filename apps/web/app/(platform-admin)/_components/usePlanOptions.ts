@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { PLAN_KEYS } from "@routeflow/types";
+import { PLAN_KEYS, PLAN_KEYS_AWAITING_CATALOG } from "@routeflow/types";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
 
 /**
@@ -22,6 +22,18 @@ export function selectablePlanKeys(
     .filter((p) => planKeys.includes(p.planKey))
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map((p) => p.planKey);
+}
+
+/**
+ * SA-1254 V2: the plan keys an admin control may offer without the catalog, i.e. PLAN_KEYS minus
+ * the invite-only LITE and minus every key no published catalog version holds yet
+ * (`PLAN_KEYS_AWAITING_CATALOG`). Also the tier preview's list, plus LITE, which an admin may preview.
+ */
+export function fallbackPlanKeys({
+  includeLite = false,
+}: { includeLite?: boolean } = {}): string[] {
+  const awaiting: readonly string[] = PLAN_KEYS_AWAITING_CATALOG;
+  return PLAN_KEYS.filter((k) => (includeLite || k !== "LITE") && !awaiting.includes(k));
 }
 
 /**
@@ -52,9 +64,10 @@ export function usePlanOptions(): PlanOptions {
 
   React.useEffect(() => {
     let cancelled = false;
-    // LITE is frozen (invite only): even the fallback never offers it.
+    // LITE is frozen (invite only): even the fallback never offers it. Nor does it offer a key no
+    // published catalog holds yet (SA-1254 V2): the server would refuse it.
     const fallback = {
-      planKeys: PLAN_KEYS.filter((k) => k !== "LITE"),
+      planKeys: fallbackPlanKeys(),
       loading: false,
       unavailable: true,
     };

@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { numberYear } from "../common/number-year";
 import {
   STOCK_TX_OPTIONS,
   lockProductsForStock,
@@ -1441,9 +1442,12 @@ export class InventoryService {
 
   // ── Purchase Orders ──
   private async nextPoNumber(
-    client: Pick<Prisma.TransactionClient, "purchaseOrder"> = this.prisma.forTenant() as never,
+    client: Pick<
+      Prisma.TransactionClient,
+      "purchaseOrder" | "tenantConfig"
+    > = this.prisma.forTenant() as never,
   ): Promise<string> {
-    const year = new Date().getFullYear();
+    const year = await numberYear(client, this.prisma.getTenantId());
     const prefix = `PO-${year}-`;
     const last = await client.purchaseOrder.findFirst({
       where: { poNumber: { startsWith: prefix } },
@@ -1834,6 +1838,8 @@ export class InventoryService {
         const outstanding = item.qtyOrdered.minus(item.qtyReceived);
         const actualQty = receivedQty;
         if (actualQty <= 0) continue;
+        // W-1318: a legacy FAMILY line must not post stock; a qty-0 line (clients send every line) is skipped above.
+        if (prod) assertSellableLines([prod]);
         // SA-1227 MEDIUM-2: a lot line is received in whole packs (pieces here, packs in the check).
         assertWholeLotReceive(
           {

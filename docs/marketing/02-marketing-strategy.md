@@ -3,6 +3,24 @@
 _Companion to [01-product-documentation.md](01-product-documentation.md). Everything here is
 constrained to features verified working on 2026-08-19._
 
+> **Source of truth (2026-11-24):** this strategy was written on 2026-08-19. The
+> [claims register](../product/claims-register.md) is the source of truth for what the product does,
+> and [04-messaging-guardrails.md](04-messaging-guardrails.md) holds the rules for public text. Where
+> this document disagrees with them, they win. Plans and prices are in
+> [billing-plans.md](../product/billing-plans.md) and [ADR 0005](../adr/0005-feature-based-plans.md).
+> Statements the register marks `partly true` or `not built` are struck through below and corrected
+> in brackets.
+
+### Corrections from the claims register (2026-11-24)
+
+| Where                                              | What this doc said                                                                       | What is true                                                                                                                                                                        | Register    |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| §0.3 Pricing                                       | Tier naming needs a decision                                                             | Settled. The catalog on sale (v13) is Starter / Growth / Scale / Enterprise by customers. Feature-based plans (Essentials, Growth, Pro) were decided on 2026-11-23 and are not live | ADR 0005    |
+| §1 pillar 2, §3 message house and differentiator 2 | Delivered-quantity billing; "invoice exactly what was delivered"                         | Partly: an open draft follows the delivery; a finalized invoice is not rebuilt                                                                                                      | A15         |
+| §1 pillar 4, §3 message house                      | License enforcement at sale and delivery                                                 | Only for categories that require a license. Tobacco does not by default. At delivery, the check is a signature and an age or ID check, not a license                                | A1, A3      |
+| §1 supporting line                                 | POD photos and signature, at-door payment with photo                                     | Phone app only. Not on the web driver screen                                                                                                                                        | A3          |
+| §6 Pricing and packaging                           | Adopt Starter / Team / Business; add-ons Buyer Portal, OCR packs, extra seats and routes | Superseded by ADR 0005. Those SKUs were retired in v11. The new plans have no seat or customer limit                                                                                | ADR 0005, C |
+
 ---
 
 ## 0. Assumptions — confirm or correct these first
@@ -36,19 +54,19 @@ Six pillars, all verified solid:
 
 1. **Orders** — scan-to-order, remembered pricing, margin guardrails, park/resume, standing
    orders, post-dispatch change requests.
-2. **Invoicing & getting paid** — order↔invoice sync, delivered-quantity billing, check
+2. **Invoicing & getting paid** — order↔invoice sync, ~~delivered-quantity billing~~ [corrected 2026-11-24: an open draft follows the delivery, A15], check
    lifecycle with NSF, credits/advances, statements that reconcile, recurring invoices.
 3. **Inventory & purchasing** — dual case/unit codes, forgiving barcode matching, weighted-
    average costing with history, scan-driven counts, forecasting, restock alerts.
-4. **Regulated products** — licence enforcement at sale and delivery, four levy types, immutable
+4. **Regulated products** — ~~licence enforcement at sale and delivery~~ [corrected 2026-11-24: licence checks for categories that require one; tobacco does not by default, A1], four levy types, immutable
    sales ledger, filing-ready state reports. **This is the wedge.**
 5. **Expenses & bookkeeping** — AI bill/receipt scanning with duplicate protection, Schedule-C
    categories, mileage, ~20 reports, real COGS-based P&L.
 6. **Buyer portal** — free, seller-branded storefront with "Your Shelf" replenishment
    intelligence, promotions, statements, and licences. **This is the moat and the growth loop.**
 
-Supporting (real, but second billing): delivery-day execution — POD photos/signature, at-door
-payment with photo, run settlement. **Never** lead with routing/tracking; live GPS is roadmap.
+Supporting (real, but second billing): delivery-day execution — ~~POD photos/signature, at-door
+payment with photo~~ [corrected 2026-11-24: phone app only, A3], run settlement. **Never** lead with routing/tracking; live GPS is roadmap.
 
 ---
 
@@ -108,15 +126,15 @@ frame _"The operating system for distribution."_
 
 ### Message house
 
-**Roof:** Take the order. Deliver it. Invoice exactly what was delivered. Get paid. One system.
+**Roof:** Take the order. Deliver it. ~~Invoice exactly what was delivered.~~ [corrected 2026-11-24: partly true, A15] Get paid. One system.
 
-| Pillar                                | Headline message                                               | Top proof points                                                                                                               |
-| ------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Stop typing**                       | Your scanner and camera do the data entry.                     | AI bill scan builds stock + costs; scan-to-order with remembered prices; batch-scan the filing cabinet to migrate.             |
-| **Get paid what you're owed**         | The invoice matches the truck, and the money matches the bank. | Delivered-qty billing; check lifecycle w/ auto-reopen on NSF; statements that reconcile to the cent; credit & advance wallets. |
-| **Sell regulated goods without fear** | Licence checks at the order, the door, and the filing.         | Sale-time blocks, age/ID gates at delivery, immutable ledger, filing-ready TX/CA reports.                                      |
-| **Your customers order themselves**   | A free, branded portal that reorders before they run out.      | Your Shelf replenishment, add-all-low, promotions, statements & "how to pay," notify-me restock alerts.                        |
-| **See your real numbers**             | P&L, margins, and dead stock from real sales at real costs.    | Invoice-sourced COGS, margin floors at the point of sale, DSO, forecasting.                                                    |
+| Pillar                                | Headline message                                                                                                                           | Top proof points                                                                                                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Stop typing**                       | Your scanner and camera do the data entry.                                                                                                 | AI bill scan builds stock + costs; scan-to-order with remembered prices; batch-scan the filing cabinet to migrate.                                                          |
+| **Get paid what you're owed**         | The invoice matches the truck, and the money matches the bank.                                                                             | ~~Delivered-qty billing~~ [corrected 2026-11-24: partly true, A15]; check lifecycle w/ auto-reopen on NSF; statements that reconcile to the cent; credit & advance wallets. |
+| **Sell regulated goods without fear** | ~~Licence checks at the order, the door, and the filing.~~ [corrected 2026-11-24: licence checks only for categories that require one, A1] | Sale-time blocks, age/ID gates at delivery, immutable ledger, filing-ready TX/CA reports.                                                                                   |
+| **Your customers order themselves**   | A free, branded portal that reorders before they run out.                                                                                  | Your Shelf replenishment, add-all-low, promotions, statements & "how to pay," notify-me restock alerts.                                                                     |
+| **See your real numbers**             | P&L, margins, and dead stock from real sales at real costs.                                                                                | Invoice-sourced COGS, margin floors at the point of sale, DSO, forecasting.                                                                                                 |
 
 Tone: plain, concrete, operator-to-operator. Numbers and nouns over adjectives. Bilingual
 (EN/ES) assets for social and print in retailer-facing material.
@@ -133,7 +151,7 @@ Tone: plain, concrete, operator-to-operator. Numbers and nouns over adjectives. 
 | **B2B ordering portals** (standalone e-commerce)                             | Nice storefront.           | A storefront without invoicing, compliance, or delivery truth creates _more_ reconciliation. Our portal is welded to the ledger.                                                                                 |
 
 **Defensible differentiators to hammer:** (1) regulated compliance at SMB price, (2) the
-order↔invoice↔delivery sync (bill what was delivered), (3) the free buyer portal with
+order↔invoice↔delivery sync ~~(bill what was delivered)~~ [corrected 2026-11-24: partly true, A15], (3) the free buyer portal with
 replenishment intelligence, (4) AI-scanned accounts payable that updates stock and costs.
 
 ---
@@ -162,12 +180,12 @@ Approved claims = anything in doc 01 §§3–14. Forbidden claims = doc 01 §15 
 - **Model (keep):** flat monthly per distributor, no per-seat games; **retailers free forever**
   — this is both an acquisition story for distributors ("give your customers a portal at no
   cost to them") and the growth loop.
-- **Unify tier naming** between the site (Starter/Growth/Scale) and the billing platform
+- ~~**Unify tier naming** between the site (Starter/Growth/Scale) and the billing platform
   (Starter/Team/Business/Enterprise). Recommendation: adopt the platform's names — they're what
   the in-app plan picker and entitlements actually enforce — and map the site's three public
-  tiers onto Starter/Team/Business with "Enterprise → Talk to us."
-- **Add-ons as expansion revenue** (already built and metered): Buyer Portal, Regulated Items,
-  OCR scan packs, Forecasting, extra seats/routes. Marketing implication: the entry plan can be
+  tiers onto Starter/Team/Business with "Enterprise → Talk to us."~~ [corrected 2026-11-24: superseded by ADR 0005 and docs/product/billing-plans.md]
+- **Add-ons as expansion revenue** ~~(already built and metered): Buyer Portal, Regulated Items,
+  OCR scan packs, Forecasting, extra seats/routes.~~ [corrected 2026-11-24: the add-ons are in docs/product/billing-plans.md; the portal, OCR, seat and route SKUs were retired in v11] Marketing implication: the entry plan can be
   priced aggressively because regulated compliance and the portal — the two wedge features —
   carry expansion pricing. Consider bundling Regulated Items into a "Compliance" tier for the
   tobacco/vape segment rather than selling it as a nickel-and-dime add-on to the very segment we

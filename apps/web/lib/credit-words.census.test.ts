@@ -16,11 +16,8 @@ const OLD_WORDS = /store credit|in wallet|unallocated \(→ advance\)|advance ba
 
 /** file (from apps/web, forward slashes) -> how many old words its renderer strings still hold */
 const ALLOW: Record<string, number> = {
-  "app/(dashboard)/customers/[id]/customer-statement-card.tsx": 1,
-  "app/(dashboard)/customers/[id]/page.tsx": 2,
   "app/(dashboard)/finance/payments/page.tsx": 1,
   "app/(dashboard)/invoices/[id]/page.tsx": 1,
-  "app/(dashboard)/orders/[id]/_components/OrderReturnsPanel.tsx": 1,
   "app/(dashboard)/orders/_components/CounterTodaysSales.tsx": 2,
   "app/(dashboard)/returns/[id]/page.tsx": 2,
   "app/(dashboard)/returns/_components/RecordInlineReturnDialog.tsx": 5,

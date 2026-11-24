@@ -32,6 +32,7 @@
 #   1. ubuntu-latest ONLY, except Verify dispatched with runner=self-hosted (runbook:
 #      docs/runbooks/self-hosted-runner.md). Windows bills 2x and macOS 10x.
 #   2. Do not add a job that installs dependencies. Add a STEP to `verify`.
+#      The one exception is the `parity` job (SA-1250): it proves scripts/ci-lanes.mjs covers every spec file `verify` runs.
 #   3. Correctness runs on the PR, ONCE. It does not re-run on the master push —
 #      see the `verify` job's `if:` for why that is sound here.
 #   4. A runner that is sleeping still bills. Before adding a wait/poll loop, ask
@@ -407,6 +408,32 @@ jobs:
       - name: Report high-severity advisories (non-blocking)
         if: always()
         run: node scripts/ci-audit-critical.mjs --level high --report-only
+
+  # ─── parity: every spec file `verify` runs is in exactly one lane (SA-1250, PR-1) ──────────
+  # Beside the single Verify, not instead of it: it removes nothing and adds a check. The lane table is
+  # scripts/ci-lanes.mjs (LANES). The same `if:` as Verify, so drafts and Dependabot are skipped alike.
+  parity:
+    name: Parity
+    if: >
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft != true)) &&
+      (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --engine-strict=false
+      - name: Lane parity
+        run: node scripts/ci-lanes.mjs --parity
 
   # ─── Playwright E2E ────────────────────────────────────────────────────────
   # Runs when RAILWAY REPORTS A SUCCESSFUL DEPLOY — plus repository_dispatch and

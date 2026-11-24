@@ -16,9 +16,26 @@
 //
 // WP1 (lite-L2, R1.1-R1.4): LITE is an invite-only tier ranked BELOW every existing plan, so it
 // leads the array. `planRank()` below derives a plan's ordinal from `PLAN_KEYS.indexOf(...)`, so
-// this is an ORDER PIN, not a set of hardcoded indices — LITE=0, STARTER=1, GROWTH=2, SCALE=3,
-// ENTERPRISE=4, and any future re-tiering only needs to reorder this array.
-export const PLAN_KEYS = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"] as const;
+// this is an ORDER PIN, not a set of hardcoded indices — since P-41: LITE=0, STARTER=1, CORE=2,
+// GROWTH=3, ALL_IN=4, SCALE=5, ENTERPRISE=6, and any future re-tiering only needs to reorder
+// this array.
+//
+// SA-1254 (b) 6 / SA-1261 rule 9 (P-41): CORE (Essentials, $99) and ALL_IN (Pro, $349) join the
+// ladder by price, so the order is LITE, STARTER, CORE, GROWTH, ALL_IN, SCALE, ENTERPRISE. This
+// order holds under both census outcomes (C1' and C1''). PLUS goes between CORE and GROWTH only
+// if the census is above zero, in its own PR. Being in this vocabulary never makes a key
+// selectable: every self-serve and admin write still needs the published catalog's row (V2).
+// The same order is kept by @routeflow/types and apps/api/scripts/lib/feature-registry-mirror.cjs
+// (plan-key-mirror-order.parity.spec.ts).
+export const PLAN_KEYS = [
+  "LITE",
+  "STARTER",
+  "CORE",
+  "GROWTH",
+  "ALL_IN",
+  "SCALE",
+  "ENTERPRISE",
+] as const;
 export type PlanKey = (typeof PLAN_KEYS)[number];
 
 /**
@@ -163,7 +180,7 @@ export function normalizePlanKey(planKey: string | null | undefined): PlanKey | 
   return Object.hasOwn(LEGACY_PLAN_KEY_ALIASES, planKey) ? LEGACY_PLAN_KEY_ALIASES[planKey] : null;
 }
 
-/** Ordinal rank of a plan key (LITE=0 … ENTERPRISE=4); -1 if unknown. Upgrade/downgrade direction. */
+/** Ordinal rank of a plan key (LITE=0 … ENTERPRISE=6); -1 if unknown. Upgrade/downgrade direction. */
 export function planRank(planKey: string): number {
   const normalized = normalizePlanKey(planKey);
   return normalized ? PLAN_KEYS.indexOf(normalized) : -1;
@@ -380,6 +397,12 @@ export function planKeyFromEnum(plan: string | null | undefined): PlanKey {
     // than falling through to the STARTER default.
     case "LITE":
       return "LITE";
+    // SA-1254 V1 (P-41): CORE and ALL_IN are direct TenantPlan values (#4401) — identity map them,
+    // never the STARTER default.
+    case "CORE":
+      return "CORE";
+    case "ALL_IN":
+      return "ALL_IN";
     case "STARTER":
     default:
       return "STARTER";
@@ -393,7 +416,16 @@ export function planKeyFromEnum(plan: string | null | undefined): PlanKey {
  * these are currently acceptable on a write DTO.
  */
 export type TenantPlanEnumValue =
-  "STARTER" | "TEAM" | "BUSINESS" | "PROFESSIONAL" | "ENTERPRISE" | "GROWTH" | "SCALE" | "LITE";
+  | "STARTER"
+  | "TEAM"
+  | "BUSINESS"
+  | "PROFESSIONAL"
+  | "ENTERPRISE"
+  | "GROWTH"
+  | "SCALE"
+  | "LITE"
+  | "CORE"
+  | "ALL_IN";
 
 /**
  * `TenantPlan` values currently selectable on an admin-facing DTO (`UpdateTenantPlanDto`,
@@ -401,6 +433,10 @@ export type TenantPlanEnumValue =
  * now identity-maps both, so they're safe to accept here too. WP1 (lite-L2) adds LITE — it's
  * invite-only (see `INVITE_ONLY_PLAN_KEYS`), not publicly self-serve, but still a value an
  * admin-facing DTO must accept when activating an invited tenant.
+ *
+ * SA-1254 V1 (P-41) adds CORE and ALL_IN, now that both helpers identity-map them. A DTO accepting
+ * a value is not the same as the value being selectable. `resolvePublishedPlan` refuses any key the
+ * published catalog has no row for (V2), so neither can be assigned before v14 is published.
  */
 export const SELECTABLE_TENANT_PLANS: TenantPlanEnumValue[] = [
   "STARTER",
@@ -411,6 +447,8 @@ export const SELECTABLE_TENANT_PLANS: TenantPlanEnumValue[] = [
   "GROWTH",
   "SCALE",
   "LITE",
+  "CORE",
+  "ALL_IN",
 ];
 
 /**
@@ -474,6 +512,12 @@ export function planKeyToEnum(planKey: string | null | undefined): TenantPlanEnu
     // 20260915000000_tenant_plan_lite migration) — identity map it like GROWTH/SCALE above.
     case "LITE":
       return "LITE";
+    // SA-1254 V1 (P-41): CORE and ALL_IN are direct TenantPlan values (#4401) — identity map them.
+    // GROWTH keeps writing TEAM (T3); a reused or new Growth key is the census PR's to rule.
+    case "CORE":
+      return "CORE";
+    case "ALL_IN":
+      return "ALL_IN";
     default:
       throw new UnknownPlanKeyError(planKey);
   }

@@ -176,6 +176,7 @@ describe("ReturnsService — kind branch (M6/§2.3): every standard-path method 
         order: prisma.order,
         customer: prisma.customer,
         $executeRaw: jest.fn().mockResolvedValue(0),
+        tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) },
         $queryRaw: jest.fn(),
       }),
     );
