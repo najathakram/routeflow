@@ -224,6 +224,8 @@ function addonStripeClient() {
       del: jest.fn().mockResolvedValue({}),
     },
     invoiceItems: { list: jest.fn().mockResolvedValue({ data: [] }) },
+    // W-1338: a plan change lists the business's open Checkout Sessions first (none here).
+    checkout: { sessions: { list: jest.fn().mockResolvedValue({ data: [] }), expire: jest.fn() } },
   };
 }
 
@@ -4359,4 +4361,78 @@ describe("B1371 — downgrade preview, schedule and notice carry no seat consequ
       { newMonthlyPrice: 59, addons: [], customerNote: null },
     );
   });
+});
+
+// W-1338 / SA-1267 PR-1 (L14): completion writes `planKey` from the session's metadata, so a plan change must close the
+// business's open Checkout Session first, and refuse when one is already paid but not yet applied.
+describe("W-1338 L14 - a plan change closes the open payment link first", () => {
+  const sub = {
+    planKey: "BUSINESS",
+    cycle: "MONTHLY",
+    periodStart: null,
+    periodEnd: new Date("2026-12-01"),
+    stripeCustomerId: "cus_1",
+    stripeSubId: null,
+  };
+  const session = (over: Record<string, unknown>) => ({
+    id: "cs_open",
+    status: "open",
+    url: "https://pay.test/1",
+    created: Math.floor(Date.now() / 1000),
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    metadata: { tenantId: "t1" },
+    subscription: null,
+    ...over,
+  });
+  const fakeStripe = (sessions: any[]) => {
+    const expire = jest.fn().mockResolvedValue({});
+    return {
+      expire,
+      stripe: {
+        isConfigured: true,
+        client: {
+          checkout: { sessions: { list: jest.fn().mockResolvedValue({ data: sessions }), expire } },
+        },
+        getSubscription: jest.fn(),
+      },
+    };
+  };
+  const changes: [string, (svc: any) => Promise<unknown>][] = [
+    ["upgrade", (svc) => svc.upgrade("t1", "TEAM", "admin")],
+    ["downgrade", (svc) => svc.downgrade("t1", "STARTER", ["u1"], "admin")],
+    [
+      "subscribe",
+      (svc) => svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY", addons: [] }, "admin"),
+    ],
+  ];
+
+  it.each(changes)("%s expires the open session before it commits", async (_n, run) => {
+    const f = fakeStripe([session({})]);
+    const { svc } = make({
+      sub: { ...sub, planKey: _n === "upgrade" ? "STARTER" : "BUSINESS" },
+      stripe: f.stripe,
+    });
+    await run(svc);
+    expect(f.expire).toHaveBeenCalledWith("cs_open");
+  });
+
+  it.each(changes)(
+    "%s refuses while a paid session is not applied, and writes nothing",
+    async (_n, run) => {
+      const f = fakeStripe([
+        session({ id: "cs_paid", status: "complete", subscription: "sub_new" }),
+      ]);
+      const { svc, tx } = make({
+        sub: { ...sub, planKey: _n === "upgrade" ? "STARTER" : "BUSINESS" },
+        stripe: f.stripe,
+      });
+      await expect(run(svc)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS },
+      });
+      expect(f.expire).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    },
+  );
 });

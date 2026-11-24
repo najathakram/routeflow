@@ -16,6 +16,7 @@ import { LeaderCron } from "../common/cron-lock";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
+import { cancelOpenLink, openCheckoutSession, readOpenLink } from "./open-checkout-session";
 import { EmailService } from "../email/email.service";
 import { routeflowNotice } from "../email/routeflow-mail";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
@@ -96,12 +97,7 @@ import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./pr
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { retryOnTxConflict } from "../common/tx-retry";
 import { NO_LIVE_SUBSCRIPTION, stopBillingIncludedAddonsTx } from "./addon-inclusion";
-import {
-  assertCheckoutSurface,
-  checkoutStartFromSession,
-  withCheckoutPolicy,
-  type CheckoutSurface,
-} from "./checkout-session-params";
+import { assertCheckoutSurface, type CheckoutSurface } from "./checkout-session-params";
 import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
 import {
@@ -669,22 +665,28 @@ export class BillingService {
     // F3: planned BEFORE any Stripe call - inside the window before the 1st it throws the coded 409.
     const anchor = planCheckoutAnchor(new Date());
 
-    const customerId = await this.ensureStripeCustomer(tenantId);
-    // Throws BadRequestException when neither an override nor a catalog price
-    // exists for this tenant's plan (e.g. Enterprise with no custom fee yet).
+    // W-1338 (W9): price first, so an unpriceable business never gets a Stripe customer (throws BadRequest).
     const pricing = await this.pricing.resolveTenantPricing(tenantId);
     const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
+    const customerId = await this.ensureStripeCustomer(tenantId);
 
     const baseUrl = webBaseUrl();
     // SA-733 D6 / M6: ALWAYS an explicit anchor (the next 1st, 12:00 UTC), prorations created, and a session that
     // expires before the anchor so it can never complete after it (Stripe would then charge the full period).
-
-    // Inline price_data line item — bypasses StripeService.createCheckoutSession
-    // (which only accepts a pre-created `priceId`) via the underlying client, since
-    // no env-configured Stripe Price exists for catalog-driven plans/tiers.
-    const session = await this.stripe.client.checkout.sessions.create(
-      withCheckoutPolicy(
-        {
+    // W-1338: ONE slot for the admin link and Pay now; the inline price_data line needs no env-configured Stripe Price.
+    return openCheckoutSession(
+      { prisma: this.prisma, stripe: this.stripe },
+      {
+        tenantId,
+        customerId,
+        surface: opts.surface,
+        terms: {
+          planKey: pricing.planKey,
+          unitAmount: priceData.unit_amount,
+          addonSkus: addons.skus,
+          anchorAt: anchor.anchorAt,
+        },
+        params: {
           customer: customerId,
           mode: "subscription",
           line_items: [{ price_data: priceData, quantity: 1 }, ...addons.lineItems],
@@ -707,14 +709,16 @@ export class BillingService {
               : {}),
           },
         },
-        { surface: opts.surface },
-      ),
+      },
     );
+  }
 
-    this.logger.log(
-      `Checkout session ${session.id} created for tenant ${tenantId} (plan ${pricing.planKey}, ${interval}, anchor ${anchor.anchorAt.toISOString()})`,
-    );
-    return checkoutStartFromSession(session);
+  getOpenLink(tenantId: string) {
+    return readOpenLink({ prisma: this.prisma, stripe: this.stripe }, tenantId);
+  }
+
+  cancelOpenLink(tenantId: string) {
+    return cancelOpenLink({ prisma: this.prisma, stripe: this.stripe }, tenantId);
   }
 
   // ─── Price sync (admin-driven price changes → live Stripe subscriptions) ──────

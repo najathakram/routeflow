@@ -394,6 +394,19 @@ export class PlatformAdminController {
     });
   }
 
+  @Get("tenants/:id/billing/open-link")
+  @ApiOperation({ summary: "The tenant's open payment link (read from Stripe), or null" })
+  getOpenLink(@Param("id") id: string) {
+    return this.billingService.getOpenLink(id);
+  }
+
+  @Post("tenants/:id/billing/open-link/cancel")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Cancel the tenant's open payment link" })
+  cancelOpenLink(@Param("id") id: string) {
+    return this.billingService.cancelOpenLink(id);
+  }
+
   @Post("tenants/:id/billing/portal")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Generate a Stripe Billing Portal link for a tenant" })

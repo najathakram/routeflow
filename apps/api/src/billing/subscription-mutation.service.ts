@@ -123,6 +123,7 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { CardFirstFlagService } from "./card-first-flag.service";
 import { isLinkPending } from "./link-pending";
+import { expireOpenCheckoutSessions, underSlotLock } from "./open-checkout-session";
 import { planGateRefusal, selfServePlanGate, type PlanGateOp } from "./self-serve-plan-gate";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
 
@@ -611,6 +612,10 @@ export class SubscriptionMutationService {
       if (held) throw refusalException(held);
     }
 
+    // W-1338 L14: close the open payment link (completion writes planKey from its metadata).
+    await underSlotLock(tenantId, () =>
+      expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId),
+    );
     const transition = {
       tenantId,
       fromPlanKey: fromKey,
@@ -1564,6 +1569,8 @@ export class SubscriptionMutationService {
     const quotedNow =
       override != null ? 0 : this.proration.proratedDiff(sub, newMonthly - oldMonthly);
 
+    // W-1338 L14: under the tenant-price lock; close the open payment link first.
+    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId);
     const transition = {
       tenantId,
       fromPlanKey: fromKey,
@@ -1784,6 +1791,9 @@ export class SubscriptionMutationService {
       );
     }
 
+    await underSlotLock(tenantId, () =>
+      expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId),
+    ); // W-1338 L14
     await this.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({

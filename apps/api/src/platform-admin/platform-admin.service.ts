@@ -27,6 +27,7 @@ import {
   type RecentActivation,
 } from "../billing/rf-invoice/rf-invoice-activation-void";
 import { PlatformPricingService } from "../billing/platform-pricing.service";
+import { expireOpenCheckoutSessions } from "../billing/open-checkout-session";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { inclusionCatalogFor, pinPlanVersionTx } from "../billing/plan-version-pin";
 import { revokeUserEmailChanges } from "../auth/link-token-revocation";
@@ -2446,8 +2447,11 @@ export class PlatformAdminService {
         updatedAt: true,
         downgradeToPlanKey: true, // R1 Option B: an early pre-renewal push may have lowered Stripe's price
         stripeSubId: true,
+        stripeCustomerId: true,
       },
     });
+    // W-1338 L14: a fee change closes the open payment link first (it would complete at the old price).
+    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, id, existing);
     const nextMonthly =
       dto.monthly === undefined ? (existing?.priceOverrideMonthly ?? null) : dto.monthly;
     if (nextMonthly == null) {
