@@ -1,4 +1,5 @@
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
+import { numberYear } from "../common/number-year";
 import {
   BadRequestException,
   ConflictException,
@@ -214,7 +215,7 @@ export class CreditNoteReissueService {
     // Hoisted above the SERIALIZABLE tx, as create() does: a blocked counter UPDATE would abort
     // under SERIALIZABLE instead of queueing. Every retry below reuses this one number.
     const creditNoteNumber = await this.numbering.reserveNext("CREDIT_NOTE", {
-      year: new Date().getFullYear(),
+      year: await numberYear(this.prisma, tenantId),
       tenantId,
     });
     const tz = await tenantTimeZone(this.prisma);

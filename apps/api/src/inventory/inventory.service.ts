@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { numberYear } from "../common/number-year";
 import {
   STOCK_TX_OPTIONS,
   lockProductsForStock,
@@ -1441,9 +1442,12 @@ export class InventoryService {
 
   // ── Purchase Orders ──
   private async nextPoNumber(
-    client: Pick<Prisma.TransactionClient, "purchaseOrder"> = this.prisma.forTenant() as never,
+    client: Pick<
+      Prisma.TransactionClient,
+      "purchaseOrder" | "tenantConfig"
+    > = this.prisma.forTenant() as never,
   ): Promise<string> {
-    const year = new Date().getFullYear();
+    const year = await numberYear(client, this.prisma.getTenantId());
     const prefix = `PO-${year}-`;
     const last = await client.purchaseOrder.findFirst({
       where: { poNumber: { startsWith: prefix } },
