@@ -168,8 +168,7 @@ check(
 );
 check(
   "2k prices are whole cents",
-  cat.filter((r) => Math.abs(Math.round(r.pricePerUnit * 100) - r.pricePerUnit * 100) > 1e-6)
-    .length,
+  cat.filter((r) => !/^\d+(\.\d{1,2})?$/.test(String(r.pricePerUnit))).length,
   0,
 );
 check(
