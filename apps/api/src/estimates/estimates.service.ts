@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { numberYear } from "../common/number-year";
 import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
@@ -166,11 +167,9 @@ export class EstimatesService {
    * short transaction: a rollback after this call leaves a gap in the series.
    */
   private async nextEstNumber() {
-    const year = new Date().getFullYear();
-    return this.numbering.reserveNext("ESTIMATE", {
-      year,
-      tenantId: this.prisma.getTenantId() ?? undefined,
-    });
+    const tenantId = this.prisma.getTenantId() ?? undefined;
+    const year = await numberYear(this.prisma, tenantId);
+    return this.numbering.reserveNext("ESTIMATE", { year, tenantId });
   }
 
   async create(dto: CreateEstimateDto, actor: JwtPayload) {
@@ -666,7 +665,7 @@ export class EstimatesService {
     // NumberingSequence row lock, and it is not called from inside the transaction
     // either — that would need a second pooled connection while this one is held and
     // starves the pool under concurrent mints (REG-B100-C).
-    const year = new Date().getFullYear();
+    const year = await numberYear(this.prisma, this.prisma.getTenantId());
     const invoiceNumber = await this.numbering.reserveNext("INVOICE", { year });
     return this.prisma.tenantTransaction(async (tx) => {
       // Claim before creating anything: two concurrent converts both passed the

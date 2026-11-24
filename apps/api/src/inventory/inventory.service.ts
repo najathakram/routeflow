@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { numberYear } from "../common/number-year";
 import {
   STOCK_TX_OPTIONS,
   lockProductsForStock,
@@ -222,11 +223,25 @@ export class InventoryService {
   }
 
   async getStockOverview() {
+    // W-1299: the Inventory page needs five family facts per row (kind, variant name, parent id, family
+    // name, "has variants"). It used to read the WHOLE catalog a second time for them (every column,
+    // barcodes, each variant twice, one signed image link per product); they ride on this read instead.
+    // The rules are the list's own: a variant counts only when active and in this tenant, and a parent
+    // from another tenant is never followed (B1211). `kind` lets Create purchase order drop a FAMILY
+    // (a container, never a line) without its own catalog read.
+    const tenantId = this.prisma.getTenantId();
     const products = await this.prisma.forTenant().product.findMany({
       orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
+        kind: true,
+        variantName: true,
+        parentProductId: true,
+        parent: { select: { name: true, tenantId: true } },
+        _count: {
+          select: { variants: { where: { isActive: true, ...(tenantId ? { tenantId } : {}) } } },
+        },
         sku: true,
         category: true,
         unit: true,
@@ -242,11 +257,15 @@ export class InventoryService {
       },
     });
 
-    return products.map((p) => {
+    return products.map(({ _count, parent, ...p }) => {
       const stock = Number(p.currentStock);
       const { unitCost, value } = this.effectiveValue(p);
       return {
         ...p,
+        variantName: p.variantName ?? null,
+        parentProductId: p.parentProductId ?? null,
+        parent: tenantSafeParentView(parent, tenantId),
+        hasVariants: (_count?.variants ?? 0) > 0,
         currentStock: stock,
         averageCost: unitCost,
         costingMethod: p.costingMethod,
@@ -1423,9 +1442,12 @@ export class InventoryService {
 
   // ── Purchase Orders ──
   private async nextPoNumber(
-    client: Pick<Prisma.TransactionClient, "purchaseOrder"> = this.prisma.forTenant() as never,
+    client: Pick<
+      Prisma.TransactionClient,
+      "purchaseOrder" | "tenantConfig"
+    > = this.prisma.forTenant() as never,
   ): Promise<string> {
-    const year = new Date().getFullYear();
+    const year = await numberYear(client, this.prisma.getTenantId());
     const prefix = `PO-${year}-`;
     const last = await client.purchaseOrder.findFirst({
       where: { poNumber: { startsWith: prefix } },

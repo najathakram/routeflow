@@ -17,6 +17,7 @@ import { unitPriceNote } from "@/lib/line-unit-price-note";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { splitProductName } from "@/lib/product-display";
 import { linePriceTag } from "./line-price-tag";
+import { LineNote } from "@/components/LineNote";
 
 /** Prisma `Decimal` columns arrive as strings over the wire (`qty`, `unitPrice`, `subtotal`,
  *  `deliveredQty`), so every numeric prop accepts both and is coerced here — never `.toFixed`
@@ -270,9 +271,7 @@ export function LineItemRowReadOnly({
             {progressText(delivered)} of {progressText(qty)} delivered
           </p>
         )}
-        {note?.trim() && (
-          <p className="mt-1 whitespace-pre-line text-xs italic text-navy/70">{note.trim()}</p>
-        )}
+        {note?.trim() && <LineNote note={note.trim()} className="text-xs text-navy/70" />}
         <ComponentSubLines components={components} />
         {lineStatus && (
           <div className="mt-1.5">
