@@ -99,28 +99,27 @@ months' price for plans and recurring add-ons alike (`annual-price-derivation.pi
 
 ### Decision record
 
-| Item                                                                                                                                                                                                                  | Decided                   |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| Essentials $99, Growth $199, feature split as above                                                                                                                                                                   | 2026-11-02 and 2026-11-11 |
-| 25 stores ordering online on Essentials                                                                                                                                                                               | 2026-11-02                |
-| Filings $79, commissions $29, forecasting $19, AI scan pack, delivery $49 later with 6 months' notice                                                                                                                 | 2026-11-11                |
-| Pro at $349 with delivery included for good (replaces the $299 ruling of 2026-11-11)                                                                                                                                  | 2026-11-23                |
-| No customer limit on any plan; fair-use line in the terms                                                                                                                                                             | 2026-11-23                |
-| $79 "every store online" add-on on Essentials                                                                                                                                                                         | 2026-11-23                |
-| A store counts toward the 25 once it is approved for ordering, whether or not it has ordered                                                                                                                          | 2026-11-23                |
-| Recurring add-ons paid yearly cost ten months' price                                                                                                                                                                  | 2026-11-23                |
-| Path for Pro to $449 ([pricing-roadmap.md](pricing-roadmap.md))                                                                                                                                                       | 2026-11-23                |
-| Guided move-in is free with Pro only when Pro is paid yearly                                                                                                                                                          | 2026-11-23                |
-| Essentials replaces the invite-only LITE plan; LITE accounts move to Essentials at the same $99                                                                                                                       | 2026-11-23                |
-| Drivers must be able to complete a stop with regulated items before Pro is sold to tobacco wholesalers with vans                                                                                                      | 2026-11-23                |
-| These plans replace both the live customer-count plans and the 11-21 Core / All-in idea (SA-1204)                                                                                                                     | 2026-11-24                |
-| Reuse `CORE` for Essentials and `ALL_IN` for Pro; no new enum values for them                                                                                                                                         | 2026-11-24                |
-| The new $199 Growth gets its own plan key; today's Growth accounts keep theirs                                                                                                                                        | 2026-11-24                |
-| 12 months' protection, then a review with 90 days' notice (replaces "grandfathered forever", 2026-11-07)                                                                                                              | 2026-11-24                |
-| Ladder check 2 uses delivery's scheduled $49, stored with its notice date                                                                                                                                             | 2026-11-24                |
-| The AI scan pack is sold on Growth and Pro only                                                                                                                                                                       | 2026-11-24                |
-| The pricing-page test pins the page to the catalog on sale, never to v14 before it is on sale                                                                                                                         | 2026-11-24                |
-| `PLAN_FLAG_ENFORCEMENT` stays on in production ("Let's keep it on"), so Starter does not get the six features the pricing page lists under "every plan includes"; fixing the page wording is a separate open question | 2026-11-24                |
+| Item                                                                                                             | Decided                   |
+| ---------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| Essentials $99, Growth $199, feature split as above                                                              | 2026-11-02 and 2026-11-11 |
+| 25 stores ordering online on Essentials                                                                          | 2026-11-02                |
+| Filings $79, commissions $29, forecasting $19, AI scan pack, delivery $49 later with 6 months' notice            | 2026-11-11                |
+| Pro at $349 with delivery included for good (replaces the $299 ruling of 2026-11-11)                             | 2026-11-23                |
+| No customer limit on any plan; fair-use line in the terms                                                        | 2026-11-23                |
+| $79 "every store online" add-on on Essentials                                                                    | 2026-11-23                |
+| A store counts toward the 25 once it is approved for ordering, whether or not it has ordered                     | 2026-11-23                |
+| Recurring add-ons paid yearly cost ten months' price                                                             | 2026-11-23                |
+| Path for Pro to $449 ([pricing-roadmap.md](pricing-roadmap.md))                                                  | 2026-11-23                |
+| Guided move-in is free with Pro only when Pro is paid yearly                                                     | 2026-11-23                |
+| Essentials replaces the invite-only LITE plan; LITE accounts move to Essentials at the same $99                  | 2026-11-23                |
+| Drivers must be able to complete a stop with regulated items before Pro is sold to tobacco wholesalers with vans | 2026-11-23                |
+| These plans replace both the live customer-count plans and the 11-21 Core / All-in idea (SA-1204)                | 2026-11-24                |
+| Reuse `CORE` for Essentials and `ALL_IN` for Pro; no new enum values for them                                    | 2026-11-24                |
+| The new $199 Growth gets its own plan key; today's Growth accounts keep theirs                                   | 2026-11-24                |
+| 12 months' protection, then a review with 90 days' notice (replaces "grandfathered forever", 2026-11-07)         | 2026-11-24                |
+| Ladder check 2 uses delivery's scheduled $49, stored with its notice date                                        | 2026-11-24                |
+| The AI scan pack is sold on Growth and Pro only                                                                  | 2026-11-24                |
+| The pricing-page test pins the page to the catalog on sale, never to v14 before it is on sale                    | 2026-11-24                |
 
 Every price above is kept as one catalog value, so a later change is one line and the ladder spec
 re-checks it.
@@ -745,8 +744,7 @@ transaction as the state change, so MRR is a query rather than a spreadsheet.
   none runs automatically, and the choice decides whether the OCR add-on is currently grantable
   and whether the tenant-facing add-on list has 5 SKUs or 10.
 - The runtime value of `PLAN_FLAG_ENFORCEMENT` on Railway — if unset (the default), seven of the
-  eleven plan gates are silently allowing everything right now. _Settled 2026-11-24: the owner says
-  it is on and stays on (see "Pricing v14: decided, not live", decision record)._
+  eleven plan gates are silently allowing everything right now.
 - Whether any live tenant currently holds a `TenantAddon` row for a retired SKU, or holds both a
   legacy key and its bridged SKU under the overlapping namespaces described above.
 - The Stripe account state — whether tenants have real subscriptions behind their RouteFlow plan
