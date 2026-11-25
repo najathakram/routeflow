@@ -1102,6 +1102,18 @@ function orderStatusFor(d) {
   return chance(0.6) ? "PENDING" : "DRAFT";
 }
 
+/**
+ * A route order is never written as OUT_FOR_DELIVERY (SA-1284, W-1306): a real
+ * run does not produce that state, and it takes the order off the trip picker.
+ * It is seeded CONFIRMED, the state a route order holds until its run starts.
+ * Ship and pickup orders keep the status they were drawn with. Pure: it draws no
+ * random numbers, so every other seeded value stays where it was.
+ */
+function routeSafeStatus(status, customer) {
+  const isRoute = (customer.fulfillPath ?? "ROUTE") === "ROUTE";
+  return isRoute && status === "OUT_FOR_DELIVERY" ? "CONFIRMED" : status;
+}
+
 /** Build every order in memory first, so opening stock can be sized to cover it. */
 function planOrders(customers, products) {
   const sellable = products.filter((p) => Number(p.pricePerUnit) > 0);
@@ -1125,7 +1137,7 @@ function planOrders(customers, products) {
     const n = d >= 12 ? (chance(0.62) ? 1 : chance(0.35) ? 2 : 0) : chance(0.55) ? 2 : 1;
     for (let k = 0; k < n; k++) {
       const customer = pick(weighted);
-      const status = orderStatusFor(d);
+      const status = routeSafeStatus(orderStatusFor(d), customer);
 
       const lineCount = randInt(3, 9);
       const chosen = new Map();
