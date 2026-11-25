@@ -50,10 +50,13 @@ describe("image delete is confirmed (the file is deleted for good; no undo exist
 });
 
 describe("delete copy: web and mobile share one sentence, and it never says 'permanently'", () => {
-  it("deleteProductConfirmText describes the deactivation", () => {
+  // UX audit 2026-11-24 F54: the body ran to five lines and never said the product can come back.
+  it("deleteProductConfirmText says it is hidden, how to get it back, and what is kept", () => {
     const text = deleteProductConfirmText("Cola 12pk");
-    expect(text).toMatch(/^Cola 12pk will be deactivated/);
-    expect(text).not.toMatch(/permanent/i);
+    expect(text).toBe(
+      "Cola 12pk will be hidden from the catalog. It is not gone for good: find it under Inactive in Products to turn it back on. Past orders and invoices keep it. Its SKU and barcode become free for another product.",
+    );
+    expect(text).not.toMatch(/permanent|deactivated/i);
   });
 
   it("both confirms use it", () => {
