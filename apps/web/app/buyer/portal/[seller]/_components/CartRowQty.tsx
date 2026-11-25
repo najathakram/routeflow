@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Minus, Plus } from "lucide-react";
-import { lineCount, type CartLineShape, type CartUnit } from "@/lib/buyer-cart-line";
+import { lineCount, lineLimit, type CartLineShape, type CartUnit } from "@/lib/buyer-cart-line";
 import { CartLineUnit } from "./CartLineUnit";
 
 /**
@@ -15,7 +15,9 @@ import { CartLineUnit } from "./CartLineUnit";
  * switch to Each and type it.
  *
  * The field commits on blur or Enter (typing never moves the cart mid-keystroke); an empty or
- * zero entry reverts, and the Trash button stays the one way to remove a line. `−` at 1 removes.
+ * zero, negative or non-whole entry reverts with one plain line, and the Trash button stays the one way to
+ * remove a line. `−` at 1 removes. A number above the line's limit (`lineLimit`) sets the box to the limit and
+ * says so (B1382).
  */
 export function CartRowQty({
   item,
@@ -36,14 +38,20 @@ export function CartRowQty({
 }) {
   const count = lineCount(item);
   const [val, setVal] = React.useState(String(count));
+  const [note, setNote] = React.useState<string | null>(null);
   React.useEffect(() => setVal(String(count)), [count]);
+  const { max, maxWord } = lineLimit(item);
+  const limitNote = `The most you can order at once is ${max.toLocaleString("en-US")}${maxWord ? ` ${maxWord}` : ""}.`;
 
   const commit = (raw: string) => {
-    const n = parseInt(raw.trim(), 10);
-    if (!Number.isFinite(n) || n <= 0) {
+    const t = raw.trim();
+    if (!/^[0-9]+$/.test(t) || Number(t) <= 0) {
+      setNote("Enter 1 or more.");
       setVal(String(count));
       return;
     }
+    const n = Math.min(Number(t), max);
+    setNote(Number(t) > max ? limitNote : null);
     if (n !== count) onCount(n);
     setVal(String(n));
   };
@@ -82,12 +90,20 @@ export function CartRowQty({
         <button
           type="button"
           aria-label={`Increase ${name}`}
-          onClick={() => onCount(count + 1)}
+          onClick={() => {
+            if (count >= max) setNote(limitNote);
+            else onCount(count + 1);
+          }}
           className={btn}
         >
           <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
+      {note && (
+        <p role="status" className="max-w-[180px] text-xs text-navy/70">
+          {note}
+        </p>
+      )}
       <CartLineUnit item={item} name={name} onUnit={onUnit} />
     </div>
   );

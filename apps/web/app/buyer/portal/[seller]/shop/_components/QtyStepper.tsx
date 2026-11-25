@@ -3,10 +3,11 @@
 import * as React from "react";
 import { Plus, Minus, Trash2 } from "lucide-react";
 import { useToast } from "@routeflow/ui/web";
-import { BUYER_LINE_QTY_MAX } from "@routeflow/types";
+import { BUYER_LINE_QTY_MAX } from "@routeflow/pricing";
 import { useUndo } from "@/lib/undo";
 
-const LIMIT_LINE = `The most you can order at once is ${BUYER_LINE_QTY_MAX.toLocaleString("en-US")}.`;
+const limitLine = (max: number, word?: string) =>
+  `The most you can order at once is ${max.toLocaleString("en-US")}${word ? ` ${word}` : ""}.`;
 const ENTRY_LINE = "Enter 1 or more. Enter 0 to remove.";
 
 // ─── Quantity Stepper ─────────────────────────────────────────────────────────
@@ -26,6 +27,8 @@ export function QtyStepper({
   onRestore,
   size = "md",
   stack = false,
+  max = BUYER_LINE_QTY_MAX,
+  maxWord,
 }: {
   qty: number;
   /** Product name — used for the accessible names and the Undo toast. */
@@ -40,6 +43,10 @@ export function QtyStepper({
    * inline stepper 102px against the 124px it needs (44 + 36 + 44), and the "+" was clipped (row 531 R3).
    */
   stack?: boolean;
+  /** The most the line may count (the cart hook clamps to the same number: `lineLimit` in buyer-cart-line.ts). */
+  max?: number;
+  /** The unit word shown in the limit line on a Case line ("cases"). */
+  maxWord?: string;
 }) {
   const runUndoable = useUndo();
   const { toast } = useToast();
@@ -65,8 +72,8 @@ export function QtyStepper({
       remove();
     } else if (/^\d+$/.test(trimmed)) {
       const n = Number(trimmed);
-      const next = Math.min(n, BUYER_LINE_QTY_MAX);
-      if (n > BUYER_LINE_QTY_MAX) toast({ title: LIMIT_LINE, variant: "info" });
+      const next = Math.min(n, max);
+      if (n > max) toast({ title: limitLine(max, maxWord), variant: "info" });
       if (next !== qty) onUpdate(next);
       setInputVal(String(next));
     } else {
@@ -77,8 +84,8 @@ export function QtyStepper({
   };
 
   const increase = () => {
-    if (qty >= BUYER_LINE_QTY_MAX) {
-      toast({ title: LIMIT_LINE, variant: "info" });
+    if (qty >= max) {
+      toast({ title: limitLine(max, maxWord), variant: "info" });
       return;
     }
     onUpdate(qty + 1);

@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ToastProvider } from "@routeflow/ui/web";
-import { BUYER_LINE_QTY_MAX } from "@routeflow/types";
+import { BUYER_LINE_QTY_MAX } from "@routeflow/pricing";
 import { QtyStepper } from "./QtyStepper";
 
 /**
@@ -121,5 +121,29 @@ describe("QtyStepper limits (B1382)", () => {
     const src = readFileSync(join(__dirname, "QtyStepper.tsx"), "utf8");
     expect(src).toContain("BUYER_LINE_QTY_MAX");
     expect(src).not.toMatch(/100_?000/);
+  });
+});
+
+describe("QtyStepper on a Case line (B1382, SA-1283)", () => {
+  it("a 12-pack line stops at 8,333 cases and says so", async () => {
+    render(
+      <ToastProvider>
+        <QtyStepper
+          qty={2}
+          name="Widget"
+          onUpdate={() => {}}
+          onRemove={() => {}}
+          max={8333}
+          maxWord="cases"
+        />
+      </ToastProvider>,
+    );
+    const field = screen.getByRole("textbox", { name: "Quantity" });
+    fireEvent.change(field, { target: { value: "8334" } });
+    fireEvent.blur(field);
+    expect(field).toHaveValue("8333");
+    expect(
+      await screen.findByText("The most you can order at once is 8,333 cases."),
+    ).toBeInTheDocument();
   });
 });

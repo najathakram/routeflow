@@ -15,7 +15,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
-import { BUYER_LINE_QTY_MAX } from "../../common/buyer-line-qty";
+import { BUYER_LINE_QTY_MAX } from "@routeflow/pricing";
 
 // BUG-B1-6: same numeric/length caps as CreateOrderDto so the buyer-facing
 // order endpoint cannot accept 999,999 cases of bread or 5MB of notes.

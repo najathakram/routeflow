@@ -86,3 +86,25 @@ describe("commitQtyDraft", () => {
     expect(commitQtyDraft("3", { min: 1 })).toBe(3);
   });
 });
+
+import { isNegativeEntry as isNeg, sanitizeIntInput as sanitize } from "../lib/qty";
+
+describe("isNegativeEntry (B1382)", () => {
+  it("flags -5 (which sanitizeIntInput would turn into 5) and not plain digits", () => {
+    expect(sanitize("-5")).toBe("5");
+    expect(isNeg("-5")).toBe(true);
+    expect(isNeg(" -5")).toBe(true);
+    expect(isNeg("5")).toBe(false);
+    expect(isNeg("")).toBe(false);
+    expect(isNeg(null)).toBe(false);
+  });
+});
+
+import { isDigitsOnly } from "../lib/qty";
+
+describe("isDigitsOnly (B1382)", () => {
+  it("rejects the entries sanitizeIntInput used to rewrite", () => {
+    for (const bad of ["-5", "12.5", "1e9", " 5", "5a"]) expect(isDigitsOnly(bad)).toBe(false);
+    for (const ok of ["", "0", "100000"]) expect(isDigitsOnly(ok)).toBe(true);
+  });
+});

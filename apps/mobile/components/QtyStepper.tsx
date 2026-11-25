@@ -1,7 +1,13 @@
 import * as React from "react";
 import { Pressable, StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
-import { sanitizeIntInput, parseIntQty, commitQtyDraft } from "../lib/qty";
+import {
+  sanitizeIntInput,
+  parseIntQty,
+  commitQtyDraft,
+  isNegativeEntry,
+  isDigitsOnly,
+} from "../lib/qty";
 import { QTY_INPUT_WIDTH } from "../lib/row-layout";
 
 export interface QtyTextInputProps extends Omit<
@@ -13,6 +19,8 @@ export interface QtyTextInputProps extends Omit<
   min?: number; // default 0
   max?: number;
   emptyMeansZero?: boolean; // default true (blur on empty commits 0)
+  /** Buyer boxes: a change that is not whole digits ("-5", "12.5", "1e9") is rejected whole, never stripped. */
+  rejectNonDigits?: boolean;
 }
 
 /**
@@ -27,6 +35,7 @@ export function QtyTextInput({
   min = 0,
   max,
   emptyMeansZero = true,
+  rejectNonDigits = false,
   style,
   ...rest
 }: QtyTextInputProps) {
@@ -39,6 +48,10 @@ export function QtyTextInput({
       style={style}
       value={draft}
       onChangeText={(txt) => {
+        if (isNegativeEntry(txt) || (rejectNonDigits && !isDigitsOnly(txt))) {
+          setDraft(String(value)); // a negative never removes and never becomes positive
+          return;
+        }
         const clean = sanitizeIntInput(txt);
         setDraft(clean);
         if (clean === "") return;
@@ -52,7 +65,7 @@ export function QtyTextInput({
       }}
       keyboardType="number-pad"
       returnKeyType="done"
-      maxLength={5}
+      maxLength={max != null ? String(max).length : 5}
       selectTextOnFocus
       {...rest}
     />
