@@ -1699,7 +1699,7 @@ export function CreateOrderModal({
     // #2696 (b): an open price sheet takes Escape first — it closes the sheet, never the order.
     if (editingLineId) {
       event.preventDefault();
-      setEditingLineId(null);
+      closePriceEditor(editingLineId); // F33: Escape is a close like Done, so focus goes back to the price too
       return;
     }
     // K3: Escape with the customer list OPEN closes just the list (typed text kept) — never parks a draft.
@@ -3433,10 +3433,11 @@ export function CreateOrderModal({
                 {formatMoney(mergePrompt.total)}
               </div>
               {/* UX audit 2026-11-24 F34: nothing said how old the open order was; a merge into last week's order
-                  looked the same as a merge into this morning's. */}
+                  looked the same as a merge into this morning's. This is the day it was created (a real timestamp),
+                  not its order date. */}
               {mergePrompt.createdAt ? (
                 <div data-testid="merge-open-order-date" className="text-navy/70">
-                  Started {formatDate(mergePrompt.createdAt)}
+                  Created {formatDate(mergePrompt.createdAt)}
                 </div>
               ) : null}
             </div>

@@ -152,6 +152,24 @@ describe("F33: the price sheet gives focus back to the price that opened it", ()
     expect(priceOf("Widget")).not.toHaveFocus();
   });
 
+  // Review R-172: Escape closed the sheet by its own path and still dropped focus, on the keyboard route F33 is for.
+  it("Escape closes the sheet and returns focus to that line's price", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+    await pickCustomer();
+    await scanLine("111", "Widget");
+    await scanLine("222", "Gadget");
+    const done = await openSheet("Widget");
+    done.focus();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(priceOf("Widget")).toHaveFocus());
+    // the builder itself is still open: Escape closed only the sheet
+    expect(screen.getByRole("button", { name: /save as draft/i })).toBeInTheDocument();
+  });
+
   it("from the price, Tab goes on inside the same line (never to Save as draft)", async () => {
     const user = userEvent.setup();
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
@@ -165,7 +183,7 @@ describe("F33: the price sheet gives focus back to the price that opened it", ()
   });
 });
 
-describe("F34: the Open order exists prompt says when the open order was started", () => {
+describe("F34: the Open order exists prompt says when the open order was created", () => {
   const openPrompt = async (order: Record<string, unknown>) => {
     activeOrder = order;
     renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
@@ -179,11 +197,11 @@ describe("F34: the Open order exists prompt says when the open order was started
   };
   const base = { id: "o1", orderNumber: "ORD-1", status: "PENDING", itemCount: 1, total: 40 };
 
-  it("shows the day the open order was started", async () => {
+  it("shows the day the open order was created", async () => {
     // Noon UTC: the same calendar day in every timezone this suite runs in.
     const prompt = await openPrompt({ ...base, createdAt: "2026-11-17T12:00:00.000Z" });
     expect(within(prompt).getByTestId("merge-open-order-date")).toHaveTextContent(
-      "Started Nov 17, 2026",
+      "Created Nov 17, 2026",
     );
   });
 
