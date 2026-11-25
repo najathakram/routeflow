@@ -42,7 +42,7 @@ import { assertOrdersUnchanged, releaseLiveOrderStockInTx } from "./customer-del
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
-import { loadAvailableCreditByCustomer } from "./available-credit";
+import { filterAvailableAdvances, loadAvailableCreditByCustomer } from "./available-credit";
 import {
   advancePaymentKey,
   keyedPayment,
@@ -975,10 +975,12 @@ export class CustomersService {
 
   async getAdvancePayments(customerId: string) {
     await this.findCustomerOrThrow(customerId);
-    return this.prisma.forTenant().advancePayment.findMany({
+    const db = this.prisma.forTenant();
+    const advances = await db.advancePayment.findMany({
       where: { customerId },
       orderBy: { receivedAt: "desc" },
     });
+    return filterAvailableAdvances(db, advances); // B1385: an unconfirmed (DRAFT/PENDING) excess is not offered
   }
 
   // ─── Customer Prices ───────────────────────────────────────────────────────
@@ -1176,6 +1178,14 @@ export class CustomersService {
       if (!ap) throw new NotFoundException("Advance payment not found");
       if (Number(ap.balance) <= 0)
         throw new BadRequestException("Advance payment has no remaining balance");
+      // B1385: the server half of B839: money from a DRAFT, PENDING or VOID group is not spendable credit.
+      if ((await filterAvailableAdvances(tx, [ap])).length === 0) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.ADVANCE_NOT_AVAILABLE,
+          message:
+            "This advance comes from a payment that is not confirmed yet, so it cannot be applied.",
+        });
+      }
 
       // Opus review (F39): withAdvisoryLock above only serializes concurrent applies of THIS
       // advance against EACH OTHER (keyed by customerId) — it does nothing against a totally
