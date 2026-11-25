@@ -177,13 +177,14 @@ function allowedFeeTexts(
   const waivedNames = plans.slice(i).map((p) => p.name);
   const waived = listNames(waivedNames);
   const charged = listNames(plans.slice(0, i).map((p) => p.name));
+  // the price is written the way the page writes it (prices.js groups thousands: "1,000")
+  const price = typeof monthly === "number" ? monthly.toLocaleString("en-US") : String(monthly);
   const texts = [
-    `$${String(monthly)} a month on ${charged}. No fee on ${waived}.`,
+    `$${price} a month on ${charged}. No fee on ${waived}.`,
     `${waived} also get regulated items at no fee.`,
   ];
   // "the largest plans" is plural: true only while at least two plans waive the fee
-  if (waivedNames.length >= 2)
-    texts.push(`$${String(monthly)} a month, and no fee on the largest plans.`);
+  if (waivedNames.length >= 2) texts.push(`$${price} a month, and no fee on the largest plans.`);
   return texts;
 }
 
@@ -259,6 +260,20 @@ function feeSentences(rest: string): string[] {
   return out;
 }
 
+/**
+ * SEAM (SA-1287 A1, M-B pending): the one place the sweep's vocabulary lives. Widen it here only on the
+ * architect's ruling; the sweep and the carrier check read nothing else.
+ */
+function feeSweepPatterns(plans: ReadonlyArray<FeePlan>): RegExp[] {
+  return [
+    /no fee on/i,
+    /free on/i,
+    /largest plans/i,
+    /a month on/i,
+    ...plans.map((p) => new RegExp(`\\b${p.name}\\b[^.!?]*\\bfee\\b`, "i")),
+  ];
+}
+
 /** Every problem with the fee claim across the given pages (throws when the catalog leaves no fee to state). */
 function feeClaimProblems(
   pages: Record<string, string>,
@@ -267,13 +282,7 @@ function feeClaimProblems(
   monthly: unknown,
 ): string[] {
   const allowed = allowedFeeTexts(plans, includedAt, monthly);
-  const feeWords = [
-    /no fee on/i,
-    /free on/i,
-    /largest plans/i,
-    /a month on/i,
-    ...plans.map((p) => new RegExp(`\\b${p.name}\\b[^.!?]*\\bfee\\b`, "i")),
-  ];
+  const feeWords = feeSweepPatterns(plans);
   const problems: string[] = [];
   let carriers = 0;
   for (const [name, page] of Object.entries(pages)) {
@@ -383,8 +392,10 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
     const T1 = `${price} a month on Starter and Growth. No fee on Scale and Enterprise.`;
     const T3 = `${price} a month, and no fee on the largest plans.`;
     const T2 = "Scale and Enterprise also get regulated items at no fee.";
-    const run = (html: string, at: string | null | undefined = "SCALE") =>
-      feeClaimProblems({ "planted.html": html }, feePlans(), at, 39);
+    const run = (html: string, at: string | null | undefined = "SCALE", monthly = 39) =>
+      feeClaimProblems({ "planted.html": html }, feePlans(), at, monthly);
+    const mismatch = (text: string) => `planted.html: carrier mismatch: "${text}"`;
+    const unmarked = (text: string) => `planted.html: sweep: unmarked fee sentence: "${text}"`;
     const valid = `<li><b>Regulated items</b><small>${mark(T3)}</small></li>`;
 
     it.each([
@@ -399,52 +410,75 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
       expect(run(page)).toEqual([]);
     });
 
+    // each red case asserts the WHOLE problem list: it names its own planted text and nothing else
     it.each([
       [
         "F1 an extra waiver",
         mark(`${price} a month on Starter. No fee on Growth. No fee on Scale and Enterprise.`),
-        /carrier mismatch/,
+        [mismatch("$39 a month on Starter. No fee on Growth. No fee on Scale and Enterprise.")],
       ],
       [
         "F2 the wrong charge side",
         mark(`${price} a month on Starter, Growth and Scale. No fee on Scale and Enterprise.`),
-        /carrier mismatch/,
+        [mismatch("$39 a month on Starter, Growth and Scale. No fee on Scale and Enterprise.")],
       ],
-      ["F3a a plan the catalog lacks", mark(`${T3} No fee on Pro.`), /carrier mismatch/],
-      ["F3b an every-plan claim", mark(`${T3} Free on every plan.`), /carrier mismatch/],
+      [
+        "F3a a plan the catalog lacks",
+        mark(`${T3} No fee on Pro.`),
+        [mismatch("$39 a month, and no fee on the largest plans. No fee on Pro.")],
+      ],
+      [
+        "F3b an every-plan claim",
+        mark(`${T3} Free on every plan.`),
+        [mismatch("$39 a month, and no fee on the largest plans. Free on every plan.")],
+      ],
       [
         "F3c a negated sentence",
         mark(`${price} a month, and not: No fee on Scale and Enterprise.`),
-        /carrier mismatch/,
+        [mismatch("$39 a month, and not: No fee on Scale and Enterprise.")],
       ],
       [
-        "F4 a second fee line, marked",
+        "F4 a second fee line, marked (only the bad one is reported)",
         `${valid}<li ${FEE_MARK}>No fee on Growth and Scale.</li>`,
-        /carrier mismatch/,
+        [mismatch("No fee on Growth and Scale.")],
       ],
       [
         "L1 the home line names the wrong plans",
         `<p>${mark("Growth, Scale and Enterprise also get regulated items at no fee.")}</p>`,
-        /carrier mismatch/,
+        [mismatch("Growth, Scale and Enterprise also get regulated items at no fee.")],
       ],
-    ])("red: %s", (_n, page, re) => {
-      expect(run(page).join("\n")).toMatch(re);
+    ])("red: %s", (_n, page, expected) => {
+      expect(run(page)).toEqual(expected);
     });
 
     it("red: F4 a second fee line, unmarked, fails the sweep", () => {
-      expect(run(`${valid}<li>No fee on Growth and Scale.</li>`).join("\n")).toMatch(
-        /sweep: unmarked/,
-      );
+      expect(run(`${valid}<li>No fee on Growth and Scale.</li>`)).toEqual([
+        unmarked("No fee on Growth and Scale."),
+      ]);
     });
 
-    it("red: L1 today's product sentence, unmarked, gives two sweep problems", () => {
+    it("red: L1 today's product sentence, unmarked, gives exactly two sweep problems", () => {
       const product = `<p>We turn it on for you. It's ${price} a month on Starter and Growth. There's no fee on Scale and Enterprise.</p>`;
-      const found = run(`${valid}${product}`).filter((x) => x.includes("sweep: unmarked"));
-      expect(found).toHaveLength(2);
+      expect(run(`${valid}${product}`)).toEqual([
+        unmarked("It's $39 a month on Starter and Growth."),
+        unmarked("There's no fee on Scale and Enterprise."),
+      ]);
     });
 
     it("red: R1 one waiver makes the plural line false", () => {
-      expect(run(`<li>${mark(T3)}</li>`, "ENTERPRISE").join("\n")).toMatch(/carrier mismatch/);
+      expect(run(`<li>${mark(T3)}</li>`, "ENTERPRISE")).toEqual([
+        mismatch("$39 a month, and no fee on the largest plans."),
+      ]);
+    });
+
+    it("a price of 1,000 or more is written with its thousands separator", () => {
+      const big = '$<span data-addon="REGULATED" data-field="monthly">1,000</span>';
+      const t3 = `${big} a month, and no fee on the largest plans.`;
+      expect(run(`<li>${mark(t3)}</li>`, "SCALE", 1000)).toEqual([]);
+      const plain = t3.replace("1,000", "1000");
+      expect(run(`<li>${mark(plain)}</li>`, "SCALE", 1000)).toEqual([
+        mismatch("$1000 a month, and no fee on the largest plans."),
+      ]);
     });
 
     it("red: R2 the fee is not stated when every plan waives it", () => {
@@ -456,9 +490,9 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
     });
 
     it("red: no carrier anywhere", () => {
-      expect(run("<p>The trial is on the Starter plan, and it's free.</p>").join("\n")).toMatch(
-        /no carrier/,
-      );
+      expect(run("<p>The trial is on the Starter plan, and it's free.</p>")).toEqual([
+        `no carrier: no element carries ${FEE_MARK}`,
+      ]);
     });
   });
 
