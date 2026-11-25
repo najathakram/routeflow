@@ -507,6 +507,7 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     "invoices/invoices.service.ts#deleteInvoice": "Order > Invoice",
     "invoices/invoices.service.ts#markSent": "Order > Invoice > CreditNote",
     "invoices/invoices.service.ts#rebuildIssuedDepositMirrorOnDelivery": "Order > Invoice",
+    "invoices/invoices.service.ts#revertInvoiceToDraft": "Order > Invoice", // SA-1508: lockInvoiceRow first
     "invoices/invoices.service.ts#unvoidInvoice": "Order > Invoice",
     "invoices/invoices.service.ts#voidInvoice": "Order > Invoice",
     "invoices/invoices.service.ts#voidInvoiceInTx": "Invoice > CreditNote",

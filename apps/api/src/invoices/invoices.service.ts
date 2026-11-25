@@ -282,6 +282,8 @@ import { retryCreditTx, retryOnTxConflict } from "../common/tx-retry";
 import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
   lockInvoiceRow,
+  REVERTABLE_STATUSES,
+  revertRefusal,
   lockInvoicesForPayment,
   nextSentStatus,
   paymentRefusal,
@@ -3793,33 +3795,37 @@ export class InvoicesService {
 
   async revertInvoiceToDraft(id: string) {
     const inv = await this.findOneOrThrow(id);
-    const revertableStatuses = [InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.OVERDUE];
-    if (!revertableStatuses.includes(inv.status as any)) {
-      throw new BadRequestException(
-        `Only SENT, VIEWED, or OVERDUE invoices with no payments can be reverted to Draft. Current status: ${inv.status}`,
-      );
-    }
-    // Block if there are any LIVE payments. B314: a VOID (bounced) payment carries no money —
-    // counting it here made a bounced check permanently block the revert with no way out.
-    // This is an EXISTENCE check ("is any payment record still live?"), not a money sum — a
-    // DRAFT payment must still block: it's an unconfirmed but real payment record sitting on
-    // the invoice, and reverting out from under it would orphan it once it's later confirmed.
-    // CONFIRMED_PAYMENT (status: "PAID" only) would be WRONG here — it would let an invoice
-    // with an outstanding DRAFT payment revert.
-    const paymentCount = await this.prisma
-      .forTenant()
-      // scan-ok: draft-payment-not-void — existence check, not a money sum; see comment above.
-      .invoicePayment.count({ where: { invoiceId: id, status: { not: "VOID" } } });
-    if (paymentCount > 0) {
-      throw new BadRequestException(
-        "Cannot revert to Draft: this invoice has payments recorded. Void it instead.",
-      );
-    }
+    // Fast refusal on the pre-read; the authoritative one is re-judged on the LOCKED row below.
+    const refused = revertRefusal(
+      inv.status,
+      // Block if there are any LIVE payments. B314: a VOID (bounced) payment carries no money —
+      // counting it here made a bounced check permanently block the revert with no way out.
+      // This is an EXISTENCE check ("is any payment record still live?"), not a money sum — a
+      // DRAFT payment must still block: it is an unconfirmed but real payment record, and
+      // reverting out from under it would orphan it once it is later confirmed.
+      // CONFIRMED_PAYMENT (status: "PAID" only) would be WRONG here.
+      await this.prisma
+        .forTenant()
+        // scan-ok: draft-payment-not-void — existence check, not a money sum; see comment above.
+        .invoicePayment.count({ where: { invoiceId: id, status: { not: "VOID" } } }),
+    );
+    if (refused) throw new BadRequestException(refused);
     // Sales agents & commissions: revert + resync are one atomic unit — a
     // DRAFT invoice targets zero commission.
     return this.prisma.tenantTransaction(async (tx) => {
+      // SA-1508 (R-197-D F2): (Order →) Invoice locked FIRST; the status and the live payments are
+      // re-judged on the locked row, so a void or a payment committed since the pre-read wins.
+      const locked = await lockInvoiceRow(tx, id, inv.orderId);
+      const lockedRefusal = locked
+        ? revertRefusal(
+            locked.status,
+            // scan-ok: draft-payment-not-void — existence check on the locked row, not a money sum.
+            locked.payments.filter((p: any) => p.status !== "VOID").length,
+          )
+        : "Invoice not found";
+      if (lockedRefusal) throw new BadRequestException(lockedRefusal);
       const reverted = await tx.invoice.update({
-        where: { id },
+        where: { id, status: { in: REVERTABLE_STATUSES } },
         data: { status: InvoiceStatus.DRAFT, sentAt: null, pdfUrl: null },
       });
       await du.clearIssueDisplayUnits(tx, id); // SA-827: a DRAFT renders live; a re-issue freezes afresh
