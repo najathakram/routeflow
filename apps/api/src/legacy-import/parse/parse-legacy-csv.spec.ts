@@ -24,6 +24,24 @@ describe("streamed parser (T2)", () => {
     });
   });
 
+  it("names the dropped row's document number on the issue when the first cell has one", async () => {
+    const out = await collectLegacyCsv(Buffer.from("a,b,c\r\n 1001 ,2\r\n2002,5,6,7\r\n,8\r\n"));
+    expect(out.issues.map((i) => [i.code, i.sourceDocKey])).toEqual([
+      ["ROW_SHORT", "1001"],
+      ["ROW_LONG", "2002"],
+      ["ROW_SHORT", undefined],
+    ]);
+  });
+
+  it("reports the right physical line after a skipped blank line (R-176 F4)", async () => {
+    const out = await collectLegacyCsv(Buffer.from("a,b\r\n1,2\r\n\r\n3,4,5\r\n\r\n6,7\r\n"));
+    expect(out.records.map((r) => [r.cells[0], r.physicalLine, r.recordNo])).toEqual([
+      ["1", 2, 2],
+      ["6", 6, 4],
+    ]);
+    expect(out.issues[0]).toMatchObject({ code: "ROW_LONG", physicalLine: 4, recordNo: 3 });
+  });
+
   it("turns a long row into a row error too", async () => {
     const out = await collectLegacyCsv(Buffer.from("a,b\r\n1,2,3\r\n4,5\r\n"));
     expect(out.records).toHaveLength(1);

@@ -29,6 +29,8 @@ export interface GroupedDocument {
   historyOnly: boolean;
   held: boolean;
   holdCodes: LegacyIssueCode[];
+  /** False when the net is incomplete (a dropped row or a line with no usable Total): the sign class and key are provisional. */
+  keyFinal: boolean;
 }
 
 export interface GroupResult {
@@ -42,7 +44,15 @@ export interface GroupResult {
  * every line defect become issue rows, and the document is HELD. The customer text is never
  * folded or partially matched (ACME is not ACME 2). Totals are the file's totals only.
  */
-export function groupDocuments(lines: Iterable<CanonicalLine>): GroupResult {
+export interface DroppedRow {
+  docNumber: string;
+  code: "ROW_SHORT" | "ROW_LONG";
+}
+
+export function groupDocuments(
+  lines: Iterable<CanonicalLine>,
+  _opts: { dropped?: readonly DroppedRow[] } = {},
+): GroupResult {
   const issues: LegacyIssue[] = [];
   const byDoc = new Map<string, CanonicalLine[]>();
   for (const line of lines) {
@@ -146,6 +156,7 @@ export function groupDocuments(lines: Iterable<CanonicalLine>): GroupResult {
       signClass,
       kind,
       historyOnly: kind === "NEGATIVE_UNKNOWN",
+      keyFinal: true,
       held: holds.size > 0,
       holdCodes: [...holds],
     });

@@ -37,6 +37,9 @@ describe("parseMoney (T55 strict cents)", () => {
     expect(parseMoney("12abc")).toEqual({ ok: false, reason: "NOT_A_NUMBER" });
     expect(parseMoney("1,23")).toEqual({ ok: false, reason: "NOT_A_NUMBER" });
     expect(parseMoney("--5")).toEqual({ ok: false, reason: "NOT_A_NUMBER" });
+    // R-176 F3: a double sign is refused, never read as -5
+    expect(parseMoney("(-5)")).toEqual({ ok: false, reason: "NOT_A_NUMBER" });
+    expect(parseMoney("-(5)")).toEqual({ ok: false, reason: "NOT_A_NUMBER" });
   });
 
   it("reports blank as EMPTY, never as zero", () => {

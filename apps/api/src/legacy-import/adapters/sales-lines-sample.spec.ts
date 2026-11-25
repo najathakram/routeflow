@@ -117,6 +117,18 @@ describe("sample-signature adapter: money (T4)", () => {
     ]);
   });
 
+  it("a priced line with a blank Total gets a MISSING_TOTAL defect (R-176 F2), still not rebuilt", () => {
+    const line = adapt(row({ 7: "" }));
+    expect(line?.total).toBeNull();
+    expect(line?.defects).toEqual([
+      expect.objectContaining({ code: "MISSING_TOTAL", column: "Total" }),
+    ]);
+  });
+
+  it("a note line with no numbers has no MISSING_TOTAL defect", () => {
+    expect(adapt(row({ 3: "", 4: "call first", 5: "", 6: "", 7: "" }))?.defects).toEqual([]);
+  });
+
   it("converts M/D/YYYY to an ISO date and defects an impossible one", () => {
     expect(adapt(row({ 2: "3/4/2025" }))?.issueDate).toBe("2025-03-04");
     expect(adapt(row({ 2: "12/31/2024" }))?.issueDate).toBe("2024-12-31");
@@ -158,6 +170,84 @@ describe("readSalesFile (T7 adapter half, end to end)", () => {
     expect(out.documents.some((d) => d.kind === ("CREDIT_MEMO" as string))).toBe(false);
     expect(out.adapterKey).toBe(SALES_LINES_SAMPLE_ADAPTER.key);
     expect(out.linksKnown).toBe(false);
+  });
+
+  it("holds the twin's document whose row was short", async () => {
+    const twin = buildSyntheticSalesFile({ withShortRow: true });
+    const out = await readSalesFile(twin.bytes);
+    const held = out.documents.filter((d) => d.held);
+    expect(held).toHaveLength(1);
+    expect(held[0].holdCodes).toContain("ROW_SHORT");
+    expect(held[0].keyFinal).toBe(false);
+    expect(out.blocked).toBe(false);
+  });
+
+  it("holds a document whose positive row was dropped, so its key sign cannot silently flip", async () => {
+    const bytes = salesCsv([
+      ["1001", "ACME", "1/5/2025", "Acme Widget", "", "6", "20.00", "120.00", "", "extra"],
+      ["1001", "ACME", "1/5/2025", "", "Discount", "", "", "-20.00", ""],
+      ["1002", "ACME", "1/5/2025", "Acme Widget", "", "1", "5.00", "5.00", ""],
+    ]);
+    const out = await readSalesFile(bytes);
+    const d1001 = out.documents.find((d) => d.docNumber === "1001");
+    expect(d1001).toMatchObject({ held: true, keyFinal: false });
+    expect(d1001?.holdCodes).toContain("ROW_LONG");
+    expect(out.documents.find((d) => d.docNumber === "1002")).toMatchObject({
+      held: false,
+      keyFinal: true,
+    });
+  });
+
+  it("holds a document whose negative row was dropped (net would read +10, file says -20)", async () => {
+    const bytes = salesCsv([
+      ["3001", "ACME", "1/5/2025", "Acme Widget", "", "1", "10.00", "10.00", ""],
+      ["3001", "ACME", "1/5/2025", "", "Discount", "", "", "-30.00"],
+    ]);
+    const out = await readSalesFile(bytes);
+    expect(out.documents[0]).toMatchObject({ docNumber: "3001", held: true, keyFinal: false });
+  });
+
+  it("BLOCKS the file, with no documents out, when a row has no document number", async () => {
+    const bytes = salesCsv([
+      ["1001", "ACME", "1/5/2025", "Acme Widget", "", "1", "5.00", "5.00", ""],
+      ["", "ACME", "1/5/2025", "Acme Widget", "", "1", "5.00", "5.00", ""],
+    ]);
+    const out = await readSalesFile(bytes);
+    expect(out.blocked).toBe(true);
+    expect(out.blockReasons).toContain("BLANK_DOCUMENT_NUMBER");
+    expect(out.documents).toEqual([]);
+    expect(out.issues.some((i) => i.code === "BLANK_DOCUMENT_NUMBER")).toBe(true);
+  });
+
+  it("BLOCKS the file when a short row has a blank first cell", async () => {
+    const bytes = salesCsv([
+      ["1001", "ACME", "1/5/2025", "Acme Widget", "", "1", "5.00", "5.00", ""],
+      ["", "ACME"],
+    ]);
+    const out = await readSalesFile(bytes);
+    expect(out.blocked).toBe(true);
+    expect(out.blockReasons).toContain("ROW_SHORT");
+    expect(out.documents).toEqual([]);
+  });
+
+  it("does not block on a blank line or an all-empty row", async () => {
+    const bytes = Buffer.concat([
+      salesCsv([["1001", "ACME", "1/5/2025", "Acme Widget", "", "1", "5.00", "5.00", ""]]),
+      Buffer.from("\r\n,,,,,,,,\r\n"),
+    ]);
+    const out = await readSalesFile(bytes);
+    expect(out.blocked).toBe(false);
+    expect(out.documents).toHaveLength(1);
+  });
+
+  it("holds a document with a priced line and a blank Total (issue raised, key provisional)", async () => {
+    const bytes = salesCsv([
+      ["4001", "ACME", "1/5/2025", "Acme Widget", "", "2", "5.00", "", ""],
+      ["4001", "ACME", "1/5/2025", "", "Discount", "", "", "-1.00", ""],
+    ]);
+    const out = await readSalesFile(bytes);
+    expect(out.documents[0]).toMatchObject({ held: true, keyFinal: false });
+    expect(out.issues.map((i) => i.code)).toContain("MISSING_TOTAL");
   });
 
   it("refuses an unknown header file before reading any row", async () => {

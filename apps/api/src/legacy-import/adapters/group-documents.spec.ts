@@ -200,3 +200,63 @@ describe("groupDocuments (sign class, T7 kinds)", () => {
     expect(documents[0].netTotal).toBe(12.01);
   });
 });
+
+// MEDIUM-1 (R-175, R-176): a row the parser dropped must hold its document.
+describe("groupDocuments (dropped rows)", () => {
+  it("HOLDS a document named by a dropped row, with a provisional key", () => {
+    const { documents } = groupDocuments([line({ docNumber: "3001", total: 10 })], {
+      dropped: [{ docNumber: "3001", code: "ROW_SHORT" }],
+    });
+    expect(documents[0].held).toBe(true);
+    expect(documents[0].holdCodes).toContain("ROW_SHORT");
+    expect(documents[0].keyFinal).toBe(false);
+  });
+
+  it("leaves other documents alone", () => {
+    const { documents } = groupDocuments([line({ docNumber: "1" }), line({ docNumber: "2" })], {
+      dropped: [{ docNumber: "2", code: "ROW_LONG" }],
+    });
+    expect(documents.map((d) => [d.docNumber, d.held, d.keyFinal])).toEqual([
+      ["1", false, true],
+      ["2", true, false],
+    ]);
+  });
+});
+
+describe("groupDocuments (incomplete net, blank rows, rounding)", () => {
+  it("a priced line with no Total makes the key provisional", () => {
+    const { documents } = groupDocuments([
+      line({ quantity: 2, unitPrice: 5, total: null }),
+      line({ itemName: null, description: "Discount", quantity: null, unitPrice: null, total: -1 }),
+    ]);
+    expect(documents[0].keyFinal).toBe(false);
+  });
+
+  it("a complete document has a final key", () => {
+    expect(groupDocuments([line()]).documents[0].keyFinal).toBe(true);
+  });
+
+  it("an entirely blank row is a WARNING skip, not a missing-number error", () => {
+    const blank = line({
+      docNumber: "",
+      customerName: "",
+      issueDate: null,
+      itemName: null,
+      quantity: null,
+      unitPrice: null,
+      total: null,
+    });
+    const { documents, issues } = groupDocuments([blank]);
+    expect(documents).toEqual([]);
+    expect(issues).toEqual([expect.objectContaining({ severity: "WARNING", code: "BLANK_ROW" })]);
+  });
+
+  it("sums the net with roundMoney: 0.1 + 0.2 - 0.3 is 0, not 5.5e-17", () => {
+    const { documents } = groupDocuments([
+      line({ total: 0.1 }),
+      line({ total: 0.2 }),
+      line({ total: -0.3 }),
+    ]);
+    expect(documents[0].netTotal).toBe(0);
+  });
+});

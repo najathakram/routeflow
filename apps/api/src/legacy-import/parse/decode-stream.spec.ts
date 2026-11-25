@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { decodeLegacyBytes } from "./decode-stream";
 import { collectLegacyCsv } from "./parse-legacy-csv";
 
 const EM_DASH = "—";
@@ -25,6 +26,13 @@ describe("decoder (T1 leading 0xA0)", () => {
     const out = await collectLegacyCsv(bytes(body, [0xef, 0xbb, 0xbf]));
     expect(out.headers[0]).toBe("Invoice Number");
     expect(out.issues).toEqual([]);
+  });
+
+  it("removes the BOM at the decoder: decoded text never starts with U+FEFF (R-175 LOW-3)", async () => {
+    let text = "";
+    for await (const part of decodeLegacyBytes(bytes(body, [0xef, 0xbb, 0xbf]))) text += part;
+    expect(text.charCodeAt(0)).not.toBe(0xfeff);
+    expect(text.startsWith("Invoice Number")).toBe(true);
   });
 
   it("trims header keys", async () => {

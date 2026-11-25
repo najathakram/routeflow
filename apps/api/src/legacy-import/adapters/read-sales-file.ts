@@ -1,6 +1,6 @@
 import { parseLegacyCsv } from "../parse/parse-legacy-csv";
 import type { DecodeOptions, LegacySource } from "../parse/decode-stream";
-import { LegacyParseError, type LegacyIssue } from "../parse/legacy-issue";
+import { LegacyParseError, type LegacyIssue, type LegacyIssueCode } from "../parse/legacy-issue";
 import {
   defaultAdapterRegistry,
   type AdapterRegistry,
@@ -16,6 +16,8 @@ export interface SalesFileResult {
   headers: string[];
   lineCount: number;
   documents: GroupedDocument[];
+  blocked: boolean;
+  blockReasons: LegacyIssueCode[];
   issues: LegacyIssue[];
 }
 
@@ -62,6 +64,8 @@ export async function readSalesFile(
     headers,
     lineCount: lines.length,
     documents: grouped.documents,
+    blocked: false,
+    blockReasons: [],
     issues: [...issues, ...grouped.issues],
   };
 }

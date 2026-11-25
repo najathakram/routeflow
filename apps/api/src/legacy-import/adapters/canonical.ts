@@ -1,7 +1,7 @@
 // Canonical rows an adapter produces from one source record (SA-1295 A1). Money is a number of
 // dollars in whole cents, read strictly; a line total is the FILE's total, never quantity x price.
 
-export type LineDefectCode = "BAD_MONEY" | "BAD_QUANTITY" | "BAD_DATE";
+export type LineDefectCode = "BAD_MONEY" | "BAD_QUANTITY" | "BAD_DATE" | "MISSING_TOTAL";
 
 export interface LineDefect {
   code: LineDefectCode;

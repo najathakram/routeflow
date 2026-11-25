@@ -8,6 +8,8 @@ export type LegacyIssueCode =
   | "BAD_MONEY"
   | "BAD_QUANTITY"
   | "BAD_DATE"
+  | "MISSING_TOTAL"
+  | "BLANK_ROW"
   | "BLANK_DOCUMENT_NUMBER"
   | "BLANK_CUSTOMER"
   | "BLANK_CUSTOMER_INHERITED"
