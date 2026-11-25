@@ -122,9 +122,32 @@
 {"id":"B729","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"PR #4383: checkQtySplitConsistency refuses contradicting split on buyer create/edit with QTY_SPLIT_MISMATCH and at CR sites (fixed in f9eff1c2f93890dcf04aa808ff86bd8437e78a29)","sha":"f9eff1c2f93890dcf04aa808ff86bd8437e78a29"}
 {"id":"B844","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"PR #4379: nextBillNumber reads inside the creating tx under per-tenant advisory xact lock; 12-concurrent DB spec (fixed in fbc30035c00a33239f03f6873ba4c7ac2db0d482)","sha":"fbc30035c00a33239f03f6873ba4c7ac2db0d482"}
 {"id":"B1378","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4462 (W-1316 PR-1), SA-1273 (board comment 7149879397 on #4456): a return is never credited above the price the customer was charged for the item; matched returns price at the invoice line, an unreferenced chunk is capped at the last charged price per selling unit (lastPaidCapSubtotal), a staff override above it is 400 RETURN_CREDIT_OVER_CAP. Pins: inline-returns-quote.last-paid-cap.w1316.spec.ts, inline-returns-last-paid-cap.w1316.db.spec.ts. (fixed in 6aa9cc9e528963366d92d34c098a7ed07aa4e4d9)","sha":"6aa9cc9e528963366d92d34c098a7ed07aa4e4d9"}
-{"id":"B1379","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1379","batch":"F65","tier":"T1","state":"proven","pr":4516,"proof":"REG-B1379 jest: one Save adjustment press sends one request (inventory.adjust-once.test.tsx)","evidence":null,"buildPlan":null}
 {"id":"B1380","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1381","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1382","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1383","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1382","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4509 (merged 2026-11-25): BUYER_LINE_QTY_MAX clamp on web cart and mobile box; QtyStepper.limits.test.tsx and buyer-cart-line.test.ts (fixed in 18428dd1901a9b85098705ac219d13aa2410d870)","sha":"18428dd1901a9b85098705ac219d13aa2410d870"}
+{"id":"B1383","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Staff sites fixed by #4513 (PR-A, merged 2026-11-25): pricedPerLabel names the box; buyer display sites PR-B still pending (fixed in e7c4f7be38d6554b4f5da4e92e4dd983bb07ce62)","sha":"e7c4f7be38d6554b4f5da4e92e4dd983bb07ce62"}
 {"id":"B1384","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1385","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4512 (merged 2026-11-25): one filterAvailableAdvances plus DRAFT_PAYMENT_HAS_EXCESS refusal; specs available-credit.draft-advance.spec.ts (fixed in c81df0b225857d98dd1a1b7d4b3e33e19105e352)","sha":"c81df0b225857d98dd1a1b7d4b3e33e19105e352"}
+{"id":"B1386","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1387","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4514 (merged 2026-11-25): qty cells via invoiceLineQtyText; estimate-line-qty-price.test.ts and page.qty-cells.test.tsx (fixed in f036def3eba178a78ea7690fd0b805499ee5edbc)","sha":"f036def3eba178a78ea7690fd0b805499ee5edbc"}
+{"id":"B1390","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1391","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4514 (merged 2026-11-25): buyerOrderListTotal reads the stored total; buyer-orders-list-total.test.ts (fixed in f036def3eba178a78ea7690fd0b805499ee5edbc)","sha":"f036def3eba178a78ea7690fd0b805499ee5edbc"}
+{"id":"B1392","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4517 (merged 2026-11-25): label and You-save line removed; page.annual-label.test.tsx (fixed in d71b7ccbee5b774bd172bc104303a3e60ba6a688)","sha":"d71b7ccbee5b774bd172bc104303a3e60ba6a688"}
+{"id":"B1395","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1396","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1397","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1398","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1399","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1400","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1401","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1402","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1403","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1404","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1405","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1406","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1407","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1408","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1409","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1411","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1077","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Stale: ADDON_ANNUAL_NOT_SUPPORTED exists and is thrown from the add-on paths since #3129; pinned by trial-addon-checkout.spec.ts:891 (SA-1304 R-1 ruling) (fixed in 3878401c53cb694ed1157c67f0b84e7ba6141cd9)","sha":"3878401c53cb694ed1157c67f0b84e7ba6141cd9"}

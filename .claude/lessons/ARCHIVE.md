@@ -4945,3 +4945,33 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the gate key named what the counter answers (what kind of access), not what the log answers (where from); a cron job has no request route to name itself.
 - **Lesson:** **Key a rate gate by every field the log line is read by (kind, model, op, call place), put one global per-second budget over it (20) and a backstop on the map size (5,000 entries), and check the shape of the place string before it enters a key. Name each scheduled job's place where the job starts (`@LeaderCron` runs the body at `<area>.<method>`), so the log says which job.**
 - **Guard:** `prisma/tenant-context-guard.spec.ts` rows B5-1 (key without `where`), B5-2 (no budget) and B5-4 (no shape check), each red by mutation; `common/call-place.ts`. Open: B1295 (the two queue processors have no row). Cf. [[L-369]].
+
+## Archived 2026-11-25 (bookkeeping for the 2026-11-25 merges) — zero outside citations, real test or spec guard; headroom for L-410 to L-413
+
+### L-381 · 2026-11-13 · web · after print, restore the scroll place on the first ScrollTrigger refresh, not at `afterprint` and not on a timer (B1324)
+
+- **Symptom:** leaving print (preview closed, or the print media query ending) put the page back at the wrong place: the reading position was lost.
+- **Root cause:** leaving print rebuilds every trigger. Each refresh records the place, scrolls to the top to measure, puts the place back, then reports. The first refresh after the rebuild recorded the place of the print layout (no pins, a shorter page), so a single restore at `afterprint` was overwritten by the refreshes that run after it.
+- **Lesson:** **Save the place when print starts; for the one frame after print ends, put the saved place back on every `refresh` report, with no timer, then stop. Turn off `overflow-anchor` in print so entering it does not shift the page before the place is read.**
+- **Guard:** spec 85 T1 reads `scrollY` and the trigger count before print and after returning, on 12 pages at 1440x900 and 390x844. The mechanism is commented in `public/site/js/home-up.js` and `js/site.js` (the same toggle in both; `site-motion-always.static.test.ts` pins that).
+
+### L-398 · 2026-11-21 · web · a file input fires no change when the same file is picked again; clear its value after every pick (#4397)
+
+- **Symptom:** an edited CSV re-picked from the same place kept the old File, and the next Preview ran on stale content.
+- **Root cause:** the browser raises `change` only when the selected path differs, and the panel kept the first File in state; the first fix pass tested picking a different file.
+- **Lesson:** **Set `input.value = ""` after reading the file on every pick, and test the second pick of the same file (a test that picks two different files proves nothing here).**
+- **Guard:** `apps/web/components/import/ImportCsvPanel.repick.test.tsx` (#4397).
+
+### L-397 · 2026-11-21 · web · a Next page file exports only page fields; helpers and components used elsewhere live in their own module (#4370)
+
+- **Symptom:** `tsc` failed TS2344 on two pages (estimates and a platform-admin tenant page), and only in a tree that had a local `.next`; a clean checkout passed.
+- **Root cause:** with `.next` present, tsc reads the per-page type guards Next emits, and a guard rejects any export that is not a page field. Two pages exported a date helper and a section component for other files to import.
+- **Lesson:** **Move any non-page export out of a `page.tsx` (or layout, route) file into a sibling module before another file imports it, and read a type-check in a tree that has run `next build` or `next dev`, not only a clean one.**
+- **Guard:** `apps/web/app/page-file-exports.static.test.ts` (fails on a page file with a non-page export; #4370).
+
+### L-380 · 2026-11-13 · web · a `gsap.matchMedia` condition whose KEY is `all` always matches, whatever its value says (B1324)
+
+- **Symptom:** a print toggle meant to take page motion off for print never reverted: motion stayed on and pages printed blank bands. Changing the condition's value string to screen-only changed nothing.
+- **Root cause:** GSAP's `matchMedia` treats a condition named `all` as match-everything and never reads its value. `site.js` declared `{ all: "all", desk: "(min-width: 900px)" }`, so the context was live in print.
+- **Lesson:** **Never name a `matchMedia` condition key `all`; name it for what it means (`screen`) and give it the media query. Prove a print branch by emulating print media and reading that the context reverted, not by reading the condition text.**
+- **Guard:** `site-motion-always.static.test.ts` computes the condition from the source and requires it screen-only (ledger row B1324/T1 in `site-pin-ledger.json`); spec 85 T1 asserts no `js-motion` in print.
