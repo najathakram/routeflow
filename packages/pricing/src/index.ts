@@ -76,3 +76,4 @@ export * from "./line-counts";
 export * from "./line-order";
 export * from "./po-bill-lines";
 export * from "./plan-display-name";
+export * from "./quantity-expression";
