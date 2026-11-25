@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { BUYER_LINE_QTY_MAX, computeLineSubtotal, maxLineCount } from "@routeflow/pricing";
 
 export interface CartItem {
   productId: string;
@@ -43,6 +43,14 @@ function boxedFields(unitsPerBox: number | null | undefined, sellingUnits: numbe
   return { boxes: null, pieces: null, qty: Math.max(0, Math.floor(sellingUnits)) };
 }
 
+/**
+ * The most selling units (boxes for a boxed product, else pieces) a line may hold: its piece total stays within
+ * BUYER_LINE_QTY_MAX (B1382). `step` and `setUnits` clamp to it; `add` clamps too (SA-1292).
+ */
+export function maxLineUnits(unitsPerBox: number | null | undefined): number {
+  return maxLineCount(BUYER_LINE_QTY_MAX, unitsPerBox);
+}
+
 /** Current selling-unit count of a line (boxes for boxed, else qty). */
 function sellingUnitsOf(item: CartItem): number {
   const upb = Number(item.unitsPerBox ?? 0);
@@ -59,7 +67,13 @@ export const useCartStore = create<CartState>()((set, get) => ({
         return {
           items: state.items.map((i) =>
             i.productId === item.productId
-              ? { ...i, ...boxedFields(i.unitsPerBox, sellingUnitsOf(i) + 1) }
+              ? {
+                  ...i,
+                  ...boxedFields(
+                    i.unitsPerBox,
+                    Math.min(sellingUnitsOf(i) + 1, maxLineUnits(i.unitsPerBox)),
+                  ),
+                }
               : i,
           ),
         };
@@ -73,7 +87,7 @@ export const useCartStore = create<CartState>()((set, get) => ({
     set((state) => {
       const item = state.items.find((i) => i.productId === productId);
       if (!item) return state;
-      const next = sellingUnitsOf(item) + delta;
+      const next = Math.min(sellingUnitsOf(item) + delta, maxLineUnits(item.unitsPerBox));
       if (next <= 0) return { items: state.items.filter((i) => i.productId !== productId) };
       return {
         items: state.items.map((i) =>
@@ -89,7 +103,9 @@ export const useCartStore = create<CartState>()((set, get) => ({
       if (units <= 0) return { items: state.items.filter((i) => i.productId !== productId) };
       return {
         items: state.items.map((i) =>
-          i.productId === productId ? { ...i, ...boxedFields(i.unitsPerBox, units) } : i,
+          i.productId === productId
+            ? { ...i, ...boxedFields(i.unitsPerBox, Math.min(units, maxLineUnits(i.unitsPerBox))) }
+            : i,
         ),
       };
     }),

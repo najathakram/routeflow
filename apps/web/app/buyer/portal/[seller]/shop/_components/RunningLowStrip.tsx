@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowRight, Package, Plus } from "lucide-react";
 import { useBuyerShelf, type ShelfEstimate } from "@/lib/api/buyer";
 import type { useBuyerCart } from "@/lib/buyer-cart";
-import { lineCount, newCartLine } from "@/lib/buyer-cart-line";
+import { lineCount, lineLimit, newCartLine } from "@/lib/buyer-cart-line";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { QtyStepper } from "./QtyStepper";
 import { CartLineUnit } from "../../_components/CartLineUnit";
@@ -92,6 +92,7 @@ export function RunningLowStrip({
                     onRemove={() => cart.updateQty(e.productId, 0)}
                     onRestore={line ? () => cart.addItem(line) : undefined}
                     size="sm"
+                    {...(line ? lineLimit(line) : {})}
                   />
                   {line && (
                     <CartLineUnit
