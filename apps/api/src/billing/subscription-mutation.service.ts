@@ -52,6 +52,7 @@ import { applyCouponStateTx, readCouponStateFromStripe } from "./coupon-state";
 import { markNeedsReconcile } from "./needs-reconcile";
 import { NO_COUPON } from "./coupon-unbilled";
 import { b58GuardRefusal } from "./b58-guard";
+import { assertSubscribeNotAnnual } from "./subscribe-cycle-guard";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import {
   BILLING_EVENTS,
@@ -511,6 +512,7 @@ export class SubscriptionMutationService {
    * no Pay now able to open a session at the old terms in between.
    */
   async subscribe(tenantId: string, input: SubscribeInput, actorId?: string) {
+    assertSubscribeNotAnnual(input.cycle);
     // The card-first gate runs BEFORE the tenant-price lock (never re-take it inside).
     await this.enforceCardFirst(tenantId, "subscribe");
     await this.assertNotOverdue(tenantId, "subscribe");
