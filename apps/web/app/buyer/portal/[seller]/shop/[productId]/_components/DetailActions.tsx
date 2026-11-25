@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Bell } from "lucide-react";
-import type { PromotionRule, PromoResult } from "@routeflow/pricing";
+import { pricedPerLabel, type PromotionRule, type PromoResult } from "@routeflow/pricing";
 import type { BuyerProductDetail, BuyerPromotion } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
 import { lineCount, type CartUnit } from "@/lib/buyer-cart-line";
@@ -101,8 +101,7 @@ export function DetailActions({
           )}
         </div>
         <p className="mt-1 text-sm text-navy/70">
-          per {product.unit}
-          {product.unitsPerBox ? ` (${product.unitsPerBox}/box)` : ""}
+          {pricedPerLabel({ unit: product.unit, unitsPerBox: product.unitsPerBox }).perText}
         </p>
       </div>
 

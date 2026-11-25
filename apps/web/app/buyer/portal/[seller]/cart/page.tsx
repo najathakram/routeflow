@@ -42,6 +42,7 @@ import {
   normalizeBoxesPieces,
   applyBestPromotion,
   roundMoney,
+  pricedPerLabel,
 } from "@routeflow/pricing";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import { objectPositionForUrl } from "@/lib/image-focal";
@@ -565,7 +566,12 @@ export default function BuyerCartPage() {
                             </div>
                             <div>
                               <p className="text-sm font-medium text-navy">{item.name}</p>
-                              <p className="text-xs text-navy/70">per {item.unit}</p>
+                              <p className="text-xs text-navy/70">
+                                {
+                                  pricedPerLabel({ unit: item.unit, unitsPerBox: item.unitsPerBox })
+                                    .perText
+                                }
+                              </p>
                               {freeUnits > 0 && (
                                 <p className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
                                   {freeUnits} free

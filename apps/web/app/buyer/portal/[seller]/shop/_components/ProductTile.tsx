@@ -4,7 +4,7 @@ import * as React from "react";
 import { RetryableImg } from "@/components/RetryableImg";
 import Link from "next/link";
 import { Package, Heart, Plus, Bell } from "lucide-react";
-import type { PromotionRule, PromoResult } from "@routeflow/pricing";
+import { pricedPerLabel, type PromotionRule, type PromoResult } from "@routeflow/pricing";
 import type { BuyerProduct, BuyerPromotion, ReplenishmentEstimate } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
 import { lineCount, type CartUnit } from "@/lib/buyer-cart-line";
@@ -225,8 +225,7 @@ export function ProductTile({
               )}
             </div>
             <p className={`text-navy/70 ${isCompact ? "text-[10px]" : "text-[11px]"}`}>
-              per {product.unit}
-              {product.unitsPerBox ? ` (${product.unitsPerBox}/box)` : ""}
+              {pricedPerLabel({ unit: product.unit, unitsPerBox: product.unitsPerBox }).perText}
             </p>
           </div>
 

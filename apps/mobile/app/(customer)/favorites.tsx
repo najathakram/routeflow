@@ -6,6 +6,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useBuyerFavorites, useToggleFavorite } from "../../lib/api/buyer";
 import { useCartStore } from "../../store/cartStore";
+import { pricedPerLabel } from "@routeflow/pricing";
 
 /**
  * Favorites-only view — the products the buyer hearted, with quick add-to-cart
@@ -85,7 +86,9 @@ export default function BuyerFavoritesScreen() {
                   </Text>
                   <Text style={styles.price}>
                     ${price.toFixed(2)}
-                    {p.unit ? ` / ${p.unit}` : ""}
+                    {p.unit
+                      ? ` / ${pricedPerLabel({ unit: p.unit, unitsPerBox: p.unitsPerBox }).word}`
+                      : ""}
                   </Text>
                 </View>
                 <Pressable

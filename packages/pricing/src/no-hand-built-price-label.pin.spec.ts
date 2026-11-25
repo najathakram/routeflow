@@ -16,8 +16,47 @@ const ALLOW = [
 
 const HAND_BUILT = [/Price per\s*\$\{/, /["'`]Price per ["'`]\s*\+/, /["'`]Price per unit["'`]/];
 
+// PR-B: a price quoted "per {x.unit}" / "/ {x.unit}" by hand reads "per can" over a box price.
+const HAND_BUILT_PER = [
+  /\bper\s+\{\s*[\w.?]*\bunit\s*\}/,
+  /\bper\s+\$\{\s*[\w.?]*\bunit\s*\}/,
+  /\/\s+\$\{\s*[\w.?]*\bunit\s*\}/,
+  /\/\s+\{\s*[\w.?]*\bunit\s*\}/,
+];
+
+// Files that keep a hand-written "/ {unit}" on purpose, each with its reason (PR-B scan decisions).
+const ALLOW_PER = [
+  // boxed lines print "/ box" first; the unit fallback is reached only for a line with no pack
+  [path.join("(customer)", "orders", "cart.tsx"), "boxed branch is separate; fallback is unboxed"],
+  [path.join("edit-items", "ProductPicker.tsx"), "boxed branch is separate; fallback is unboxed"],
+  ["invoice-line-display.ts", "pack lines (upb > 1) return first; fallback is a factor-1 line"],
+  // staff order editors that carry their own pack-aware price unit; converting needs a behaviour change
+  [path.join("scan", "PriceEditor.tsx"), "staff scan editor: follow-up (own priceUnit logic)"],
+  ["LineItemRow.tsx", "staff unlisted-line price input: follow-up"],
+  // mobile rows with a separate boxed branch ("case of N" / "box") ahead of the unit fallback; the hardcoded
+  // pack word that ignores the tenant's pack name is its own MEDIUM bug (PR-A follow-ups)
+  ["CartRow.tsx", "boxed branch is separate; fallback is unboxed"],
+  ["ProductRow.tsx", "boxed branch is separate; fallback is unboxed"],
+  [path.join("invoices", "new.tsx"), "boxed branch is separate; fallback is unboxed"],
+  // not a product price label
+  [path.join("_components", "CounterLinePriceEdit.tsx"), "the order-line editor's own item label"],
+  [path.join("price-history", "PriceHistoryChart.tsx"), "chart caption (average per unit)"],
+  // need a behaviour change (follow-ups named in the PR): not converted here
+  [path.join("(customer)", "invoices", "[id].tsx"), "follow-up: own bug (pieces before box price)"],
+  [path.join("(customer)", "orders", "[id].tsx"), "follow-up: needs a behaviour change"],
+  [path.join("[id]", "edit-items.tsx"), "follow-up: needs a behaviour change"],
+] as const;
+
+function strip(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, " ");
+}
+
 export function handBuilt(src: string): boolean {
-  return HAND_BUILT.some((re) => re.test(src.replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, " ")));
+  return HAND_BUILT.some((re) => re.test(strip(src)));
+}
+
+export function handBuiltPer(src: string): boolean {
+  return HAND_BUILT_PER.some((re) => re.test(strip(src)));
 }
 
 function collect(dir: string, out: string[] = []): string[] {
@@ -44,6 +83,39 @@ describe("no hand-built price label outside pricedPerLabel (B1383)", () => {
     expect(handBuilt("// Price per ${x} is wrong")).toBe(false);
     expect(handBuilt("label={pricedPerLabel({ unit }).label}")).toBe(false);
     expect(handBuilt("Price per {w.base.lower}")).toBe(false);
+  });
+
+  it.each([
+    ["JSX per", "<p>per {item.unit}</p>"],
+    ["template per", "`per ${p.unit}`"],
+    ["template slash", "` / ${p.unit}`"],
+    ["JSX slash", "<span>/ {li.unit}</span>"],
+    ["bare name", "<p>per {unit}</p>"],
+  ])("the per-unit detector sees %s", (_n, src) => {
+    expect(handBuiltPer(src)).toBe(true);
+  });
+
+  it("the per-unit detector ignores the helper, a URL path and a comment", () => {
+    expect(handBuiltPer("{pricedPerLabel({ unit: p.unit }).perText}")).toBe(false);
+    expect(handBuiltPer("`/api/${unit}`")).toBe(false);
+    expect(handBuiltPer("// per {x.unit} is wrong")).toBe(false);
+  });
+
+  it("no web or mobile source words a per-unit price by hand (allowlist is reasoned)", () => {
+    const hits = ROOTS.flatMap((r) => collect(r))
+      .filter((f) => !ALLOW_PER.some(([a]) => f.endsWith(a)))
+      .filter((f) => handBuiltPer(fs.readFileSync(f, "utf8")))
+      .map((f) => path.relative(REPO_ROOT, f));
+    expect(hits).toEqual([]);
+  });
+
+  it("every allowlisted file still needs its entry", () => {
+    const files = ROOTS.flatMap((r) => collect(r));
+    for (const [a] of ALLOW_PER) {
+      const f = files.find((x) => x.endsWith(a));
+      expect(f).toBeDefined();
+      expect(handBuiltPer(fs.readFileSync(f!, "utf8"))).toBe(true);
+    }
   });
 
   it("no web or mobile source builds a price label by hand", () => {
