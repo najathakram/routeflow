@@ -11,6 +11,7 @@ import {
   type RoutePlanningDriverOption,
 } from "@/components/RoutePlanningControls";
 import type { StopEntry, CustomerForMap } from "./page";
+import type { StartPointHint } from "./start-point-hint";
 
 // ─── Props ─────────────────────────────────────────────────────────────────────
 
@@ -34,6 +35,8 @@ interface CreateRouteLeftPanelProps {
   onTogglePlanning: () => void;
   /** Gates the Create route button — mirrors deliveries/new's originReady. */
   originReady: boolean;
+  /** The line above the buttons while Create route is off for want of a start point; null says nothing. */
+  startPointHint: StartPointHint;
   /** avoidTolls/optimizeBy changed since the last "Optimize stop order" run. */
   settingsChanged: boolean;
 }
@@ -57,6 +60,7 @@ export function CreateRouteLeftPanel({
   planningOpen,
   onTogglePlanning,
   originReady,
+  startPointHint,
   settingsChanged,
 }: CreateRouteLeftPanelProps) {
   const router = useRouter();
@@ -305,9 +309,11 @@ export function CreateRouteLeftPanel({
       <div className="shrink-0 border-t border-surface-border bg-white px-4 py-3">
         {/* The button below is off until a start point is set. Say so in words (a tooltip is no help on a
             phone or to someone who does not hover) and take the user to the place that fixes it. */}
-        {!originReady && (
+        {startPointHint && (
           <p className="mb-2 text-sm text-navy" role="status">
-            Choose where the route starts.{" "}
+            {startPointHint === "settings-failed"
+              ? "Your business address did not load. Reload the page, or pick another start."
+              : "Choose where the route starts."}{" "}
             <button
               type="button"
               className="font-semibold text-brand-700 underline underline-offset-2"

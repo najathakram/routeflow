@@ -477,6 +477,9 @@ export default function MyRunsPage() {
       earlierRuns: earlierList,
     };
   }, [data?.data]);
+  // The next run the driver will really drive. An operator's list (drive mode) also carries cancelled and finished
+  // runs, and a cancelled run tomorrow is not "your next route" (review R-138, M1).
+  const nextRun = upcomingRuns.find((r) => r.status === "SCHEDULED" || r.status === "IN_PROGRESS");
 
   // Today's active/next run gets promoted to the drive-mode hero card — the rest
   // of today's runs (if more than one) still render in the compact list below it.
@@ -549,8 +552,8 @@ export default function MyRunsPage() {
           <section className="rounded-lg border border-surface-border bg-white p-6 shadow-card">
             {/* "None today" above an Upcoming card that holds tomorrow's run read as "you have no work": name the next one. */}
             <p className="text-sm text-navy/70">
-              {upcomingRuns[0]
-                ? `No route today. Your next one is ${fmtCalendarDateWithWeekday(upcomingRuns[0].scheduledDate, "short")}.`
+              {nextRun
+                ? `Nothing to deliver today. Your next route is ${fmtCalendarDateWithWeekday(nextRun.scheduledDate, "short")}.`
                 : "No runs scheduled for you today."}
             </p>
           </section>
