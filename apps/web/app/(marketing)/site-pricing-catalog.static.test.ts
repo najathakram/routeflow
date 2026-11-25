@@ -153,29 +153,142 @@ const pages = () => fs.readdirSync(SITE).filter((f) => f.endsWith(".html"));
 const html = (f: string) => fs.readFileSync(path.join(SITE, f), "utf8");
 const num = (s: string) => Number(s.replace(/,/g, ""));
 
-/** SA-1287: the regulated-items fee sentence, derived from the catalog. The add-on's own list item names the
- *  waived plans when it names any plan; with no plan name, "no fee on the largest plans." stands only while
- *  the waived plans are the catalog's top two or more and not all of them. Returns null when the line is true. */
-function regulatedFeeLineProblem(
-  page: string,
-  plans: ReadonlyArray<{ planKey: string; name: string }>,
+/**
+ * SA-1287 A1: the regulated-items fee claim is a contract, not a free sentence.
+ *  - Every element that states the fee carries data-claim="regulated-fee", and its text must EQUAL one of the texts
+ *    allowedFeeTexts() derives from the catalog (plan order, included-at plan, add-on price).
+ *  - A sweep over every site page fails any fee sentence outside a carrier.
+ *  - At least one carrier must exist on the site.
+ */
+const FEE_MARK = 'data-claim="regulated-fee"';
+type FeePlan = { planKey: string; name: string };
+
+const listNames = (n: string[]) =>
+  n.length < 2 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+
+function allowedFeeTexts(
+  plans: ReadonlyArray<FeePlan>,
   includedAt: string | null | undefined,
-): string | null {
-  const li = page.match(/<li><span><b>Regulated items<\/b>[\s\S]*?<\/li>/)?.[0];
-  if (!li) return "no Regulated items list item";
+  monthly: unknown,
+) {
   const i = plans.findIndex((p) => p.planKey === includedAt);
-  if (i < 0) return `includedAtPlan ${String(includedAt)} is not a catalog plan`;
-  if (i === 0) return "the add-on is free on every plan; the page must not sell it as a fee";
-  const waived = plans.slice(i).map((p) => p.name);
-  if (plans.some((p) => new RegExp(`\\b${p.name}\\b`).test(li))) {
-    const named = `No fee on ${waived.join(" and ")}.`;
-    return li.includes(named) ? null : `named sentence missing: "${named}"`;
+  if (i < 0) throw new Error(`includedAtPlan ${String(includedAt)} is not a catalog plan`);
+  if (i === 0) throw new Error("the add-on is free on every plan; there is no fee to state");
+  const waivedNames = plans.slice(i).map((p) => p.name);
+  const waived = listNames(waivedNames);
+  const charged = listNames(plans.slice(0, i).map((p) => p.name));
+  const texts = [
+    `$${String(monthly)} a month on ${charged}. No fee on ${waived}.`,
+    `${waived} also get regulated items at no fee.`,
+  ];
+  // "the largest plans" is plural: true only while at least two plans waive the fee
+  if (waivedNames.length >= 2)
+    texts.push(`$${String(monthly)} a month, and no fee on the largest plans.`);
+  return texts;
+}
+
+const ENTITY: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+};
+function normalizeText(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&([a-z]+);/gi, (m, n) => ENTITY[n.toLowerCase()] ?? m)
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\s+/g, " ")
+    .replace(/\$ (\d)/g, "$$$1")
+    .replace(/ ([.,!?])/g, "$1")
+    .trim();
+}
+
+/** The carriers' text and the page without them. The scan counts nested tags of the same name: a plain
+ *  non-greedy match stops at the first closing tag and breaks on the price span inside a carrier. */
+function splitCarriers(page: string): { texts: string[]; rest: string } {
+  const texts: string[] = [];
+  let rest = "";
+  let pos = 0;
+  for (;;) {
+    const at = page.indexOf(FEE_MARK, pos);
+    if (at < 0) break;
+    const open = page.lastIndexOf("<", at);
+    const tag = /^<([a-z0-9]+)/i.exec(page.slice(open))?.[1].toLowerCase();
+    if (!tag) throw new Error("a fee marker sits outside an element");
+    const innerStart = page.indexOf(">", at) + 1;
+    const re = new RegExp(`<(/?)${tag}\\b[^>]*>`, "gi");
+    re.lastIndex = innerStart;
+    let depth = 1;
+    let innerEnd = -1;
+    let end = -1;
+    for (let m = re.exec(page); m; m = re.exec(page)) {
+      depth += m[1] ? -1 : 1;
+      if (depth === 0) {
+        innerEnd = m.index;
+        end = m.index + m[0].length;
+        break;
+      }
+    }
+    if (end < 0) throw new Error(`an unclosed <${tag}> fee carrier`);
+    texts.push(normalizeText(page.slice(innerStart, innerEnd)));
+    rest += `${page.slice(pos, open)} `;
+    pos = end;
   }
-  if (waived.length < 2)
-    return `"the largest plans" is plural, but only ${waived[0]} waives the fee`;
-  return /\bno fee on the largest plans\./i.test(li)
-    ? null
-    : "no fee sentence for the waived plans";
+  return { texts, rest: rest + page.slice(pos) };
+}
+
+const SWEEP_BREAK =
+  /<\/?(?:p|li|ul|ol|td|th|tr|table|h[1-6]|div|section|article|header|footer|nav|main|aside|figure|figcaption|summary|details|dt|dd|br|button|a|label|blockquote|title)\b[^>]*>/gi;
+
+function feeSentences(rest: string): string[] {
+  const body = rest
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "\n")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "\n")
+    .replace(/<!--[\s\S]*?-->/g, "\n")
+    .replace(SWEEP_BREAK, "\n");
+  const out: string[] = [];
+  for (const chunk of body.split("\n")) {
+    const text = normalizeText(chunk);
+    for (const sentence of text.split(/(?<=[.!?])\s+/)) if (sentence) out.push(sentence);
+  }
+  return out;
+}
+
+/** Every problem with the fee claim across the given pages (throws when the catalog leaves no fee to state). */
+function feeClaimProblems(
+  pages: Record<string, string>,
+  plans: ReadonlyArray<FeePlan>,
+  includedAt: string | null | undefined,
+  monthly: unknown,
+): string[] {
+  const allowed = allowedFeeTexts(plans, includedAt, monthly);
+  const feeWords = [
+    /no fee on/i,
+    /free on/i,
+    /largest plans/i,
+    /a month on/i,
+    ...plans.map((p) => new RegExp(`\\b${p.name}\\b[^.!?]*\\bfee\\b`, "i")),
+  ];
+  const problems: string[] = [];
+  let carriers = 0;
+  for (const [name, page] of Object.entries(pages)) {
+    const { texts, rest } = splitCarriers(page);
+    carriers += texts.length;
+    for (const t of texts)
+      if (!allowed.includes(t)) problems.push(`${name}: carrier mismatch: "${t}"`);
+    for (const sentence of feeSentences(rest)) {
+      if (feeWords.some((re) => re.test(sentence))) {
+        problems.push(`${name}: sweep: unmarked fee sentence: "${sentence}"`);
+      }
+    }
+  }
+  if (carriers === 0) problems.push(`no carrier: no element carries ${FEE_MARK}`);
+  return problems;
 }
 
 describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})`, () => {
@@ -251,50 +364,102 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
     }
   });
 
-  const feePlans = () => catalog.plans as unknown as Array<{ planKey: string; name: string }>;
-  const FEE_MASTER =
-    "<li><span><b>Regulated items</b><small>We turn it on for you. $39 a month on Starter and Growth. No fee on Scale and Enterprise.</small></span></li>";
-  const FEE_ONE_LINE =
-    "<li><span><b>Regulated items</b><small>We turn it on for you. $39 a month, and no fee on the largest plans.</small></span></li>";
+  const feePlans = () => catalog.plans as unknown as FeePlan[];
+  const feeAt = () => sku("REGULATED_ITEMS")?.includedAtPlan as string | null | undefined;
+  const feeMonthly = () => sku("REGULATED_ITEMS")?.monthlyPrice;
 
-  it("the regulated-items fee line follows the catalog's included-at plan", () => {
-    const at = sku("REGULATED_ITEMS")?.includedAtPlan as string | null | undefined;
-    expect(at).toBe("SCALE"); // kept tripwire: a catalog move re-opens SA-1287
-    expect(regulatedFeeLineProblem(html("pricing.html"), feePlans(), at)).toBeNull();
+  it("the regulated-items fee claim is marked, equals the catalog's text, and appears nowhere unmarked", () => {
+    expect(feeAt()).toBe("SCALE"); // kept tripwire: a catalog move re-opens SA-1287
+    const byPage: Record<string, string> = {};
+    for (const f of pages()) byPage[f] = html(f);
+    expect(feeClaimProblems(byPage, feePlans(), feeAt(), feeMonthly())).toEqual([]);
+    const carriers = Object.values(byPage).reduce((n, h) => n + splitCarriers(h).texts.length, 0);
+    expect(carriers).toBeGreaterThanOrEqual(1);
   });
 
-  it("G1 both wordings pass at the catalog's included-at plan", () => {
-    expect(regulatedFeeLineProblem(FEE_MASTER, feePlans(), "SCALE")).toBeNull();
-    expect(regulatedFeeLineProblem(FEE_ONE_LINE, feePlans(), "SCALE")).toBeNull();
-  });
+  describe("the fee claim guard, on planted pages (SA-1287 A1)", () => {
+    const price = '$<span data-addon="REGULATED" data-field="monthly">39</span>';
+    const mark = (inner: string, tag = "span") => `<${tag} ${FEE_MARK}>${inner}</${tag}>`;
+    const T1 = `${price} a month on Starter and Growth. No fee on Scale and Enterprise.`;
+    const T3 = `${price} a month, and no fee on the largest plans.`;
+    const T2 = "Scale and Enterprise also get regulated items at no fee.";
+    const run = (html: string, at: string | null | undefined = "SCALE") =>
+      feeClaimProblems({ "planted.html": html }, feePlans(), at, 39);
+    const valid = `<li><b>Regulated items</b><small>${mark(T3)}</small></li>`;
 
-  it.each([
-    [
-      "R1 the plural line is false when only the top plan waives the fee",
-      FEE_ONE_LINE,
-      "ENTERPRISE",
-      /only Enterprise waives the fee/,
-    ],
-    [
-      "R2 the fee is not sold when every plan waives it",
-      FEE_ONE_LINE,
-      "STARTER",
-      /free on every plan/,
-    ],
-    [
-      "R3 a line that names plans must name the waived ones",
-      FEE_ONE_LINE.replace("$39 a month,", "$39 a month on Starter and Growth,"),
-      "SCALE",
-      /named sentence missing: "No fee on Scale and Enterprise\."/,
-    ],
-    [
-      "R4 a fee with no waiver sentence is red",
-      FEE_ONE_LINE.replace(", and no fee on the largest plans", ""),
-      "SCALE",
-      /no fee sentence for the waived plans/,
-    ],
-  ])("%s", (_name, li, at, message) => {
-    expect(regulatedFeeLineProblem(li, feePlans(), at)).toMatch(message);
+    it.each([
+      ["master wording (T1)", `<li>We turn it on for you. ${mark(T1)}</li>`],
+      ["the one-line wording (T3)", valid],
+      ["the home wording (T2) after a lead-in", `<p>The plans differ. ${mark(T2)}</p>`],
+      [
+        "a true trial sentence beside a valid carrier",
+        `<p>The trial is on the Starter plan, and it's free.</p>${valid}`,
+      ],
+    ])("green: %s", (_n, page) => {
+      expect(run(page)).toEqual([]);
+    });
+
+    it.each([
+      [
+        "F1 an extra waiver",
+        mark(`${price} a month on Starter. No fee on Growth. No fee on Scale and Enterprise.`),
+        /carrier mismatch/,
+      ],
+      [
+        "F2 the wrong charge side",
+        mark(`${price} a month on Starter, Growth and Scale. No fee on Scale and Enterprise.`),
+        /carrier mismatch/,
+      ],
+      ["F3a a plan the catalog lacks", mark(`${T3} No fee on Pro.`), /carrier mismatch/],
+      ["F3b an every-plan claim", mark(`${T3} Free on every plan.`), /carrier mismatch/],
+      [
+        "F3c a negated sentence",
+        mark(`${price} a month, and not: No fee on Scale and Enterprise.`),
+        /carrier mismatch/,
+      ],
+      [
+        "F4 a second fee line, marked",
+        `${valid}<li ${FEE_MARK}>No fee on Growth and Scale.</li>`,
+        /carrier mismatch/,
+      ],
+      [
+        "L1 the home line names the wrong plans",
+        `<p>${mark("Growth, Scale and Enterprise also get regulated items at no fee.")}</p>`,
+        /carrier mismatch/,
+      ],
+    ])("red: %s", (_n, page, re) => {
+      expect(run(page).join("\n")).toMatch(re);
+    });
+
+    it("red: F4 a second fee line, unmarked, fails the sweep", () => {
+      expect(run(`${valid}<li>No fee on Growth and Scale.</li>`).join("\n")).toMatch(
+        /sweep: unmarked/,
+      );
+    });
+
+    it("red: L1 today's product sentence, unmarked, gives two sweep problems", () => {
+      const product = `<p>We turn it on for you. It's ${price} a month on Starter and Growth. There's no fee on Scale and Enterprise.</p>`;
+      const found = run(`${valid}${product}`).filter((x) => x.includes("sweep: unmarked"));
+      expect(found).toHaveLength(2);
+    });
+
+    it("red: R1 one waiver makes the plural line false", () => {
+      expect(run(`<li>${mark(T3)}</li>`, "ENTERPRISE").join("\n")).toMatch(/carrier mismatch/);
+    });
+
+    it("red: R2 the fee is not stated when every plan waives it", () => {
+      expect(() => run(valid, "STARTER")).toThrow(/free on every plan/);
+    });
+
+    it("red: R3 the included-at plan must be a catalog plan", () => {
+      expect(() => run(valid, "PRO")).toThrow(/not a catalog plan/);
+    });
+
+    it("red: no carrier anywhere", () => {
+      expect(run("<p>The trial is on the Starter plan, and it's free.</p>").join("\n")).toMatch(
+        /no carrier/,
+      );
+    });
   });
 
   it("every data-bound price span holds the value prices.js gives it", () => {
@@ -312,7 +477,7 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
         }
       }
     }
-    // SA-1282: the home plan cards no longer carry the three yearly spans, so the floor is exactly 28 spans (was 31).
+    // SA-1282: the home plan cards no longer carry the three yearly spans, so the floor is at least 28 spans (was 31).
     expect(seen).toBeGreaterThan(27);
     expect(bad).toEqual([]);
   });
