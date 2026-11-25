@@ -59,6 +59,16 @@ export function collectScanFiles(siteDir: string, marketingDir: string): ScanFil
   ];
 }
 
+/**
+ * The refusal throw sites live in more than one billing file (checkout in billing.service.ts, the add-on refusal in
+ * subscription-mutation.service.ts), so the guard reads every non-spec .ts file under apps/api/src/billing.
+ */
+export function collectBillingSource(billingDir: string): string {
+  return walk(billingDir, (r) => r.endsWith(".ts") && !r.endsWith(".spec.ts"))
+    .map((r) => fs.readFileSync(path.join(billingDir, r), "utf8"))
+    .join(String.fromCharCode(10));
+}
+
 export function yearlyOfferViolations(input: GuardInput): string[] {
   const bad: string[] = [];
   if (input.yearlyOffer) {

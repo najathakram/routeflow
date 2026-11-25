@@ -16,7 +16,11 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vm from "vm";
 import * as ts from "typescript";
-import { collectScanFiles, yearlyOfferViolations } from "./yearly-offer-guard.testkit";
+import {
+  collectBillingSource,
+  collectScanFiles,
+  yearlyOfferViolations,
+} from "./yearly-offer-guard.testkit";
 
 /** The catalog version on sale today. Change it only in the PR that publishes the next catalog and its page. */
 const ON_SALE_VERSION = 13;
@@ -287,7 +291,7 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
     ].map(read);
     const out = yearlyOfferViolations({
       yearlyOffer: site.yearlyOffer,
-      billingSource: read(path.join(ROOT, "apps/api/src/billing/billing.service.ts")),
+      billingSource: collectBillingSource(path.join(ROOT, "apps/api/src/billing")),
       files: collectScanFiles(SITE, __dirname),
       specSources: specs,
       claimsRegister: read(path.join(ROOT, "docs/product/claims-register.md")),

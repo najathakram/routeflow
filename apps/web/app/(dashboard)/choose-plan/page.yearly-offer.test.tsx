@@ -101,6 +101,18 @@ describe("C1 plan chooser yearly offer is closed unless the server opens it", ()
     expect(screen.getByText("$100")).toBeInTheDocument();
   });
 
+  it("the cycle is forced to Monthly when the offer closes under a yearly pick", () => {
+    const { rerender } = render(<ChoosePlanPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Annual" }));
+    expect(screen.getByText("$1,000")).toBeInTheDocument();
+    mockCatalog = { plans: [growth], annualCheckout: false };
+    rerender(<ChoosePlanPage />);
+    expect(screen.queryByRole("button", { name: /Annual/ })).toBeNull();
+    expect(screen.queryByText("$1,000")).toBeNull();
+    expect(screen.getByText("$100")).toBeInTheDocument();
+    expect(screen.getByText("/mo")).toBeInTheDocument();
+  });
+
   it("an open chooser (annualCheckout true) shows the yearly toggle and its price", () => {
     render(<ChoosePlanPage />);
     fireEvent.click(screen.getByRole("button", { name: "Annual" }));

@@ -7,6 +7,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
+  collectBillingSource,
   collectScanFiles,
   yearlyOfferViolations,
   type GuardInput,
@@ -70,6 +71,32 @@ describe("yearly-offer guard", () => {
 
   it("C-T4: yearlyOffer true with a throw site goes red", () => {
     expect(yearlyOfferViolations(base({ yearlyOffer: true })).join("|")).toMatch(/throw site/);
+  });
+
+  it("C-T4: yearlyOffer true with the add-on refusal still thrown in another billing file goes red", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "c1-billing-"));
+    fs.mkdirSync(path.join(dir, "sub"));
+    fs.writeFileSync(path.join(dir, "billing.service.ts"), "// checkout refusal removed");
+    fs.writeFileSync(
+      path.join(dir, "sub", "subscription-mutation.service.ts"),
+      "throw new ConflictException({ code: API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED })",
+    );
+    const out = yearlyOfferViolations(
+      base({ yearlyOffer: true, billingSource: collectBillingSource(dir) }),
+    );
+    expect(out.join("|")).toMatch(/throw site/);
+  });
+
+  it("the billing source skips spec files, which may name the codes", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "c1-billing-"));
+    fs.writeFileSync(path.join(dir, "billing.service.ts"), "// clean");
+    fs.writeFileSync(
+      path.join(dir, "x.spec.ts"),
+      "expect(code).toBe(API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED)",
+    );
+    expect(
+      yearlyOfferViolations(base({ yearlyOffer: true, billingSource: collectBillingSource(dir) })),
+    ).toEqual([]);
   });
 
   it("C-T4: yearlyOffer true with a skipped spec goes red", () => {
