@@ -44,7 +44,7 @@ describe("every seller of a NEW self-serve add-on line is judged", () => {
 
     const svc = read(MUTATION);
     const inEnable = method(svc, "private async enableAddonLocked(");
-    const inSubscribe = method(svc, "async subscribe(");
+    const inSubscribe = method(svc, "async subscribeLocked(");
     const calls = svc.match(/\b(upsertAddonRowTx|createAddonRowTx)\(/g) ?? [];
     const counted =
       (inEnable.match(/\b(upsertAddonRowTx|createAddonRowTx)\(/g) ?? []).length +
@@ -56,17 +56,17 @@ describe("every seller of a NEW self-serve add-on line is judged", () => {
     const svc = read(MUTATION);
     expect(method(svc, "async enableAddon(")).toMatch(/this\.heldStateRefusal\(/);
     expect(method(svc, "async addonEnableRefusal(")).toMatch(/this\.heldStateRefusal\(/);
-    expect(method(svc, "async subscribe(")).toMatch(/this\.heldStateRefusal\(/);
+    expect(method(svc, "async subscribeLocked(")).toMatch(/this\.heldStateRefusal\(/);
   });
 
   it("subscribe judges on the TARGET plan: it passes asPlan to both judgeAddon and heldStateRefusal", () => {
-    const body = method(read(MUTATION), "async subscribe(");
+    const body = method(read(MUTATION), "async subscribeLocked(");
     expect(body).toMatch(/this\.judgeAddon\([\s\S]{0,80}?input\.planKey/);
     expect(body).toMatch(/heldStateRefusal\([^)]*asPlan/s);
   });
 
   it("the judgement runs before the first Stripe call and the transaction in subscribe", () => {
-    const body = method(read(MUTATION), "async subscribe(");
+    const body = method(read(MUTATION), "async subscribeLocked(");
     const check = body.indexOf("this.heldStateRefusal(");
     expect(check).toBeGreaterThan(-1);
     for (const later of [

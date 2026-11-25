@@ -13,12 +13,11 @@
  * Billing lists only the self-serve SKUs, so pointing there for any other add-on would be a dead end. `ocr` is
  * override-only for a refused LITE business: it never says "comes with" (that contradicts the 403 it rides on).
  */
+import { planDisplayName as sharedPlanDisplayName } from "@routeflow/pricing";
 import { FEATURE_REGISTRY, type FeatureDef } from "./feature-registry";
 import {
   FLAG_TO_ADDON_SKU,
   LEGACY_ADDON_KEY_TO_SKU,
-  LITE_PLAN_DISPLAY_NAME,
-  PLAN_KEYS,
   isSelfServiceAddon,
 } from "./plan-catalog.constants";
 
@@ -54,12 +53,12 @@ function buyableInBilling(row: FeatureDef): boolean {
   return sku !== undefined && isSelfServiceAddon(sku);
 }
 
-/** A plan's display name ("Scale"); undefined for a key this build does not know (a custom plan). */
-export function planDisplayName(planKey: string | null | undefined): string | undefined {
-  if (!planKey || !(PLAN_KEYS as readonly string[]).includes(planKey)) return undefined;
-  if (planKey === "LITE") return LITE_PLAN_DISPLAY_NAME;
-  return planKey.charAt(0) + planKey.slice(1).toLowerCase();
-}
+/**
+ * A plan's display name ("Scale", "Essentials" for CORE); undefined for a key this build does not know
+ * (a custom plan). SA-1254 V7 (P-45): the ONE helper is @routeflow/pricing's; this re-export keeps the
+ * refusal seats' import path.
+ */
+export const planDisplayName = sharedPlanDisplayName;
 
 export function denialText(input: DenialInput): string {
   const rows = [...new Set(input.keys.map(rowFor).filter((r): r is FeatureDef => Boolean(r)))];

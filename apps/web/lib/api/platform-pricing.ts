@@ -201,3 +201,24 @@ export async function fetchPlanPriceImpact(
   });
   return res.data;
 }
+
+/**
+ * W-1338 PR-2: the one open payment link of a business (SA-1267 rule 2), read from Stripe by the API. `null` when none is
+ * open. The URL lives only in the caller's component state: it is never logged, toasted or stored.
+ */
+export interface OpenPaymentLink {
+  kind: "card" | "catch_up";
+  url: string;
+  expiresAt: string;
+}
+
+export async function fetchOpenPaymentLink(tenantId: string): Promise<OpenPaymentLink | null> {
+  const res = await superAdminClient.get(`/platform-admin/tenants/${tenantId}/billing/open-link`);
+  // Nest answers a null result with an empty body, which axios hands back as "": only an object with a url is a link.
+  const d = res.data as Partial<OpenPaymentLink> | string | null | undefined;
+  return d && typeof d === "object" && typeof d.url === "string" ? (d as OpenPaymentLink) : null;
+}
+
+export async function cancelOpenPaymentLink(tenantId: string): Promise<void> {
+  await superAdminClient.post(`/platform-admin/tenants/${tenantId}/billing/open-link/cancel`);
+}

@@ -8,11 +8,14 @@ import {
   fetchTenantPricing,
   updateTenantPriceOverride,
   createTenantCheckout,
+  fetchOpenPaymentLink,
+  cancelOpenPaymentLink,
   tenantCheckoutErrorMessage,
   platformPricingErrorMessage,
   type TenantPricingResponse,
   type PriceOverrideEffective,
   type PriceSyncResult,
+  type OpenPaymentLink,
 } from "@/lib/api/platform-pricing";
 import {
   fetchCatchupPlan,
@@ -37,9 +40,11 @@ const CLAIM_HELD_COPY =
   "A payment link is already open for this business. Wait for it to be paid or to expire.";
 const NOT_ELIGIBLE_COPY = "This business can't be moved to card payment yet.";
 const PLAN_READ_FAILED_COPY = "Couldn't check how this business pays. Try again.";
+const CANCEL_FAILED_COPY = "Couldn't cancel the link. Try again.";
 /** The planner reads paid coverage from invoices and activation markers. A bank payment recorded on neither is the super admin's to catch before sending (SA-1210 G1). */
 const PAID_THROUGH_CHECK_COPY =
   "Check that 'Paid through' matches what this business has paid. If they paid by bank and it isn't shown, record it first with Activate manually.";
+const LINK_EXPIRED_COPY = "This link expired. Create a new one.";
 const AMOUNT_CHANGED_COPY = "The amount changed. Check the new amount and try again.";
 
 /** True when the plan read says this business is invoiced by hand with no Stripe subscription: the card-link path. */
@@ -84,29 +89,24 @@ function previewLines(r: CatchupReportView): string[] {
 }
 
 /**
- * SA-1206 R2: the card payment link for a business invoiced by hand. Everything shown is the plan JSON from
+ * SA-1206 R2: creating the card payment link for a business invoiced by hand. Everything shown is the plan JSON from
  * `GET …/billing/catchup-plan`; the confirm posts the plan's own `stub.totalCents`, exactly as read. The link
- * comes back once, is shown once, and is never logged, toasted or sent anywhere else.
+ * is shown by `OpenLinkPanel` and is never logged, toasted or sent anywhere else.
  */
-function CardPaymentLinkSection({
+function CatchupCreate({
   tenantId,
   report,
-  checkoutUrl,
   onLink,
-  onDone,
   onReread,
 }: {
   tenantId: string;
   report: CatchupReportView | null;
-  checkoutUrl: string | null;
   onLink: (url: string) => void;
-  onDone: () => void;
   onReread: () => void;
 }) {
   const [confirming, setConfirming] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const linkRef = React.useRef<HTMLElement | null>(null);
   const plan = report?.plan;
   const eligible = !!report && report.eligible && !!plan?.ok;
 
@@ -137,10 +137,7 @@ function CardPaymentLinkSection({
   };
 
   return (
-    <div className="border-t border-slate-700 pt-4" data-testid="card-payment-link">
-      <p className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-400">
-        Card payment link
-      </p>
+    <div>
       {error && (
         <div
           role="alert"
@@ -149,35 +146,7 @@ function CardPaymentLinkSection({
           {error}
         </div>
       )}
-      {checkoutUrl ? (
-        <div className="rounded-lg bg-slate-700/30 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-medium text-white">Payment link ready</p>
-            <CopyButton
-              value={checkoutUrl}
-              label="Copy payment link"
-              failedText="Copy failed. Select the link"
-              selectOnFail={linkRef}
-              className="admin-tap inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/40"
-            />
-          </div>
-          <code
-            ref={linkRef}
-            className="mt-2 block break-all font-mono text-xs text-indigo-300"
-            data-testid="card-payment-link-url"
-          >
-            {checkoutUrl}
-          </code>
-          <p className="mt-2 text-xs text-amber-300">Copy it now. It can&apos;t be shown again.</p>
-          <button
-            type="button"
-            onClick={onDone}
-            className="mt-3 rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500"
-          >
-            Done
-          </button>
-        </div>
-      ) : eligible ? (
+      {eligible ? (
         <>
           <ul className="mb-3 flex list-none flex-col gap-1 text-sm text-slate-200">
             {(report ? previewLines(report) : []).map((line) => (
@@ -231,9 +200,69 @@ function CardPaymentLinkSection({
         </ul>
         <p className="mt-3 text-sm text-slate-300">{PAID_THROUGH_CHECK_COPY}</p>
         <p className="mt-3 text-sm text-slate-300">
-          The link opens Stripe&apos;s payment page. It is shown once, so copy it right away.
+          The link opens Stripe&apos;s payment page. You can copy it again until it expires.
         </p>
       </AdminModal>
+    </div>
+  );
+}
+
+/** Local time of Stripe's own `expires_at` (the date too when it is not today); null when unreadable. */
+function worksUntil(expiresAt: string, now: number): string | null {
+  const t = new Date(expiresAt);
+  if (Number.isNaN(t.getTime())) return null;
+  const sameDay = t.toDateString() === new Date(now).toDateString();
+  return t.toLocaleString(
+    [],
+    sameDay
+      ? { hour: "numeric", minute: "2-digit" }
+      : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" },
+  );
+}
+
+/**
+ * W-1338 PR-2 (SA-1267 rule 4): the one open payment link, both kinds. It comes from `GET …/billing/open-link`, so it is
+ * shown again after a reload. The URL is held in this component's state only: never logged, toasted or stored.
+ */
+function OpenLinkPanel({
+  link,
+  cancelling,
+  onCancel,
+}: {
+  link: OpenPaymentLink;
+  cancelling: boolean;
+  onCancel: () => void;
+}) {
+  const linkRef = React.useRef<HTMLElement | null>(null);
+  const until = worksUntil(link.expiresAt, Date.now());
+  return (
+    <div className="rounded-lg bg-slate-700/30 p-3" data-testid="open-payment-link">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium text-white">Payment link ready</p>
+        <CopyButton
+          value={link.url}
+          label="Copy payment link"
+          failedText="Copy failed. Select the link"
+          selectOnFail={linkRef}
+          className="admin-tap inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/40"
+        />
+      </div>
+      <code
+        ref={linkRef}
+        className="mt-2 block break-all font-mono text-xs text-indigo-300"
+        data-testid="card-payment-link-url"
+      >
+        {link.url}
+      </code>
+      {until && <p className="mt-2 text-xs text-slate-300">Works until {until}</p>}
+      <button
+        type="button"
+        disabled={cancelling}
+        onClick={onCancel}
+        className="mt-3 rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
+      >
+        Cancel link
+      </button>
     </div>
   );
 }
@@ -271,20 +300,41 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
   const [msg, setMsg] = React.useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const [confirmingLink, setConfirmingLink] = React.useState(false);
-  const linkRef = React.useRef<HTMLElement | null>(null);
   const [checkoutLoading, setCheckoutLoading] = React.useState(false);
-  const [checkoutUrl, setCheckoutUrl] = React.useState<string | null>(null);
+
+  // W-1338 PR-2: the one open link of this business (either kind), read from the API; null when none is open.
+  const [openLink, setOpenLink] = React.useState<OpenPaymentLink | null>(null);
+  const [cancelling, setCancelling] = React.useState(false);
+  const [linkError, setLinkError] = React.useState<string | null>(null);
+  const [linkExpired, setLinkExpired] = React.useState(false);
+  const [clockTick, setClockTick] = React.useState(0);
 
   // SA-1206 R2: how this business pays, from GET catchup-plan alone. Until it is read, neither block shows.
   const [payReport, setPayReport] = React.useState<CatchupReportView | null>(null);
   const [payReadFailed, setPayReadFailed] = React.useState(false);
-  const [paymentLink, setPaymentLink] = React.useState<string | null>(null);
+  const [payReadError, setPayReadError] = React.useState(PLAN_READ_FAILED_COPY);
+
+  const loadOpenLink = React.useCallback(
+    (keepIfNone = false) => {
+      fetchOpenPaymentLink(tenantId)
+        .then((l) => setOpenLink((cur) => l ?? (keepIfNone ? cur : null)))
+        .catch(() => {
+          // Keep what is shown: the API itself refuses a second open link, so a failed read can't make a duplicate.
+        });
+    },
+    [tenantId],
+  );
+
+  React.useEffect(() => {
+    loadOpenLink();
+  }, [loadOpenLink]);
 
   const loadPayReport = React.useCallback(() => {
     setPayReadFailed(false);
     fetchCatchupPlan(tenantId)
       .then((r) => setPayReport(r))
-      .catch(() => {
+      .catch((err) => {
+        setPayReadError(codedToastCopy(err) ?? PLAN_READ_FAILED_COPY);
         // Never fall back to the ordinary Checkout: a business invoiced by hand would be refused there.
         setPayReport(null);
         setPayReadFailed(true);
@@ -294,6 +344,32 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
   React.useEffect(() => {
     loadPayReport();
   }, [loadPayReport]);
+
+  // The link expires at its own `expiresAt`: a timer, plus a re-check when the tab wakes or regains focus (timers
+  // are delayed across sleep), plus the check below for a link already past its expiry when read. An expired link is
+  // dropped so Create or Retry shows, and the plan is read again so a held-claim line never sits under it.
+  React.useEffect(() => {
+    const bump = () => setClockTick((n) => n + 1);
+    document.addEventListener("visibilitychange", bump);
+    window.addEventListener("focus", bump);
+    return () => {
+      document.removeEventListener("visibilitychange", bump);
+      window.removeEventListener("focus", bump);
+    };
+  }, []);
+  React.useEffect(() => {
+    if (!openLink) return;
+    const wait = Date.parse(openLink.expiresAt) - Date.now();
+    if (Number.isNaN(wait)) return;
+    if (wait <= 0) {
+      setOpenLink(null);
+      setLinkExpired(true);
+      loadPayReport();
+      return;
+    }
+    const id = setTimeout(() => setClockTick((n) => n + 1), Math.min(wait, 2_000_000_000));
+    return () => clearTimeout(id);
+  }, [openLink, clockTick, loadPayReport]);
 
   const load = React.useCallback(() => {
     setLoading(true);
@@ -332,8 +408,9 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
       const result = await updateTenantPriceOverride(tenantId, body);
       setMsg({ type: "success", text: savedMessage(result.sync, asked) });
       load();
-      // the card link's amounts follow the price just saved
-      if (!paymentLink) loadPayReport();
+      // the card link's amounts follow the price just saved, and a fee save closes the open link (SA-1267 rule 3)
+      loadOpenLink();
+      loadPayReport();
     } catch (err) {
       setMsg({
         type: "error",
@@ -345,15 +422,37 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
     }
   };
 
+  /** A link just created: show it now, then read its expiry from the API. */
+  const showCreated = (kind: OpenPaymentLink["kind"], url: string) => {
+    setLinkError(null);
+    setLinkExpired(false);
+    setOpenLink({ kind, url, expiresAt: "" });
+    loadOpenLink(true); // the link just made stays shown if this read comes back empty
+  };
+
+  const cancelLink = async () => {
+    setCancelling(true);
+    setLinkError(null);
+    try {
+      await cancelOpenPaymentLink(tenantId);
+      setOpenLink(null);
+      setLinkExpired(false);
+      loadPayReport();
+    } catch {
+      setLinkError(CANCEL_FAILED_COPY);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const doCheckout = async () => {
     setConfirmingLink(false);
     setCheckoutLoading(true);
     setMsg(null);
-    setCheckoutUrl(null);
     try {
       // Monthly only: the API refuses Annual (SA-733 D6), so no interval is offered or sent.
       const res = await createTenantCheckout(tenantId);
-      setCheckoutUrl(res.checkoutUrl);
+      showCreated("card", res.checkoutUrl);
     } catch (err) {
       setMsg({
         type: "error",
@@ -540,77 +639,79 @@ export function TenantPricingCard({ tenantId }: { tenantId: string }) {
 
           {/* How this business pays is read once (catchup-plan). Until then, and if the read fails, neither
               the card payment link nor the ordinary Checkout shows. */}
-          {payReport == null && !payReadFailed && !paymentLink && (
+          {payReport == null && !payReadFailed && !openLink && (
             <p className="border-t border-slate-700 pt-4 text-sm text-slate-400">
               Checking how this business pays…
             </p>
           )}
-          {payReport == null && payReadFailed && !paymentLink && (
+          {payReport == null && payReadFailed && !openLink && (
             <div className="flex flex-wrap items-center gap-3 border-t border-slate-700 pt-4">
               <p role="alert" className="text-sm text-amber-300">
-                {PLAN_READ_FAILED_COPY}
+                {payReadError}
               </p>
               <button
                 type="button"
                 onClick={loadPayReport}
                 className="rounded-lg bg-slate-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-slate-500"
               >
-                Try again
+                Retry
               </button>
             </div>
           )}
-          {(paymentLink || (payReport && isInvoicedByHand(payReport))) && (
-            <CardPaymentLinkSection
-              tenantId={tenantId}
-              report={payReport}
-              checkoutUrl={paymentLink}
-              onLink={setPaymentLink}
-              onDone={() => {
-                setPaymentLink(null);
-                loadPayReport();
-              }}
-              onReread={loadPayReport}
-            />
-          )}
 
-          {/* Checkout — only once a price actually resolves; a checkout on an
-              unpriceable plan would 400 at Stripe anyway. Only for a business that is NOT invoiced by hand
-              (the ordinary checkout refuses one: EXTERNAL_PAYMENT_USE_CATCHUP). */}
-          {payReport && !isInvoicedByHand(payReport) && resolved && pricing && (
-            <div className="border-t border-slate-700 pt-4">
+          {/* One "Payment link" section for both kinds (SA-1267 rule 4). An open link wins; otherwise a business
+              invoiced by hand creates the catch-up link, and any other business with a price creates the ordinary
+              one (the ordinary checkout refuses an invoiced-by-hand business: EXTERNAL_PAYMENT_USE_CATCHUP). */}
+          {(openLink || payReport || linkExpired) && (
+            <div className="border-t border-slate-700 pt-4" data-testid="payment-link">
               <p className="mb-3 text-xs font-medium uppercase tracking-wider text-slate-400">
-                Checkout
+                Payment link
               </p>
-              <button
-                type="button"
-                disabled={checkoutLoading}
-                onClick={() => setConfirmingLink(true)}
-                className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
-              >
-                {checkoutLoading ? "Creating…" : "Create link"}
-              </button>
-              {checkoutUrl && (
-                <div className="mt-3 rounded-lg bg-slate-700/30 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-white">Link ready</p>
-                    <CopyButton
-                      value={checkoutUrl}
-                      label="Copy link"
-                      failedText="Copy failed. Select the link"
-                      selectOnFail={linkRef}
-                      className="admin-tap inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-300 hover:bg-indigo-900/40"
-                    />
-                  </div>
-                  <a
-                    ref={linkRef as React.RefObject<HTMLAnchorElement>}
-                    href={checkoutUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="admin-inline mt-2 block break-all text-xs text-indigo-400 hover:underline"
-                  >
-                    {checkoutUrl}
-                  </a>
+              {linkError && (
+                <div
+                  role="alert"
+                  className="mb-3 rounded-lg bg-red-900/30 px-4 py-3 text-sm text-red-300 ring-1 ring-red-700/50"
+                >
+                  {linkError}
                 </div>
+              )}
+              {openLink ? (
+                <OpenLinkPanel
+                  link={openLink}
+                  cancelling={cancelling}
+                  onCancel={() => void cancelLink()}
+                />
+              ) : (
+                <>
+                  {linkExpired && (
+                    <p role="status" className="mb-3 text-sm text-amber-300">
+                      {LINK_EXPIRED_COPY}
+                    </p>
+                  )}
+                  {payReport && isInvoicedByHand(payReport) ? (
+                    <div data-testid="card-payment-link">
+                      <CatchupCreate
+                        tenantId={tenantId}
+                        report={payReport}
+                        onLink={(url) => showCreated("catch_up", url)}
+                        onReread={loadPayReport}
+                      />
+                    </div>
+                  ) : (
+                    payReport &&
+                    resolved &&
+                    pricing && (
+                      <button
+                        type="button"
+                        disabled={checkoutLoading}
+                        onClick={() => setConfirmingLink(true)}
+                        className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
+                      >
+                        {checkoutLoading ? "Creating…" : "Create link"}
+                      </button>
+                    )
+                  )}
+                </>
               )}
             </div>
           )}

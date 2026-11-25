@@ -10,7 +10,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { fromCents, roundMoney, toCents } from "@routeflow/pricing";
+import { fromCents, planDisplayName, roundMoney, toCents } from "@routeflow/pricing";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
 import { ProrationService } from "./proration.service";
 import { SubscriptionService } from "./subscription.service";
@@ -123,6 +123,7 @@ import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { CardFirstFlagService } from "./card-first-flag.service";
 import { isLinkPending } from "./link-pending";
+import { expireOpenCheckoutSessions } from "./open-checkout-session";
 import { planGateRefusal, selfServePlanGate, type PlanGateOp } from "./self-serve-plan-gate";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
 
@@ -138,6 +139,14 @@ export type PlanChangeAction =
 /** Custom (Enterprise) plans are negotiated, never self-service — the same refusal
  *  subscribe()/upgrade()/downgrade() throw, surfaced by the preview as an action. */
 const CUSTOM_PLAN_MESSAGE = "Enterprise is a custom plan — contact sales.";
+
+/** SA-1254 V7 (P-45): the invite-only refusal names the plan ("The Lite plan"), never its key. */
+function inviteOnlyRefusal(planKey: string): string {
+  return `The ${planDisplayName(planKey) ?? "requested"} plan is available by invitation only — contact us.`;
+}
+
+/** A published key outside PLAN_KEYS has no name to show, so the refusal prints none (P-45). */
+const OFF_LADDER_PLAN_MESSAGE = "This plan can't be chosen here — contact support.";
 
 /** Committing an UPGRADE or a DOWNGRADE writes `cancelAtPeriodEnd: false`, so a tenant who
  *  had cancelled must be told at the decision point that the cancellation is being called off. */
@@ -496,10 +505,22 @@ export class SubscriptionMutationService {
     return d?.monthlyPrice != null ? Number(d.monthlyPrice) : 0;
   }
 
-  /** Commit a subscription / convert a trial by picking a plan (+ optional add-ons). */
+  /**
+   * Commit a subscription / convert a trial by picking a plan (+ optional add-ons). W-1338: the whole change runs
+   * under the `tenant-price` lock (like upgrade), so the open payment link is closed and the plan is written with
+   * no Pay now able to open a session at the old terms in between.
+   */
   async subscribe(tenantId: string, input: SubscribeInput, actorId?: string) {
+    // The card-first gate runs BEFORE the tenant-price lock (never re-take it inside).
     await this.enforceCardFirst(tenantId, "subscribe");
     await this.assertNotOverdue(tenantId, "subscribe");
+    return underTenantPriceLock(tenantId, () => this.subscribeLocked(tenantId, input, actorId), {
+      waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
+      busyMessage: UPGRADE_BUSY,
+    });
+  }
+
+  private async subscribeLocked(tenantId: string, input: SubscribeInput, actorId?: string) {
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === input.planKey);
     if (!def) throw new BadRequestException(`Unknown plan "${input.planKey}"`);
@@ -508,9 +529,7 @@ export class SubscriptionMutationService {
     // platform-admin action — never this self-service surface. Enforced here, not just in the
     // UI, so this is the structural gate the whole invite-only lane depends on.
     if (isInviteOnlyPlanKey(input.planKey)) {
-      throw new BadRequestException(
-        `Plan "${input.planKey}" is available by invitation only — contact us.`,
-      );
+      throw new BadRequestException(inviteOnlyRefusal(input.planKey));
     }
     // B218: `def` only proves `input.planKey` matches a PUBLISHED catalog definition
     // verbatim — nothing stops a published PlanDefinition's key from being outside
@@ -520,9 +539,7 @@ export class SubscriptionMutationService {
     // otherwise crash the request with a 500 for what is really a 400 — refuse it here,
     // the same seam planChangePreview() already guards for the ranking paths.
     if (!normalizePlanKey(input.planKey)) {
-      throw new BadRequestException(
-        `Plan "${input.planKey}" is not a recognized plan key — contact support.`,
-      );
+      throw new BadRequestException(OFF_LADDER_PLAN_MESSAGE);
     }
     const quote = await this.proration.quote({
       planKey: input.planKey,
@@ -611,6 +628,8 @@ export class SubscriptionMutationService {
       if (held) throw refusalException(held);
     }
 
+    // W-1338 L14: under the tenant-price lock; close the open payment link (completion writes planKey from its metadata).
+    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId);
     const transition = {
       tenantId,
       fromPlanKey: fromKey,
@@ -1125,7 +1144,8 @@ export class SubscriptionMutationService {
     // on the paths that actually RANK. Refusing above the branch took the whole /billing/quote
     // down for every tenant on that card, including the fresh-subscribe path, which never ranks
     // and prices the definition correctly from the published catalog.
-    if (!toKey) throw new BadRequestException(`Unknown plan "${planKey}"`);
+    // P-45 (R-58 F1): this is the off-ladder case, so the refusal prints no key.
+    if (!toKey) throw new BadRequestException(OFF_LADDER_PLAN_MESSAGE);
 
     // Same-plan compares NORMALIZED keys on both sides: a tenant whose stored key is a legacy
     // alias (v7 BUSINESS) IS on the plan the catalog now lists as SCALE, so re-picking it is
@@ -1513,9 +1533,7 @@ export class SubscriptionMutationService {
     // S5/WP3a: same invite-only gate as subscribe() — blocks moving TO an invite-only plan
     // (LITE) only; moving AWAY from one (the upsell path, R2.6) is never touched by this check.
     if (isInviteOnlyPlanKey(planKey)) {
-      throw new BadRequestException(
-        `Plan "${planKey}" is available by invitation only — contact us.`,
-      );
+      throw new BadRequestException(inviteOnlyRefusal(planKey));
     }
 
     const [sub, tenant] = await Promise.all([
@@ -1564,6 +1582,8 @@ export class SubscriptionMutationService {
     const quotedNow =
       override != null ? 0 : this.proration.proratedDiff(sub, newMonthly - oldMonthly);
 
+    // W-1338 L14: under the tenant-price lock; close the open payment link first.
+    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId);
     const transition = {
       tenantId,
       fromPlanKey: fromKey,
@@ -1727,7 +1747,7 @@ export class SubscriptionMutationService {
     };
   }
 
-  /** Schedule a downgrade at period end (no proration/credit; nothing deleted). */
+  /** Schedule a downgrade at period end (no proration/credit; nothing deleted). Under the tenant-price lock (W-1338). */
   async downgrade(
     tenantId: string,
     targetPlanKey: string,
@@ -1736,6 +1756,19 @@ export class SubscriptionMutationService {
   ) {
     await this.enforceCardFirst(tenantId, "downgrade");
     await this.assertNotOverdue(tenantId, "downgrade");
+    return underTenantPriceLock(
+      tenantId,
+      () => this.downgradeLocked(tenantId, targetPlanKey, retainedUserIds, actorId),
+      { waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, busyMessage: UPGRADE_BUSY },
+    );
+  }
+
+  private async downgradeLocked(
+    tenantId: string,
+    targetPlanKey: string,
+    retainedUserIds: string[],
+    actorId?: string,
+  ) {
     const version = await this.catalog.getPublishedCatalog();
     const def = version.definitions.find((d) => d.planKey === targetPlanKey);
     if (!def) throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);
@@ -1743,14 +1776,13 @@ export class SubscriptionMutationService {
     // every plan and schedules a downgrade the cron applies with a NULL base price (free
     // tenant). Refuse it here rather than letting -1 read as "the lowest plan".
     if (planRank(targetPlanKey) < 0) {
-      throw new BadRequestException(`Unknown plan "${targetPlanKey}"`);
+      // P-45 (R-58 F1): the off-ladder case, so the refusal prints no key.
+      throw new BadRequestException(OFF_LADDER_PLAN_MESSAGE);
     }
     // S5/WP3a: same invite-only gate as subscribe()/upgrade() — a downgrade landing ON LITE is
     // still a self-service pick of an invite-only plan and must be refused the same way.
     if (isInviteOnlyPlanKey(targetPlanKey)) {
-      throw new BadRequestException(
-        `Plan "${targetPlanKey}" is available by invitation only — contact us.`,
-      );
+      throw new BadRequestException(inviteOnlyRefusal(targetPlanKey));
     }
     const [sub, tenant] = await Promise.all([
       this.prisma.tenantSubscription.findUnique({ where: { tenantId } }),
@@ -1784,6 +1816,7 @@ export class SubscriptionMutationService {
       );
     }
 
+    await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId); // W-1338 L14, under the lock
     await this.prisma.$transaction(async (tx) => {
       await lockTenantForLedger(tx, tenantId); // #2551 / SA-503a: Tenant before the subscription
       await tx.tenantSubscription.update({

@@ -179,6 +179,8 @@ const EXEMPT: Record<string, Reason> = {
   // Postgres (SPEC_DB_PATTERN enforced), never a tenant table.
   "scripts/local-db-specs.mjs": "local-only",
   "scripts/local-super-admin.mjs": "local-only",
+  // P-64: refuses any non-local DB and NODE_ENV=production, and calls assertTestTenant("test") first.
+  "scripts/perf/seed-catalog-5k.mjs": "local-only",
   // In scope only through risk-class.mjs's computed import(); it reads git and prints a line count.
   "scripts/pr-size.mjs": "not-a-db-client",
   "scripts/repair-integrity.mjs": "retired-stub",

@@ -79,6 +79,7 @@ const EXPECTED_PLATFORM_WRITES: string[] = [
   "POST /api/v1/platform-admin/tenants/:id/admin PlatformAdminController#createTenantAdmin",
   "POST /api/v1/platform-admin/tenants/:id/billing/catchup-checkout CatchupAdminController#open",
   "POST /api/v1/platform-admin/tenants/:id/billing/checkout PlatformAdminController#createCheckout",
+  "POST /api/v1/platform-admin/tenants/:id/billing/open-link/cancel PlatformAdminController#cancelOpenLink",
   "POST /api/v1/platform-admin/tenants/:id/billing/portal PlatformAdminController#createPortal",
   "POST /api/v1/platform-admin/tenants/:id/business-capabilities PlatformAdminController#applyBusinessCapabilities",
   "POST /api/v1/platform-admin/tenants/:id/business-capabilities/preview PlatformAdminController#previewBusinessCapabilities",

@@ -2,6 +2,16 @@ import { BillingService } from "./billing.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { pinWallClock } from "../testing/pin-clock";
 
+// W-1338: the checkout slot runs under the tenant-price lock (a pass-through here, no database).
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: async (_o: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
+
 /**
  * SA-733 D6 / M6 at the service boundary: what `createCheckoutSession` sends to Stripe. Stripe is MOCKED (the
  * `client.checkout.sessions.create` jest.fn); nothing here can reach a real account.
@@ -31,7 +41,7 @@ function make(
   const create = jest.fn().mockResolvedValue({ id: "cs_1", url: "https://pay.test" });
   const stripe: any = {
     isConfigured: true,
-    client: { checkout: { sessions: { create } } },
+    client: { checkout: { sessions: { create, list: jest.fn().mockResolvedValue({ data: [] }) } } },
     getSubscription: jest.fn(),
   };
   const prisma: any = {
@@ -457,8 +467,11 @@ describe("SA-1139 PR-1: the tenant's own subscription checkout x BILLING_CHECKOU
       "customer",
       "mode",
     ]) {
-      expect(emb[k]).toEqual(hosted[k]);
+      // W-1338: the slot's terms hash carries the ui mode, so an embedded session never reuses a hosted one.
+      const strip = (v: any) => (k === "metadata" ? { ...v, termsHash: undefined } : v);
+      expect(strip(emb[k])).toEqual(strip(hosted[k]));
     }
+    expect(emb.metadata.termsHash).not.toBe(hosted.metadata.termsHash);
     expect(emb.subscription_data.metadata).toBeDefined();
     expect(emb.line_items).toHaveLength(2);
   });

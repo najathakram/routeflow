@@ -57,6 +57,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
+import { underSlotLock } from "./open-checkout-session";
 import { fakeStripeProducts } from "../testing/fake-stripe-products";
 import { PLAN_CHANGE_ADDONS_CHANGED } from "./plan-change-stripe";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -224,6 +225,8 @@ function addonStripeClient() {
       del: jest.fn().mockResolvedValue({}),
     },
     invoiceItems: { list: jest.fn().mockResolvedValue({ data: [] }) },
+    // W-1338: a plan change lists the business's open Checkout Sessions first (none here).
+    checkout: { sessions: { list: jest.fn().mockResolvedValue({ data: [] }), expire: jest.fn() } },
   };
 }
 
@@ -2606,7 +2609,10 @@ describe("SubscriptionMutationService — an unrankable plan key is refused at t
     });
     // The definition exists, so the "Unknown plan" catalog check passes; only the rank check
     // catches it — `-1 >= planRank(BUSINESS)` is false, so the schedule used to be written.
-    await expect(svc.downgrade("t1", "PRO", [], "admin")).rejects.toThrow(/Unknown plan/);
+    // P-45 (R-58 F1): the off-ladder refusal prints no key.
+    await expect(svc.downgrade("t1", "PRO", [], "admin")).rejects.toThrow(
+      "This plan can't be chosen here — contact support.",
+    );
     expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
   });
 
@@ -4358,6 +4364,245 @@ describe("B1371 — downgrade preview, schedule and notice carry no seat consequ
       periodEnd,
       { newMonthlyPrice: 59, addons: [], customerNote: null },
     );
+  });
+});
+
+// W-1338 / SA-1267 PR-1 (L14): completion writes `planKey` from the session's metadata, so a plan change must close the
+// business's open Checkout Session first, and refuse when one is already paid but not yet applied.
+describe("W-1338 L14 - a plan change closes the open payment link first", () => {
+  const sub = {
+    planKey: "BUSINESS",
+    cycle: "MONTHLY",
+    periodStart: null,
+    periodEnd: new Date("2026-12-01"),
+    stripeCustomerId: "cus_1",
+    stripeSubId: null,
+  };
+  const session = (over: Record<string, unknown>) => ({
+    id: "cs_open",
+    status: "open",
+    url: "https://pay.test/1",
+    created: Math.floor(Date.now() / 1000),
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    metadata: { tenantId: "t1" },
+    subscription: null,
+    ...over,
+  });
+  const fakeStripe = (sessions: any[]) => {
+    const expire = jest.fn().mockResolvedValue({});
+    return {
+      expire,
+      stripe: {
+        isConfigured: true,
+        client: {
+          checkout: { sessions: { list: jest.fn().mockResolvedValue({ data: sessions }), expire } },
+        },
+        getSubscription: jest.fn(),
+      },
+    };
+  };
+  const changes: [string, (svc: any) => Promise<unknown>][] = [
+    ["upgrade", (svc) => svc.upgrade("t1", "TEAM", "admin")],
+    ["downgrade", (svc) => svc.downgrade("t1", "STARTER", ["u1"], "admin")],
+    [
+      "subscribe",
+      (svc) => svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY", addons: [] }, "admin"),
+    ],
+  ];
+
+  // R-88 F5: the lock must span the plan WRITE, not only the expire, or a Pay now in the gap opens a session at the old terms.
+  it.each(changes.filter(([n]) => n !== "upgrade"))(
+    "%s keeps the price lock until the plan write has committed",
+    async (_n, run) => {
+      const f = fakeStripe([]);
+      const { svc, prisma, tx } = make({ sub: { ...sub, planKey: "BUSINESS" }, stripe: f.stripe });
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let writing!: () => void;
+      const inWrite = new Promise<void>((r) => (writing = r));
+      prisma.$transaction.mockImplementationOnce(async (fn: any) => {
+        writing();
+        await gate;
+        return fn(tx);
+      });
+      const running = run(svc);
+      await inWrite;
+      const probe = jest.fn();
+      const payNow = underSlotLock("t1", async () => probe());
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      expect(probe).not.toHaveBeenCalled();
+      release();
+      await running;
+      await payNow;
+      expect(probe).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(changes)("%s expires the open session before it commits", async (_n, run) => {
+    const f = fakeStripe([session({})]);
+    const { svc } = make({
+      sub: { ...sub, planKey: _n === "upgrade" ? "STARTER" : "BUSINESS" },
+      stripe: f.stripe,
+    });
+    await run(svc);
+    expect(f.expire).toHaveBeenCalledWith("cs_open");
+  });
+
+  it.each(changes)(
+    "%s refuses while a paid session is not applied, and writes nothing",
+    async (_n, run) => {
+      const f = fakeStripe([
+        session({ id: "cs_paid", status: "complete", subscription: "sub_new" }),
+      ]);
+      const { svc, tx } = make({
+        sub: { ...sub, planKey: _n === "upgrade" ? "STARTER" : "BUSINESS" },
+        stripe: f.stripe,
+      });
+      await expect(run(svc)).rejects.toMatchObject({
+        response: { code: API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS },
+      });
+      expect(f.expire).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.updateMany).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    },
+  );
+});
+
+// R-102 F6: a request the writer refuses must never close the open payment link (the admin still needs it).
+describe("W-1338 L14 - a refused plan change leaves the open payment link alone", () => {
+  const openSession = {
+    id: "cs_open",
+    status: "open",
+    url: "https://pay.test/1",
+    created: Math.floor(Date.now() / 1000),
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    metadata: { tenantId: "t1" },
+    subscription: null,
+  };
+  const withOpenSession = () => {
+    const expire = jest.fn().mockResolvedValue({});
+    const stripe = {
+      isConfigured: true,
+      client: {
+        checkout: {
+          sessions: { list: jest.fn().mockResolvedValue({ data: [openSession] }), expire },
+        },
+      },
+      getSubscription: jest.fn(),
+    };
+    return { expire, stripe };
+  };
+  const sub = {
+    planKey: "BUSINESS",
+    cycle: "MONTHLY",
+    periodStart: null,
+    periodEnd: new Date("2026-12-01"),
+    stripeCustomerId: "cus_1",
+    stripeSubId: null,
+  };
+
+  it("E2 subscribe: an admin-locked business is refused and nothing is expired", async () => {
+    const f = withOpenSession();
+    const { svc } = make({
+      tenantStatus: "READ_ONLY",
+      readOnlyReason: "admin_set",
+      stripe: f.stripe,
+      sub,
+    });
+    await expect(
+      svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin"),
+    ).rejects.toMatchObject({ response: { code: API_ERROR_CODES.TENANT_ADMIN_LOCKED } });
+    expect(f.expire).not.toHaveBeenCalled();
+  });
+
+  it("E3 upgrade: a target that is not an upgrade refuses and expires nothing", async () => {
+    const f = withOpenSession();
+    const { svc } = make({ sub: { ...sub, planKey: "BUSINESS" }, stripe: f.stripe });
+    await expect(svc.upgrade("t1", "STARTER", "admin")).rejects.toThrow("not an upgrade");
+    expect(f.expire).not.toHaveBeenCalled();
+  });
+
+  it("E4 downgrade: a target that is not a downgrade refuses and expires nothing", async () => {
+    const f = withOpenSession();
+    const { svc } = make({ sub: { ...sub, planKey: "STARTER" }, stripe: f.stripe });
+    await expect(svc.downgrade("t1", "BUSINESS", ["u1"], "admin")).rejects.toThrow(
+      "not a downgrade",
+    );
+    expect(f.expire).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SA-1254 V7 (P-45): a refused business reads the plan's name, never its key. Red on master: the
+ * invitation-only errors read `Plan "LITE" ...` and the off-ladder error reads `Plan "PRO" is not a
+ * recognized plan key ...`.
+ */
+describe("SubscriptionMutationService — plan refusals name the plan, never the key (P-45)", () => {
+  type Call = (svc: SubscriptionMutationService) => Promise<unknown>;
+  const calls: ReadonlyArray<readonly [string, Call]> = [
+    ["subscribe", (svc) => svc.subscribe("t1", { planKey: "LITE", cycle: "MONTHLY" })],
+    ["upgrade", (svc) => svc.upgrade("t1", "LITE", "admin")],
+    ["downgrade", (svc) => svc.downgrade("t1", "LITE", [], "admin")],
+  ];
+
+  it.each(calls)("%s() to an invite-only plan reads 'The Lite plan ...'", async (_name, call) => {
+    const { svc } = make({ catalog: catalogWithLite() });
+    const err = await call(svc).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(
+      "The Lite plan is available by invitation only — contact us.",
+    );
+    expect((err as Error).message).not.toContain("LITE");
+  });
+
+  function offLadderCatalog(): ReturnType<typeof catalog> {
+    const v = catalog();
+    return {
+      ...v,
+      definitions: [
+        { planKey: "PRO", name: "Bad row", monthlyPrice: 199, isCustom: false, seatsIncluded: 1 },
+        ...v.definitions,
+      ],
+    } as ReturnType<typeof catalog>;
+  }
+  const OFF_LADDER = "This plan can't be chosen here — contact support.";
+
+  it("subscribe() to a published key outside the ladder prints no key", async () => {
+    const { svc } = make({ catalog: offLadderCatalog() });
+    const err = await svc
+      .subscribe("t1", { planKey: "PRO", cycle: "MONTHLY" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(OFF_LADDER);
+  });
+
+  // R-58 F1: the quote (POST /billing/quote) and the downgrade hit the same off-ladder case and
+  // printed `Unknown plan "PRO"`. Red at 8153d75368.
+  it("planChangePreview() (the quote) to a published key outside the ladder prints no key", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc } = make({
+      catalog: offLadderCatalog(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const err = await svc.planChangePreview("t1", "PRO", "MONTHLY").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(OFF_LADDER);
+  });
+
+  it("downgrade() to a published key outside the ladder prints no key, and writes nothing", async () => {
+    const { periodStart, periodEnd } = activePeriod();
+    const { svc, tx } = make({
+      catalog: offLadderCatalog(),
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "BUSINESS", cycle: "MONTHLY", periodStart, periodEnd },
+    });
+    const err = await svc.downgrade("t1", "PRO", [], "admin").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as Error).message).toBe(OFF_LADDER);
+    expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
   });
 });
 

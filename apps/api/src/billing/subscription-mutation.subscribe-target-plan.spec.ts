@@ -16,6 +16,16 @@ import { FeatureResolverService } from "./feature-resolver.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { featureConfigOver, mockCollaborators, type FeatureFixture } from "./feature-fixtures";
 
+// W-1338: subscribe() closes the open payment link under the tenant-price lock (a pass-through here, no database).
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: async (_o: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
+
 const FORECASTING = {
   sku: "FORECASTING",
   name: "Forecasting",
