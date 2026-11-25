@@ -246,7 +246,7 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
         }
       }
     }
-    expect(seen).toBeGreaterThan(30);
+    expect(seen).toBe(42); // exact: 51 on master, minus the nine yearly spans (SA-1282 item 3)
     expect(bad).toEqual([]);
   });
 
