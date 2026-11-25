@@ -114,12 +114,23 @@ Neutral wording only. This text is co-signed by SA-C (the design's copy owner) a
 word for word with the in-app messages: full refund within 14 days, the subscription ends that
 day, the refund goes to the original payment method.
 
-> We have refunded your yearly payment in full. Your subscription ended today, and the refund
-> goes back to the payment method you used. Your bank decides how long it takes to show.
+**Message 1, refund done:**
 
+> We have refunded your yearly payment in full. Your subscription ended today, so you won't be charged
+> again. The refund goes back to the payment method you used, and your bank decides how long it takes
+> to show.
+
+**Message 2, request after day 14 (no refund):**
+
+> Your yearly payment was made more than 14 days ago, so it can't be refunded. Your plan stays active
+> until {renewalDate}, and you can cancel any time so it doesn't renew.
+
+- Staff read {renewalDate} from the tenant's billing page. Never work it out.
 - Do not promise a number of days for the refund to appear. Do not mention other customers.
 - A platform super admin sends it by email from the support address the app uses for billing mail.
-  The words are SA-C's two R-1 messages, final once owner box 1 (terms line) is answered.
+- The wording is final with these two messages (SA-C co-sign, comment 7173251037).
+- If owner box B is answered "refunded too", message 1 and the in-app S7 text change together
+  (SA-C's wording is in that comment).
 
 ## If something is wrong
 
