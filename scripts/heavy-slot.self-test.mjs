@@ -276,6 +276,7 @@ check(
     0,
   ),
   {
+    kind: "job",
     label: "l",
     branch: "b",
     host: "h",
@@ -2000,7 +2001,7 @@ check(
     "Q13 nextGrant without a finite `now` throws (the age term must never be silently dropped)",
     [undefined, NaN, "5"].map((now) => {
       try {
-        nextGrantRaw({ order: [oldN], myName: oldN, freeSlots: 1, now });
+        nextGrant({ order: [oldN], myName: oldN, freeSlots: 1, now });
         return "no throw";
       } catch (e) {
         return /nextGrant: `now` must be a finite number/.test(String(e.message));
@@ -2309,6 +2310,194 @@ check(
     },
     { pass: ["RF_HEAVY_SLOT", "RF_HEAVY_SLOT_TOKEN"], inEnv: [] },
   );
+}
+
+{
+  // A1-A6: the install class (cap 1, decided by the COMMAND) and the 10 GB floor at grant time.
+  const NPM_CI = ["run", "--label", "foo", "--", "npm", "ci", "--ignore-scripts"];
+  const stubSpawn = (calls) => async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    return { status: 0, signal: null };
+  };
+  const noop = () => {};
+  const installOpts = (dir, over = {}) => ({
+    dir,
+    env: {},
+    slots: 4,
+    maxCpuPct: 100, // no real load sampling: the cases are about the install class and the floor
+    maxMemPct: 100,
+    freeGb: () => 50,
+    log: noop,
+    ...FAST,
+    ...over,
+  });
+  const queueNames = [ticketName(1, 1, "a"), ticketName(2, 1, "b")];
+
+  // A1: two installs with four free slots: only one is granted (pure rule, then live).
+  check(
+    "A1a nextGrant: an install ticket is skipped while an install is held, a plain job behind it is granted",
+    [
+      nextGrant({
+        order: queueNames,
+        myName: queueNames[0],
+        freeSlots: 1,
+        install: new Set([queueNames[0]]),
+        installHeld: 1,
+      }).grant,
+      nextGrant({
+        order: queueNames,
+        myName: queueNames[1],
+        freeSlots: 1,
+        install: new Set([queueNames[0]]),
+        installHeld: 1,
+      }).grant,
+      nextGrant({
+        order: queueNames,
+        myName: queueNames[0],
+        freeSlots: 1,
+        install: new Set([queueNames[0]]),
+        installHeld: 0,
+      }).grant,
+    ],
+    [false, true, true],
+  );
+  {
+    const dir = mkTmp();
+    let live = 0;
+    let peak = 0;
+    const job = () =>
+      withHeavySlot({ label: "i", branch: "b", kind: "install", ...installOpts(dir) }, async () => {
+        peak = Math.max(peak, ++live);
+        await sleep(150);
+        live--;
+      });
+    await Promise.all([job(), job()]);
+    check("A1b two live installs with 4 free slots never overlap (peak 1)", peak, 1);
+  }
+
+  // A2: a verify ticket behind a HELD install is granted (skip, not block).
+  {
+    const dir = mkTmp();
+    ghost(dir, { label: "ghost-install", kind: "install" }, 0);
+    const events = [];
+    const inst = withHeavySlot(
+      { label: "inst", branch: "b", kind: "install", ...installOpts(dir) },
+      async () => void events.push("install"),
+    );
+    await sleep(60);
+    await withHeavySlot(
+      { label: "wt-verify-3", branch: "b", ...installOpts(dir) },
+      async () => void events.push("verify"),
+    );
+    rmSync(lockFile(dir, 0));
+    await inst;
+    check(
+      "A2 verify runs while an install is held and another waits; the install runs after",
+      events,
+      ["verify", "install"],
+    );
+  }
+
+  // A3: the class follows the COMMAND, never the label.
+  {
+    const dir = mkTmp();
+    const calls = [];
+    const o = { after: noop, spawn: stubSpawn(calls), slotOpts: installOpts(dir) };
+    const a = await cliMain(NPM_CI, o);
+    const b = await cliMain(["run", "--label", "x-ci", "--", "node", "-e", "1"], o);
+    const h = history(dir);
+    check(
+      "A3 label foo + `npm ci` is an install, label x-ci + `node -e 1` is not (history kind)",
+      [a, b, h.map((r) => r.label), h.map((r) => r.kind)],
+      [0, 0, ["foo", "x-ci"], ["install", "job"]],
+    );
+    check(
+      "A6a history carries the free space before and after for an install, none for a job",
+      [h[0].freeGbBefore, h[0].freeGbAfter, h[1].freeGbBefore],
+      [50, 50, undefined],
+    );
+  }
+
+  // A4: 9.9 GB free: not granted, npm never spawned; at 10.0 it is granted.
+  {
+    const dir = mkTmp();
+    const calls = [];
+    const lines = [];
+    let free = 9.9;
+    const run = cliMain(NPM_CI, {
+      after: noop,
+      spawn: stubSpawn(calls),
+      slotOpts: installOpts(dir, { freeGb: () => free, log: (m) => lines.push(m), waitLogMs: 1e9 }),
+    });
+    await sleep(200);
+    const before = calls.length;
+    const waiting = queued(dir).length;
+    free = 10.0;
+    const code = await run;
+    check(
+      "A4 at 9.9 GB the install waits (ticket kept, 0 spawns, one wait line); at 10.0 GB it runs",
+      [
+        before,
+        waiting,
+        lines.filter((l) => /install waits: 9\.9 GB free, needs 10/.test(l)).length,
+        code,
+        calls.length,
+      ],
+      [0, 1, 1, 0, 1],
+    );
+  }
+
+  // A5: under the floor past 15 minutes (injected clock): exit 3 with the message, no spawn, no ticket left.
+  {
+    const dir = mkTmp();
+    const calls = [];
+    const errs = [];
+    let t = Date.now();
+    const origErr = console.error;
+    console.error = (m) => errs.push(String(m));
+    let code;
+    try {
+      code = await cliMain(NPM_CI, {
+        after: noop,
+        spawn: stubSpawn(calls),
+        slotOpts: installOpts(dir, {
+          freeGb: () => 7.4,
+          now: () => (t += 30_000),
+          maxWaitMs: 1e12,
+        }),
+      });
+    } finally {
+      console.error = origErr;
+    }
+    check(
+      "A5 7.4 GB for 15+ min: exit 3, message names 7.4 and 10, npm never spawned, no ticket or lock left",
+      [
+        code,
+        calls.length,
+        /7\.4 GB free, needs 10/.test(errs.join("\n")),
+        queued(dir).length,
+        existsSync(lockFile(dir)),
+      ],
+      [3, 0, true, 0, false],
+    );
+  }
+
+  // A6b: status shows `install: none`, then the holder, then the last install's free space.
+  {
+    const dir = mkTmp();
+    const none = formatStatus(dir)
+      .split("\n")
+      .filter((l) => l.startsWith("install:"));
+    ghost(dir, { label: "ghost-install", kind: "install" }, 0);
+    const held = formatStatus(dir)
+      .split("\n")
+      .filter((l) => l.startsWith("install:"));
+    check(
+      "A6b status prints an `install:` line: none, then the holder",
+      [none.length, /^install: none/.test(none[0]), /^install: ghost-install/.test(held[0])],
+      [1, true, true],
+    );
+  }
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });

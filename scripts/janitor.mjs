@@ -80,7 +80,7 @@
 //                                               Known limit: on macOS/Linux a rename never fails for a held
 //                                               cwd, so only the `lsof` cwd list and the 24h rule guard there.
 //
-// Preflight threshold guidance (document, not enforced by this tool):
+// Preflight threshold guidance (enforced for installs by heavy-slot (install class) and install-guard):
 //   > 10 GB  normal — proceed with anything
 //   6-10 GB  reclaim (this tool, report-only or --apply) BEFORE an npm ci
 //   < 6 GB   refuse installs — reclaim first
@@ -469,7 +469,7 @@ function isWindows() {
   return process.platform === "win32";
 }
 
-function getFreeSpaceGb() {
+export function getFreeSpaceGb() {
   if (isWindows()) {
     const out = trySh("powershell", [
       "-NoProfile",

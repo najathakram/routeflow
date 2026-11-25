@@ -9,8 +9,11 @@ import path from "node:path";
 import { ensureGitHooks } from "./lib/check-git-hooks.mjs";
 import {
   HeavySlotTimeout,
+  INSTALL_FLOOR_EXIT_CODE,
+  InstallFloorError,
   bareNpmReason,
   isNpmInstall,
+  jobKind,
   npmInstallPrefix,
   TIMEOUT_EXIT_CODE,
   formatStatus,
@@ -68,7 +71,10 @@ export function afterRun(
   }
 }
 
-export async function main(argv = process.argv.slice(2), { after = afterRun } = {}) {
+export async function main(
+  argv = process.argv.slice(2),
+  { after = afterRun, spawn = spawnAsync, slotOpts = {} } = {},
+) {
   let cli;
   try {
     cli = parseCli(argv);
@@ -90,18 +96,22 @@ export async function main(argv = process.argv.slice(2), { after = afterRun } = 
     return 2;
   }
   try {
-    return await withHeavySlot({ label: cli.label, branch: cli.branch }, async () => {
-      let r = await spawnAsync(cli.cmd, cli.args);
-      // Windows .cmd shims (npm, npx) need a shell; retry once that way on a plain ENOENT.
-      if (r.error?.code === "ENOENT" && process.platform === "win32") {
-        r = await spawnAsync(cli.cmd, cli.args, { shell: true });
-      }
-      if (r.error) console.error(`heavy-slot: ${r.error.message}`);
-      after(cli.cmd, cli.args, r.status);
-      return r.status ?? 1;
-    });
+    return await withHeavySlot(
+      { label: cli.label, branch: cli.branch, kind: jobKind(cli.cmd, cli.args), ...slotOpts },
+      async () => {
+        let r = await spawn(cli.cmd, cli.args);
+        // Windows .cmd shims (npm, npx) need a shell; retry once that way on a plain ENOENT.
+        if (r.error?.code === "ENOENT" && process.platform === "win32") {
+          r = await spawn(cli.cmd, cli.args, { shell: true });
+        }
+        if (r.error) console.error(`heavy-slot: ${r.error.message}`);
+        after(cli.cmd, cli.args, r.status);
+        return r.status ?? 1;
+      },
+    );
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
+    if (e instanceof InstallFloorError) return INSTALL_FLOOR_EXIT_CODE;
     return e instanceof HeavySlotTimeout ? TIMEOUT_EXIT_CODE : 1;
   }
 }
