@@ -105,16 +105,50 @@ function cells(): HTMLElement[] {
 }
 
 describe("buyer order read view - quantity cells on a boxed line (B1387)", () => {
-  it('3 boxes of 12 at $18.00: Qty "3 boxes", Delivered "1 box", Remaining "2 boxes"; Subtotal $54.00', () => {
+  // One test per cell so each goes red on its own old value (Qty "36", Delivered "12", Remaining "24").
+  it('Qty reads "3 boxes", never the raw "36"', () => {
     mockOrder = order([line()]);
     renderWithProviders(<BuyerOrderDetailPage />);
-    const c = cells();
-    expect(c[1]).toHaveTextContent("3 boxes");
-    expect(c[1]).not.toHaveTextContent("36");
-    expect(c[2]).toHaveTextContent("1 box");
-    expect(c[2]).not.toHaveTextContent("12");
-    expect(c[3]).toHaveTextContent("2 boxes");
-    expect(c[5]).toHaveTextContent("$54.00");
+    expect(cells()[1].textContent).toContain("3 boxes");
+    expect(cells()[1].textContent).not.toContain("36");
+  });
+
+  it('Delivered 12 pieces reads "1 box", never the raw "12"', () => {
+    mockOrder = order([line()]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(cells()[2].textContent).toBe("1 box");
+  });
+
+  it('Remaining 24 pieces reads "2 boxes", never the raw "24"', () => {
+    mockOrder = order([line()]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(cells()[3].textContent).toBe("2 boxes");
+  });
+
+  it("the Subtotal stays $54.00 (labels only)", () => {
+    mockOrder = order([line()]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(cells()[5]).toHaveTextContent("$54.00");
+  });
+
+  it("a split whose pack cannot be recovered (3 boxes, qty 37) keeps plain numbers", () => {
+    mockOrder = order([line({ qty: 37, boxes: 3, pieces: 0, deliveredQty: 12 })]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(cells()[2].textContent).toBe("12");
+    expect(cells()[3].textContent).toBe("25");
+  });
+
+  it("the line's own pack wins over a repacked live product (own 12, live 6)", () => {
+    mockOrder = order([
+      line({
+        product: { id: "p-1", name: "Sample Cola 12oz", unit: "each", unitsPerBox: 6 },
+        unitsPerBox: 6,
+      }),
+    ]);
+    renderWithProviders(<BuyerOrderDetailPage />);
+    // Delivered 12 pieces is 1 box at the line's own pack of 12 (a live pack of 6 would say 2 boxes).
+    expect(cells()[2].textContent).toBe("1 box");
+    expect(cells()[3].textContent).toBe("2 boxes");
   });
 
   it("fully delivered reads 0 remaining", () => {
