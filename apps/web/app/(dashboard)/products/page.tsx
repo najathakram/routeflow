@@ -31,7 +31,13 @@ import {
   useUpdateProduct,
   useBulkDeleteProducts,
 } from "@/lib/api/products";
-import { applyLadderChange, ladderChangeNote, unitWords, type TierField } from "@routeflow/pricing";
+import {
+  applyLadderChange,
+  ladderChangeNote,
+  pricedPerLabel,
+  unitWords,
+  type TierField,
+} from "@routeflow/pricing";
 import { productTierLabel } from "@/lib/tier-one-label";
 import { displayProductName } from "@/lib/product-display";
 import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
@@ -264,7 +270,7 @@ function ProductCard({
           <p className="font-mono tabular-nums text-base font-bold text-navy">
             ${parseFloat(String(product.pricePerUnit)).toFixed(2)}
             <span className="ml-1 font-sans text-xs font-normal text-navy/70">
-              / {product.unit}
+              / {pricedPerLabel({ unit: product.unit, unitsPerBox: product.unitsPerBox }).word}
             </span>
           </p>
           {product.variants && product.variants.length > 0 && (

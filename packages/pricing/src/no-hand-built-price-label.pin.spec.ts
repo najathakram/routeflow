@@ -14,7 +14,14 @@ const ALLOW = [
   path.join("orders", "_components", "CounterLinePriceEdit.tsx"),
 ];
 
-const HAND_BUILT = [/Price per\s*\$\{/, /["'`]Price per ["'`]\s*\+/, /["'`]Price per unit["'`]/];
+const HAND_BUILT = [
+  // a credit label that already names the pack word (`Credit price per ${UW.pack.lower}`) is correct
+  /Price per\s*\$\{(?!\s*UW\.pack)/i,
+  /["'`]Price per ["'`]\s*\+/i,
+  /["'`]Price per unit["'`]/i,
+  // JSX text: <Text>Price per {u}</Text>; the optional piece-price field names the base word and stays legitimate
+  /Price per\s*\{(?!\s*w\.base\.)/i,
+];
 
 export function handBuilt(src: string): boolean {
   return HAND_BUILT.some((re) => re.test(src.replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, " ")));
@@ -35,6 +42,8 @@ describe("no hand-built price label outside pricedPerLabel (B1383)", () => {
     ["a template", "const l = `Price per ${unitWord} *`;"],
     ["a template, spaced", "`Price per   ${u}`"],
     ["a concatenation", 'const l = "Price per " + unit;'],
+    ["JSX text", "<Text>Price per {u}</Text>"],
+    ["lower case", "const l = `price per ${u}`;"],
     ["the mobile literal", '<FormField label="Price per unit">'],
   ])("the detector sees %s", (_n, src) => {
     expect(handBuilt(src)).toBe(true);
@@ -43,7 +52,7 @@ describe("no hand-built price label outside pricedPerLabel (B1383)", () => {
   it("does not trip on a comment, the helper's own call or the optional piece-price label", () => {
     expect(handBuilt("// Price per ${x} is wrong")).toBe(false);
     expect(handBuilt("label={pricedPerLabel({ unit }).label}")).toBe(false);
-    expect(handBuilt("Price per {w.base.lower}")).toBe(false);
+    expect(handBuilt('Price per {w.base.lower}{" "}')).toBe(false);
   });
 
   it("no web or mobile source builds a price label by hand", () => {

@@ -83,7 +83,7 @@ describe("ProductCreateModal draft + restore banner (V13)", () => {
     await userEvent.click(screen.getByTestId("units-v2-restore-yes"));
     expect(screen.queryByTestId(BANNER)).toBeNull();
     expect(screen.getByLabelText("Name *")).toHaveValue("Cola");
-    expect(screen.getByLabelText("Price per box *")).toHaveValue(12);
+    expect(screen.getByLabelText(/^Price per box .+ pieces.+ [*]$/)).toHaveValue(12);
     expect(screen.getByLabelText("Units per box")).toHaveValue(24);
   });
 
