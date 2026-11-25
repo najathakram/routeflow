@@ -217,6 +217,7 @@ export * from "./api/price-history";
 export * from "./api/order-suggestions";
 export * from "./api/order-cancel";
 export * from "./api/ship-state";
+export * from "./api/estimate-moves"; // SA-1263: the one estimate allowed-moves table
 export * from "./shipment-save";
 export * from "./api/order-tracking";
 export * from "./api/onboarding";

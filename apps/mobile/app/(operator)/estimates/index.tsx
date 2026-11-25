@@ -13,6 +13,7 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useEstimates, type Estimate } from "../../../lib/api/estimates";
+import { estimateRevisionTag } from "@routeflow/types/api/estimate-moves";
 import { estimatePillFor } from "../../../lib/estimates-logic";
 import { fmtCalendarDate } from "../../../lib/format-date";
 
@@ -91,12 +92,14 @@ export default function EstimatesListScreen() {
 
 function Row({ estimate, onPress }: { estimate: Estimate; onPress: () => void }) {
   const s = estimatePillFor(estimate.status);
+  const rev = estimateRevisionTag(estimate.status, estimate.revision);
   return (
     <Pressable style={styles.row} onPress={onPress}>
       <View style={styles.rowHead}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.title} numberOfLines={1}>
             {estimate.estimateNumber}
+            {rev ? ` · ${rev}` : ""}
           </Text>
           <Text style={styles.sub} numberOfLines={1}>
             {estimate.customer?.businessName ?? "Customer"}

@@ -100,7 +100,16 @@ export function useConvertEstimateToInvoice() {
   });
 }
 
-/** Void == server sets status DECLINED; rejected once CONVERTED. */
+/** A SENT or ACCEPTED estimate back to DRAFT, so it can be revised (the revision count goes up). */
+export function useRevertEstimateToDraft() {
+  const qc = useQueryClient();
+  return useMutation<Estimate, Error, string>({
+    mutationFn: (id) => apiClient.post(`/estimates/${id}/revert-to-draft`).then((r) => r.data),
+    onSuccess: (_, id) => invalidateEstimate(qc, id),
+  });
+}
+
+/** Void == server sets status DECLINED (A1); rejected once CONVERTED. */
 export function useVoidEstimate() {
   const qc = useQueryClient();
   return useMutation<Estimate, Error, string>({

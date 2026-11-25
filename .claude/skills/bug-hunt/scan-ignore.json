@@ -93,9 +93,6 @@
     "apps/mobile/components/DrawerMenu.tsx::import { useEffect, useRef } from \"react\";",
     "apps/mobile/components/HeaderBackButton.tsx::import { Pressable } from \"react-native\";",
     "apps/mobile/components/NetworkError.tsx::import { Pressable, StyleSheet, Text, View } from \"react-native\";",
-    "apps/mobile/components/skeletons/HistorySkeleton.tsx::import { StyleSheet, View } from \"react-native\";",
-    "apps/mobile/components/skeletons/RouteSkeleton.tsx::import { StyleSheet, View } from \"react-native\";",
-    "apps/mobile/components/skeletons/ShopSkeleton.tsx::import { Dimensions, StyleSheet, View } from \"react-native\";",
     "apps/web/app/(dashboard)/routes/_components/CreateRouteModal.tsx::\"use client\";",
     "apps/web/components/InstallAppButton.tsx::\"use client\";",
     "apps/web/components/ReportChart.tsx::\"use client\";"

@@ -72,6 +72,8 @@ export interface Estimate {
   customerId: string;
   customer?: { id: string; businessName: string; contactName?: string; address?: string };
   status: EstimateStatus;
+  /** 1 until a sent quote goes back to draft; +1 at each revert (SA-1263). Shown as "Rev n" past 1. */
+  revision?: number;
   /** Operator-picked issue date (F27); null on legacy rows — fall back to createdAt. */
   issueDate?: string | null;
   expiresAt?: string;

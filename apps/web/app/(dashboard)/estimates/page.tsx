@@ -7,6 +7,7 @@ import { PageHeader, Button, Select, cn, EmptyState, Badge } from "@routeflow/ui
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
+import { estimateRevisionTag } from "@routeflow/types";
 import { useEstimates, type Estimate } from "@/lib/api/estimates";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
@@ -320,7 +321,9 @@ export default function EstimatesPage() {
                     className="cursor-pointer transition-colors hover:bg-surface-raised"
                   >
                     <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
-                      {est.estimateNumber}
+                      {[est.estimateNumber, estimateRevisionTag(est.status, est.revision)]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </td>
                     <td className="px-4 py-3 font-medium text-navy">
                       {est.customer?.businessName ?? "—"}
