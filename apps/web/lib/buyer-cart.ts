@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useOptionalToast } from "@routeflow/ui/web";
 import {
+  clampNewLine,
   completeLineFromCatalog,
   hydrateCartLine,
   lineCount,
@@ -120,28 +121,31 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
 
   const addItem = React.useCallback(
     (item: CartItem) => {
-      // B1382: a merge that hits the cap says so (when the call site has a ToastProvider; never throws without one).
-      const current = cartRef.current.items.find((i) => i.productId === item.productId);
-      if (current) {
-        const checked = mergeCartLinesChecked(current, normalizeCartLine(item));
-        if (checked.clamped) {
-          const { max, maxWord } = lineLimit(checked.line);
-          toastCtx?.toast({ title: limitLine(max, maxWord), variant: "info" });
-        }
-      }
+      // B1382/B1409: whether the cap clamped is decided from `prev` (the state this Add really lands on), never from
+      // cartRef, which is stale inside a synchronous loop (Order Again). The toast fires once per call even if React
+      // re-runs the updater (strict mode); without a ToastProvider the Add still clamps and stays silent.
+      let said = false;
+      const sayLimit = (line: CartItem) => {
+        if (said) return;
+        said = true;
+        const { max, maxWord } = lineLimit(line);
+        toastCtx?.toast({ title: limitLine(max, maxWord), variant: "info" });
+      };
       setCart((prev) => {
         const incoming = normalizeCartLine(item);
         const existing = prev.items.find((i) => i.productId === item.productId);
         let next: CartState;
         if (existing) {
           // Merge in PIECES, then re-derive the split: never add a qty onto a stale split.
+          const checked = mergeCartLinesChecked(existing, incoming);
+          if (checked.clamped) sayLimit(checked.line);
           next = {
-            items: prev.items.map((i) =>
-              i.productId === item.productId ? mergeCartLinesChecked(i, incoming).line : i,
-            ),
+            items: prev.items.map((i) => (i.productId === item.productId ? checked.line : i)),
           };
         } else {
-          next = { items: [...prev.items, incoming] };
+          const checked = clampNewLine(incoming);
+          if (checked.clamped) sayLimit(checked.line);
+          next = { items: [...prev.items, checked.line] };
         }
         if (key) writeCart(key, next);
         return next;
