@@ -29,6 +29,13 @@ export function orderAgainCartLines(
     if ((!orderCancelled && li.status === "CANCELLED") || !li.productId || !li.product) continue;
     const qty = Math.trunc(Number(li.qty));
     if (!(qty > 0)) continue;
+    // B1409: one product is one cart line. A repeated line folds into the first in PIECES (uncapped here: the cart's
+    // Add clamps the folded line once and shows one limit line, not one per repeat).
+    const at = out.findIndex((l) => l.productId === li.productId);
+    if (at >= 0) {
+      out[at] = normalizeCartLine({ ...out[at], qty: out[at].qty + qty });
+      continue;
+    }
     out.push(
       normalizeCartLine({
         productId: li.productId,
