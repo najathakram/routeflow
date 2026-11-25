@@ -13,6 +13,7 @@ import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
+import { ESTIMATE_MOVES } from "@routeflow/types";
 
 let rights = true;
 jest.mock("../auth/permissions/price-edit", () => ({
@@ -146,7 +147,7 @@ describe("Estimates: typed prices, draft edit, back to draft", () => {
         NO_PRICE_RIGHTS,
       );
       const claim = prisma.estimate.updateMany.mock.calls[0][0];
-      expect(claim.where).toEqual({ id: "est-1", status: "DRAFT" });
+      expect(claim.where).toEqual({ id: "est-1", status: { in: [...ESTIMATE_MOVES.edit] } });
       expect(claim.data).toMatchObject({ subtotal: 27, total: 27, notes: "Net 30" });
       expect(prisma.estimateItem.deleteMany).toHaveBeenCalledWith({
         where: { estimateId: "est-1" },
@@ -265,13 +266,13 @@ describe("Estimates: typed prices, draft edit, back to draft", () => {
   });
 
   describe("revertToDraft()", () => {
-    it("claims DRAFT from any status but DRAFT, CONVERTED and DECLINED", async () => {
+    it("claims DRAFT from SENT or ACCEPTED only, and counts the revision in the same claim", async () => {
       prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
       prisma.estimate.findUnique.mockResolvedValue({ id: "est-1", status: "DRAFT", items: [] });
       await service.revertToDraft("est-1");
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith({
-        where: { id: "est-1", status: { notIn: ["DRAFT", "CONVERTED", "DECLINED"] } },
-        data: { status: "DRAFT" },
+        where: { id: "est-1", status: { in: ["SENT", "ACCEPTED"] } },
+        data: { status: "DRAFT", revision: { increment: 1 } },
       });
     });
 
@@ -283,7 +284,15 @@ describe("Estimates: typed prices, draft edit, back to draft", () => {
       );
     });
 
-    it("a DECLINED estimate stays closed (a void is stored as DECLINED today)", async () => {
+    it("a VOID estimate stays closed (VOID is absorbing)", async () => {
+      prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
+      prisma.estimate.findFirst.mockResolvedValue({ id: "est-1", status: "VOID" });
+      await expect(service.revertToDraft("est-1")).rejects.toThrow(
+        "Void estimates cannot be moved back to draft",
+      );
+    });
+
+    it("a DECLINED estimate stays closed (a void is stored as DECLINED until A2)", async () => {
       prisma.estimate.updateMany.mockResolvedValue({ count: 0 });
       prisma.estimate.findFirst.mockResolvedValue({ id: "est-1", status: "DECLINED" });
       await expect(service.revertToDraft("est-1")).rejects.toThrow(

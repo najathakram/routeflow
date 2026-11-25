@@ -134,6 +134,12 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Dashboard overdue days, new-sale quantity | [`web`](web/landing-2026-11-24-w44.md) → `app/(dashboard)/dashboard/page.tsx` |
 | Supplier bill from a purchase order (prefill, by-hand lines) | [`web`](web/landing-2026-11-24-w45.md) → `lib/po-prefill.ts` |
 | PO bill plan, one line one unit | [`packages`](packages/landing-2026-11-24-w45.md) → `pricing/src/po-bill-lines.ts` |
+| Document number year (tenant calendar year) | [`api`](api/landing-2026-11-24-w46.md) → `src/common/number-year.ts` |
+| Return credit last-paid cap | [`api`](api/landing-2026-11-24-w46.md) → `src/returns/inline-returns-pricing.ts` |
+| Counter quantity box hold (Enter, Tab, blur) | [`web`](web/landing-2026-11-24-w46.md) → `components/use-held-qty.ts` |
+| Invoices Follow up view, due-soon filter | [`web`](web/landing-2026-11-24-w46.md) → `app/(dashboard)/invoices/follow-up-view.tsx` |
+| Plan key ladder (CORE, ALL_IN) | [`api`](api/landing-2026-11-24-w46.md) → `src/billing/plan-catalog.constants.ts` |
+| Heavy-slot max-mem file, prod-migrate-resolve | [`api`](api/landing-2026-11-24-w46.md) → `scripts/lib/heavy-slot.mjs` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →

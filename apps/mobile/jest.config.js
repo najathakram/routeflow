@@ -94,6 +94,7 @@ module.exports = {
     // Row 505: the fulfilment capability shape + UNSET fallback (pure, no imports), same subpath trick.
     // SA-1101: the shared terminal-order-status lists (pure, no imports), same subpath trick.
     "^@routeflow/types/api/enums$": "<rootDir>/../../packages/types/api/enums.ts",
+    "^@routeflow/types/api/estimate-moves$": "<rootDir>/../../packages/types/api/estimate-moves.ts",
     "^@routeflow/types/api/restrictions$": "<rootDir>/../../packages/types/api/restrictions.ts",
     "^@routeflow/types/api/product-name$": "<rootDir>/../../packages/types/api/product-name.ts",
     "^@routeflow/types/api/finance$": "<rootDir>/../../packages/types/api/finance.ts",

@@ -16,7 +16,7 @@ const PINS: Array<[file: string, dialogConfirms: number, which: string]> = [
     'delete price override, suspend/deactivate (:4021, ternary form: variant={x ? "danger" : "secondary"}, the dialog confirm), delete standing order, delete contact, decline request, delete customer, disconnect portal',
   ],
   ["credit-notes/[id]/page.tsx", 0, "none"],
-  ["estimates/[id]/page.tsx", 1, "the void dialog's own confirm"],
+  ["estimates/[id]/page.tsx", 2, "the void and decline dialogs' own confirms"],
   ["finance/commissions/[id]/page.tsx", 1, "void statement dialog"],
   ["returns/[id]/page.tsx", 2, "reject return, cancel return"],
 ];
