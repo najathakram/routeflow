@@ -19,7 +19,7 @@
 //   POST   platform-admin/onboarding/cases/:id/adopt-catalog                → OnboardingCaseDetail
 //   GET    platform-admin/demo-bookings?status=&from=&to=                   → DemoBookingListItem[]
 
-import type { DemoBookingStatus } from "./enums";
+import type { BillingCycle, DemoBookingStatus } from "./enums";
 import { API_ERROR_CODES } from "./error-codes";
 
 export const ONBOARDING_STAGE_VALUES = [
@@ -410,7 +410,7 @@ export interface IntakeFileView {
 export interface IntakeOrderSnapshot {
   planKey: string;
   planName: string;
-  cycle: "MONTHLY" | "ANNUAL";
+  cycle: BillingCycle;
   isCustom: boolean;
   lines: {
     type: "plan" | "addon";

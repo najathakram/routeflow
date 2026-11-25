@@ -4,6 +4,8 @@
 // const arrays in apps/api/src/billing/rf-invoice/rf-invoice.constants.ts; rf-invoice-constants-parity.spec.ts
 // pins the two equal. Dates arrive as ISO strings, money as numbers rounded to cents.
 
+import type { BillingCycle } from "./enums";
+
 /** `RfInvoice.status` - a plain string column, not a Prisma enum. The legacy FAILED is never written. */
 export const RF_INVOICE_STATUS_VALUES = ["OPEN", "PAID", "VOID"] as const;
 export type RfInvoiceStatus = (typeof RF_INVOICE_STATUS_VALUES)[number];
@@ -35,7 +37,7 @@ export interface RfInvoiceLine {
 
 export type RfInvoiceDueState = "overdue" | "due_soon" | "upcoming";
 
-export type RfInvoiceCycle = "MONTHLY" | "ANNUAL";
+export type RfInvoiceCycle = BillingCycle;
 
 /** One queue row. No paidNote / voidReason / actor ids: those stay on the detail path. */
 export interface RfInvoiceRow {

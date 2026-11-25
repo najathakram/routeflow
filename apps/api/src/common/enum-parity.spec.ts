@@ -177,6 +177,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["USER_STATUS_VALUES", "UserStatus"],
   ["BUYER_ACCOUNT_STATUS_VALUES", "BuyerAccountStatus"],
   ["CUSTOMER_LINK_STATUS_VALUES", "CustomerLinkStatus"],
+  // SA-1304 PR-2: BillingCycle, an EXISTING enum (no count change) whose union was hand-typed in four client files.
+  ["BILLING_CYCLE_VALUES", "BillingCycle"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -672,5 +674,19 @@ describe("regression: apps/mobile's @routeflow/types stub stays pinned to Prisma
     const canonical = (SHARED as Record<string, unknown>)["CHECK_TRANSITIONS"];
     expect(canonical).toBeDefined();
     expect(MOBILE_STUB["CHECK_TRANSITIONS"]).toEqual(canonical);
+  });
+});
+
+// SA-1304 PR-2 (test 18): the four client files that hand-typed the billing-cycle union now derive it from
+// BILLING_CYCLE_VALUES (packages/types/api/enums.ts), which the ENUM_TABLE row above pins to @prisma/client.
+describe("regression: the billing-cycle union is derived, never hand-typed (L-072, SA-1304)", () => {
+  it.each([
+    "packages/types/api/billing.ts",
+    "packages/types/api/onboarding.ts",
+    "packages/types/api/rf-invoices.ts",
+    "apps/web/lib/api/billing.ts",
+  ])("%s declares no literal MONTHLY | ANNUAL union", (relPath) => {
+    const text = fs.readFileSync(path.join(REPO_ROOT, relPath), "utf8");
+    expect(text).not.toMatch(/"MONTHLY"\s*\|\s*"ANNUAL"|"ANNUAL"\s*\|\s*"MONTHLY"/);
   });
 });

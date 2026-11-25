@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   API_ERROR_CODES,
   type AddonBillingMode,
+  type BillingCycle,
   type EnableAddonResult,
   type BillingPortalResult,
   type CheckoutStart,
@@ -16,7 +17,7 @@ export type { SubscriptionView };
 
 // ─── Types (mirror apps/api/src/billing return shapes) ──────────────────────────
 
-export type Cycle = "MONTHLY" | "ANNUAL";
+export type Cycle = BillingCycle;
 
 export interface PlanDef {
   planKey: string;
