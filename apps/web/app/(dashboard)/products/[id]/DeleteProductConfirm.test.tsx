@@ -64,7 +64,7 @@ describe("DeleteProductConfirm", () => {
     expect(yes()).toBeInTheDocument();
     expect(
       screen.getByText(
-        /will be deactivated and hidden from the catalog\. Its SKU and barcode are freed, so another product can use them\. Order and invoice history is kept\. A product on an undelivered order can't be deleted\./,
+        /will be hidden from the catalog\. It is not gone for good: find it under Inactive in Products to turn it back on\. Past orders and invoices keep it\. Its SKU and barcode become free for another product\./,
       ),
     ).toBeInTheDocument();
   });
