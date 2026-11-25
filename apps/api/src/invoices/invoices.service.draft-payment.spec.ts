@@ -182,4 +182,37 @@ describe("InvoicesService — B1385 a draft payment is not credit", () => {
       expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("the STRIPE_SETTLE exemption is exactly one clause wide (SA note on #4512)", () => {
+    const settle = { source: "STRIPE_SETTLE" } as any;
+    const invoiceIs = (status: InvoiceStatus) =>
+      prisma.invoice.findFirst.mockResolvedValue({
+        id: "inv-1",
+        status,
+        total: 100,
+        dueDate: null,
+        payments: [],
+      });
+
+    it("1a: a STRIPE_SETTLE DRAFT with a leftover is still refused (the refusal does not ride the exemption)", async () => {
+      const err: any = await write({ status: "DRAFT" }, settle).catch((e: unknown) => e);
+      expect(err.getResponse()).toEqual(
+        expect.objectContaining({ code: API_ERROR_CODES.DRAFT_PAYMENT_HAS_EXCESS }),
+      );
+      nothingWritten();
+    });
+
+    it("1b: a staff allocation on a DRAFT invoice is refused; the same one through STRIPE_SETTLE records PAID", async () => {
+      const alloc = { totalAmount: 100, allocations: [{ invoiceId: "inv-1", amount: 100 }] };
+      invoiceIs(InvoiceStatus.DRAFT);
+      await expect(write(alloc)).rejects.toThrow(/is a draft/);
+      expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
+
+      await write(alloc, settle);
+      expect(prisma.invoicePayment.create).toHaveBeenCalledTimes(1);
+      expect(prisma.invoicePayment.create.mock.calls[0][0].data).toEqual(
+        expect.objectContaining({ amount: 100, status: "PAID" }),
+      );
+    });
+  });
 });

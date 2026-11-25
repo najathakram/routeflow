@@ -18,6 +18,7 @@ import {
 import {
   allocationTotals,
   changeCustomerGate,
+  draftBlockedByExcess,
   oldestInvoicesFirst,
   waterfallAllocations,
 } from "../../../lib/payments-logic";
@@ -336,7 +337,7 @@ function PaymentForm({
         photos,
         asDraft,
       })}
-      submitDisabled={statusCheck.unknown || (asDraft && totals.excess > 0.001)} // B1385: no draft with a leftover
+      submitDisabled={statusCheck.unknown || draftBlockedByExcess(asDraft, totals.excess)} // B1385: no draft with a leftover
       onSubmit={() => submit()}
     >
       <PaymentStatusNotice status={statusCheck} />
@@ -501,7 +502,9 @@ function PaymentForm({
           </View>
           <Text style={styles.draftLabel}>
             Save as draft (records the rows without touching invoice statuses)
-            {asDraft && totals.excess > 0.001 ? ". Allocate the full amount to save a draft." : ""}
+            {draftBlockedByExcess(asDraft, totals.excess)
+              ? ". Allocate the full amount to save a draft."
+              : ""}
           </Text>
         </Pressable>
       </FormSection>

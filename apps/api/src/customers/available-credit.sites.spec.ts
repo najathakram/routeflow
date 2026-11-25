@@ -133,11 +133,12 @@ const ADVANCE_READERS: Record<string, string> = {
   "payment-requests/connect-charge-review.service.ts": "charge review, not an offer of credit",
   "routes/routes.service.ts": "run-cash settle writer",
 };
-const MUST_FILTER = [
-  "customers/customers.service.ts",
-  "invoices/payment-list-query.ts",
-  "customers/account-statement.ts",
-  "customers/customer-statement.ts",
+/** Each offering file and how many predicate CALLS it must keep (one per site: customers.service has the list and the apply). */
+const MUST_FILTER: Array<[string, number]> = [
+  ["customers/customers.service.ts", 2],
+  ["invoices/payment-list-query.ts", 1],
+  ["customers/account-statement.ts", 1],
+  ["customers/customer-statement.ts", 1],
 ];
 
 describe("B1385 pin: advance readers are classified and the offering ones are filtered", () => {
@@ -153,9 +154,17 @@ describe("B1385 pin: advance readers are classified and the offering ones are fi
     expect(readers).toEqual(Object.keys(ADVANCE_READERS).sort());
   });
 
-  it.each(MUST_FILTER)("%s runs the availability predicate", (rel) => {
-    expect(stripComments(read(rel))).toMatch(
-      /filterAvailableAdvances|isAdvanceAvailable|loadAvailableCredit/,
-    );
-  });
+  it.each(MUST_FILTER)(
+    "%s calls the availability predicate (an import is not enough)",
+    (rel, calls) => {
+      // a CALL (`name(`), outside comments and import lines
+      const code = stripComments(read(rel))
+        .split(String.fromCharCode(10))
+        .filter((l) => !l.startsWith("import "))
+        .join(String.fromCharCode(10));
+      expect(
+        (code.match(/(filterAvailableAdvances|isAdvanceAvailable)[(]/g) ?? []).length,
+      ).toBeGreaterThanOrEqual(calls);
+    },
+  );
 });
