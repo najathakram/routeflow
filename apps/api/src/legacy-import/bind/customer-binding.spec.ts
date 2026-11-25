@@ -226,3 +226,56 @@ describe("T28 (bind half): no auto-create, no partial-name attach, job not folde
     ]);
   });
 });
+
+// Lessons from the B1 read (R-180): gates on the whole name, in order; stable order; blank safe.
+describe("customer gates and ordering", () => {
+  it("numbers are compared on the whole name, in order (wrong value: near)", () => {
+    expect(customerNameScore("Acme Store 6 x 12", "Acme Store 12 x 6")).toBe(0);
+  });
+
+  it("a long name that differs in one number scores 0 (wrong value: 0.9+)", () => {
+    expect(
+      customerNameScore("Acme Wholesale Market Downtown 12", "Acme Wholesale Market Downtown 21"),
+    ).toBe(0);
+  });
+
+  it("the same letters with different spacing score as near", () => {
+    expect(customerNameScore("AcmeMarket", "Acme Market")).toBeGreaterThanOrEqual(0.6);
+  });
+
+  it("a blank name scores 0 against anything, including blank", () => {
+    expect(customerNameScore("", "")).toBe(0);
+    expect(customerNameScore("  ", "Acme")).toBe(0);
+  });
+
+  it("candidate order does not depend on the order of the rows passed in", () => {
+    const a: RfCustomerRow = { id: "a", name: "Acme Market" };
+    const z: RfCustomerRow = { id: "z", name: "ACME  MARKET" };
+    const one = resolveCustomerBinding("acme market", [z, a], []).candidates.map(
+      (c) => c.customerId,
+    );
+    const two = resolveCustomerBinding("acme market", [a, z], []).candidates.map(
+      (c) => c.customerId,
+    );
+    expect(one).toEqual(two);
+  });
+
+  it("two confirmed bindings for one key that disagree never bind (wrong value: first wins)", () => {
+    const bindings: CustomerBindingRow[] = [
+      { sourceCustomerKey: "Acme Market", customerId: "c-market", confirmed: true },
+      { sourceCustomerKey: "Acme Market", customerId: "c-acme", confirmed: true },
+    ];
+    for (const rows of [bindings, [...bindings].reverse()]) {
+      const r = resolveCustomerBinding("Acme Market", customers, rows);
+      expect(r.status).not.toBe("BOUND");
+      expect(r.canPost).toBe(false);
+    }
+  });
+
+  it("a confirmed binding to a customer no longer in the list never binds", () => {
+    const bindings: CustomerBindingRow[] = [
+      { sourceCustomerKey: "Acme Market", customerId: "c-gone", confirmed: true },
+    ];
+    expect(resolveCustomerBinding("Acme Market", customers, bindings).canPost).toBe(false);
+  });
+});
