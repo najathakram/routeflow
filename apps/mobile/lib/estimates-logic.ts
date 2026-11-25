@@ -1,4 +1,4 @@
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { computeLineSubtotal, invoiceLineQtyText } from "@routeflow/pricing";
 import { canMoveEstimate } from "@routeflow/types/api/estimate-moves";
 import type { EstimateStatus } from "./api/estimates";
 
@@ -65,6 +65,23 @@ export interface LineAmountInput {
   pieces?: number;
   /** Null on an unboxed line (the shared EstimateItem shape). */
   unitsPerBox?: number | null;
+}
+
+/**
+ * B1387: "<qty> × <price>" for an estimate line. `qty` counts PIECES on a boxed line while
+ * `unitPrice` is the BOX price, so the qty goes through the ONE shared formatter
+ * (`invoiceLineQtyText`): "3 boxes × $18.00", never "36 × $18.00". Label only, no money.
+ */
+export function estimateLineQtyPriceText(
+  item: LineAmountInput & { unitLabel?: string | null },
+  fmt: (n: number) => string,
+): string {
+  return `${invoiceLineQtyText({
+    qty: item.qty,
+    boxes: item.boxes,
+    pieces: item.pieces,
+    unitLabel: item.unitLabel,
+  })} × ${fmt(item.unitPrice)}`;
 }
 
 /**

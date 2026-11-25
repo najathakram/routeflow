@@ -206,7 +206,7 @@ const FILES: Pin[] = [
     present: [
       "placeholder={`Same as ${UW.pack.lower} code`}",
       "placeholder={`Leave blank if it matches the ${UW.pack.lower} code`}",
-      "≈ <MoneyFigure value={pu} /> / {UW.base.short.one}",
+      "≈ <MoneyFigure value={pp.price} /> / {pp.word}",
       "— (same as {UW.pack.lower} code)",
       "<PiecesPerBoxValue",
     ],
