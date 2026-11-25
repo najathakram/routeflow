@@ -1,27 +1,25 @@
-import { priceUnitWord, unitWords } from "@routeflow/pricing";
+import { isPackUnitWord, priceUnitWord, pricedPerLabel, unitWords } from "@routeflow/pricing";
 
 // The word a price is quoted per lives in pricing (receipt-line-detail.ts) so the emailed receipt reads the same word; re-exported here.
 export { priceUnitWord };
 
-const PACKISH = new Set(["box", "case", "carton", "pack", "crate", "bundle"]);
-
 /** True when the selling unit is a pack, so "Units per {pack}" belongs next to the price. */
-export function isPackUnit(unit: string | null | undefined, packLabel?: string | null): boolean {
-  const t = priceUnitWord(unit);
-  if (t === "unit") return false;
-  const w = unitWords({ packLabel });
-  return PACKISH.has(t) || t === w.pack.lower || t === w.pack.lowerOther;
-}
+export const isPackUnit = isPackUnitWord;
 
 /**
  * The product detail's price row: "Price each (tier 1)" for an each-priced product (never "Price per each"), "Price
  * per case (tier 1)" for a pack unit. A default "Tier N" name reads lower case inside the parentheses; a tenant's own
  * tier name is left exactly as they wrote it.
  */
-export function priceRowLabel(unit: string | null | undefined, tierName: string): string {
-  const word = priceUnitWord(unit);
+export function priceRowLabel(
+  unit: string | null | undefined,
+  tierName: string,
+  pack?: { unitsPerBox?: number | null; packLabel?: string | null },
+): string {
   const tier = /^Tier \d+$/.test(tierName) ? tierName.toLowerCase() : tierName;
-  return word === "each" ? `Price each (${tier})` : `Price per ${word} (${tier})`;
+  // B1383: a boxed product's price is the BOX price; the label comes from pricing, never built here
+  const l = pricedPerLabel({ unit: priceUnitWord(unit), ...pack });
+  return l.detail ? `${l.short} (${l.detail}, ${tier})` : `${l.short} (${tier})`;
 }
 
 /**
@@ -29,9 +27,8 @@ export function priceRowLabel(unit: string | null | undefined, tierName: string)
  * "Price each" (never "Price per each"), the same rule as `priceRowLabel`; a pack or a picked unit reads "Price per Case".
  */
 export function priceFieldLabel(unitWord: string): string {
-  const word = unitWord.trim();
-  const t = word.toLowerCase();
-  return !t || t === "each" || t === "unit" ? "Price each" : `Price per ${word}`;
+  const t = unitWord.trim().toLowerCase();
+  return pricedPerLabel({ unit: !t || t === "unit" ? "each" : unitWord }).label;
 }
 
 /**
@@ -51,6 +48,7 @@ export function priceFieldUnitWord(line: {
   const packSize = line.packUnitsPerBox ?? line.unitsPerBox ?? 0;
   const own = (line.packUnit ?? line.unit ?? "").trim();
   const isPlainWord = !own || own.toLowerCase() === "each" || own.toLowerCase() === "unit";
-  if (packSize > 1) return unitWords({ packLabel: isPlainWord ? null : own }).pack.one;
+  // B1383 (Q12): a piece word ("can") is NOT the pack's name; only a pack word ("case") is. Otherwise the pack reads "Box".
+  if (packSize > 1) return unitWords({ packLabel: isPackUnitWord(own) ? own : null }).pack.one;
   return isPlainWord ? "each" : own;
 }
