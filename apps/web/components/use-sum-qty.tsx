@@ -61,10 +61,16 @@ export function useSumQty(on: boolean | undefined, o: SumQtyOptions) {
     heldRef.current = null;
     setHeld(null);
   }, [committed, disabled, line]);
+  // A refusal note belongs to the number it put back: once the line holds another number it is gone for good.
+  React.useEffect(() => {
+    setRefused((r) => (r && r.at !== committed ? null : r));
+  }, [committed]);
   if (!on) return { input: null, note: null };
 
   const putBack = () => {
-    if (committed !== atFocus.current) commit(atFocus.current);
+    // An emptied box shows "" while the line already holds the number: put it back through the box's handler too.
+    if (committed !== atFocus.current || String(plain.value) !== String(atFocus.current))
+      commit(atFocus.current);
   };
   /** True when there was held text (worked out, or refused). */
   const flush = (): boolean => {

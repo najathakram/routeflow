@@ -535,3 +535,96 @@ describe("LineItemRow typed sums (SA-1256 X1-X10)", () => {
     });
   });
 });
+
+/**
+ * R-121 findings 1 and 2. An emptied boxes or pieces box keeps its own "cleared" flag, which only the box's own
+ * handler resets, so a sum's result, an Esc or a refusal must go back through that handler (ruling 6: "as String(n)
+ * into the existing handlers"), or the box shows empty beside a line that holds the number.
+ */
+describe("R-121: boxes and pieces boxes show the number after a sum, Esc or a refusal", () => {
+  const on = { acceptSums: true };
+  /** Boxes: the box under test starts at `boxes`. Pieces: opened with "+ units", set to 3, blurred, so 3 is the number at focus. */
+  const FIELDS = [
+    {
+      name: "boxes",
+      atFocus: 2,
+      open: () => {
+        const m = mount({ ...MODES[1], start: { ...BOXED, boxes: 2, qty: 48 } }, on);
+        return { ...m, field: m.box };
+      },
+      value: (l: LineItemRowItem) => l.boxes ?? 0,
+    },
+    {
+      name: "pieces",
+      atFocus: 3,
+      open: () => {
+        const rig = makeRig();
+        renderWithProviders(<Harness rig={rig} start={{ ...BOXED, pieces: 0 }} acceptSums />);
+        fireEvent.click(screen.getByRole("button", { name: /add extra/i }));
+        const el = () => screen.getByLabelText(/^extra /i) as HTMLInputElement;
+        fireEvent.focus(el());
+        typeText(el(), "3");
+        fireEvent.blur(el());
+        return { rig, field: el };
+      },
+      value: (l: LineItemRowItem) => l.pieces ?? 0,
+    },
+  ];
+
+  describe.each(FIELDS)("$name box", (f) => {
+    it("emptied, then (1+1)*3 and Enter: the line takes 6 and the box shows 6", () => {
+      const { rig, field } = f.open();
+      fireEvent.focus(field());
+      typeText(field(), "");
+      typeText(field(), "(1+1)*3");
+      press(field(), "Enter");
+      expect(f.value(rig.line)).toBe(6);
+      expect(field().value).toBe("6");
+    });
+
+    it("emptied, then (2)*5 and Esc: the line goes back to the number at focus and the box shows it", () => {
+      const { rig, field } = f.open();
+      fireEvent.focus(field());
+      typeText(field(), "");
+      typeText(field(), "(2)*5");
+      press(field(), "Escape");
+      expect(f.value(rig.line)).toBe(f.atFocus);
+      expect(field().value).toBe(String(f.atFocus));
+    });
+
+    it("emptied, then a refused sum and Enter: the box shows the number put back, beside the note", () => {
+      const { rig, field } = f.open();
+      fireEvent.focus(field());
+      typeText(field(), "");
+      typeText(field(), "(1)/2");
+      press(field(), "Enter");
+      expect(f.value(rig.line)).toBe(f.atFocus);
+      expect(field().value).toBe(String(f.atFocus));
+      expect(screen.getByRole("alert")).toHaveTextContent("Not a whole number. Not changed.");
+    });
+  });
+
+  it("boxes emptied from 0, then a held sum and Esc: the box shows 0, the number at focus", () => {
+    const { rig, box } = mount({ ...MODES[1], start: { ...BOXED, boxes: 0, qty: 0 } }, on);
+    fireEvent.focus(box());
+    typeText(box(), "");
+    typeText(box(), "(2)*5");
+    press(box(), "Escape");
+    expect(rig.line.boxes).toBe(0);
+    expect(box().value).toBe("0");
+  });
+
+  it("a refusal note stays hidden after the number moves and comes back to the refused number", () => {
+    const mode = MODES[0];
+    const { box } = mount(mode, on);
+    fireEvent.focus(box());
+    typeText(box(), "5/2");
+    press(box(), "Enter");
+    expect(screen.getByRole("alert")).toHaveTextContent("Not a whole number. Not changed.");
+    press(box(), "ArrowUp");
+    expect(screen.queryByRole("alert")).toBeNull();
+    press(box(), "ArrowDown");
+    expect(box().value).toBe("3");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});

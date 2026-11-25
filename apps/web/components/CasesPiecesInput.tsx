@@ -29,13 +29,15 @@ function useTypedNumber(value: number | null | undefined, commit: (n: number) =>
   const committed = value ?? 0;
   // Only ever "" (a cleared field): any other typed value is committed at once, so the parent's number is what shows.
   const [cleared, setCleared] = React.useState(false);
+  const change = (raw: string) => {
+    setCleared(raw === "");
+    commit(parseInt(raw, 10)); // "" -> NaN: the caller normalises, exactly as before
+  };
   return {
     value: cleared ? "" : String(committed),
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-      const raw = e.target.value;
-      setCleared(raw === "");
-      commit(parseInt(raw, 10)); // "" -> NaN: the caller normalises, exactly as before
-    },
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => change(e.target.value),
+    /** A number worked out elsewhere (a typed sum, Esc, an arrow step) goes in as its text, through this same path. */
+    set: (n: number) => change(String(n)),
     onBlur: () => setCleared(false),
   };
 }
@@ -98,13 +100,13 @@ export function CasesPiecesInput({
   const sumBoxes = useSumQty(acceptSums, {
     ...sum,
     committed: boxes ?? 0,
-    commit: onSetBoxes,
+    commit: boxesField.set,
     plain: boxesField,
   });
   const sumPieces = useSumQty(acceptSums, {
     ...sum,
     committed: pieces ?? 0,
-    commit: onSetPieces,
+    commit: piecesField.set,
     plain: piecesField,
     stepMax: unitsPerBox - 1,
   });
