@@ -61,6 +61,7 @@ import {
   PICKUP_STEP_LABELS,
   SHIP_STEP_LABELS,
   buyerOrderStatusLabel,
+  buyerTimelineNote,
   noFleetStepIndex,
   orderTravelView,
   pickupStepIndex,
@@ -846,6 +847,11 @@ export default function BuyerOrderDetailPage() {
       {timelineView !== "loading" && (
         <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
           <OrderTimeline order={order} view={timelineView} />
+          {buyerTimelineNote(timelineView) && (
+            <p className="mt-3 text-xs text-navy/70" data-testid="timeline-note">
+              {buyerTimelineNote(timelineView)}
+            </p>
+          )}
         </div>
       )}
 
