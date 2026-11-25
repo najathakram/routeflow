@@ -27,9 +27,10 @@ describe("pricedPerLabel", () => {
     );
   });
 
-  it("a pack word is quoted per itself, unchanged", () => {
+  it("a pack word is quoted per itself and still says how many pieces it holds", () => {
     const r = pricedPerLabel({ unit: "case", unitsPerBox: 12, price: 12 });
-    expect(r.label).toBe("Price per case");
+    expect(r.label).toBe("Price per case (12 pieces)");
+    expect(r.perText).toBe("per case (12 pieces)");
     expect(r.hint).toBe("≈ $1.00 / pc");
   });
 
@@ -71,10 +72,42 @@ describe("pricedPerLabel", () => {
     const r = pricedPerLabel({ unit: "can", unitsPerBox: 12 });
     expect([r.short, r.detail]).toEqual(["Price per box", "12 cans"]);
     expect(pricedPerLabel({ unit: "case" }).detail).toBeNull();
+    expect(pricedPerLabel({ unit: "case", unitsPerBox: 12 }).detail).toBe("12 pieces");
   });
 
   it("keeps the case the operator typed on a pack unit (order-line field)", () => {
     expect(pricedPerLabel({ unit: "Case" }).label).toBe("Price per Case");
+  });
+});
+
+describe("the pack count rides every boxed label (SA note, B1383 PR-B)", () => {
+  it.each([
+    ["case", 12, "per case (12 pieces)"],
+    ["case", 1, "per case"],
+    ["case", null, "per case"],
+    ["can", 12, "per box (12 cans)"],
+    ["each", 12, "per box (12 pieces)"],
+  ])("unit %s with %s per box reads %s", (unit, n, want) => {
+    expect(pricedPerLabel({ unit, unitsPerBox: n }).perText).toBe(want);
+  });
+
+  it("a business base word names the pieces of a pack unit", () => {
+    expect(pricedPerLabel({ unit: "case", unitsPerBox: 6, baseUnitLabel: "Bottle" }).perText).toBe(
+      "per case (6 bottles)",
+    );
+  });
+});
+
+describe("the default unit and generic piece words are not pluralised (F1)", () => {
+  it.each([
+    ["ea", "12 pieces", "≈ $1.00 / piece"],
+    ["pc", "12 pieces", "≈ $1.00 / piece"],
+    ["piece", "12 pieces", "≈ $1.00 / piece"],
+  ])("unit %s with 12 per box reads %s and %s", (unit, detail, hint) => {
+    const r = pricedPerLabel({ unit, unitsPerBox: 12, price: 12 });
+    expect(r.detail).toBe(detail);
+    expect(r.label).toBe("Price per box (12 pieces)");
+    expect(r.hint).toBe(hint);
   });
 });
 

@@ -4,12 +4,12 @@
  * the product's unit is a piece word ("can"); the hint under it names the piece ("≈ $0.10 / can"). Display only: the
  * hint is `perUnitPrice` (never in a payload). Web, mobile and any scan of copy read this; no caller builds the text.
  */
+import { GENERIC_PIECE } from "./line-counts";
 import { formatReceiptMoney, priceUnitWord } from "./receipt-line-detail";
 import { perUnitPrice } from "./pricing";
 import { plural, unitWords } from "./unit-words";
 
 const PACKISH = new Set(["box", "case", "carton", "pack", "crate", "bundle"]);
-const PLAIN = new Set(["each", "unit"]);
 
 /** True when the selling unit is a pack word ("case") or the tenant's own pack name. */
 export function isPackUnitWord(
@@ -55,17 +55,18 @@ export function pricedPerLabel(p: {
   const word = priceUnitWord(given);
   const w = unitWords({ packLabel: p.packLabel, baseUnitLabel: p.baseUnitLabel });
   const isPack = isPackUnitWord(given, p.packLabel);
-  const plain = !given || PLAIN.has(word);
+  const plain = !given || GENERIC_PIECE.test(word);
   // the piece the box holds: the product's own piece word, else the tenant's base word ("piece")
-  const piece = plain ? w.base.lower : word;
+  const piece = plain || isPack ? w.base.lower : word;
 
   let per: string;
   let quoted: string;
   let detail: string | null = null;
+  // a boxed product always says how many pieces the pack holds ("per case (12 pieces)", "per box (12 cans)")
+  if (boxed) detail = `${packSize} ${plural(piece, packSize)}`;
   if (boxed && !isPack) {
     quoted = w.pack.lower;
     per = `per ${quoted}`;
-    detail = `${packSize} ${plural(piece, packSize)}`;
   } else if (word === "each") {
     quoted = "each";
     per = "each";

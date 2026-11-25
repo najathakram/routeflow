@@ -1678,6 +1678,9 @@ export function CreateOrderModal({
   const handleEscape = (event: KeyboardEvent) => {
     // A window above us (New product) already took this Escape for its own list: nothing here closes (SA-1066 FL1).
     if (event.defaultPrevented) return;
+    // SA-1256: a quantity box holding a typed sum takes Escape for itself (it puts the number back).
+    if ((event.target as HTMLElement | null)?.closest?.("[data-qty-held]"))
+      return event.preventDefault();
     // The "Order again" menu takes Escape first — it closes the menu, never the order.
     if (suggestionsMenuOpen) {
       event.preventDefault();
@@ -2377,6 +2380,7 @@ export function CreateOrderModal({
       onTapPrice?: () => void;
       priceHistory?: boolean;
       moveId?: string;
+      acceptSums?: boolean;
     },
   ) => (
     <LineItemRow
@@ -2402,6 +2406,7 @@ export function CreateOrderModal({
       }
       highlighted={ctx?.highlighted}
       moveId={ctx?.moveId}
+      acceptSums={ctx?.acceptSums}
       stock={lineStock.get(li.tempId)}
       onTapPrice={ctx?.onTapPrice}
       active={
@@ -3116,6 +3121,7 @@ export function CreateOrderModal({
                     // too — moving off the special price takes a reason there (SA-558).
                     onTapPrice: () => setEditingLineId(li.tempId),
                     priceHistory: true,
+                    acceptSums: true,
                   }),
                 )}
               </CartMovableList>

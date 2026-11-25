@@ -29,7 +29,9 @@ describe("priceRowLabel on a boxed product (B1383)", () => {
   });
 
   it("a pack unit stays 'Price per case' whatever the pack size", () => {
-    expect(priceRowLabel("case", "Tier 1", { unitsPerBox: 12 })).toBe("Price per case (tier 1)");
+    expect(priceRowLabel("case", "Tier 1", { unitsPerBox: 12 })).toBe(
+      "Price per case (12 pieces, tier 1)",
+    );
   });
 });
 
