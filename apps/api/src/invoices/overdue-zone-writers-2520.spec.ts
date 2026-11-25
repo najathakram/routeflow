@@ -388,11 +388,16 @@ describe("#2520 — persisted OVERDUE in the tenant zone", () => {
   it("every persisted-status writer passes the tenant zone (the required parameter, counted)", () => {
     const read = (rel: string) => fs.readFileSync(path.join(__dirname, "..", rel), "utf8");
     const calls = (src: string) => src.match(/statusFromPayments\(/g)?.length ?? 0;
-    // 10 writers + the injected price-adjustment dep in invoices.service (voidPayment's writer moved verbatim
-    // to payment-void-tx.ts, SA-762r, counted next); in credit notes the 3 settlement writers + #2536's
+    // 9 writers + the injected price-adjustment dep in invoices.service (voidPayment's writer moved verbatim
+    // to payment-void-tx.ts, SA-762r, counted next; updateTerms' writer moved verbatim to
+    // invoice-terms-edit.ts, SA-1508, counted after it); in credit notes the 3 settlement writers + #2536's
     // voidPreview (a read-only preview of the status after a void).
-    expect(calls(read("invoices/invoices.service.ts"))).toBe(11);
+    expect(calls(read("invoices/invoices.service.ts"))).toBe(10);
     expect(calls(read("invoices/payment-void-tx.ts"))).toBe(1);
+    expect(calls(read("invoices/invoice-terms-edit.ts"))).toBe(1);
+    expect(read("invoices/invoice-terms-edit.ts")).toMatch(
+      /statusFromPayments\(\s*totalPaid,[\s\S]*?\btz,/,
+    );
     expect(read("invoices/payment-void-tx.ts")).toMatch(
       /statusFromPayments\(\s*totalPaid,[\s\S]*?\btz,/,
     );
