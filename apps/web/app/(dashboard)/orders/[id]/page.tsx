@@ -371,7 +371,9 @@ export default function OrderDetailPage() {
       },
       { items: editItems, pendingDeletes, shippingFee: editShippingFee, creditsTouched },
     );
-  const leaveGuard = useEditLeaveGuard(editDirty, cancelEditMode, () => router.push("/orders"));
+  const leaveGuard = useEditLeaveGuard(editDirty, cancelEditMode, () => router.push("/orders"), {
+    navigate: (href) => router.push(href),
+  });
   // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef, (_why, message) =>

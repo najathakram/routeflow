@@ -88,6 +88,7 @@ import {
   ThumbImage,
   scrollCardIntoView,
 } from "./ProductEditActions";
+import { useEditLeaveGuard } from "../../orders/[id]/edit-leave-guard";
 import { LegacyVariantsActions, variantModalTitle } from "./LegacyVariantsActions";
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DeleteProductConfirm } from "./DeleteProductConfirm";
@@ -218,6 +219,19 @@ export default function ProductDetailPage() {
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
+  /** The Details draft as the form was opened, to tell a typed change from an untouched form (leave guard). */
+  const editSeedRef = React.useRef("");
+  // UX audit 2026-11-24 F03: a typed price or description was lost by one click on the side menu, by Back or by a
+  // reload, with no question. The order page's guard asks "Discard your changes?" for all three. (Declared here,
+  // above the loading returns; `cancelEdit` is defined further down and reached through the ref.)
+  const cancelEditRef = React.useRef<() => void>(() => {});
+  const editDirty = isEditing && JSON.stringify(editDraft) !== editSeedRef.current;
+  const leaveGuard = useEditLeaveGuard(
+    editDirty,
+    () => cancelEditRef.current(),
+    () => router.push("/products"),
+    { what: "product", navigate: (href) => router.push(href) },
+  );
   // The pack the form opened with: a save sends `unit` only if the operator changed it, and then sends this
   // pack back as the expected values (SA-797), so a Settings > Units rename made meanwhile is a 409, not lost.
   const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
@@ -428,7 +442,7 @@ export default function ProductDetailPage() {
     };
     pricesWhenEditStartedRef.current = seededPrices;
     lastTierCommitRef.current = {};
-    setEditDraft({
+    const seed: Record<string, unknown> = {
       name: product.name,
       sku: product.sku ?? "",
       barcode: product.barcode ?? "",
@@ -446,7 +460,9 @@ export default function ProductDetailPage() {
       regUomCase: product.regUomCase ?? "",
       regUomUnit: product.regUomUnit ?? "",
       unitsPerBox: product.unitsPerBox != null ? String(product.unitsPerBox) : "",
-    });
+    };
+    editSeedRef.current = JSON.stringify(seed);
+    setEditDraft(seed);
     setLadderNote(null);
     setIsEditing(true);
   };
@@ -595,6 +611,7 @@ export default function ProductDetailPage() {
     setIsEditing(false);
     setLadderNote(null);
   };
+  cancelEditRef.current = cancelEdit;
 
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
   // ── Crop helpers ──────────────────────────────────────────────────────────
@@ -1286,6 +1303,7 @@ export default function ProductDetailPage() {
         variant="danger"
         loading={deleteImage.isPending}
       />
+      {leaveGuard.dialog}
       <DeleteProductConfirm
         id={id}
         name={product.name}
