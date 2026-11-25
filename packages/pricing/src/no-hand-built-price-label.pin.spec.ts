@@ -29,6 +29,8 @@ const HAND_BUILT_PER = [
   /\bper\s+\$\{\s*[\w.?]*\bunit\s*\}/,
   /\/\s+\$\{\s*[\w.?]*\bunit\s*\}/,
   /\/\s+\{\s*[\w.?]*\bunit\s*\}/,
+  // the pack-count tail the buyer tiles hand-built: " (${n}/box)" or "({n}/box)"
+  /\(\s*\$?\{[^}]*\}\s*\/\s*box\s*\)/,
 ];
 
 // Files that keep a hand-written "/ {unit}" on purpose, each with its reason (PR-B scan decisions).
@@ -106,6 +108,8 @@ describe("no hand-built price label outside pricedPerLabel (B1383)", () => {
     ["template slash", "` / ${p.unit}`"],
     ["JSX slash", "<span>/ {li.unit}</span>"],
     ["bare name", "<p>per {unit}</p>"],
+    ["a count tail, template", "` (${product.unitsPerBox}/box)`"],
+    ["a count tail, JSX", "<p>per case ({n}/box)</p>"],
   ])("the per-unit detector sees %s", (_n, src) => {
     expect(handBuiltPer(src)).toBe(true);
   });

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
 import type { BuyerProduct } from "@routeflow/types";
+import { pricedPerLabel } from "@routeflow/pricing";
 import { ProductTile } from "./ProductTile";
 
 /**
@@ -57,6 +58,13 @@ describe("ProductTile price line (B1383)", () => {
     setup(product());
     expect(screen.getByText("per box (12 cans)")).toBeInTheDocument();
     expect(screen.queryByText(/per can/)).not.toBeInTheDocument();
+  });
+
+  it("a pack-word unit keeps the count the old tile showed, from the helper", () => {
+    setup(product({ unit: "case" }));
+    const expected = pricedPerLabel({ unit: "case", unitsPerBox: 12 }).perText;
+    expect(expected).toBe("per case (12 pieces)");
+    expect(screen.getByText(expected)).toBeInTheDocument();
   });
 
   it("a product sold by the piece reads as before", () => {
