@@ -6,10 +6,12 @@
  * Returns null when there is nothing to say: no list price to compare with, a negative price, or a price inside the
  * half-to-double band (an ordinary discount or upsell, which each screen already marks in its own way).
  */
+import { formatMoney } from "./format";
+
 export function farFromListText(unitPrice: number, listPrice: number): string | null {
   if (!(listPrice > 0) || !(unitPrice >= 0)) return null;
   if (unitPrice >= listPrice * 0.5 && unitPrice <= listPrice * 2) return null;
-  const list = `$${listPrice.toFixed(2)}`;
+  const list = formatMoney(listPrice);
   return unitPrice < listPrice
     ? `${Math.round((1 - unitPrice / listPrice) * 100)}% below list (${list})`
     : `${Math.round((unitPrice / listPrice - 1) * 100)}% above list (${list})`;

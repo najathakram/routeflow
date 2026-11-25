@@ -10,6 +10,7 @@ const WEB = join(__dirname, "..", "..", "..");
 const ROOTS = [
   join(WEB, "app", "(dashboard)", "orders"),
   join(WEB, "components", "LineItemRow.tsx"),
+  join(WEB, "lib", "far-from-list.ts"),
 ];
 
 /**
@@ -29,7 +30,7 @@ export const countHandMoney = (src: string): number => src.match(HAND_MONEY_ANY)
 
 /** Remaining hand-rolled sites, by path relative to apps/web. Lower only. */
 const MAX: Record<string, number> = {
-  "app/(dashboard)/orders/[id]/price-edit-row.tsx": 4,
+  "app/(dashboard)/orders/[id]/price-edit-row.tsx": 2,
   "app/(dashboard)/orders/_components/scan/PriceEditor.tsx": 6,
   "app/(dashboard)/orders/_components/CreditNotePicker.tsx": 3,
   "app/(dashboard)/orders/_components/SplitInvoiceModal.tsx": 2,

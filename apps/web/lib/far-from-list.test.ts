@@ -21,6 +21,12 @@ describe("farFromListText", () => {
     expect(farFromListText(20.01, 10)).toBe("100% above list ($10.00)");
   });
 
+  // Review R-172 F1: the list price is money text, so it prints through formatMoney (grouped thousands).
+  it("groups thousands in the list price like every other amount", () => {
+    expect(farFromListText(3000, 1234)).toBe("143% above list ($1,234.00)");
+    expect(farFromListText(100, 12345.5)).toBe("99% below list ($12,345.50)");
+  });
+
   it("a free line (0.00) on a priced product is 100% below list", () => {
     expect(farFromListText(0, 10)).toBe("100% below list ($10.00)");
   });

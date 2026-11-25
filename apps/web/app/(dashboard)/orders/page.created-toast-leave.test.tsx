@@ -1,7 +1,7 @@
 import * as React from "react";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import OrdersPage from "./page";
-import { showOrderCreatedToast } from "./_components/order-created-toast";
+import { dismissOrderCreatedToast, showOrderCreatedToast } from "./_components/order-created-toast";
 
 /**
  * UX audit 2026-11-24 F39, review R-172: the order-created message stays until dismissed, and used to follow the
@@ -70,6 +70,8 @@ jest.mock("@/lib/api/addons", () => ({
 
 beforeEach(() => {
   currentQuery = "";
+  // Each test starts with no message up, whatever ran before it (review R-172 F3).
+  dismissOrderCreatedToast({ dismiss });
   jest.clearAllMocks();
 });
 
