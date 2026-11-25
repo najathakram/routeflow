@@ -10,7 +10,7 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { customerPricingGate } from "@/lib/customer-pricing-gate";
-import { formatMoney } from "@/lib/format";
+import { formatDate, formatMoney } from "@/lib/format";
 import { orderBuilderTotals } from "@/lib/order-builder-totals";
 import { PENDING, TotalsSummary } from "@/components/money/TotalsSummary";
 import { useProducts } from "@/lib/api/products";
@@ -456,6 +456,15 @@ export function CreateOrderModal({
   const [editingLineId, setEditingLineId] = React.useState<string | null>(null);
   // Scroll the just-scanned line into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLLIElement>>(new Map());
+  // UX audit 2026-11-24 F33: closing the price sheet dropped focus on the page, so the next Tab landed on "Save as
+  // draft" at the bottom. Focus goes back to the price that opened the sheet, as any dialog returns it to its opener;
+  // Tab then moves on to that line's quantity.
+  const closePriceEditor = (tempId: string) => {
+    setEditingLineId(null);
+    requestAnimationFrame(() =>
+      rowRefs.current.get(tempId)?.querySelector<HTMLElement>("[data-line-price-trigger]")?.focus(),
+    );
+  };
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
   // Q09: the line you last touched (or just added). Only it shows the "Tap to change" hint; before any touch the newest
   // line is the active one (computed at render, not mirrored into state: L-333).
@@ -3423,6 +3432,13 @@ export function CreateOrderModal({
                 {mergePrompt.itemCount} item{mergePrompt.itemCount === 1 ? "" : "s"} ·{" "}
                 {formatMoney(mergePrompt.total)}
               </div>
+              {/* UX audit 2026-11-24 F34: nothing said how old the open order was; a merge into last week's order
+                  looked the same as a merge into this morning's. */}
+              {mergePrompt.createdAt ? (
+                <div data-testid="merge-open-order-date" className="text-navy/70">
+                  Started {formatDate(mergePrompt.createdAt)}
+                </div>
+              ) : null}
             </div>
             <div role="status" data-testid="merge-return-status">
               {mergeReturnLine && (
@@ -3465,7 +3481,7 @@ export function CreateOrderModal({
           onClose={() => setLicenseBlock(null)}
         />
       )}
-      {editingLine && renderPriceEditor(editingLine, () => setEditingLineId(null))}
+      {editingLine && renderPriceEditor(editingLine, () => closePriceEditor(editingLine.tempId))}
       {/* SA-817 A3: a local copy the server lacks is offered on a fresh open. */}
       <ResumeUnsentOrderDialog
         candidates={unsent.candidates}

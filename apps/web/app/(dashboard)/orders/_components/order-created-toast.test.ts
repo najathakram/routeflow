@@ -1,6 +1,7 @@
 import {
   ACTION_TOAST_MS,
   addedLineQty,
+  dismissOrderCreatedToast,
   orderCreatedToast,
   showOrderCreatedToast,
 } from "./order-created-toast";
@@ -81,6 +82,37 @@ describe("orderCreatedToast", () => {
     // the echo dedupe still runs for every order
     expect(wasCreatedHere("ORD-1")).toBe(true);
     expect(wasCreatedHere("ORD-2")).toBe(true);
+  });
+
+  describe("F39: leaving the orders list takes the toast down", () => {
+    it("dismisses the toast that is up, once", () => {
+      const api = { toast: jest.fn(() => "t-leave"), dismiss: jest.fn() };
+      showOrderCreatedToast(api, { asDraft: false, created: { id: "o3", orderNumber: "ORD-3" } });
+      api.dismiss.mockClear(); // drop the replace of an earlier test's toast
+      dismissOrderCreatedToast(api);
+      expect(api.dismiss).toHaveBeenCalledTimes(1);
+      expect(api.dismiss).toHaveBeenCalledWith("t-leave");
+      dismissOrderCreatedToast(api); // leaving again: nothing left to take down
+      expect(api.dismiss).toHaveBeenCalledTimes(1);
+    });
+
+    it("the next order's toast does not try to replace one already taken down", () => {
+      const api = { toast: jest.fn(() => "t-a"), dismiss: jest.fn() };
+      showOrderCreatedToast(api, { asDraft: false, created: { id: "o4", orderNumber: "ORD-4" } });
+      dismissOrderCreatedToast(api);
+      api.dismiss.mockClear();
+      showOrderCreatedToast(api, { asDraft: false, created: { id: "o5", orderNumber: "ORD-5" } });
+      expect(api.dismiss).not.toHaveBeenCalled();
+    });
+
+    it("with no toast up it does nothing", () => {
+      const api = { toast: jest.fn(() => "t-b"), dismiss: jest.fn() };
+      showOrderCreatedToast(api, { asDraft: false, created: { id: "o6", orderNumber: "ORD-6" } });
+      dismissOrderCreatedToast(api);
+      const other = { dismiss: jest.fn() };
+      dismissOrderCreatedToast(other);
+      expect(other.dismiss).not.toHaveBeenCalled();
+    });
   });
 });
 

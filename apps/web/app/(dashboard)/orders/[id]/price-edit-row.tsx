@@ -6,6 +6,7 @@ import { cn } from "@routeflow/ui/web";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
 import { PriceHistoryButton } from "@/components/PriceHistory";
+import { farFromListText } from "@/lib/far-from-list";
 import { priceFieldLabel } from "@/lib/product-unit-label";
 import { EDIT_CONTROL_H } from "./edit-line-controls";
 
@@ -108,12 +109,7 @@ export function PriceEditRow({
 
   // F14: under half or over twice the list price is far more often a slip (3.00 typed into a $6.99 line) than a deal.
   // Display only - nothing blocks.
-  const farFromList =
-    basePrice > 0 && unitPrice >= 0 && (unitPrice < basePrice * 0.5 || unitPrice > basePrice * 2)
-      ? unitPrice < basePrice
-        ? `${Math.round((1 - unitPrice / basePrice) * 100)}% below list (${"$"}${basePrice.toFixed(2)})`
-        : `${Math.round((unitPrice / basePrice - 1) * 100)}% above list (${"$"}${basePrice.toFixed(2)})`
-      : null;
+  const farFromList = farFromListText(unitPrice, basePrice);
 
   return (
     // r4 Q29: the 44px indent (the product-name column) is sm and up; on a phone every row of the card starts at one edge.
