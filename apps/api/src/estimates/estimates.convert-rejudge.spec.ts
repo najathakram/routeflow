@@ -17,6 +17,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { ESTIMATE_MOVES } from "@routeflow/types";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 const ACTOR = {
@@ -275,7 +276,7 @@ describe("EstimatesService.accept - a repeat accept writes nothing (SA-1260 A1, 
       "Converted estimates cannot be re-accepted",
     );
     expect(prisma.estimate.updateMany).toHaveBeenCalledWith({
-      where: { id: "est-1", status: { notIn: ["CONVERTED"] } },
+      where: { id: "est-1", status: { in: [...ESTIMATE_MOVES.accept] } },
       data: { status: "ACCEPTED" },
     });
   });

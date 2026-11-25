@@ -15,6 +15,7 @@ import {
   ThumbsUp,
   FileText,
 } from "lucide-react";
+import { canMoveEstimate, estimateClosedLine, estimateRevisionTag } from "@routeflow/types";
 import { Button, Badge, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
@@ -53,7 +54,7 @@ function VoidConfirmModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Void estimate?"
+      title="Void this estimate?"
       description={`Estimate ${estimateNumber} will be marked as void. This action cannot be undone.`}
       footer={
         <>
@@ -70,6 +71,43 @@ function VoidConfirmModal({
         Voiding this estimate will mark it as cancelled. The customer will no longer be able to
         accept it.
       </p>
+    </Modal>
+  );
+}
+
+// ─── Decline confirm ──────────────────────────────────────────────────────────
+
+function DeclineConfirmModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  estimateNumber,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  estimateNumber: string;
+  isPending: boolean;
+}) {
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Decline this estimate?"
+      description={`Estimate ${estimateNumber} will be marked as declined and closed.`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onConfirm} loading={isPending}>
+            Decline estimate
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-navy/70">Use this when the customer said no.</p>
     </Modal>
   );
 }
@@ -130,6 +168,7 @@ export default function EstimateDetailPage() {
   const revertToDraft = useRevertEstimateToDraft();
 
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
+  const [isDeclineOpen, setIsDeclineOpen] = React.useState(false);
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isRevertOpen, setIsRevertOpen] = React.useState(false);
 
@@ -204,6 +243,7 @@ export default function EstimateDetailPage() {
   const handleDecline = () => {
     declineEstimate.mutate(estimate.id, {
       onSuccess: () => {
+        setIsDeclineOpen(false);
         toast({
           title: "Estimate declined",
           description: `${estimate.estimateNumber} has been marked as declined.`,
@@ -297,15 +337,16 @@ export default function EstimateDetailPage() {
     });
   };
 
-  // F27: mirrors the API rule — only ACCEPTED estimates can be converted.
-  const canConvert = status === "ACCEPTED";
+  // SA-1263: convert, revert and void read ESTIMATE_MOVES, the table the API claims with (no hand mirror).
+  const canConvert = canMoveEstimate(status, "convert");
   // Wave E / imp-10b, L-072 (sibling-sweep find): dropped a comparison against a
   // phantom "EXPIRED" EstimateStatus value the schema has never had.
-  const isReadOnly = status === "DECLINED";
+  const closedLine = estimateClosedLine(status);
   // A sent or accepted quote can be revised: back to draft, edit, send again.
-  const canRevert = status === "SENT" || status === "ACCEPTED";
-  // Void closes an open quote; a converted one has an invoice and a declined one is already closed.
-  const canVoid = status !== "DECLINED" && status !== "CONVERTED";
+  const canRevert = canMoveEstimate(status, "revert");
+  // Void closes an open quote; a converted, declined or voided one has no move.
+  const canVoid = canMoveEstimate(status, "void");
+  const revTag = estimateRevisionTag(status, estimate.revision);
 
   return (
     <div className="space-y-5 p-6">
@@ -323,6 +364,7 @@ export default function EstimateDetailPage() {
         <div className="flex items-center gap-3">
           <h2 className="text-2xl font-bold text-navy">{estimate.estimateNumber}</h2>
           <Badge status={status} />
+          {revTag && <span className="text-sm text-navy/70">{revTag}</span>}
         </div>
 
         {/* Actions */}
@@ -362,7 +404,7 @@ export default function EstimateDetailPage() {
                 size="sm"
                 variant="secondary"
                 leftIcon={<ThumbsDown className="h-4 w-4" />}
-                onClick={handleDecline}
+                onClick={() => setIsDeclineOpen(true)}
                 loading={declineEstimate.isPending}
               >
                 Mark declined
@@ -405,11 +447,7 @@ export default function EstimateDetailPage() {
             </Button>
           )}
 
-          {isReadOnly && (
-            <span className="text-sm italic text-navy/70">
-              This estimate was declined or voided.
-            </span>
-          )}
+          {closedLine && <span className="text-sm italic text-navy/70">{closedLine}</span>}
         </div>
       </div>
 
@@ -624,6 +662,13 @@ export default function EstimateDetailPage() {
         onConfirm={handleVoid}
         estimateNumber={estimate.estimateNumber}
         isPending={voidEstimate.isPending}
+      />
+      <DeclineConfirmModal
+        isOpen={isDeclineOpen}
+        onClose={() => setIsDeclineOpen(false)}
+        onConfirm={handleDecline}
+        estimateNumber={estimate.estimateNumber}
+        isPending={declineEstimate.isPending}
       />
       <RevertAcceptedModal
         isOpen={isRevertOpen}

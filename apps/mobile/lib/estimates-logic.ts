@@ -1,4 +1,5 @@
 import { computeLineSubtotal } from "@routeflow/pricing";
+import { canMoveEstimate } from "@routeflow/types/api/estimate-moves";
 import type { EstimateStatus } from "./api/estimates";
 
 /**
@@ -34,14 +35,15 @@ export interface EstimateActionFlags {
   canAcceptDecline: boolean;
   canConvert: boolean;
   canVoid: boolean;
+  /** SENT or ACCEPTED goes back to draft to be revised (web has the same button). */
+  canRevert: boolean;
 }
 
 /**
- * Which detail-screen actions are available for a status. Deliberately stricter
- * than web on Convert: the API only converts ACCEPTED estimates
- * (`BadRequestException("Only ACCEPTED estimates can be converted")`), so we
- * gate Convert to ACCEPTED to avoid guaranteed error toasts. Void is rejected by
- * the server on CONVERTED, and DECLINED is terminal read-only. (Wave E /
+ * Which detail-screen actions are available for a status. Convert, Void and Back to draft read
+ * `ESTIMATE_MOVES` (SA-1263), the table the API claims with, so a status the API refuses is never
+ * offered: CONVERTED, DECLINED and VOID show no actions. Send and Accept/Decline are each offered on
+ * one status only (a UI choice; the API allows more). (Wave E /
  * imp-10b, L-072: this used to also exclude a phantom "EXPIRED" status the
  * schema has never had — dropped along with the dead pill-mapping branch above.)
  */
@@ -49,8 +51,9 @@ export function estimateActionFlags(status: EstimateStatus): EstimateActionFlags
   return {
     canSend: status === "DRAFT",
     canAcceptDecline: status === "SENT",
-    canConvert: status === "ACCEPTED",
-    canVoid: status !== "CONVERTED" && status !== "DECLINED" && status !== "VOID",
+    canConvert: canMoveEstimate(status, "convert"),
+    canVoid: canMoveEstimate(status, "void"),
+    canRevert: canMoveEstimate(status, "revert"),
   };
 }
 
