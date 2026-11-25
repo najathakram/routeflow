@@ -7,7 +7,8 @@
  */
 import type { OrderCancelBlockedReason } from "@routeflow/types";
 import type { OrderStatus } from "./api/orders";
-import { isPosOrder, posStatusMoveAllowed } from "./order-status-flow";
+import { isPosOrder } from "@routeflow/types/api/fulfilment";
+import { posStatusMoveAllowed } from "./order-status-flow";
 
 /** Fixed copy for a cancel the server refuses (ORDER_WITH_CARRIER_NO_CANCEL): the web's exact words. */
 export const WITH_CARRIER_COPY =

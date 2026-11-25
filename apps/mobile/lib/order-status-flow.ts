@@ -1,3 +1,5 @@
+import { isPosOrder } from "@routeflow/types/api/fulfilment";
+
 /**
  * Pure order status-flow helpers (no api-client/react-query imports so they stay
  * unit-testable in the node Jest env). Mirror the server's guards in
@@ -71,18 +73,6 @@ export function demotionRequiresReason(from: string, to: string): boolean {
  */
 export function canDeleteOrder(_status: string): boolean {
   return true;
-}
-
-/**
- * POS mode (SA-763r P-2): a staff order on the PICKUP path that is not a walk-in counter sale.
- * The order's own `fulfillPath` is the snapshot (there is no `Order.posMode` column), and counter
- * sales (PICKUP + `counterSale: true`) keep their own flow, so the predicate is the literal pair.
- * Mirrors `apps/web/lib/api/pos-orders.ts` `isPosOrder`.
- */
-export function isPosOrder(
-  order: { fulfillPath?: string | null; counterSale?: boolean | null } | null | undefined,
-): boolean {
-  return order?.fulfillPath === "PICKUP" && order?.counterSale !== true;
 }
 
 /**
