@@ -86,6 +86,8 @@ import {
 } from "./verify-turbo.mjs";
 import {
   PHASE0_PREBUILD,
+  callTasks,
+  failFastReport,
   failedTasks,
   failureReport,
   isFailFast,
@@ -2937,6 +2939,44 @@ check(
     "verify: test:repo-truth: not run (stopped after check-types lint)",
   ]);
   check("FF5b nothing is listed when every call ran", notRunLines(calls, [0, 0, 0]), []);
+  // W-1416: a pins / fsRead call has argv and cwd, no args; callTasks used to throw on it.
+  const pinCall = { pins: true, cwd: "apps/api", argv: ["jest", "--", "a.spec.ts"] };
+  const fsCall = {
+    fsRead: true,
+    cwd: "apps/web",
+    argv: ["jest", "--runTestsByPath", "a.test.tsx"],
+  };
+  const thrown = (fn) => {
+    try {
+      return fn();
+    } catch (e) {
+      return `threw: ${e.message}`;
+    }
+  };
+  check(
+    "FF5c W-1416 a call without args is listed with a real label, no throw",
+    thrown(() => notRunLines([{ args: ["lint"] }, pinCall, fsCall], [1])),
+    [
+      "verify: pin specs (apps/api): not run (stopped after lint)",
+      "verify: fs-read specs (apps/web): not run (stopped after lint)",
+    ],
+  );
+  check(
+    "FF5d W-1416 the failing call is named when it has no args, never 'failing task unknown'",
+    failFastReport(tmpdir(), Date.now() + 60_000, [{ args: ["lint"] }, pinCall], [0, 1]),
+    ["FAILED: pin specs (apps/api) (its jest output is above)"],
+  );
+  const kinds = [false, true].flatMap((fast) =>
+    [FULL, AFF(["@routeflow/web"])].flatMap((scope) => {
+      const fsRead = { "apps/web": ["a.test.tsx"] };
+      return planTurboCalls({ scope, splitJest: true, fast, pins: { pins: true }, fsRead }).calls;
+    }),
+  );
+  check(
+    "FF5e W-1416 every call kind the real plan can produce has a label",
+    thrown(() => [...kinds, PHASE0_PREBUILD].filter((c) => !callTasks(c).trim()).length),
+    0,
+  );
   const split = planTurboCalls({ scope: { mode: "full" }, splitJest: true });
   check(
     "FF6 T3 the split plan is check-types+lint, then jest",
