@@ -88,6 +88,7 @@ import {
   ThumbImage,
   scrollCardIntoView,
 } from "./ProductEditActions";
+import { useDraftEditLeaveGuard } from "../../orders/[id]/edit-leave-guard";
 import { LegacyVariantsActions, variantModalTitle } from "./LegacyVariantsActions";
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DeleteProductConfirm } from "./DeleteProductConfirm";
@@ -218,6 +219,8 @@ export default function ProductDetailPage() {
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
+  // UX audit F03: a typed edit was lost by a menu click, Back or a reload with no question (see the hook).
+  const leaveGuard = useDraftEditLeaveGuard("product", editDraft, isEditing, router, "/products");
   // The pack the form opened with: a save sends `unit` only if the operator changed it, and then sends this
   // pack back as the expected values (SA-797), so a Settings > Units rename made meanwhile is a 409, not lost.
   const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
@@ -595,6 +598,7 @@ export default function ProductDetailPage() {
     setIsEditing(false);
     setLadderNote(null);
   };
+  leaveGuard.cancel.current = cancelEdit;
 
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
   // ── Crop helpers ──────────────────────────────────────────────────────────
@@ -1290,6 +1294,7 @@ export default function ProductDetailPage() {
         variant="danger"
         loading={deleteImage.isPending}
       />
+      {leaveGuard.dialog}
       <DeleteProductConfirm
         id={id}
         name={product.name}

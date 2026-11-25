@@ -4,7 +4,7 @@ import { Plus, Bell } from "lucide-react";
 import type { PromotionRule, PromoResult } from "@routeflow/pricing";
 import type { BuyerProductDetail, BuyerPromotion } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
-import { lineCount, type CartUnit } from "@/lib/buyer-cart-line";
+import { lineCount, lineLimit, type CartUnit } from "@/lib/buyer-cart-line";
 import { CartLineUnit } from "../../../_components/CartLineUnit";
 import { bogoChipLabel, deriveTilePrice } from "../../_components/tile-pricing";
 import { SHIPS_WHEN_RESTOCKED, canOrderOutOfStock, isOrderBlocked } from "@/lib/buyer-backorder";
@@ -115,6 +115,7 @@ export function DetailActions({
               onUpdate={onUpdateQty}
               onRemove={() => onUpdateQty(0)}
               onRestore={onRestore}
+              {...lineLimit(cartItem)}
             />
             {onSetUnit && <CartLineUnit item={cartItem} name={product.name} onUnit={onSetUnit} />}
           </div>
