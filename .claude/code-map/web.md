@@ -116,3 +116,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-24-w44.md](web/landing-2026-11-24-w44.md) | Window 44: dashboard overdue days on the business day, new-sale quantity, middle dot, Credit word |
 | [web/landing-2026-11-24-w45.md](web/landing-2026-11-24-w45.md) | Window 45: create a supplier bill from a purchase order (PO detail link, bill modal prefill) |
 | [web/landing-2026-11-24-w46.md](web/landing-2026-11-24-w46.md) | Window 46: counter quantity hold, seller switcher landing, line note list, payment link card, invoices Follow up view, PO detail by ids |
+| [web/landing-2026-11-25-w47.md](web/landing-2026-11-25-w47.md) | Window 47: payment link panel on the tenant pricing card, Stock tab one layout per width, whole-catalog census, estimate screens on the moves table |
