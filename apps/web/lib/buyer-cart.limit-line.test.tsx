@@ -29,6 +29,28 @@ const caseLine = (cases: number): CartItem => ({
 
 beforeEach(() => localStorage.clear());
 
+// First in the file on purpose: React logs its "Cannot update a component" warning once per module, so an earlier
+// clamping case would use it up before this guard looked.
+describe("useBuyerCart.addItem is pure (B1409)", () => {
+  it("the toast is never raised while rendering: no 'Cannot update a component' warning (updater is pure)", async () => {
+    const errors = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { result } = renderHook(() => useBuyerCart("b1", "acme"), { wrapper });
+      act(() => {
+        result.current.addItem(plain(60_000));
+        result.current.addItem(plain(60_000));
+      });
+      expect(await screen.findByText("The most you can order at once is 100,000.")).toBeTruthy();
+      const warned = errors.mock.calls.some((c) =>
+        String(c[0]).includes("Cannot update a component"),
+      );
+      expect(warned).toBe(false);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+});
+
 describe("useBuyerCart.addItem at the limit (B1382)", () => {
   it("a line at the cap plus Add stays at the cap and shows the limit line", async () => {
     const { result } = renderHook(() => useBuyerCart("b1", "acme"), { wrapper });

@@ -119,18 +119,27 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     };
   }, [key]);
 
+  const addSeqRef = React.useRef(0);
+  const pendingLimitRef = React.useRef(new Map<number, CartItem>());
+  // The limit line for every Add that clamped, said after the commit (never inside a state updater).
+  React.useEffect(() => {
+    const pending = pendingLimitRef.current;
+    if (pending.size === 0) return;
+    const lines = [...pending.values()];
+    pending.clear();
+    for (const line of lines) {
+      const { max, maxWord } = lineLimit(line);
+      toastCtx?.toast({ title: limitLine(max, maxWord), variant: "info" });
+    }
+  });
+
   const addItem = React.useCallback(
     (item: CartItem) => {
       // B1382/B1409: whether the cap clamped is decided from `prev` (the state this Add really lands on), never from
-      // cartRef, which is stale inside a synchronous loop (Order Again). The toast fires once per call even if React
-      // re-runs the updater (strict mode); without a ToastProvider the Add still clamps and stays silent.
-      let said = false;
-      const sayLimit = (line: CartItem) => {
-        if (said) return;
-        said = true;
-        const { max, maxWord } = lineLimit(line);
-        toastCtx?.toast({ title: limitLine(max, maxWord), variant: "info" });
-      };
+      // cartRef, which is stale inside a synchronous loop (Order Again). The updater stays pure: it only records the
+      // clamp under this call's id (a Map, so React re-running the updater cannot record it twice); the toast fires
+      // from an effect after the commit, once per call. Without a ToastProvider the Add still clamps and stays silent.
+      const callId = ++addSeqRef.current;
       setCart((prev) => {
         const incoming = normalizeCartLine(item);
         const existing = prev.items.find((i) => i.productId === item.productId);
@@ -138,20 +147,20 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
         if (existing) {
           // Merge in PIECES, then re-derive the split: never add a qty onto a stale split.
           const checked = mergeCartLinesChecked(existing, incoming);
-          if (checked.clamped) sayLimit(checked.line);
+          if (checked.clamped) pendingLimitRef.current.set(callId, checked.line);
           next = {
             items: prev.items.map((i) => (i.productId === item.productId ? checked.line : i)),
           };
         } else {
           const checked = clampNewLine(incoming);
-          if (checked.clamped) sayLimit(checked.line);
+          if (checked.clamped) pendingLimitRef.current.set(callId, checked.line);
           next = { items: [...prev.items, checked.line] };
         }
         if (key) writeCart(key, next);
         return next;
       });
     },
-    [key, toastCtx],
+    [key],
   );
 
   const removeItem = React.useCallback(
