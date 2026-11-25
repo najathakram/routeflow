@@ -16,14 +16,6 @@ import type {
   FeatureModeState,
 } from "@routeflow/types";
 
-/** `GET /platform-admin/business-profiles` — registry order; an unavailable profile has `available: false`. */
-export async function fetchBusinessProfiles(): Promise<BusinessProfileSummary[]> {
-  const res = await superAdminClient.get<BusinessProfileListResponse>(
-    "/platform-admin/business-profiles",
-  );
-  return Array.isArray(res.data?.profiles) ? res.data.profiles : [];
-}
-
 /** `GET /platform-admin/tenants/:id/business-capabilities` — the ticks, read back from the server (BO-03). */
 export async function fetchBusinessCapabilities(tenantId: string): Promise<BusinessCapabilities> {
   const res = await superAdminClient.get<BusinessCapabilities>(
