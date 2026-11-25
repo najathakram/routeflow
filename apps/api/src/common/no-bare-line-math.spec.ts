@@ -100,9 +100,14 @@ const PINNED_B: Record<string, PinB> = {
     "buildReplaceAllLineData :180 splits item.boxes/pieces, prices at :366, the trailing tx.orderItem.create writes it; warn site orders.replace-all",
   ],
   "orders/orders.service.ts": [
-    4,
-    { CLASS: 3, EDIT: 1 },
-    "CLASS: create() lines :1696 (orders.create.lines / counter.sale, priced :1819), the SUBSTITUTE line :3645 (orders.update.substitute: a new sale of a new product on an old row id, priced :3690; SA-982a) and the change-request add :4958 (orders.cr.add, priced :4993, created :4980). EDIT: :3831 orders.update, the same-product line edit that resolves against the line's own pack (B717 / SA-077e); never converts",
+    3,
+    { CLASS: 3 },
+    "CLASS: create() lines :1696 (orders.create.lines / counter.sale, priced :1819), the SUBSTITUTE line :3645 (orders.update.substitute: a new sale of a new product on an old row id, priced :3690; SA-982a) and the change-request add :4958 (orders.cr.add, priced :4993, created :4980). The same-product line edit (orders.update, EDIT) moved to orders/edited-line-qty.ts (SA-1506 PR-1 prefactor)",
+  ],
+  "orders/edited-line-qty.ts": [
+    1,
+    { EDIT: 1 },
+    "resolveEditedLineQty: orders.update, the same-product line edit that resolves against the line's own pack (B717 / SA-077e); lifted verbatim out of orders.service.ts; never converts",
   ],
   "orders/live-pack-map.ts": [
     1,
@@ -229,7 +234,7 @@ describe("row 139 pin B: hand-built pack-axis builders (normalizeBoxesPieces wit
     const editSites = Object.entries(PINNED_B)
       .filter(([, [, tags]]) => (tags.EDIT ?? 0) > 0)
       .map(([f]) => f);
-    expect(editSites).toEqual(["orders/orders.service.ts", "orders/live-pack-map.ts"]); // an edit never converts
+    expect(editSites).toEqual(["orders/edited-line-qty.ts", "orders/live-pack-map.ts"]); // an edit never converts
   });
 
   it("the detector counts a boxes: argument (key, shorthand), and not a qty-only re-split, or a comment", () => {
