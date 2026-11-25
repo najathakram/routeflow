@@ -33,6 +33,8 @@ function parseStrict(raw: string, maxDecimals: number): NumberParse {
   }
   const lead = /^([+-]?)\$?(.*)$/.exec(s);
   if (!lead) return { ok: false, reason: "NOT_A_NUMBER" };
+  // A double sign such as "(-5)" is refused, never read as -5 (R-176 F3).
+  if (paren && lead[1] !== "") return { ok: false, reason: "NOT_A_NUMBER" };
   if (lead[1] === "-") negative = true;
   s = lead[2];
 

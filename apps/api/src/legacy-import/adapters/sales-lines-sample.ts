@@ -92,6 +92,21 @@ export const SALES_LINES_SAMPLE_ADAPTER = defineAdapter({
       });
     }
 
+    const quantity = read(COL.quantity, parseQuantity, "BAD_QUANTITY");
+    const unitPrice = read(COL.price, parseMoney, "BAD_MONEY");
+    const total = read(COL.total, parseMoney, "BAD_MONEY");
+    // A priced line with no Total is never rebuilt (T4), but it is never silent either: the
+    // document's net is incomplete (R-176 F2).
+    if (total === null && (quantity !== null || unitPrice !== null)) {
+      if (!defects.some((d) => d.column === headers[COL.total])) {
+        defects.push({
+          code: "MISSING_TOTAL",
+          column: headers[COL.total],
+          message: "A priced line has no Total, so the document's net is incomplete.",
+        });
+      }
+    }
+
     const line: CanonicalLine = {
       recordNo,
       physicalLine,
@@ -100,9 +115,9 @@ export const SALES_LINES_SAMPLE_ADAPTER = defineAdapter({
       issueDate,
       itemName: blankToNull(cell(COL.item)),
       description: blankToNull(cell(COL.description)) === null ? null : cell(COL.description),
-      quantity: read(COL.quantity, parseQuantity, "BAD_QUANTITY"),
-      unitPrice: read(COL.price, parseMoney, "BAD_MONEY"),
-      total: read(COL.total, parseMoney, "BAD_MONEY"),
+      quantity,
+      unitPrice,
+      total,
       sku: blankToNull(cell(COL.sku)),
       defects,
     };

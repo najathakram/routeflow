@@ -39,7 +39,6 @@ export async function* parseLegacyCsv(
     columns: false,
     info: true,
     relax_column_count: true,
-    skip_empty_lines: true,
     bom: false,
     record_delimiter: ["\r\n", "\n"],
   });
@@ -47,11 +46,16 @@ export async function* parseLegacyCsv(
 
   let headers: string[] | null = null;
   let previousEnd = 0;
+  let recordNo = 0;
   try {
     for await (const row of parser as unknown as AsyncIterable<ParsedRow>) {
       while (queued.length) yield { type: "issue", issue: queued.shift() as LegacyIssue };
       const startLine = previousEnd + 1;
       previousEnd = row.info.lines;
+      // A blank line parses as one empty cell. It is skipped, but its line still counts, so the
+      // physical line of every later record stays right (R-176 F4).
+      if (row.record.length === 1 && row.record[0] === "") continue;
+      recordNo += 1;
       if (headers === null) {
         headers = row.record.map((h) => h.trim());
         yield { type: "header", headers };
@@ -60,21 +64,25 @@ export async function* parseLegacyCsv(
       const have = row.record.length;
       if (have !== headers.length) {
         const short = have < headers.length;
+        // The dropped row's document number (cell 0) rides on the issue so the reader can hold
+        // that document; with no number the reader blocks the file (R-175/R-176 MEDIUM).
+        const docKey = (row.record[0] ?? "").trim();
         yield {
           type: "issue",
           issue: {
             severity: "ERROR",
             code: short ? "ROW_SHORT" : "ROW_LONG",
             message: `The row has ${have} cells but the header has ${headers.length}.`,
-            recordNo: row.info.records,
+            recordNo,
             physicalLine: startLine,
+            ...(docKey ? { sourceDocKey: docKey } : {}),
           },
         };
         continue;
       }
       yield {
         type: "record",
-        recordNo: row.info.records,
+        recordNo,
         physicalLine: startLine,
         cells: row.record,
       };

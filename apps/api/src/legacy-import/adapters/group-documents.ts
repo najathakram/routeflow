@@ -29,7 +29,11 @@ export interface GroupedDocument {
   historyOnly: boolean;
   held: boolean;
   holdCodes: LegacyIssueCode[];
-  /** False when the net is incomplete (a dropped row or a line with no usable Total): the sign class and key are provisional. */
+  /**
+   * False when the net is incomplete (a row the parser dropped, or a line whose Total is missing
+   * or refused): the sign class and the key were computed from part of the document and are
+   * provisional. A document with `keyFinal === false` is always held and must never be stored.
+   */
   keyFinal: boolean;
 }
 
@@ -38,29 +42,58 @@ export interface GroupResult {
   issues: LegacyIssue[];
 }
 
-/**
- * Group canonical lines into documents by the document key (a Map, not adjacency), in first-seen
- * order. Never silent: a blank document number, a blank or conflicting customer, a date problem and
- * every line defect become issue rows, and the document is HELD. The customer text is never
- * folded or partially matched (ACME is not ACME 2). Totals are the file's totals only.
- */
+/** A row the parser dropped (short or long) whose document number could be read from cell 0. */
 export interface DroppedRow {
   docNumber: string;
   code: "ROW_SHORT" | "ROW_LONG";
 }
 
+function isBlankRow(l: CanonicalLine): boolean {
+  return (
+    l.docNumber === "" &&
+    l.customerName === "" &&
+    l.issueDate === null &&
+    l.itemName === null &&
+    l.description === null &&
+    l.quantity === null &&
+    l.unitPrice === null &&
+    l.total === null &&
+    l.sku === null &&
+    l.defects.length === 0
+  );
+}
+
+/** A line whose own Total is missing or refused leaves the document's net incomplete. */
+function lacksUsableTotal(l: CanonicalLine): boolean {
+  return l.total === null && (l.quantity !== null || l.unitPrice !== null || l.defects.length > 0);
+}
+
+/**
+ * Group canonical lines into documents by the document key (a Map, not adjacency), in first-seen
+ * order. Never silent: a blank document number, a blank or conflicting customer, a date problem,
+ * a dropped row and every line defect become issue rows, and the document is HELD. The customer
+ * text is never folded or partially matched (ACME is not ACME 2). Totals are the file's totals
+ * only. A document whose net is incomplete is held and its key is marked provisional.
+ */
 export function groupDocuments(
   lines: Iterable<CanonicalLine>,
-  _opts: { dropped?: readonly DroppedRow[] } = {},
+  opts: { dropped?: readonly DroppedRow[] } = {},
 ): GroupResult {
   const issues: LegacyIssue[] = [];
+  const dropped = new Map<string, DroppedRow["code"]>();
+  for (const d of opts.dropped ?? [])
+    if (!dropped.has(d.docNumber)) dropped.set(d.docNumber, d.code);
+
   const byDoc = new Map<string, CanonicalLine[]>();
   for (const line of lines) {
     if (line.docNumber === "") {
+      const blank = isBlankRow(line);
       issues.push({
-        severity: "ERROR",
-        code: "BLANK_DOCUMENT_NUMBER",
-        message: "The row has no invoice number, so it belongs to no document.",
+        severity: blank ? "WARNING" : "ERROR",
+        code: blank ? "BLANK_ROW" : "BLANK_DOCUMENT_NUMBER",
+        message: blank
+          ? "An entirely blank row was skipped."
+          : "The row has no invoice number, so it belongs to no document.",
         recordNo: line.recordNo,
         physicalLine: line.physicalLine,
       });
@@ -92,8 +125,15 @@ export function groupDocuments(
       });
     };
 
+    // The parser already reported the dropped row itself (with this document number).
+    const droppedCode = dropped.get(docNumber);
+    if (droppedCode) holds.add(droppedCode);
+
     for (const l of docLines) {
       for (const d of l.defects) report(d.code, `${d.column}: ${d.message}`, l);
+      if (l.defects.length === 0 && lacksUsableTotal(l)) {
+        report("MISSING_TOTAL", "A priced line has no Total, so the net is incomplete.", l);
+      }
     }
 
     const dates = [...new Set(docLines.map((l) => l.issueDate).filter((d): d is string => !!d))];
@@ -134,6 +174,7 @@ export function groupDocuments(
     const signClass = signClassOf(netTotal);
     const sourceKey = buildFallbackSourceKey(signClass, docNumber);
     const kind: DocumentKind = signClass === "untyped-" ? "NEGATIVE_UNKNOWN" : "INVOICE";
+    const keyFinal = !droppedCode && !docLines.some(lacksUsableTotal);
 
     documents.push({
       sourceKey,
@@ -156,9 +197,9 @@ export function groupDocuments(
       signClass,
       kind,
       historyOnly: kind === "NEGATIVE_UNKNOWN",
-      keyFinal: true,
       held: holds.size > 0,
       holdCodes: [...holds],
+      keyFinal,
     });
   }
   return { documents, issues };
