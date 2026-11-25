@@ -6,6 +6,10 @@ import AdminCreateTenantPage from "./page";
 import { superAdminClient } from "@/lib/admin-api";
 import { CAPABILITY_PRESETS_FIXTURE } from "../[id]/_features/__fixtures__/capabilities.fixtures";
 
+// SA-1254 V2 (P-41): the catalog-unavailable fallback is PLAN_KEYS minus the keys no published
+// catalog holds yet (CORE, ALL_IN). Literal, so a leak goes red instead of being followed.
+const FALLBACK_PLAN_OPTIONS = ["LITE", "STARTER", "GROWTH", "SCALE", "ENTERPRISE"];
+
 jest.mock("@/lib/admin-api", () => ({
   superAdminClient: {
     post: jest.fn().mockResolvedValue({ data: {} }),
@@ -100,7 +104,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     const select = screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement;
     expect(select).not.toBeDisabled();
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
-    expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
+    expect(options.map((o) => o.value)).toEqual(FALLBACK_PLAN_OPTIONS);
     const submit = screen.getByRole("button", { name: /create tenant/i });
     expect(submit).not.toBeDisabled();
   });
@@ -116,7 +120,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     const select = screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement;
     expect(select).not.toBeDisabled();
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
-    expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
+    expect(options.map((o) => o.value)).toEqual(FALLBACK_PLAN_OPTIONS);
     const submit = screen.getByRole("button", { name: /create tenant/i });
     expect(submit).not.toBeDisabled();
   });
@@ -179,7 +183,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     });
     const select = screen.getByRole("combobox", { name: "Plan" }) as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
-    expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
+    expect(options.map((o) => o.value)).toEqual(FALLBACK_PLAN_OPTIONS);
   });
 });
 

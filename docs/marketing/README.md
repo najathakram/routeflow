@@ -3,11 +3,12 @@
 A complete, code-verified marketing foundation for RouteFlow, written against the product as it
 actually works today (verified 2026-08-19 against the live codebase, not the roadmap).
 
-| Doc                                                        | What it is                                                                                                                                                            |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [01-product-documentation.md](01-product-documentation.md) | Detailed documentation of RouteFlow: every shipped capability in business language, plus an explicit "not ready — do not market" list.                                |
-| [02-marketing-strategy.md](02-marketing-strategy.md)       | The strategy: ICP, personas, positioning, message house, claim discipline, competition, pricing, go-to-market motion, channels, 90-day plan, KPIs.                    |
-| [03-content-playbook.md](03-content-playbook.md)           | The content: social video scripts, post series, a 4-week calendar, full draft copy for a tri-fold brochure and two print flyers, a demo script, and website fix list. |
+| Doc                                                        | What it is                                                                                                                                                                                       |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [01-product-documentation.md](01-product-documentation.md) | Detailed documentation of RouteFlow: every shipped capability in business language, plus an explicit "not ready — do not market" list.                                                           |
+| [02-marketing-strategy.md](02-marketing-strategy.md)       | The strategy: ICP, personas, positioning, message house, claim discipline, competition, pricing, go-to-market motion, channels, 90-day plan, KPIs.                                               |
+| [03-content-playbook.md](03-content-playbook.md)           | The content: social video scripts, post series, a 4-week calendar, full draft copy for a tri-fold brochure and two print flyers, a demo script, and website fix list.                            |
+| [04-messaging-guardrails.md](04-messaging-guardrails.md)   | The rules for every public sentence (2026-11-24): the core message, what not to claim, the "does and doesn't" list. The [claims register](../product/claims-register.md) is the source of truth. |
 
 ## Ground rules baked into every doc
 

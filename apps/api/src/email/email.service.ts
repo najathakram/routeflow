@@ -1456,7 +1456,7 @@ export class EmailService {
         return { delivered: true, transport: "smtp", route: "tenant-smtp", id: info.messageId };
       } catch (err: any) {
         const rawMessage: string = err?.message ?? "SMTP send failed";
-        smtpError = rawMessage;
+        smtpError = redactAddresses(rawMessage);
         smtpFallbackReason = mapSmtpError(err, emailCfg.host, emailCfg.port, emailCfg.user);
         fallbackReason = classifyFallbackReason(err);
         this.logger.error(

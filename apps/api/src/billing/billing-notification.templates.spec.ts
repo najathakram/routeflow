@@ -338,6 +338,29 @@ describe("billing-notification.templates", () => {
       expect(t.html).toContain("/settings/billing");
       expect(t.html).not.toContain("<b>SCALE</b>");
     });
+
+    it("names the plan, never its key (SA-1254 V7, P-45)", () => {
+      const t = checkoutPlanNotAppliedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        requestedPlanKey: "CORE",
+      });
+      expect(t.text).toContain("your payment for Essentials on Acme Retail");
+      expect(t.html).toContain("<strong>Essentials</strong>");
+      expect(t.text).not.toContain("CORE");
+      expect(t.html).not.toContain("CORE");
+    });
+
+    it("reads 'your new plan' for a key with no name, and prints no key", () => {
+      const t = checkoutPlanNotAppliedTemplate({
+        businessName: "Acme Retail",
+        adminName: "Jamie",
+        requestedPlanKey: "custom_acme",
+      });
+      expect(t.text).toContain("your payment for your new plan on Acme Retail");
+      expect(t.text).not.toContain("custom_acme");
+      expect(t.html).not.toContain("custom_acme");
+    });
   });
 
   describe("dunning d0 copy is keyed by whether Stripe ATTEMPTED the invoice (SA r-note 5 A1)", () => {

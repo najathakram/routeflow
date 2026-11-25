@@ -55,6 +55,7 @@ import { useOrderLineOrder } from "@/lib/use-order-line-order";
 import { DeliveryTrackingCard } from "./_components/DeliveryTrackingCard";
 import { ShipmentCard } from "./_components/ShipmentCard";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
+import { LineNote } from "@/components/LineNote";
 import {
   NO_FLEET_STEP_LABELS,
   PICKUP_STEP_LABELS,
@@ -726,6 +727,8 @@ export default function BuyerOrderDetailPage() {
         expectedRevisionNumber: openedRevision.current,
       });
       setEditMode(false);
+      // The numbers changing was the only sign the save worked; say it.
+      toast({ title: "Changes saved", variant: "success" });
     } catch (err: any) {
       const data = err?.response?.data;
       if (err?.response?.status === 409 && data?.code === "REGULATED_AUTH_REQUIRED") {
@@ -995,7 +998,8 @@ export default function BuyerOrderDetailPage() {
                 className="max-lg:min-h-11"
                 onClick={() => setEditMode(false)}
               >
-                Cancel
+                {/* Not "Cancel": the red "Cancel order" on this page kills the order, and the two were mixed up. */}
+                Discard changes
               </Button>
               <Button
                 size="sm"
@@ -1164,9 +1168,7 @@ export default function BuyerOrderDetailPage() {
                             )}
                           </p>
                           {li.notes?.trim() && (
-                            <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
-                              {li.notes}
-                            </p>
+                            <LineNote note={li.notes} className="text-xs text-navy/60" />
                           )}
                           <ComponentSubLines components={li.components} />
                         </td>
@@ -1287,7 +1289,8 @@ export default function BuyerOrderDetailPage() {
       </div>
 
       {/* Actions */}
-      {canCancel && (
+      {/* Hidden while editing items: beside "Discard changes" a red "Cancel order" was one mis-tap from losing the order. */}
+      {canCancel && !editMode && (
         <div className="flex justify-end">
           <Button
             variant="danger-outline"

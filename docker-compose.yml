@@ -106,7 +106,7 @@ services:
   # It behaves like the real Google Workspace submission port (STARTTLS + AUTH), so the SMTP integration spec
   # (apps/api/src/email/email-smtp.smtp.spec.ts, run by `npm run local:validate:features`) proves a
   # genuine connect -> STARTTLS -> AUTH -> delivery for the platform SMTP branch, not an open relay:
-  #   - STARTTLS is REQUIRED (MP_SMTP_REQUIRE_STARTTLS) and served from the committed throwaway
+  #   - STARTTLS is REQUIRED (MP_SMTP_REQUIRE_STARTTLS) and served from the per-machine generated
   #     self-signed cert in docker/mailpit-tls (localhost/mailpit/127.0.0.1 only; see its README);
   #   - AUTH is REQUIRED with a local-only credential (MP_SMTP_AUTH) — a wrong password is a real 535.
   # Clients trust the cert through NODE_EXTRA_CA_CERTS (the api service below, and

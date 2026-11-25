@@ -276,7 +276,10 @@ function make(opts: Opts = {}) {
   let itemSeq = 0;
   const client = {
     checkout: {
-      sessions: { create: jest.fn().mockResolvedValue({ id: "cs_1", url: "https://pay" }) },
+      sessions: {
+        create: jest.fn().mockResolvedValue({ id: "cs_1", url: "https://pay" }),
+        list: jest.fn().mockResolvedValue({ data: [] }),
+      },
     },
     products: fakeStripeProducts().products,
     subscriptionItems: {
@@ -709,6 +712,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       planKey: "STARTER",
       interval: "month",
       addonSkus: "CUSTOMER_PACK_100,FORECASTING",
+      termsHash: expect.stringMatching(/^[0-9a-f]{32}$/), // W-1338: the slot's reuse key
     });
     expect(args.subscription_data).toEqual({
       billing_cycle_anchor: expect.any(Number), // SA-733 D6: always anchored (see the D6 block below)
@@ -908,6 +912,7 @@ describe("SA-690 checkout — the unbilled add-ons ride the card checkout", () =
       slug: "acme",
       planKey: "STARTER",
       interval: "month",
+      termsHash: expect.any(String),
     });
     // no add-on tags: the subscription_data is the D6 anchor alone (no metadata)
     expect(m.subscription_data).toEqual({

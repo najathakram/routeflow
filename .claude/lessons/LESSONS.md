@@ -86,6 +86,13 @@
 
 ## testing
 
+### L-409 · 2026-11-25 · testing · a change that adds a call to an outside service greps every `*.spec.ts` and every `*.db.spec.ts` rig for its fake, and a billing or ledger PR needs a green Migration replay run at the sha before it merges (#4489, fixed by #4497, W-1338)
+
+- **Symptom:** #4489 merged on a green Verify and broke `billing/trial-addon-checkout.db.spec.ts`: subscribe, upgrade and downgrade now list and expire the business's open Checkout Sessions first, and that rig's Stripe fake had no `checkout.sessions`. Fail-closed code turns a missing Stripe member into one coded 503, so the spec saw a refusal instead of an error naming the missing member.
+- **Root cause:** the search for the service fake did not reach the SA-690 rig, which is a `*.db.spec.ts`, and "Migration replay" (`.github/workflows/db-migrations.yml`) is the only CI lane that runs DB specs, so Verify could not see it. Nothing required a Migration replay run at the merged sha for a billing PR.
+- **Lesson:** **When a change makes existing code call an outside service (Stripe, mail, storage), grep every `*.spec.ts` AND every `*.db.spec.ts` for a fake of that service and give each the new members. Wrap such a fake in `strictFake` so a missing member is named at the end of the test, not read as a refusal later. A billing, ledger or other Tier 1 PR does not merge on Verify alone: the gate needs a green Migration replay run at the exact sha.**
+- **Guard:** `apps/api/src/testing/strict-fake.ts` (`strictFake(target, name, misses)`, pinned by `testing/strict-fake.spec.ts`) wraps the Stripe fakes in `trial-addon-checkout.db.spec.ts`, whose `afterEach` asserts `fakeMisses` is empty. The Tier 1 gate requires a Migration replay run at the sha (a lead rule, not a repo file).
+
 ### L-396 · 2026-11-19 · testing · a change to a hook, or to a file a hook calls, runs every `*-script.spec.ts` that builds a hook fixture; a by-path review run misses them (#4363, fix round 2)
 
 - **Symptom:** a push guard added as the first step of `.husky/pre-push` passed its own self-test and the by-path review runs, then CI Verify went red with 11 failures in two specs that drive the real hook in a temp repo.
@@ -121,27 +128,6 @@
 - **Lesson:** **Every inventory pin or source-scan test ships with a probe the builder observed red (add the violating file, or remove the entry, and run it), and asserts that the scan found at least one file. A control byte in a pattern is read in a hex view of the line, not by eye.**
 - **Guard:** none automatic yet; the corrected pin is owed in the counter lane's next PR (test-only). Cf. [[L-364]], [[L-322]]. Extended 2026-11-13 (B1324): the first overlap probe on the phone heading rise (spec 85 T9) read only settled pairs with both boxes in the window and passed on master while the bug stood; the strengthened probe reads the first frame after each scroll step and again settled, counts boxes below the window, and on master fails on the bug's own value (10 px: a 22 px hold over a 12 px gap). The replay cell also asserts its precondition (the section really is at rest) before it measures. Rule: a probe waits for nothing and measures at the moment the person sees it.
 
-### L-378 · 2026-11-12 · testing · a hand-over test runs the real scan detector with a full-length code; a mocked detector and a short code cannot see a dropped first key (#4302 review)
-
-- **Symptom:** in PR #4302 (merged as 1c22822497, head 15137041c9, with the fix) the order builder's line handle handed focus to product search, but the first key of a scan had already gone to the handle, so the lookup lost its first character (board 6819958479, confirmed in a browser run on 6819958939: 5/5 runs, no line added). The PR's test passed.
-- **Root cause:** the test mocked `BarcodeScannerButton` and scanned "300", which is under the detector's 6-character gate (`sequence.length >= 6`, `BarcodeScannerButton.tsx:110`), so neither the detector nor the dropped key was exercised.
-- **Lesson:** **A test of a focus hand-over during a scan runs the real detector and types a full-length code (13 digits) with the scanner's key gaps, then asserts the lookup got the whole code once. A mock of the component that reads the keys removes the thing under test.**
-- **Guard:** `apps/web/app/(dashboard)/orders/_components/CreateOrderModal.scan-from-handle.test.tsx`: the real detector, a 13-digit code from handles 1 and 2 and from the search box; removing the dispatch in `SortableLines.tsx` turns two cells red. Open: only Enter is sent, a CR+LF ending from a handle is not covered. Cf. [[L-376]].
-
-### L-374 · 2026-11-12 · testing · a spec that counts log lines across a loop owns its clock when the code under test rate-gates by wall time (B5-5, #4274)
-
-- **Symptom:** CI Verify failed `prisma/prisma-call-place.spec.ts` B5-5 with "Expected length: 2, Received length: 3": one call site logged twice. Local runs and the earlier CI runs passed.
-- **Root cause:** `tenant-context-guard.ts` lets one capture key log again after `CAPTURE_GAP_MS` (1000 ms, gate at `:139-140`) and reads time as `opts.now ?? Date.now`, bound once at module load. The spec's 1000-read loop was one line only while it stayed inside that second; a slow runner crossed it. The same unpinned loop sat on master since `8f73cf3880` (the guard itself landed in `9c743285ed`, B1285).
-- **Lesson:** **A test that counts what a time-gated component emits across a loop installs its own clock for the module under test (a `jest.mock` factory that holds `Date.now` while the module loads and restores it in `finally`), and keeps one case that advances the clock past the gap and expects the next emit. Prove the cause by jumping the clock, not by throttling the machine.**
-- **Guard:** `prisma/prisma-call-place.spec.ts` B5-5 (frozen clock) and B5-5b (advance 1001 ms, the same site logs again). Cf. [[L-353]], [[L-370]].
-
-### L-366 · 2026-10-31 · testing · a wrapper must accept only values its inner guard accepts; a safety guard is never widened to fit the wrapper
-
-- **Symptom:** a full DB lane run with `RF_DBSPEC_HOST=127.0.0.2` failed 441 of 444 suites after a long wait, each with "Refusing to run DB-backed specs against a target that is not provably local".
-- **Root cause:** `scripts/local-db-specs.mjs` accepts `localhost` or any 127.x.x.x address, but `requireLocalDatabaseUrl` (`apps/api/src/common/testing/db-spec.ts`) allows only localhost, 127.0.0.1, ::1 and postgres. The wrapper passed its own check and the inner guard then refused every suite. The host was chosen to route around a relay holding a port, which is an environment fault.
-- **Lesson:** **Every value a wrapper accepts must also pass the guard behind it: share one allow-list, or pin the wrapper's accepted set against the guard. A safety guard is never edited inside a train; an environment fault (a relay holding a port) is fixed, or routed around on another host, not by widening the guard.**
-- **Guard:** none yet; a spec pinning the wrapper's accepted hosts against the guard is a named follow-up. Cf. [[L-363]].
-
 ### L-364 · 2026-10-31 · testing · a static pin that scans source text must read every shape the repo writes, template literals included; fix the source shape, never the pin, inside a train
 
 - **Symptom:** the date-input size pin (`apps/web/app/globals-date-input.static.test.ts`, #2080) went red on the assembled train: the new product-count window's date input read as unsized, although its shared class constant carries `w-full`. The member that added the input never ran that pin: it is red at that member's own head too, so this is the case in [[L-323]], not a composition surprise.
@@ -155,13 +141,6 @@
 - **Root cause:** the code reads `new Date()` for a 72-hour floor while the spec billed a literal future date, so the case flipped once the wall clock passed the floor. Member passes were days old and nobody had run bare master that day.
 - **Lesson:** **When code under test reads the clock, pin it (`jest.useFakeTimers().setSystemTime(NOW)`) or derive every fixture date from that NOW; a literal future date is a failure with a date on it. Before assembling a train, run the gate on bare `origin/master` first, so a red that is master's own is fixed on its own and never charged to a member.**
 - **Guard:** the clock pin on the payment-due specs (5f6b2290b, train W26); the train pre-check of LEAD-LOG 2026-10-29 #3799. Cf. L-290, L-335. Extended 2026-11-01 (train q): two billing specs left the clock real, and the checkout anchor refuses a start within 91 minutes of the 1st at 12:00Z, so every api Verify that reached them between 10:29Z and 12:00Z on that day failed (33 tests, 2 suites) while the code was right; a run before 10:29Z had passed. Pin the clock in each spec whose subject reads it (`apps/api/src/testing/pin-clock.ts`, #4084), and when a month-boundary window exists, expect the red on the 1st and 2nd, not only on the day a commit lands. Extended 2026-11-13 (B1327): `CounterSaleScreen.date-scan.test.tsx` called `jest.useFakeTimers()` without a system date, and fake timers start at the real now, so its "fri" scan and TODAY/BACK chips failed on one weekday. Now pinned to Wed 2026-06-17 12:00Z in the same `beforeEach`. Put `setSystemTime` next to every `useFakeTimers`; a weekday-relative case is red one day in seven. No automatic scan for a fake-timer spec with no pinned date yet.
-
-### L-326 · 2026-10-20 · testing · a migration that retires a known edge updates, in the same train, every spec that pins the edge's old behavior
-
-- **Symptom:** after a column widen retired a rounding edge (B296, a 4-dp rate), a spec that asserted the old 4-dp clamp stayed in the tree; it was green on its own branch and red only on the combined R5 tree.
-- **Root cause:** the pin lived in a different branch from the migration, so neither branch's run held both the new column and the old assertion, and a diff review cannot see a spec that asserts a behavior the migration removed.
-- **Lesson:** **When a migration retires a known edge (a widen, a dropped clamp, a new constraint), grep the specs for the edge's bug id and its old literal values in the same train and update each pin to the new rule; the pin goes red only on the combined tree, so run it there before the push.**
-- **Guard:** none automatic; the train gate runs the full suite on the combined tree (cf. [[L-264]], [[L-323]]).
 
 ### L-262 · 2026-10-05 · testing · a generated Prisma client is per install: a worktree that shares or hoists `node_modules` verifies against another tree's schema
 
@@ -178,6 +157,27 @@
 - **Guard:** none automatic. SA-E111 records the miss; the red pin for the floor (B1330) lands with F-1, and B1336 tracks the silent `qty: 0` skip itself.
 
 ## domain
+
+### L-404 · 2026-11-24 · domain · the year in every document number is the tenant's calendar year through one helper, and a repo-truth scan fails a minting file that reads the server clock (#4475, W-1199)
+
+- **Symptom:** at 23:30 on 31 December in New York a UTC server minted 2027 for estimates, credit notes, returns, POs and bills while invoices said 2026.
+- **Root cause:** the earlier fix moved the invoice year only; every other minting site read the server clock itself, and no list of the sites existed, so the fix reached the one named caller and left the other series on the old clock.
+- **Lesson:** **When one number series moves to a rule, sweep every site that mints any series, route all of them through one helper that reads through the caller's own tx, and pin the class with a scan that fails a minting file that reads `getFullYear()`. A per-site fix leaves the next series on the old clock. Cf. [[L-223]].**
+- **Guard:** `common/number-year.ts`; `common/no-server-clock-number-year.spec.ts` (repo-truth lane); `common/document-number-year.spec.ts` (the New York cases were red on master with 2027).
+
+### L-405 · 2026-11-24 · domain · a cap on a credit reads the newest sale and prices it through the pool helper, never qty times unit price; a cap only lowers (#4462, W-1316)
+
+- **Symptom:** a return of an item sold before credited today's higher price, more than the customer last paid.
+- **Root cause:** the sold-before read only asked whether any invoice line existed ("ever sold?") and priced from the catalog; no read said what was paid last, and a boxed line cannot be priced as qty times unit price.
+- **Lesson:** **A read added to answer "ever?" is not an answer to "what, last?": give the new rule its own read, newest invoice first, and price it through the shared helper (`lastPaidCapSubtotal`), where paid and $0 lines pool and boxed lines scale once. A cap returns null when it cannot price (no cap) and only ever lowers; the edit path refuses an override above it with the same figure the quote used.**
+- **Guard:** `returns/inline-returns-quote.last-paid-cap.w1316.spec.ts` (red values taken on master), `returns/inline-returns-last-paid-cap.w1316.db.spec.ts`.
+
+### L-406 · 2026-11-24 · domain · a refusal added to one write path is added to every write method of that entity, and a pin lists the methods; the check sits where the effect happens (#4479, W-1318)
+
+- **Symptom:** a PO line written before the guard existed posted a stock lot and an item update against a FAMILY product at receive, although create, raise-from-bill and edit all refused it.
+- **Root cause:** the helper was called by the writers that create or change lines; receive, the one that posts stock, was never listed. The first fix then checked every line before the qty <= 0 skip, so a PO holding a legacy zero-quantity FAMILY line could not receive its other lines.
+- **Lesson:** **When a refusal is added to a write path, list every method of that entity that writes and pin the list in a spec that fails when one skips the helper. Put the check where the effect happens (quantity above 0 posts stock), not on the row, or a legacy zero row blocks the rest of the document.**
+- **Guard:** `inventory/inventory.po-family-refuse.spec.ts`, `products/family-writers-tripwire.spec.ts`.
 
 ### L-401 · 2026-11-21 · domain · a background or send step that can fail writes a status the screen reads and tells the operator; a log line is not a report (#4381, #4372, #4399)
 
@@ -199,13 +199,6 @@
 - **Root cause:** `resolveOperatorPathGuard` trusts the `rf-op-auth` presence cookie, which a normal operator sign-in sets; `setImpersonation` stored the tokens but never set the cookie.
 - **Lesson:** **Every code path that makes a browser an operator (sign-in, impersonation, any future switch) calls the one helper that sets the presence cookie, and every exit path clears it unless the browser holds operator tokens of its own. Test it through the real guard with no mocks of the helpers.**
 - **Guard:** `lib/impersonation.presence.test.ts` (5 tests, real guard and helpers). Open: the automatic exits in `lib/api-client.ts` clear the tokens but not the cookie (see the register). Cf. [[L-369]].
-
-### L-370 · 2026-11-06 · domain · a capture gate on a diagnostic is keyed by every field the reader groups by, under one global budget and a bounded map; a coarser key hides the second site (B1285)
-
-- **Symptom:** the dark tenant-context guard captured one stack per second per `kind|model|op`; one hot call site (1,000 reads) took the second's capture and a second site under the same key never reached the log, though the counter stayed true. Scheduled jobs logged no job name at all.
-- **Root cause:** the gate key named what the counter answers (what kind of access), not what the log answers (where from); a cron job has no request route to name itself.
-- **Lesson:** **Key a rate gate by every field the log line is read by (kind, model, op, call place), put one global per-second budget over it (20) and a backstop on the map size (5,000 entries), and check the shape of the place string before it enters a key. Name each scheduled job's place where the job starts (`@LeaderCron` runs the body at `<area>.<method>`), so the log says which job.**
-- **Guard:** `prisma/tenant-context-guard.spec.ts` rows B5-1 (key without `where`), B5-2 (no budget) and B5-4 (no shape check), each red by mutation; `common/call-place.ts`. Open: B1295 (the two queue processors have no row). Cf. [[L-369]].
 
 ### L-369 · 2026-11-05 · domain · a tenant-scoped accessor never degrades to the unscoped client; with no business in context a secret read and every write throw
 
@@ -300,19 +293,19 @@
 
 ## security
 
+### L-407 · 2026-11-24 · security · a redaction is applied where each transport stores its error, with one test per transport branch (#4473, W-1289)
+
+- **Symptom:** staff saw a business's own mail server reply in "Email invoice", "Email reminder" and "Email statement", carrying a recipient's full address and a server IP.
+- **Root cause:** every other transport stored `redactAddresses(message)`; the tenant SMTP branch had its own catch and stored the raw string, and no test read the text the staff user sees.
+- **Lesson:** **Redact at the place the error is stored for the screen, not only in the log line, and give each transport branch its own test that asserts the staff-visible text. A transport added later with its own catch is a new unredacted exit unless a test names it.**
+- **Guard:** `email/email.tenant-smtp-error-redact.w1289.spec.ts` (tenant fail with and without a platform transport, the statement 400, the log line).
+
 ### L-399 · 2026-11-21 · security · when a storage key is renamed, the reader drops the old key and logout clears it once; a fallback read keeps a signed-out person signed in (#4371)
 
 - **Symptom:** a buyer who signed in with Google and then signed out was read as signed in again, and revisiting the portal showed it.
 - **Root cause:** the Google callback still wrote the pre-namespacing `buyerAccessToken` key, the token reader fell back to it, and logout cleared only the namespaced keys. A second page read yet another key (`buyerToken`) that nothing writes, so its request went out with no Authorization header.
 - **Lesson:** **After a storage-key migration the writer stops writing the old key, the reader stops falling back to it, and logout removes it once for browsers that still hold it. Every page reads the token through the one accessor, never by a key literal.**
 - **Guard:** `apps/web/lib/buyer-auth.legacy-token.test.ts`, `page.code-only.test.tsx` (callback) and `page.merge-request.test.tsx` (settings), #4371.
-
-### L-328 · 2026-10-21 · security · a same-origin form POST under `Referrer-Policy: no-referrer` sends `Origin: null`; an Origin-equals-Host check then refuses every login
-
-- **Symptom:** after the control dashboard set `Referrer-Policy: no-referrer`, every login was refused with 403, although the page and the form were on the same host.
-- **Root cause:** browsers send `Origin: null` on a form POST when the referrer policy is `no-referrer`. The CSRF check compared the `Origin` header with the served host, so the literal "null" never matched (`apps/control/src/http/headers.ts:13`, `originOk` before `POST /login` in `apps/control/src/http/server.ts`).
-- **Lesson:** **A strict Referrer-Policy changes what `Origin` a form POST carries. An Origin-equals-Host check must either accept `Origin: null` only when `Sec-Fetch-Site: same-origin` is also present, or the page must not use `no-referrer` for its own forms. Test the real form submit in a browser, never a hand-built request with a correct Origin.**
-- **Guard:** none automatic yet; prove any CSRF or header change with a browser form submit. Fixed in `apps/control` (`Referrer-Policy: same-origin`; `originOk` accepts `Origin: null` only with `Sec-Fetch-Site: same-origin`), pinned by `apps/control/test/login-origin.spec.ts`.
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
 
@@ -322,6 +315,13 @@
 - **Guard:** none yet; propose a lint/review checklist item flagging `token`/`code`/`secret`-named query params on any new route. Restored 2026-11-01 (it was archived on 2026-10-31 for room): this is a rule about RouteFlow's own routes, and the agent privacy rules cover what an agent does with URLs, not what the app puts in them.
 
 ## web
+
+### L-408 · 2026-11-24 · web · a quantity box a scanner can type into holds its text until Enter, Tab or blur, then judges the whole text as one number (#4481, W-1336)
+
+- **Symptom:** a 12-digit barcode scanned into a focused counter quantity box left a 4 or 5 digit quantity with no message.
+- **Root cause:** the box committed on every keystroke and a scanner types digits as keys, so each prefix was a valid quantity and the last one accepted stayed.
+- **Lesson:** **Where a scanner can type into a focused box, hold the text and commit once on a boundary through the screen's own commit path, refuse an out-of-range whole with one sentence, and clear the held ref before the commit so the blur after an Enter refocus finds nothing. Make the mode opt-in per screen; the order builder keeps per-keystroke commit. Cf. [[L-385]].**
+- **Guard:** `use-held-qty.ts`; `CounterSaleScreen.qty-hold.test.tsx`, `CounterLineRow.qty-refusal.test.tsx` (a scanned code, Esc, Undo merge).
 
 ### L-398 · 2026-11-21 · web · a file input fires no change when the same file is picked again; clear its value after every pick (#4397)
 

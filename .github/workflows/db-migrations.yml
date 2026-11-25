@@ -94,7 +94,7 @@ jobs:
     # 30, not 15: a schema PR runs the FULL DB-spec step, which alone takes over 13 min. #3626's
     # replay was cancelled twice at the 15-min mark mid-pass with every spec green so far
     # (run 39905899177, step 9 "DB-backed specs" 06:10:33-06:23:31).
-    timeout-minutes: 30
+    timeout-minutes: 50
 
     services:
       postgres:
@@ -174,5 +174,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
           RUN_DB_SPECS: ci
-          # W-723: the lane takes ~10 min; a hung run is killed (whole process tree) at 25.
-          RF_DB_LANE_TIMEOUT_MIN: 25
+          # W-723: a hung run is killed (whole process tree) at the ceiling. W-1348: 2026-11-24 passing
+          # runs took 22.9, 23.7 and 24.1 min and #4483 was killed at 25 while passing, so 40 here and
+          # 50 on the job (lane + setup). Stopgap; sharding the DB lane is the class fix.
+          RF_DB_LANE_TIMEOUT_MIN: 40

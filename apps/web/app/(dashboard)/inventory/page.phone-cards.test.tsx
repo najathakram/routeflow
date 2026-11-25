@@ -3,10 +3,15 @@
  * its Current stock and stock status, every row action), the table is md and up only, the header keeps
  * the title and Quick restock on one row with the rest in a More menu, the tiles are one sideways row,
  * and a sort control sits above the cards. From md up nothing changes.
+ *
+ * W-1299: only ONE of the two layouts is built, the one the width shows (both used to be built for every
+ * product, with the other hidden by CSS). So these tests set the viewport: 390px for the cards, 1280px
+ * for the table.
  */
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { act, render, screen, within, fireEvent } from "@testing-library/react";
+import { setViewportWidth } from "@/test-utils/viewport";
 import InventoryPage from "./page";
 
 jest.mock("next/navigation", () => ({
@@ -37,6 +42,8 @@ const stockRows = [
     totalValue: null,
     isActive: true,
     unitsPerBox: null,
+    parentProductId: null,
+    hasVariants: false,
   },
   {
     id: "p-ok",
@@ -50,6 +57,8 @@ const stockRows = [
     totalValue: 48,
     isActive: true,
     unitsPerBox: 12,
+    parentProductId: null,
+    hasVariants: true,
   },
   {
     // low (no reorder point, 3 <= 5), no cost, has variants: all four actions apply
@@ -63,6 +72,8 @@ const stockRows = [
     totalValue: null,
     isActive: true,
     unitsPerBox: null,
+    parentProductId: null,
+    hasVariants: true,
   },
 ];
 
@@ -78,16 +89,9 @@ jest.mock("@/lib/api/inventory", () => ({
   useBulkSetCostBasis: () => ({ mutate: jest.fn(), isPending: false }),
   useRecomputeCosts: () => ({ mutate: jest.fn(), isPending: false }),
 }));
+// W-1299: "has variants" used to come from this whole-catalog read; it rides on the stock rows above now.
 jest.mock("@/lib/api/products", () => ({
-  useProducts: () => ({
-    data: {
-      data: [
-        { id: "p-out", parentProductId: null, variants: [] },
-        { id: "p-ok", parentProductId: null, variants: [{ id: "v1" }] },
-        { id: "p-all", parentProductId: null, variants: [{ id: "v2" }] },
-      ],
-    },
-  }),
+  useProducts: () => ({ data: { data: [] } }),
 }));
 
 jest.mock("@/components/InlineCreateProductModal", () => ({
@@ -121,10 +125,14 @@ function classTokens(el: HTMLElement): string[] {
   return el.className.split(/\s+/).filter(Boolean);
 }
 
+const PHONE = 390;
+const DESKTOP = 1280;
+
 describe("InventoryPage: phone cards", () => {
   beforeEach(() => {
     mockSearch = "";
     mockValuation = undefined;
+    setViewportWidth(PHONE);
   });
 
   it("renders one card per product with its Current stock and stock status", () => {
@@ -244,20 +252,24 @@ describe("InventoryPage: phone cards", () => {
     expect(within(cards[0]).getByText(/^24\b/).className).not.toContain("text-danger");
   });
 
-  it("the stock table container is md and up only", () => {
+  // W-1299: this used to pin `hidden md:block` on the table's shell. The table is no longer hidden on a
+  // phone, it is not built there, so the pin is "no table at a phone width" and "nothing hides it at md".
+  it("the stock table is md and up only", () => {
+    setViewportWidth(PHONE);
+    const phone = render(<InventoryPage />);
+    expect(phone.container.querySelector("table")).toBeNull();
+    phone.unmount();
+
+    setViewportWidth(DESKTOP);
     const { container } = render(<InventoryPage />);
     const table = container.querySelector("table") as HTMLElement;
     const shell = table.parentElement as HTMLElement;
-    const tokens = classTokens(shell);
-    expect(tokens).toEqual(expect.arrayContaining(["hidden", "md:block"]));
-    // no bare display class that would show it on a phone
-    for (const bad of ["block", "flex", "grid", "inline-block", "inline-flex"]) {
-      expect(tokens).not.toContain(bad);
-    }
+    expect(classTokens(shell)).not.toContain("hidden");
     expect(within(table).getByText("Current stock")).toBeInTheDocument();
   });
 
   it("colours the table's Current stock cell out, low and ok from the one rule", () => {
+    setViewportWidth(DESKTOP);
     const { container } = render(<InventoryPage />);
     const table = container.querySelector("table") as HTMLElement;
     expect(within(table).getByText(/^0\b/).className).toContain("text-danger");
@@ -373,5 +385,125 @@ describe("InventoryPage: phone cards", () => {
     // no React warning (controlled/uncontrolled, unknown prop) from the select
     expect(errors.mock.calls.map((c) => String(c[0]))).toEqual([]);
     errors.mockRestore();
+  });
+});
+
+// W-1299: the Stock tab used to build BOTH layouts for every product and hide one with CSS, so a
+// 2,500-product catalog mounted 5,000 rows. It builds one now.
+describe("InventoryPage: one layout at a time (W-1299)", () => {
+  const PRODUCTS = 3;
+  const cards = (c: HTMLElement) => c.querySelectorAll("ul.md\\:hidden > li");
+  const tableRows = (c: HTMLElement) => c.querySelectorAll("table tbody tr");
+
+  beforeEach(() => {
+    mockSearch = "";
+    mockValuation = undefined;
+  });
+
+  it("a phone builds the cards and no table", () => {
+    setViewportWidth(PHONE);
+    const { container } = render(<InventoryPage />);
+    expect(cards(container)).toHaveLength(PRODUCTS);
+    expect(container.querySelector("table")).toBeNull();
+    expect(screen.getByLabelText("Sort products by")).toBeInTheDocument();
+  });
+
+  it("a desktop builds the table and no cards", () => {
+    setViewportWidth(DESKTOP);
+    const { container } = render(<InventoryPage />);
+    expect(tableRows(container)).toHaveLength(PRODUCTS);
+    expect(cards(container)).toHaveLength(0);
+    expect(screen.queryByLabelText("Sort products by")).toBeNull();
+  });
+
+  it.each([
+    ["just below md", 767, "cards"],
+    ["exactly md", 768, "table"],
+  ] as const)("%s (%ipx) shows the %s", (_label, width, which) => {
+    setViewportWidth(width);
+    const { container } = render(<InventoryPage />);
+    expect(cards(container)).toHaveLength(which === "cards" ? PRODUCTS : 0);
+    expect(tableRows(container)).toHaveLength(which === "table" ? PRODUCTS : 0);
+  });
+
+  // The hook asks `max-width: 767px`, Tailwind's `md` asks `min-width: 768px`. Between the two (browser zoom,
+  // display scaling) neither matches, so a table shell that still said `hidden md:block` would be built and
+  // hidden: an empty list. jsdom applies no CSS, so the pin is the class itself.
+  it("a fractional width between 767 and 768 builds the table, and no CSS class hides it", () => {
+    setViewportWidth(767.5);
+    const { container } = render(<InventoryPage />);
+    expect(tableRows(container)).toHaveLength(PRODUCTS);
+    expect(cards(container)).toHaveLength(0);
+    for (let el = container.querySelector("table")?.parentElement; el; el = el.parentElement) {
+      expect(el.classList.contains("hidden")).toBe(false);
+    }
+  });
+
+  it("crossing the breakpoint swaps the layout, both ways, and never builds neither or both", () => {
+    const resize = setViewportWidth(PHONE);
+    const { container } = render(<InventoryPage />);
+    expect(cards(container)).toHaveLength(PRODUCTS);
+
+    act(() => resize(DESKTOP));
+    expect(tableRows(container)).toHaveLength(PRODUCTS);
+    expect(cards(container)).toHaveLength(0);
+
+    act(() => resize(PHONE));
+    expect(cards(container)).toHaveLength(PRODUCTS);
+    expect(container.querySelector("table")).toBeNull();
+  });
+
+  it("keeps the sort when the layout swaps", async () => {
+    const user = userEvent.setup();
+    const resize = setViewportWidth(PHONE);
+    const { container } = render(<InventoryPage />);
+    await user.click(screen.getByRole("button", { name: "Sort descending" }));
+    expect(
+      within(cards(container)[0] as HTMLElement).getByText("Acme Zed Kit"),
+    ).toBeInTheDocument();
+
+    act(() => resize(DESKTOP));
+    expect(
+      within(tableRows(container)[0] as HTMLElement).getByText("Acme Zed Kit"),
+    ).toBeInTheDocument();
+  });
+
+  describe("a picked search suggestion scrolls to the product", () => {
+    const scrolled: Element[] = [];
+    const original = window.HTMLElement.prototype.scrollIntoView;
+    beforeEach(() => {
+      scrolled.length = 0;
+      window.HTMLElement.prototype.scrollIntoView = function (this: Element) {
+        scrolled.push(this);
+      };
+      mockSearch = "acme";
+    });
+    afterEach(() => {
+      window.HTMLElement.prototype.scrollIntoView = original;
+    });
+    const pick = (name: RegExp) => {
+      fireEvent.focus(screen.getByPlaceholderText(/search by name, sku, or category/i));
+      const option = within(screen.getByRole("listbox")).getByText(name).closest("button");
+      // The page picks on mousedown, so it fires before the input loses focus.
+      fireEvent.mouseDown(option as HTMLElement);
+    };
+
+    it("on a phone: its card (the table row it used to aim at is not built)", () => {
+      setViewportWidth(PHONE);
+      render(<InventoryPage />);
+      pick(/Acme Boxed Gadget/);
+      expect(scrolled).toHaveLength(1);
+      expect(scrolled[0].tagName).toBe("LI");
+      expect(within(scrolled[0] as HTMLElement).getByText("Acme Boxed Gadget")).toBeInTheDocument();
+    });
+
+    it("on a desktop: its table row, as before", () => {
+      setViewportWidth(DESKTOP);
+      render(<InventoryPage />);
+      pick(/Acme Boxed Gadget/);
+      expect(scrolled).toHaveLength(1);
+      expect(scrolled[0].tagName).toBe("TR");
+      expect(within(scrolled[0] as HTMLElement).getByText("Acme Boxed Gadget")).toBeInTheDocument();
+    });
   });
 });

@@ -111,10 +111,14 @@ describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => 
     authUser = { role: "OPERATOR" };
     renderWithProviders(<DashboardPage />);
     // Unset account: the ONLY disabled reads are the three SHIP-filtered shipping-tile reads.
-    const disabled = reads.filter((r) => r.options?.enabled === false);
+    // The overdue panel now reads the tenant zone, so the page may render twice: count each read once.
+    const once = (rs: typeof reads) => [
+      ...new Map(rs.map((r) => [JSON.stringify([r.hook, r.params]), r])).values(),
+    ];
+    const disabled = once(reads.filter((r) => r.options?.enabled === false));
     expect(disabled.length).toBe(3);
     expect(disabled.every(isShipTile)).toBe(true);
-    expect(reads.filter(isShipTile).length).toBe(3);
+    expect(once(reads.filter(isShipTile)).length).toBe(3);
     expect(screen.getByText("Recent orders")).toBeInTheDocument();
     expect(
       screen.queryByText(/plan doesn't include routes or deliveries/i),

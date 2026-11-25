@@ -4899,3 +4899,49 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the order was written from a partial read; nothing required it to name the evidence it rested on.
 - **Lesson:** **An order that holds a PR or tells a lane what to fix names the board comment ids of the verdict and of the browser evidence it rests on, and is not sent until both are posted. A fix scoped from an interim read is re-scoped when the evidence lands.**
 - **Guard:** owed, NOT BUILT YET: a required field in the lead's order template holding the board comment ids of the verdict and of its evidence. No file in the repo carries it today.
+
+## Archived 2026-11-24 — zero outside citations, no live entry cites them; headroom for L-404..L-408 (bookkeeping for window 46)
+
+### L-326 · 2026-10-20 · testing · a migration that retires a known edge updates, in the same train, every spec that pins the edge's old behavior
+
+- **Symptom:** after a column widen retired a rounding edge (B296, a 4-dp rate), a spec that asserted the old 4-dp clamp stayed in the tree; it was green on its own branch and red only on the combined R5 tree.
+- **Root cause:** the pin lived in a different branch from the migration, so neither branch's run held both the new column and the old assertion, and a diff review cannot see a spec that asserts a behavior the migration removed.
+- **Lesson:** **When a migration retires a known edge (a widen, a dropped clamp, a new constraint), grep the specs for the edge's bug id and its old literal values in the same train and update each pin to the new rule; the pin goes red only on the combined tree, so run it there before the push.**
+- **Guard:** none automatic; the train gate runs the full suite on the combined tree (cf. [[L-264]], [[L-323]]).
+
+### L-328 · 2026-10-21 · security · a same-origin form POST under `Referrer-Policy: no-referrer` sends `Origin: null`; an Origin-equals-Host check then refuses every login
+
+- **Symptom:** after the control dashboard set `Referrer-Policy: no-referrer`, every login was refused with 403, although the page and the form were on the same host.
+- **Root cause:** browsers send `Origin: null` on a form POST when the referrer policy is `no-referrer`. The CSRF check compared the `Origin` header with the served host, so the literal "null" never matched (`apps/control/src/http/headers.ts:13`, `originOk` before `POST /login` in `apps/control/src/http/server.ts`).
+- **Lesson:** **A strict Referrer-Policy changes what `Origin` a form POST carries. An Origin-equals-Host check must either accept `Origin: null` only when `Sec-Fetch-Site: same-origin` is also present, or the page must not use `no-referrer` for its own forms. Test the real form submit in a browser, never a hand-built request with a correct Origin.**
+- **Guard:** none automatic yet; prove any CSRF or header change with a browser form submit. Fixed in `apps/control` (`Referrer-Policy: same-origin`; `originOk` accepts `Origin: null` only with `Sec-Fetch-Site: same-origin`), pinned by `apps/control/test/login-origin.spec.ts`.
+
+### L-366 · 2026-10-31 · testing · a wrapper must accept only values its inner guard accepts; a safety guard is never widened to fit the wrapper
+
+- **Symptom:** a full DB lane run with `RF_DBSPEC_HOST=127.0.0.2` failed 441 of 444 suites after a long wait, each with "Refusing to run DB-backed specs against a target that is not provably local".
+- **Root cause:** `scripts/local-db-specs.mjs` accepts `localhost` or any 127.x.x.x address, but `requireLocalDatabaseUrl` (`apps/api/src/common/testing/db-spec.ts`) allows only localhost, 127.0.0.1, ::1 and postgres. The wrapper passed its own check and the inner guard then refused every suite. The host was chosen to route around a relay holding a port, which is an environment fault.
+- **Lesson:** **Every value a wrapper accepts must also pass the guard behind it: share one allow-list, or pin the wrapper's accepted set against the guard. A safety guard is never edited inside a train; an environment fault (a relay holding a port) is fixed, or routed around on another host, not by widening the guard.**
+- **Guard:** none yet; a spec pinning the wrapper's accepted hosts against the guard is a named follow-up. Cf. [[L-363]].
+
+### L-374 · 2026-11-12 · testing · a spec that counts log lines across a loop owns its clock when the code under test rate-gates by wall time (B5-5, #4274)
+
+- **Symptom:** CI Verify failed `prisma/prisma-call-place.spec.ts` B5-5 with "Expected length: 2, Received length: 3": one call site logged twice. Local runs and the earlier CI runs passed.
+- **Root cause:** `tenant-context-guard.ts` lets one capture key log again after `CAPTURE_GAP_MS` (1000 ms, gate at `:139-140`) and reads time as `opts.now ?? Date.now`, bound once at module load. The spec's 1000-read loop was one line only while it stayed inside that second; a slow runner crossed it. The same unpinned loop sat on master since `8f73cf3880` (the guard itself landed in `9c743285ed`, B1285).
+- **Lesson:** **A test that counts what a time-gated component emits across a loop installs its own clock for the module under test (a `jest.mock` factory that holds `Date.now` while the module loads and restores it in `finally`), and keeps one case that advances the clock past the gap and expects the next emit. Prove the cause by jumping the clock, not by throttling the machine.**
+- **Guard:** `prisma/prisma-call-place.spec.ts` B5-5 (frozen clock) and B5-5b (advance 1001 ms, the same site logs again). Cf. [[L-353]], [[L-370]].
+
+### L-378 · 2026-11-12 · testing · a hand-over test runs the real scan detector with a full-length code; a mocked detector and a short code cannot see a dropped first key (#4302 review)
+
+- **Symptom:** in PR #4302 (merged as 1c22822497, head 15137041c9, with the fix) the order builder's line handle handed focus to product search, but the first key of a scan had already gone to the handle, so the lookup lost its first character (board 6819958479, confirmed in a browser run on 6819958939: 5/5 runs, no line added). The PR's test passed.
+- **Root cause:** the test mocked `BarcodeScannerButton` and scanned "300", which is under the detector's 6-character gate (`sequence.length >= 6`, `BarcodeScannerButton.tsx:110`), so neither the detector nor the dropped key was exercised.
+- **Lesson:** **A test of a focus hand-over during a scan runs the real detector and types a full-length code (13 digits) with the scanner's key gaps, then asserts the lookup got the whole code once. A mock of the component that reads the keys removes the thing under test.**
+- **Guard:** `apps/web/app/(dashboard)/orders/_components/CreateOrderModal.scan-from-handle.test.tsx`: the real detector, a 13-digit code from handles 1 and 2 and from the search box; removing the dispatch in `SortableLines.tsx` turns two cells red. Open: only Enter is sent, a CR+LF ending from a handle is not covered. Cf. [[L-376]].
+
+## Archived 2026-11-25 — zero outside citations, real spec guard; headroom for L-409 (bookkeeping for window 47)
+
+### L-370 · 2026-11-06 · domain · a capture gate on a diagnostic is keyed by every field the reader groups by, under one global budget and a bounded map; a coarser key hides the second site (B1285)
+
+- **Symptom:** the dark tenant-context guard captured one stack per second per `kind|model|op`; one hot call site (1,000 reads) took the second's capture and a second site under the same key never reached the log, though the counter stayed true. Scheduled jobs logged no job name at all.
+- **Root cause:** the gate key named what the counter answers (what kind of access), not what the log answers (where from); a cron job has no request route to name itself.
+- **Lesson:** **Key a rate gate by every field the log line is read by (kind, model, op, call place), put one global per-second budget over it (20) and a backstop on the map size (5,000 entries), and check the shape of the place string before it enters a key. Name each scheduled job's place where the job starts (`@LeaderCron` runs the body at `<area>.<method>`), so the log says which job.**
+- **Guard:** `prisma/tenant-context-guard.spec.ts` rows B5-1 (key without `where`), B5-2 (no budget) and B5-4 (no shape check), each red by mutation; `common/call-place.ts`. Open: B1295 (the two queue processors have no row). Cf. [[L-369]].

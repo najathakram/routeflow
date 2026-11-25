@@ -41,6 +41,7 @@ const DECIDE_TIER_OVERRIDE_CALLERS: Record<string, number> = {
   "orders/orders.service.ts": 2, // create (pack line) + updateOrderItems (substitute)
   "orders/replace-all-line-build.ts": 1, // the create auto-merge's new line
   "invoices/invoice-line-override.ts": 1, // invoice line create / edit (pack line)
+  "estimates/estimate-convert-lines.ts": 1, // W-1266: the estimate convert re-judges the quoted price (a COPY site: stamps only, never asks the right)
 };
 
 /** Exact: the `assertPriceEditAllowed(` calls each override-site file makes. */
@@ -80,14 +81,14 @@ const COMPUTE_COUNTS: Record<string, number> = {
 describe("SA-1034: price-edit capability is checked at every override site", () => {
   const files = sourceFiles(SRC);
 
-  it("decideTierOverride( has exactly 4 callers outside staff-override.ts (a new caller must be reviewed)", () => {
+  it("decideTierOverride( has exactly 5 callers outside staff-override.ts (a new caller must be reviewed)", () => {
     const found: Record<string, number> = {};
     for (const f of files) {
       if (f === join("orders", "staff-override.ts")) continue;
       const n = callCount(read(f), "decideTierOverride");
       if (n > 0) found[f.split("\\").join("/")] = n;
     }
-    expect(Object.values(found).reduce((a, b) => a + b, 0)).toBe(4);
+    expect(Object.values(found).reduce((a, b) => a + b, 0)).toBe(5);
     expect(found).toEqual(DECIDE_TIER_OVERRIDE_CALLERS);
   });
 

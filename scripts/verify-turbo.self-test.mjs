@@ -82,7 +82,18 @@ import {
   planFsReadSpecs,
   planPins,
   planTurboCalls,
+  laneRefusal,
 } from "./verify-turbo.mjs";
+import {
+  PHASE0_PREBUILD,
+  failedTasks,
+  failureReport,
+  isFailFast,
+  notRunLines,
+  phase0Call,
+  tailLines,
+} from "./lib/verify-fail-fast.mjs";
+import { isPositiveGreen } from "./lib/verify-result.mjs";
 import { createRequire } from "node:module";
 
 const { findSameWorkspaceReaders } = createRequire(import.meta.url)(
@@ -187,7 +198,7 @@ function isUnder(root, p, pathImpl = path) {
 // key around the whole chain too: a nested main() that inherited them would write the pass stage with the REAL nonce
 // before the real verify-turbo runs (proven on Linux, where these cases run).
 const AMBIENT_VERIFY_KNOBS =
-  /^(CI|FULL_VERIFY|RF_VERIFY_MODE|RF_VERIFY_RESULT_FILE|RF_VERIFY_NONCE|RF_VERIFY_TREE_KEY|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
+  /^(CI|RF_VERIFY_FAIL_FAST|FULL_VERIFY|RF_VERIFY_MODE|RF_VERIFY_LANE|RF_VERIFY_RESULT_FILE|RF_VERIFY_NONCE|RF_VERIFY_TREE_KEY|VERIFY_EXCLUDE|VERIFY_CONCURRENCY|JEST_MAX_WORKERS|RF_HEAVY_SLOT.*|CAMPAIGN_CHECK_.*)$/;
 const cleanVerifyEnv = (base = scrubbedGitEnv()) =>
   Object.fromEntries(Object.entries(base).filter(([k]) => !AMBIENT_VERIFY_KNOBS.test(k)));
 
@@ -2782,6 +2793,308 @@ check(
   } finally {
     rmSync(fk, { recursive: true, force: true });
   }
+}
+// SA-1250 RF_VERIFY_LANE: one pure planner input. Unset = byte-identical to master (T6, P5);
+// "static" = check-types + lint only (the `chain` lane), never a jest, pin or fs-read call.
+{
+  const base = { scope: FULL, excluded: [CONTROL], splitJest: true };
+  const FROZEN_PRE_LANE_PLAN = JSON.stringify({
+    calls: [
+      { jest: false, args: ["check-types", "lint", NEG] },
+      { jest: true, args: ["test", "test:repo-truth", NEG] },
+    ],
+    note: null,
+  });
+  check(
+    "LN1 T6/P5: lane unset or empty plans byte-identically to the pre-lane planner",
+    [
+      JSON.stringify(planTurboCalls({ ...base, lane: undefined })),
+      JSON.stringify(planTurboCalls({ ...base, lane: "" })),
+    ],
+    // L1 (R-24): a frozen copy of the pre-lane plan, not the same function's output
+    [FROZEN_PRE_LANE_PLAN, FROZEN_PRE_LANE_PLAN],
+  );
+  check(
+    "LN2 static, FULL split: only the check-types + lint call, negative filter kept",
+    planTurboCalls({ ...base, lane: "static" }).calls,
+    [{ jest: false, args: ["check-types", "lint", NEG] }],
+  );
+  check(
+    "LN3 static, FULL unsplit: the bundled call loses its test tasks",
+    planTurboCalls({ ...base, splitJest: false, lane: "static" }).calls,
+    [{ jest: false, args: ["check-types", "lint", NEG] }],
+  );
+  const aff = {
+    scope: { mode: "scoped", workspaces: ["@routeflow/api"], changed: [] },
+    excluded: [],
+    splitJest: true,
+  };
+  check(
+    "LN4 static, AFFECTED: no jest call and no repo-truth tripwire",
+    planTurboCalls({ ...aff, lane: "static" }).calls,
+    [{ jest: false, args: ["check-types", "lint", "--filter=@routeflow/api"] }],
+  );
+  check(
+    "LN5 an unknown lane name is refused, never silently planned as full",
+    (() => {
+      try {
+        planTurboCalls({ ...base, lane: "bogus" });
+        return "no throw";
+      } catch (e) {
+        return /RF_VERIFY_LANE/.test(String(e.message));
+      }
+    })(),
+    true,
+  );
+}
+// M2 (R-24): RF_VERIFY_LANE is CI-only. A stray export in a developer shell must not turn a push into a
+// lint-and-tsc-only "verified" pass.
+check(
+  "LN6 laneRefusal: a lane without CI is refused, with CI or no lane it is not",
+  [laneRefusal("static", {}) !== null, laneRefusal("static", { CI: "1" }), laneRefusal("", {})],
+  [true, null, null],
+);
+check(
+  "LN7 the pre-push hook unsets RF_VERIFY_LANE next to RF_VERIFY_MODE",
+  /unset RF_VERIFY_LANE/.test(readFileSync(join(ROOT, ".husky", "pre-push"), "utf8")),
+  true,
+);
+check(
+  "LN8 cleanVerifyEnv drops an ambient RF_VERIFY_LANE (it is a verify knob)",
+  Object.keys(cleanVerifyEnv({ RF_VERIFY_LANE: "static", KEEP_ME: "1" })),
+  ["KEEP_ME"],
+);
+// R-28 M1: pin the wiring. Deleting the laneRefusal call from main() leaves LN6-LN8 green, so run the real entry point.
+{
+  const r = spawnSync(process.execPath, [join(ROOT, "scripts", "verify-turbo.mjs")], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: { ...cleanVerifyEnv(), RF_VERIFY_LANE: "static" },
+  });
+  check(
+    "LN9 verify-turbo main() refuses RF_VERIFY_LANE without CI (exit 1, is CI-only)",
+    [r.status, /is CI-only/.test(r.stderr)],
+    [1, true],
+  );
+}
+// ---- FF: local pre-push fail-fast (SA-1251 F3). One switch, RF_VERIFY_FAIL_FAST=1, exported by the hook. ----
+{
+  const calls = [
+    { args: ["check-types", "lint"] },
+    { args: ["test"] },
+    { args: ["test:repo-truth"] },
+  ];
+  const run = (statuses, failFast) => {
+    const started = [];
+    const ran = [];
+    const i = { n: 0 };
+    return executePlan(
+      calls,
+      (c) => {
+        started.push(c.args[0]);
+        return statuses[i.n++];
+      },
+      ran,
+      failFast,
+    ).then((status) => ({ status, started, ran }));
+  };
+  check(
+    "FF1 isFailFast is on only for exactly 1",
+    [{}, { RF_VERIFY_FAIL_FAST: "0" }, { RF_VERIFY_FAIL_FAST: "1" }].map(isFailFast),
+    [false, false, true],
+  );
+  check("FF2 T2/P1 fail-fast: call 1 fails, jest never starts", await run([1, 0, 0], true), {
+    status: 1,
+    started: ["check-types"],
+    ran: [1],
+  });
+  check(
+    "FF3 T5/P3 unset: every call still runs, first non-zero is the status",
+    await run([1, 0, 3], false),
+    {
+      status: 1,
+      started: ["check-types", "test", "test:repo-truth"],
+      ran: [1, 0, 3],
+    },
+  );
+  check(
+    "FF3b fail-fast, a null (signal) status stops the run and is a failure",
+    await run([null, 0, 0], true),
+    {
+      status: 1,
+      started: ["check-types"],
+      ran: [null],
+    },
+  );
+  check("FF3c fail-fast, all green runs every call", (await run([0, 0, 0], true)).ran, [0, 0, 0]);
+  check(
+    "FF4 T6/P2 a stopped run is never a pass",
+    [isPositiveGreen([1], 3), isPositiveGreen([0], 3), isPositiveGreen([0, 0, 0], 3)],
+    [false, false, true],
+  );
+  check("FF5 stopped calls are listed as not run, naming the task", notRunLines(calls, [1]), [
+    "verify: test: not run (stopped after check-types lint)",
+    "verify: test:repo-truth: not run (stopped after check-types lint)",
+  ]);
+  check("FF5b nothing is listed when every call ran", notRunLines(calls, [0, 0, 0]), []);
+  const split = planTurboCalls({ scope: { mode: "full" }, splitJest: true });
+  check(
+    "FF6 T3 the split plan is check-types+lint, then jest",
+    split.calls.map((c) => c.args[0]),
+    ["check-types", "test"],
+  );
+  check(
+    "FF6b T5 the unsplit plan is one bundled call",
+    planTurboCalls({ scope: { mode: "full" }, splitJest: false }).calls.map((c) => c.args),
+    [["check-types", "lint", "test", "test:repo-truth"]],
+  );
+  const on = { RF_VERIFY_FAIL_FAST: "1" };
+  check("FF7 T5/P3 phase 0 is off without the switch", phase0Call(split.calls, { env: {} }), null);
+  check(
+    "FF7b T1 phase 0 is lint with the plan's filters, full scope",
+    phase0Call(split.calls, { env: on }),
+    { jest: false, args: ["lint", "--filter=!@routeflow/api"] },
+  );
+  check(
+    "FF7c phase 0 keeps a scoped plan's filters",
+    phase0Call(
+      planTurboCalls({ scope: { mode: "scoped", workspaces: ["@routeflow/web"] }, splitJest: true })
+        .calls,
+      { env: on },
+    ),
+    {
+      jest: false,
+      args: ["lint", "--filter=@routeflow/web"],
+    },
+  );
+  check(
+    "FF7d T8 fast mode plans phase 0 the same way",
+    phase0Call(planTurboCalls({ scope: { mode: "full" }, fast: true }).calls, { env: on }),
+    { jest: false, args: ["lint", "--filter=!@routeflow/api"] },
+  );
+  check(
+    "FF7e a caller that holds the slot gets no phase 0 (lint runs inside it)",
+    phase0Call(split.calls, { env: { ...on, RF_HEAVY_SLOT_TOKEN: "t" } }),
+    null,
+  );
+  check(
+    "FF7f an over-2GB workspace keeps its lint in the slot (full scope: a negative filter)",
+    phase0Call(split.calls, { env: on, heavy: { "@routeflow/web": "2.5 GB" } }),
+    {
+      jest: false,
+      args: ["lint", "--filter=!@routeflow/web"],
+    },
+  );
+  check(
+    "FF7g an over-2GB workspace is dropped from a scoped list; none left is no phase 0",
+    [
+      phase0Call([{ args: ["check-types", "lint", "--filter=@a", "--filter=@b"] }], {
+        env: on,
+        heavy: { "@a": "3 GB" },
+      }),
+      phase0Call([{ args: ["check-types", "lint", "--filter=@a"] }], {
+        env: on,
+        heavy: { "@a": "3 GB" },
+      }),
+    ],
+    [{ jest: false, args: ["lint", "--filter=@b"] }, null],
+  );
+  check(
+    "FF8 --summarize is added only when asked",
+    [buildTurboFlags("", false), buildTurboFlags("", true)],
+    [
+      ["--concurrency=2", "--continue=dependencies-successful"],
+      ["--concurrency=2", "--continue=dependencies-successful", "--summarize"],
+    ],
+  );
+  check(
+    "FF9 tailLines keeps the last 40 lines",
+    [
+      tailLines(Array.from({ length: 100 }, (_, i) => `l${i}`).join("\n") + "\n").split("\n")
+        .length,
+      tailLines("a\nb\n"),
+    ],
+    [40, "a\nb"],
+  );
+  const summary = {
+    tasks: [
+      {
+        taskId: "@routeflow/web#lint",
+        task: "lint",
+        directory: "apps/web",
+        logFile: "apps/web/.turbo/turbo-lint.log",
+        execution: { exitCode: 1 },
+      },
+      { taskId: "@routeflow/api#lint", task: "lint", execution: { exitCode: 0 } },
+      { taskId: "@routeflow/ui#lint", task: "lint", execution: {} },
+    ],
+  };
+  check("FF10 failedTasks lists only non-zero exits", failedTasks(summary), [
+    { taskId: "@routeflow/web#lint", logFile: "apps/web/.turbo/turbo-lint.log" },
+  ]);
+  const ffRoot = mkdtempSync(join(tmpdir(), "ff-"));
+  try {
+    check("FF11 T7 no run summary: one line, no throw", failureReport(ffRoot, 0), [
+      "verify: failing task unknown; see the output above",
+    ]);
+    mkdirSync(join(ffRoot, ".turbo", "runs"), { recursive: true });
+    mkdirSync(join(ffRoot, "apps", "web", ".turbo"), { recursive: true });
+    writeFileSync(join(ffRoot, ".turbo", "runs", "r.json"), JSON.stringify(summary));
+    writeFileSync(
+      join(ffRoot, "apps", "web", ".turbo", "turbo-lint.log"),
+      Array.from({ length: 60 }, (_, i) => `e${i}`).join("\n") + "\n",
+    );
+    const rep = failureReport(ffRoot, 0);
+    check(
+      "FF12 T1/T4/P5 a summary names the task and tails 40 lines of its log",
+      [rep[0], rep[1].split("\n").length, rep[1].split("\n")[39]],
+      ["FAILED: @routeflow/web#lint", 40, "e59"],
+    );
+    check(
+      "FF13 a summary older than the call is not used",
+      failureReport(ffRoot, Date.now() + 60_000),
+      ["verify: failing task unknown; see the output above"],
+    );
+  } finally {
+    rmSync(ffRoot, { recursive: true, force: true });
+  }
+  const hook = readFileSync(join(ROOT, ".husky", "pre-push"), "utf8");
+  check(
+    "FF14 the hook exports the switch next to RF_VERIFY_MODE",
+    /export RF_VERIFY_FAIL_FAST=1/.test(hook),
+    true,
+  );
+  const vt = readFileSync(join(ROOT, "scripts", "verify-turbo.mjs"), "utf8");
+  check(
+    "FF15 P3 verify-turbo reads the switch only through isFailFast(process.env)",
+    /isFailFast\(process\.env\)/.test(vt) && !/RF_VERIFY_FAIL_FAST\s*\?\?\s*"1"/.test(vt),
+    true,
+  );
+  check(
+    "FF16 P4 phase 0 runs before the heavy slot is taken",
+    vt.indexOf("phase0Call(") > 0 && vt.indexOf("phase0Call(") < vt.indexOf("withHeavySlot({"),
+    true,
+  );
+  check(
+    "FF18 M1 phase 0 builds the packages (not the apps) before it lints, so a cold tree has the types scanning needs",
+    [
+      PHASE0_PREBUILD.args,
+      vt.includes("turbo(PHASE0_PREBUILD.args)) || (await turbo(phase0.args)"),
+    ],
+    [["build", "--filter=./packages/*"], true],
+  );
+  check(
+    "FF19 H1 a spawned fixture never inherits the hook's switch",
+    Object.keys(cleanVerifyEnv({ ...scrubbedGitEnv(), RF_VERIFY_FAIL_FAST: "1" })).includes(
+      "RF_VERIFY_FAIL_FAST",
+    ),
+    false,
+  );
+  check(
+    "FF17 the split follows the switch",
+    /splitJest: Boolean\(JEST_MAX_WORKERS\) \|\| failFast/.test(vt),
+    true,
+  );
 }
 console.log(`verify-turbo self-test: ${total - failures} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

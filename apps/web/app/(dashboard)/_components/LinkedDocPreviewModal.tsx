@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { Modal, Button } from "@routeflow/ui/web";
 import { AlertTriangle, ArrowUpRight, Loader2 } from "lucide-react";
 import { isTerminalOrderStatus } from "@routeflow/types";
@@ -270,35 +269,3 @@ export function InvoicePreviewModal({
     </Modal>
   );
 }
-
-/** Small helper so both link-buttons render identically. */
-export function PreviewLinkButton({
-  onClick,
-  children,
-}: {
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 hover:text-brand-700 hover:underline"
-    >
-      {children}
-    </button>
-  );
-}
-
-// Re-export for consumers that want the raw Link (e.g. keyboard users bypassing the modal).
-export const OrderDeepLink = ({
-  orderId,
-  children,
-}: {
-  orderId: string;
-  children: React.ReactNode;
-}) => (
-  <Link href={`/orders/${orderId}`} className="text-brand-600 hover:underline">
-    {children}
-  </Link>
-);

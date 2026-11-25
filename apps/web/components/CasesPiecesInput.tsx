@@ -3,6 +3,8 @@
 import * as React from "react";
 import type { UnitWords } from "@routeflow/pricing";
 import { cn } from "@routeflow/ui/web";
+import { heldNote, useHeldQty, type QtyEntry } from "./use-held-qty";
+import { useSumQty } from "./use-sum-qty";
 
 /**
  * #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
@@ -27,13 +29,15 @@ function useTypedNumber(value: number | null | undefined, commit: (n: number) =>
   const committed = value ?? 0;
   // Only ever "" (a cleared field): any other typed value is committed at once, so the parent's number is what shows.
   const [cleared, setCleared] = React.useState(false);
+  const change = (raw: string) => {
+    setCleared(raw === "");
+    commit(parseInt(raw, 10)); // "" -> NaN: the caller normalises, exactly as before
+  };
   return {
     value: cleared ? "" : String(committed),
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-      const raw = e.target.value;
-      setCleared(raw === "");
-      commit(parseInt(raw, 10)); // "" -> NaN: the caller normalises, exactly as before
-    },
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => change(e.target.value),
+    /** A number worked out elsewhere (a typed sum, Esc, an arrow step) goes in as its text, through this same path. */
+    set: (n: number) => change(String(n)),
     onBlur: () => setCleared(false),
   };
 }
@@ -57,6 +61,10 @@ export interface CasesPiecesInputProps {
   inputClassName?: string;
   /** The counter till: the extra-pieces buttons are full 44 px targets below lg (default: the hit slop only). */
   touchTargets?: boolean;
+  /** SA-1262: hold both fields' text until Enter, Tab or blur (the counter only). Absent = a commit per keystroke. */
+  qtyEntry?: QtyEntry;
+  /** SA-1256: both fields work out a typed sum (`2*3`). The order builder's main list only; absent = number fields. */
+  acceptSums?: boolean;
 }
 
 /**
@@ -80,10 +88,28 @@ export function CasesPiecesInput({
   onSetPieces,
   inputClassName = DEFAULT_INPUT,
   touchTargets = false,
+  qtyEntry,
+  acceptSums,
 }: CasesPiecesInputProps) {
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(pieces);
   const boxesField = useTypedNumber(boxes, onSetBoxes);
   const piecesField = useTypedNumber(pieces, onSetPieces);
+  const heldBoxes = useHeldQty(boxes ?? 0, onSetBoxes, qtyEntry);
+  const heldPieces = useHeldQty(pieces ?? 0, onSetPieces, qtyEntry);
+  const sum = { min: 0, disabled, line: `${boxes}/${pieces}` };
+  const sumBoxes = useSumQty(acceptSums, {
+    ...sum,
+    committed: boxes ?? 0,
+    commit: boxesField.set,
+    plain: boxesField,
+  });
+  const sumPieces = useSumQty(acceptSums, {
+    ...sum,
+    committed: pieces ?? 0,
+    commit: piecesField.set,
+    plain: piecesField,
+    stepMax: unitsPerBox - 1,
+  });
   // F10: the "+ pieces" button unmounts when it opens the field, so focus would fall to the page top; follow it.
   const piecesRef = React.useRef<HTMLInputElement>(null);
   const focusPiecesNext = React.useRef(false);
@@ -104,6 +130,9 @@ export function CasesPiecesInput({
           onChange={boxesField.onChange}
           onBlur={boxesField.onBlur}
           onFocus={(e) => e.target.select()}
+          data-qty-box=""
+          {...heldBoxes}
+          {...sumBoxes.input}
           className={inputClassName}
           title={`Number of whole ${w.pack.lowerOther}`}
         />
@@ -114,6 +143,9 @@ export function CasesPiecesInput({
           {w.packFor(boxes ?? 0)}
         </span>
       </span>
+      {heldNote(heldBoxes, heldPieces)}
+      {sumBoxes.note}
+      {sumPieces.note}
       {showLooseUnits ? (
         <span className="flex items-center gap-1.5 whitespace-nowrap">
           <span className="text-xs text-navy/30">+</span>
@@ -127,6 +159,9 @@ export function CasesPiecesInput({
             onChange={piecesField.onChange}
             onBlur={piecesField.onBlur}
             onFocus={(e) => e.target.select()}
+            data-qty-box=""
+            {...heldPieces}
+            {...sumPieces.input}
             className={inputClassName}
             title={`Extra ${w.base.lowerOther} (less than a full ${w.pack.lower})`}
             aria-label={`Extra ${w.base.lowerOther}`}

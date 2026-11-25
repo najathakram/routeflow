@@ -31,6 +31,11 @@ jest.mock("@/lib/api/inventory", () => ({
 }));
 jest.mock("@/lib/api/products", () => ({
   useProducts: () => ({ data: { data: [{ id: "p1", name: "Widget", sku: "W-1" }] } }),
+  useProductsByIds: () => ({
+    data: [{ id: "p1", name: "Widget", sku: "W-1" }],
+    isLoading: false,
+    isError: false,
+  }),
 }));
 // the existing modals have their own tests; here they are markers
 jest.mock("../../inventory/_components/PurchaseOrdersEditModal", () => ({
@@ -39,8 +44,13 @@ jest.mock("../../inventory/_components/PurchaseOrdersEditModal", () => ({
   ),
 }));
 jest.mock("../../inventory/_components/PurchaseOrdersReceiveModal", () => ({
-  ReceivePOModal: ({ po }: { po: { poNumber: string } }) => (
-    <div data-testid="receive-modal">{po.poNumber}</div>
+  ReceivePOModal: ({ po, onReceived }: { po: { poNumber: string }; onReceived?: () => void }) => (
+    <div data-testid="receive-modal">
+      {po.poNumber}
+      <button type="button" onClick={() => onReceived?.()}>
+        mock received
+      </button>
+    </div>
   ),
 }));
 
@@ -286,5 +296,60 @@ describe("PurchaseOrderDetail", () => {
     expect(screen.queryByText(/boom|AxiosError/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(refetch).toHaveBeenCalled();
+  });
+
+  // SA-1207 P2b (decision item 19): the Bill cell offers to create the supplier bill from this PO.
+  describe("Create supplier bill", () => {
+    const href = (name: string) => screen.getByRole("link", { name }).getAttribute("href");
+
+    it("a sent PO with no bill offers Create supplier bill, to the bill form with this PO", () => {
+      show(po({ status: "SENT" }));
+      expect(href("Create supplier bill")).toBe("/vendor-bills?tab=inventory&fromPo=po1");
+    });
+
+    it("after a partial receive the button says what it bills", () => {
+      show(po({ status: "PARTIAL" }));
+      expect(href("Bill what arrived so far")).toBe("/vendor-bills?tab=inventory&fromPo=po1");
+      expect(screen.queryByRole("link", { name: "Create supplier bill" })).toBeNull();
+    });
+
+    it("a draft, a closed PO, a missing bills plan or a live bill offers no creation", () => {
+      const none = () =>
+        expect(
+          screen.queryByRole("link", { name: /Create supplier bill|Bill what arrived/ }),
+        ).toBeNull();
+      const a = show(po({ status: "DRAFT" }));
+      none();
+      a.unmount();
+      const b = show(po({ status: "CLOSED" }));
+      none();
+      b.unmount();
+      planFlag = { enabled: false, resolved: true, failed: false };
+      const c = show(po({ status: "SENT" }));
+      none();
+      c.unmount();
+      planFlag = { enabled: true, resolved: true, failed: false };
+      show(
+        po({ status: "RECEIVED", vendorBill: { id: "b1", billNumber: "BILL-1", status: "DRAFT" } }),
+      );
+      none();
+      expect(screen.getByRole("link", { name: /Open bill BILL-1/ })).toBeInTheDocument();
+    });
+
+    it("a voided bill leaves the PO billable again", () => {
+      show(
+        po({ status: "RECEIVED", vendorBill: { id: "b1", billNumber: "BILL-1", status: "VOID" } }),
+      );
+      expect(screen.getByRole("link", { name: "Create supplier bill" })).toBeInTheDocument();
+    });
+
+    it("a full receive offers the same button where the success lands", () => {
+      show(po({ status: "SENT" }));
+      fireEvent.click(screen.getByRole("button", { name: "Receive" }));
+      poState = { data: po({ status: "RECEIVED" }), isLoading: false, isError: false };
+      fireEvent.click(screen.getByRole("button", { name: "mock received" }));
+      const strip = screen.getByTestId("po-received-strip");
+      expect(within(strip).getByRole("link", { name: "Create supplier bill" })).toBeInTheDocument();
+    });
   });
 });

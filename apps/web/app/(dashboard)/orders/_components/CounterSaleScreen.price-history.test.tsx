@@ -9,6 +9,7 @@ import { renderTill } from "@/test-utils/render-till";
 import { CounterLineRow } from "./CounterLineRow";
 import { CounterSaleScreen } from "./CounterSaleScreen";
 import { installScanClock } from "@/test-utils/scan-clock";
+import { typeQty } from "@/test-utils/type-qty";
 
 /**
  * W-853 (SA-1021 as amended by SA-1022, SA-940 rule 19): a counter line shows the SAME `PriceHistoryButton` as Create Order
@@ -466,9 +467,7 @@ describe("W-853 Use this price: a line that needs a reason opens the dialog, and
     await scan("CRATE");
     // B1373: no one-tap piece stepper on a boxed line: open the loose-pieces field and type 6
     fireEvent.click(within(lineOf("Crate")).getByRole("button", { name: /^\+ .*: add extra / }));
-    fireEvent.change(within(lineOf("Crate")).getByRole("spinbutton", { name: /^Extra / }), {
-      target: { value: "6" },
-    });
+    typeQty(within(lineOf("Crate")).getByRole("spinbutton", { name: /^Extra / }), "6");
     await waitFor(() => expect(total()).toHaveTextContent("$60.00")); // 48 + 6 x (48/24)
     await pick("Beta Deli");
     fireEvent.click(await priceBtn(await openHistory("Crate"), "$36.00")); // SA-1071 P1: at once

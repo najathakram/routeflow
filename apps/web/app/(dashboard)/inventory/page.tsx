@@ -8,6 +8,7 @@ import { Badge, Button, Modal, ScrollShadow, cn, useToast } from "@routeflow/ui/
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import {
@@ -29,7 +30,7 @@ import {
   useRecomputeCosts,
   type RecomputeCostsResult,
 } from "@/lib/api/inventory";
-import { useProducts, type CostingMethod } from "@/lib/api/products";
+import type { CostingMethod } from "@/lib/api/products";
 import { displayProductName } from "@/lib/product-display";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
@@ -43,6 +44,7 @@ import { SortableTh } from "@/components/SortableTh";
 import { INVENTORY_TABS } from "./_components/inventory-tabs";
 import { useInventoryTab } from "./_components/use-inventory-tab";
 import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
+import type { POProductRow } from "./_components/po-scan-lines";
 import type { Supplier } from "./_components/purchase-orders-shared";
 import { QuickRestockModal } from "./_components/QuickRestockModal";
 import { MODAL_BODY, MODAL_FOOTER, MODAL_FORM, MODAL_PANEL } from "./_components/modal-panel";
@@ -73,13 +75,20 @@ interface StockItem {
    *  typed here — needed so a row's "Assign to variants" split (PR-D) can
    *  hide the cost-override field for STANDARD-costed generics. */
   costingMethod?: CostingMethod;
+  /** W-1299: the family facts ride on the stock overview (no second catalog read). A variant stores only
+   *  its own label in `name`; `parent` is its family when that family is in this tenant, else null.
+   *  `hasVariants` counts ACTIVE variants only. Optional so a row from an older API reads as standalone.
+   *  `kind` (FAMILY / VARIANT / STANDARD) lets Create purchase order drop a family with no catalog read;
+   *  absent from an older API, and then that window reads the catalog itself, as it did. */
+  kind?: string | null;
+  variantName?: string | null;
+  parentProductId?: string | null;
+  parent?: { name: string } | null;
+  hasVariants?: boolean;
 }
 
-/** Parent/variant lookup built off the full product catalog (PR-D) — the
- *  stock-overview row itself carries neither `parentProductId` nor a variant
- *  count, so the "Assign to variants" row action is gated off a side
- *  `useProducts({ includeVariants: true })` fetch instead of widening
- *  `/inventory/overview`. */
+/** Parent/variant lookup for the "Assign to variants" row action (PR-D), keyed by product id and built
+ *  from the stock-overview rows (W-1299). */
 interface VariantInfo {
   parentProductId: string | null;
   hasVariants: boolean;
@@ -201,14 +210,30 @@ function StockTable({
   const rowRefs = React.useRef<Map<string, HTMLTableRowElement>>(new Map());
   const [flashId, setFlashId] = React.useState<string | null>(null);
 
+  // W-1299: ONE layout is built, the one this width shows. Both used to be built for every product (the
+  // other hidden by CSS), so a 2,500-product catalog mounted 5,000 rows. The hook alone decides: the table
+  // shell carries no `hidden md:block`, because the hook asks `max-width: 767px` and Tailwind's `md` asks
+  // `min-width: 768px`, and at a fractional width between the two (zoom, display scaling) neither matches,
+  // which would leave the table built and hidden.
+  const isPhone = useBelowBreakpoint("md");
+  const cardsRef = React.useRef<HTMLDivElement>(null);
+
   React.useEffect(() => {
     if (!scrollToId) return;
-    const el = rowRefs.current.get(scrollToId);
+    // The phone layout has no table rows: find the product's card by its title link. The href is compared as
+    // a string, never placed in a selector, so no id can break the lookup.
+    const href = `/products/${scrollToId}`;
+    const el = isPhone
+      ? (Array.from(cardsRef.current?.querySelectorAll<HTMLElement>("a[href]") ?? [])
+          .find((a) => a.getAttribute("href") === href)
+          ?.closest<HTMLElement>("li") ?? null)
+      : rowRefs.current.get(scrollToId);
     if (!el) return;
     el.scrollIntoView({ block: "center", behavior: "smooth" });
-    setFlashId(scrollToId);
+    // Only table rows draw the flash; setting it on a phone would re-render every card for nothing.
+    if (!isPhone) setFlashId(scrollToId);
     onScrolled?.();
-  }, [scrollToId, sorted, onScrolled]);
+  }, [scrollToId, sorted, onScrolled, isPhone]);
 
   React.useEffect(() => {
     if (!flashId) return;
@@ -229,10 +254,10 @@ function StockTable({
     );
   }
 
-  return (
-    <>
-      {/* Phone cards (below md): same rows, sort and actions as the table; the table takes over from md up. */}
-      <div className="space-y-3 p-3 md:hidden">
+  if (isPhone) {
+    return (
+      // Phone cards (below md): same rows, sort and actions as the table; the table takes over from md up.
+      <div ref={cardsRef} className="space-y-3 p-3 md:hidden">
         <InventorySortControl sortKey={sortKey} sortDir={sortDir} onSort={setSort} />
         <InventoryCards
           items={sorted}
@@ -246,7 +271,12 @@ function StockTable({
           onAssignToVariants={(item) => onAssignToVariants(item as StockItem)}
         />
       </div>
-      <div className="hidden overflow-x-auto md:block">
+    );
+  }
+
+  return (
+    <>
+      <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
             <tr>
@@ -959,7 +989,7 @@ function ForecastingTab({
   fullName,
 }: {
   suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
+  products: POProductRow[];
   fullName: FullName;
 }) {
   const { data: forecastData, isLoading } = useForecasting();
@@ -1348,34 +1378,29 @@ export default function InventoryPage() {
   const { data: rawStockItems = [], isLoading: stockLoading } = useStockOverview();
   const [showRestockModal, setShowPurchaseModal] = React.useState(false);
   const [showAdjustModal, setShowAdjustModal] = React.useState(false);
-  // Whole-catalog read (`limit: 0`): the Stock tab's "Assign to variants" gate and the full product
-  // names (SA-1216) both need every product's parent. Enabled on the Stock tab, or while a picker that
-  // lists products is open from another tab.
-  const { data: variantProductsData } = useProducts(
-    { includeVariants: true, limit: 0 },
-    { enabled: activeTab === "stock" || showAdjustModal || showRestockModal },
-  );
   // SA-1216: a family variant is stored as just its flavor, so every row reads "<Family> - <Variant>"
-  // (the one rule, `displayProductName`) composed from this catalog. `name` is the full name from here
-  // on, so the table, the search, the pickers and the modals agree. Until the catalog arrives a row keeps
-  // its stored name.
-  const stockItems = React.useMemo(() => {
-    const catalog: any[] = variantProductsData?.data ?? [];
-    if (catalog.length === 0) return rawStockItems as StockItem[];
-    const byId = new Map<string, any>(catalog.map((c) => [c.id, c]));
-    return (rawStockItems as StockItem[]).map((i) => {
-      const c = byId.get(i.id);
-      if (!c) return i;
-      const like = {
-        name: i.name,
-        variantName: c.variantName,
-        parentProductId: c.parentProductId,
-        parent: c.parent,
-      };
-      return { ...i, name: displayProductName(like, catalog) };
-    });
-  }, [rawStockItems, variantProductsData]);
-  const fullName: FullName = (id, stored) => stockItems.find((i) => i.id === id)?.name ?? stored;
+  // (the one rule, `displayProductName`). `name` is the full name from here on, so the table, the search,
+  // the pickers and the modals agree.
+  // W-1299: the stock overview carries the family facts itself (variantName, parentProductId, parent,
+  // hasVariants). The page used to read the WHOLE catalog a second time for them (`limit: 0`, several MB
+  // on a large catalog, re-read after every stock or cost write). It reads no catalog now; a test fails if
+  // one comes back (page.catalog-reads.test.tsx).
+  const stockItems = React.useMemo(
+    () =>
+      (rawStockItems as StockItem[]).map((i) => {
+        const full = displayProductName(i);
+        return full === i.name ? i : { ...i, name: full };
+      }),
+    [rawStockItems],
+  );
+  const nameById = React.useMemo(
+    () => new Map(stockItems.map((i) => [i.id, i.name] as const)),
+    [stockItems],
+  );
+  const fullName: FullName = React.useCallback(
+    (id, stored) => nameById.get(id) ?? stored,
+    [nameById],
+  );
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
   // The pickers (Adjust Stock, Quick Restock, Create PO) list the active products. The stock
   // overview above already carries every field they read (id, name, sku, unit, currentStock,
@@ -1384,26 +1409,19 @@ export default function InventoryPage() {
     () => (stockItems as StockItem[]).filter((i) => i.isActive),
     [stockItems],
   );
-  // Parent/variant lookup for the Stock tab's "Assign to variants" row action
-  // (PR-D) — a separate fetch (not the active-only `products` above, and not
-  // `/inventory/overview`, which selects neither field) since it needs every
-  // product's `parentProductId` plus `includeVariants` to know which rows are
-  // splittable generics.
-  //
-  // Still a whole-catalog read (`limit: 0`): no endpoint says which products have variants (there is
-  // no family filter on GET /products, and /inventory/overview selects neither parentProductId nor
-  // the variants), and the Stock table shows every row, so the answer is needed for any of them.
-  // It is only consumed by the Stock tab, so it is enabled only while that tab is showing.
+  // Parent/variant lookup for the Stock tab's "Assign to variants" row action (PR-D): which rows are
+  // splittable generics. W-1299: read off the stock overview rows (`parentProductId`, and `hasVariants`,
+  // which the server counts from ACTIVE variants of this tenant, the same rule the catalog list used).
   const variantInfoById = React.useMemo(() => {
     const map = new Map<string, VariantInfo>();
-    for (const p of variantProductsData?.data ?? []) {
-      map.set(p.id, {
-        parentProductId: p.parentProductId ?? null,
-        hasVariants: (p.variants?.length ?? 0) > 0,
+    for (const i of rawStockItems as StockItem[]) {
+      map.set(i.id, {
+        parentProductId: i.parentProductId ?? null,
+        hasVariants: i.hasVariants === true,
       });
     }
     return map;
-  }, [variantProductsData]);
+  }, [rawStockItems]);
 
   // When set, the next AdjustStockModal opens with this product pre-selected.
   // Cleared after the modal closes so the next "Adjust Stock" header click
@@ -2037,11 +2055,14 @@ export default function InventoryPage() {
           <ForecastingTab
             fullName={fullName}
             suppliers={suppliers as Supplier[]}
-            products={products.map((p: any) => ({
+            products={products.map((p) => ({
               id: p.id,
               name: p.name,
               sku: p.sku,
               unitsPerBox: p.unitsPerBox ?? null,
+              // W-1299: Create purchase order reads the family facts off these rows (no catalog read).
+              kind: p.kind,
+              parentProductId: p.parentProductId ?? null,
             }))}
           />
         </Tabs.Content>

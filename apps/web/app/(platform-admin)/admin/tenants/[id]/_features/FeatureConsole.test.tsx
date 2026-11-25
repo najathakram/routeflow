@@ -217,6 +217,24 @@ describe("FeatureConsole — mode selector (test 2)", () => {
 });
 
 describe("FeatureConsole — tier change preview → confirm → apply (test 3)", () => {
+  // SA-1254 V2 (P-41, R-56 F3): the tier list never offers a key awaiting its catalog row.
+  it("offers LITE and the selectable tiers, but never CORE or ALL_IN", async () => {
+    render(
+      <FeatureConsole
+        tenant={{ id: TENANT_ID, plan: "GROWTH" }}
+        onChangePlan={jest.fn()}
+        onCustomise={jest.fn()}
+      />,
+    );
+    await screen.findByText("compliance");
+
+    const tier = screen.getByLabelText("Tier") as HTMLSelectElement;
+    const values = Array.from(tier.options).map((o) => o.value);
+    expect(values).toEqual(expect.arrayContaining(["LITE", "STARTER", "GROWTH", "SCALE"]));
+    expect(values).not.toContain("CORE");
+    expect(values).not.toContain("ALL_IN");
+  });
+
   it("opens the preview drawer with changed[]; confirm calls the existing plan-change action exactly once", async () => {
     const onChangePlan = jest.fn().mockResolvedValue(undefined);
     mockPreview.mockResolvedValueOnce(previewFixture({ planKey: "STARTER" }));

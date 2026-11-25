@@ -1,6 +1,11 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { PLAN_KEYS } from "@routeflow/types";
-import { selectablePlanKeys, usePlanOptions, withCurrentPlan } from "./usePlanOptions";
+import {
+  fallbackPlanKeys,
+  selectablePlanKeys,
+  usePlanOptions,
+  withCurrentPlan,
+} from "./usePlanOptions";
 
 const mockFetchPlanCatalog = jest.fn();
 jest.mock("@/lib/api/platform-pricing", () => ({
@@ -65,11 +70,25 @@ describe("usePlanOptions", () => {
     });
   });
 
+  // SA-1254 V2 (P-41): the fallback also leaves out every key no published catalog holds yet (CORE,
+  // ALL_IN). The lists are literal on purpose: a list derived from PLAN_KEYS would follow a leak.
   it("falls back to PLAN_KEYS without the frozen LITE when the catalog cannot be read", async () => {
     mockFetchPlanCatalog.mockRejectedValue(new Error("down"));
     const { result } = renderHook(() => usePlanOptions());
     await waitFor(() => expect(result.current.unavailable).toBe(true));
-    expect(result.current.planKeys).toEqual(PLAN_KEYS.filter((k) => k !== "LITE"));
+    expect(result.current.planKeys).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]);
+  });
+
+  it("SA-1254 V2: the fallback never offers a key awaiting its catalog row", () => {
+    expect(PLAN_KEYS).toEqual(expect.arrayContaining(["CORE", "ALL_IN"]));
+    expect(fallbackPlanKeys()).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]);
+    expect(fallbackPlanKeys({ includeLite: true })).toEqual([
+      "LITE",
+      "STARTER",
+      "GROWTH",
+      "SCALE",
+      "ENTERPRISE",
+    ]);
   });
 
   it("falls back to PLAN_KEYS without the frozen LITE when no catalog row is eligible", async () => {
@@ -80,6 +99,6 @@ describe("usePlanOptions", () => {
     });
     const { result } = renderHook(() => usePlanOptions());
     await waitFor(() => expect(result.current.unavailable).toBe(true));
-    expect(result.current.planKeys).toEqual(PLAN_KEYS.filter((k) => k !== "LITE"));
+    expect(result.current.planKeys).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]);
   });
 });

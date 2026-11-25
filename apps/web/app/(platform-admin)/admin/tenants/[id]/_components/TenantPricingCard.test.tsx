@@ -8,6 +8,7 @@ const mockUpdate = jest.fn();
 jest.mock("@/lib/api/platform-pricing", () => ({
   ...jest.requireActual("@/lib/api/platform-pricing"),
   fetchTenantPricing: (id: string) => mockFetchPricing(id),
+  fetchOpenPaymentLink: () => Promise.resolve(null),
   updateTenantPriceOverride: (id: string, body: unknown) => mockUpdate(id, body),
   createTenantCheckout: jest.fn(),
 }));

@@ -108,8 +108,6 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Buyer portal spend (invoices less credit notes) | [`api`](api/landing-2026-11-23-w39.md) → `buyer/buyer-spend.ts` |
 | Product display name (Family - Variant) | [`api`](api/landing-2026-11-23-w39.md) → `packages/types/api/product-name.ts` |
 | Inventory dialog panel (scroll, keep Save in view) | [`web`](web/landing-2026-11-23-w39.md) → `inventory/_components/modal-panel.ts` |
-| Heavy-slot priority, max-cpu file; campaign-check timeout | [`api`](api/landing-2026-11-23-w39.md) → `scripts/lib/heavy-slot.mjs`, `campaign-force-run.cjs` |
-| Receipt group (what one payment covered, read-only) | [`api`](api/landing-2026-11-23-w40.md) → `invoices/payment-receipt-group.ts` |
 | Returned items and one word for credit (counter) | [`api`](api/landing-2026-11-23-w40.md) → `orders/counter-sale/counter-return-read.ts`, `common/credit-words.ts` |
 | Generated-dirs list for cross-workspace scans | [`api`](api/landing-2026-11-23-w40.md) → `scripts/lib/generated-dirs.cjs` |
 | Create PO scan bar | [`web`](web/landing-2026-11-23-w40.md) → `inventory/_components/PurchaseOrderScanBar.tsx` |
@@ -119,11 +117,30 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Buyer statement credit total and list | [`api`](api/landing-2026-11-23-w41.md) → `buyer/buyer-statement-view.ts` |
 | Counter tender intent and on-account button | [`web`](web/landing-2026-11-23-w41.md) → `lib/counter-part-pay.ts` |
 | Buyer portal credit tile | [`web`](web/landing-2026-11-23-w41.md) → `app/buyer/portal/[seller]/finances/page.tsx` |
-| Payments list one row per check (receipt tag) | [`api`](api/landing-2026-11-23-w42.md) → `invoices/payment-receipt-group.ts` |
 | Receipt screen, View receipt link and toast | [`web`](web/landing-2026-11-23-w42.md) → `app/(dashboard)/finance/payments/[id]/page.tsx` |
 | Buyer invoice account rows, one renderer | [`web`](web/landing-2026-11-23-w42.md) → `components/InvoiceAccountRows.tsx` |
 | Buyer payment status word | [`web`](web/landing-2026-11-23-w42.md) → `lib/check-badge.ts` |
 | Ops board comments and rf inbox | [`api`](api/landing-2026-11-23-w42.md) → `tools/ops-monitor/lib/inbox.mjs` |
+| Group receipt card (receipt fields vs this payment) | [`web`](web/landing-2026-11-24-w43.md) → `app/(dashboard)/finance/payments/[id]/page.tsx` |
+| Buyer portal home landing (0 orders to Invoices) | [`web`](web/landing-2026-11-24-w43.md) → `app/buyer/portal/[seller]/page.tsx` |
+| PO create retry, edit line product lock | [`web`](web/landing-2026-11-24-w43.md) → `inventory/_components/PurchaseOrderLinesTable.tsx` |
+| Alias pack memory and void date columns (schema only) | [`api`](api/landing-2026-11-24-w43.md) → `prisma/schema/catalog.prisma`, `finance.prisma` |
+| Local mail TLS pair, fleet CLI | [`api`](api/landing-2026-11-24-w43.md) → `scripts/lib/mailpit-tls.mjs`, `scripts/fleet.mjs` |
+| Pre-push verify fail-fast (RF_VERIFY_FAIL_FAST) | [`api`](api/landing-2026-11-24-w44.md) → `scripts/lib/verify-fail-fast.mjs` |
+| Edited test assertions flagger | [`api`](api/landing-2026-11-24-w44.md) → `scripts/review-test-edits.mjs` |
+| Dashboard overdue days, new-sale quantity | [`web`](web/landing-2026-11-24-w44.md) → `app/(dashboard)/dashboard/page.tsx` |
+| Supplier bill from a purchase order (prefill, by-hand lines) | [`web`](web/landing-2026-11-24-w45.md) → `lib/po-prefill.ts` |
+| PO bill plan, one line one unit | [`packages`](packages/landing-2026-11-24-w45.md) → `pricing/src/po-bill-lines.ts` |
+| Document number year (tenant calendar year) | [`api`](api/landing-2026-11-24-w46.md) → `src/common/number-year.ts` |
+| Return credit last-paid cap | [`api`](api/landing-2026-11-24-w46.md) → `src/returns/inline-returns-pricing.ts` |
+| Counter quantity box hold (Enter, Tab, blur) | [`web`](web/landing-2026-11-24-w46.md) → `components/use-held-qty.ts` |
+| Invoices Follow up view, due-soon filter | [`web`](web/landing-2026-11-24-w46.md) → `app/(dashboard)/invoices/follow-up-view.tsx` |
+| Plan key ladder (CORE, ALL_IN) | [`api`](api/landing-2026-11-24-w46.md) → `src/billing/plan-catalog.constants.ts` |
+| Heavy-slot max-mem file, prod-migrate-resolve | [`api`](api/landing-2026-11-24-w46.md) → `scripts/lib/heavy-slot.mjs` |
+| Open payment link, one Checkout Session slot per business | [`api`](api/landing-2026-11-25-w47.md) → `src/billing/open-checkout-session.ts` |
+| Plan display name (no raw plan key in customer text) | [`packages`](packages/landing-2026-11-25-w47.md) → `pricing/src/plan-display-name.ts` |
+| Estimate allowed moves (one table, api mirror) | [`packages`](packages/landing-2026-11-25-w47.md) → `types/api/estimate-moves.ts` |
+| Strict test fake, 5k-product perf seed | [`api`](api/landing-2026-11-25-w47.md) → `src/testing/strict-fake.ts`, `scripts/perf/seed-catalog-5k.mjs` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →

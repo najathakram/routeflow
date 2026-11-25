@@ -12,7 +12,14 @@ import { MENU_LINKS, NAV_LINKS } from "./site-frame-nav";
 // the same /site/css/site.css). The only moving parts are the two the ready-made pages have too:
 // the phone menu, and "Sign in" becoming "Open dashboard" when a presence cookie says someone is
 // signed in (the rule is resolveLandingTarget, the one public/site/js/auth-nav.js mirrors).
-export function SiteFrameHeader({ current }: { current?: string }) {
+export function SiteFrameHeader({
+  current,
+  hideTrial = false,
+}: {
+  current?: string;
+  /** A store arriving from an invite or verify link is not a prospect: no marketing button. */
+  hideTrial?: boolean;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [dashboard, setDashboard] = useState<string | null>(null);
@@ -49,7 +56,7 @@ export function SiteFrameHeader({ current }: { current?: string }) {
 
   // The sign-up page is the trial: no second trial button in its header or menu.
   const p = pathname ?? "";
-  const showTrial = !(p === "/signup" || p.startsWith("/signup/"));
+  const showTrial = !hideTrial && !(p === "/signup" || p.startsWith("/signup/"));
   const signIn = dashboard ?? "/login";
   const signInLabel = dashboard ? "Open dashboard" : "Sign in";
 

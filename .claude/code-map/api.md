@@ -149,3 +149,7 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-11-23-w40.md](api/landing-2026-11-23-w40.md) | Window 40: read-only receipt group, PO detail parent and stock, counter returned items and CREDIT_WORDS mirror, shared generated-dirs list, nav layout types |
 | [api/landing-2026-11-23-w41.md](api/landing-2026-11-23-w41.md) | Window 41: PO lot lines in whole packs (create, edit, receive), the one available-credit helper and its readers, buyer credit total |
 | [api/landing-2026-11-23-w42.md](api/landing-2026-11-23-w42.md) | Window 42: receipt tag on the payments list, buyer invoice account rows, counter return proof on Postgres, ops-monitor comments and inbox |
+| [api/landing-2026-11-24-w43.md](api/landing-2026-11-24-w43.md) | Window 43: alias pack memory and void date columns, receipt reader pins, local mail TLS generated, fleet CLI |
+| [api/landing-2026-11-24-w44.md](api/landing-2026-11-24-w44.md) | Window 44: verify fail-fast switch, test-assertion edit flagger (root tooling) |
+| [api/landing-2026-11-24-w46.md](api/landing-2026-11-24-w46.md) | Window 46: tenant-year document numbers, return credit last-paid cap, PO receive FAMILY refusal, tenant SMTP redaction, products by ids, estimate convert re-judge, invoices Follow up, CORE and ALL_IN plan keys, migrate-resolve, heavy-slot max-mem |
+| [api/landing-2026-11-25-w47.md](api/landing-2026-11-25-w47.md) | Window 47: one open Checkout Session slot (W-1338), plan display names, 5k-product perf seed and query-count ratchet, strict test fake, estimate moves table |

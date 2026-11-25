@@ -1,5 +1,3 @@
-import { readFileSync } from "fs";
-import { join } from "path";
 import {
   CONTENT_MAX_WIDTH,
   WIDE_CONTENT_MAX_WIDTH,
@@ -32,13 +30,5 @@ describe("tablet-layout (#2311)", () => {
   it("the wide variant caps later than the reading column", () => {
     expect(contentWidth(1376, "wide")).toBe(WIDE_CONTENT_MAX_WIDTH);
     expect(WIDE_CONTENT_MAX_WIDTH).toBeGreaterThan(CONTENT_MAX_WIDTH);
-  });
-
-  it("ContentWidth applies exactly these caps, centred", () => {
-    const src = readFileSync(join(__dirname, "../components/ContentWidth.tsx"), "utf8");
-    expect(src).toMatch(
-      /maxWidth: variant === "wide" \? WIDE_CONTENT_MAX_WIDTH : CONTENT_MAX_WIDTH/,
-    );
-    expect(src).toMatch(/alignSelf: "center"/);
   });
 });

@@ -43,6 +43,7 @@ import protectedSlugsLib from "./lib/protected-slugs.cjs";
 import liveTargetGuard from "./lib/live-target-guard.cjs";
 import payingTenant from "./lib/paying-tenant.cjs";
 import { isTestTenant } from "../../../scripts/lib/test-tenants.cjs";
+import planKeyMirror from "./lib/feature-registry-mirror.cjs";
 
 const { loadProtectedSlugs } = protectedSlugsLib;
 const { assertWritableTenant, confirmProtectedOverride, refuseRetiredFlags, ProtectedTenantError } =
@@ -54,21 +55,16 @@ const { protectedArm } = payingTenant;
 // `main()`'s own try/finally.
 let databaseUrl;
 
-// Re-typed copy of LEGACY_PLAN_KEY_ALIASES / normalizePlanKey / findPlanDefinition
-// (apps/api/src/billing/plan-catalog.constants.ts) — this .mjs script cannot value-import that
+// LEGACY_PLAN_KEY_ALIASES / normalizePlanKey / findPlanDefinition
+// (apps/api/src/billing/plan-catalog.constants.ts): this .mjs script cannot value-import that
 // TS source (no-runtime-workspace-imports.spec.ts's constraint: the API compiles via `nest
 // build`, which does not bundle workspace deps, and this file also isn't compiled at all — it
-// runs directly via `node`). Mirrors the same duplicate-by-hand pattern already used twice in
-// this file (BILLING_EVENTS.RECONCILIATION_SNAPSHOT_BACKFILLED above, REG-743-N8) and by
-// backfill-tenant-class.mjs's own `classify()`. Keep in sync by hand if the TS source's alias
-// map ever changes. Historical plan keys from catalog versions published before the
-// Starter/Growth/Scale rename — a pinned older PlanVersion's own definitions, or a tenant's
-// stored planKey, can legitimately carry either the old or the new name.
-export const LEGACY_PLAN_KEY_ALIASES = {
-  TEAM: "GROWTH",
-  BUSINESS: "SCALE",
-  PROFESSIONAL: "SCALE",
-};
+// runs directly via `node`). SA-1204 C2b (P-41): the alias map is read from the one JS home,
+// lib/feature-registry-mirror.cjs, instead of a hand copy here. The two helpers below keep this
+// script's own pass-through semantics. Historical plan keys from catalog versions published
+// before the Starter/Growth/Scale rename — a pinned older PlanVersion's own definitions, or a
+// tenant's stored planKey, can legitimately carry either the old or the new name.
+export const LEGACY_PLAN_KEY_ALIASES = planKeyMirror.LEGACY_PLAN_KEY_ALIASES;
 
 // Mirrors normalizePlanKey(): Object.hasOwn (not a bare index) so "constructor"/"__proto__"/
 // "toString"/etc. can never resolve to an inherited Object.prototype member instead of falling

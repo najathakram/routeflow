@@ -1,4 +1,4 @@
-import { fromCents, roundMoney } from "@routeflow/pricing";
+import { fromCents, planDisplayName, roundMoney } from "@routeflow/pricing";
 import { BRAND } from "../common/brand";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import { webBaseUrl } from "../config/web-base-url";
@@ -285,12 +285,14 @@ export function checkoutPlanNotAppliedTemplate(params: {
   requestedPlanKey: string;
 }): BillingEmailTemplate {
   const manageUrl = billingSettingsUrl();
+  // SA-1254 V7 (P-45): the plan's name ("Essentials"), never its key ("CORE").
+  const planName = planDisplayName(params.requestedPlanKey) ?? "your new plan";
   const html = baseLayout({
     tagline: "Payment received, plan not changed",
     bodyHtml: `
       <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Hi ${escapeHtml(params.adminName)},</p>
       <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-        We received your payment for <strong>${escapeHtml(params.requestedPlanKey)}</strong> on
+        We received your payment for <strong>${escapeHtml(planName)}</strong> on
         <strong>${escapeHtml(params.businessName)}</strong>, but your plan was NOT changed: it was
         downgraded after you started that checkout, and we never override a newer plan choice.
         Please review your plan below or contact support and we will sort it out.
@@ -298,7 +300,7 @@ export function checkoutPlanNotAppliedTemplate(params: {
       ${ctaButtonHtml(manageUrl, "Review your plan")}
     `,
   });
-  const text = `Hi ${params.adminName},\n\nWe received your payment for ${params.requestedPlanKey} on ${params.businessName}, but your plan was NOT changed: it was downgraded after you started that checkout, and we never override a newer plan choice. Please review your plan below or contact support and we will sort it out.\n\nReview your plan: ${manageUrl}`;
+  const text = `Hi ${params.adminName},\n\nWe received your payment for ${planName} on ${params.businessName}, but your plan was NOT changed: it was downgraded after you started that checkout, and we never override a newer plan choice. Please review your plan below or contact support and we will sort it out.\n\nReview your plan: ${manageUrl}`;
   return {
     subject: `Payment received, plan not changed — ${params.businessName}`,
     html,

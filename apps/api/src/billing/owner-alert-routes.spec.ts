@@ -28,9 +28,9 @@ import { SubscriptionMutationService } from "./subscription-mutation.service";
 
 /** controller route -> the mutation method it calls, the method that holds its body, and the kind it mails. */
 const ALERTING = {
-  subscribe: { method: "subscribe", body: "subscribe", kind: "subscribe" },
+  subscribe: { method: "subscribe", body: "subscribeLocked", kind: "subscribe" },
   upgrade: { method: "upgrade", body: "upgradeLocked", kind: "upgrade" },
-  downgrade: { method: "downgrade", body: "downgrade", kind: "downgrade" },
+  downgrade: { method: "downgrade", body: "downgradeLocked", kind: "downgrade" },
   cancel: { method: "cancel", body: "cancel", kind: "cancel" },
   resume: { method: "resume", body: "resume", kind: "resume" },
 } as const;
@@ -111,7 +111,7 @@ describe("owner alerts on tenant billing routes", () => {
       expect(methodBody(service, "resume")).toMatch(
         /if \(sub\.cancelAtPeriodEnd \|\| sub\.downgradeToPlanKey\) await this\.alertNoCard\(tenantId, "resume"\)/,
       );
-      expect(methodBody(service, "downgrade")).toMatch(
+      expect(methodBody(service, "downgradeLocked")).toMatch(
         /if \(sub\.downgradeToPlanKey !== targetPlanKey\) await this\.alertNoCard\(tenantId, "downgrade"\)/,
       );
     });

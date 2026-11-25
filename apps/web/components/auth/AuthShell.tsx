@@ -19,6 +19,7 @@ export interface AuthShellProps {
 // The sign-in, sign-up and password pages: the site's header and footer around one card. The
 // header's logo and name already lead home, so the page has no back link of its own.
 export function AuthShell({
+  audience,
   kicker,
   title,
   lead,
@@ -28,7 +29,7 @@ export function AuthShell({
   children,
 }: AuthShellProps) {
   return (
-    <SiteFrame width="narrow">
+    <SiteFrame width="narrow" hideTrial={audience === "retailer"}>
       <div className="rf-auth">
         <div className="rf-auth-card">
           {logoUrl ? (

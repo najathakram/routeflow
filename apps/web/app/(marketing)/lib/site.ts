@@ -19,10 +19,6 @@ export const site = {
   email: SITE_BRAND.email,
 };
 
-// The one label for the call button, on every page (COPY.md section 0 and 4: "video call", never "demo").
-// Sentence case, 3 words, starts with a verb. W4 adds TRIAL_CTA beside it.
-export const DEMO_CTA = "Book a video call";
-
 export interface MarketingRoute {
   slug: string;
   label: string;
@@ -68,12 +64,6 @@ export const routes: MarketingRoute[] = [
     description: `The terms that apply to accessing and using the ${BRAND.name} platform.`,
   },
 ];
-
-/**
- * The primary-nav routes, in header order (Contact sits before Company: the retired marketing
- * stylesheet hid the LAST link from 901 to 1100 px and that had to stay Company; the order is kept).
- */
-export const NAV_SLUGS = ["product", "pricing", "company", "contact"] as const;
 
 /** Slugs excluded from the sitemap (legal shells, R9/T9). */
 // privacy/terms were excluded while they were placeholder shells; now that they carry the

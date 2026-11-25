@@ -19,6 +19,7 @@ import {
   TIMEOUT_EXIT_CODE,
 } from "./lib/heavy-slot.mjs";
 import { loadLocalSaEnv } from "./lib/local-sa-env.mjs";
+import { ensureMailpitTls } from "./lib/mailpit-tls.mjs";
 import {
   STACK_IMAGES,
   buildStamp,
@@ -111,6 +112,18 @@ if (unknown.length) {
 }
 
 const env = { ...process.env };
+
+// SA-1248: the local mail TLS pair is generated per machine (never tracked). Ensure it before any
+// mode that builds, proves or exercises the stack; a missing tool stops here, command never run.
+if (flags.has("--build-sha") || flags.has("--proof-stack") || flags.has("--smtp-specs")) {
+  try {
+    const { generated } = ensureMailpitTls({ repoRoot: REPO_ROOT });
+    console.error(`mailpit tls: ${generated ? "generated" : "kept"}`);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+}
 
 if (flags.has("--db")) {
   // The Railway proxy variables win over DATABASE_URL in scripts/lib/railway-db-url.mjs, so a

@@ -174,7 +174,7 @@ export function CustomerStatementCard({
                 {statement.transactions.map((tx, i) => {
                   // Server rows: INVOICE / CREDIT_NOTE / ADVANCE_PAYMENT
                   // (payments fold into invoices). `runningBalance` is
-                  // per-row remaining: owed / unused / in wallet.
+                  // per-row remaining: owed / unused / credit.
                   const isInvoice = tx.type === "INVOICE";
                   const meta = isInvoice
                     ? { label: "Invoice", cls: "bg-blue-100 text-blue-700" }
@@ -185,7 +185,7 @@ export function CustomerStatementCard({
                     ? "owed"
                     : tx.type === "CREDIT_NOTE"
                       ? "unused"
-                      : "in wallet";
+                      : "credit";
                   return (
                     <tr key={tx.id ?? i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/60"}>
                       <td className="px-8 py-2.5 text-xs text-navy/70">

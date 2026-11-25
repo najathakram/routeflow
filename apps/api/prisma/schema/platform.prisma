@@ -78,6 +78,10 @@ model TenantSubscription {
   couponId              String?
   couponEndsAt          DateTime?
   couponSyncedAt        DateTime?
+  // SA-1261 rule 9 (P-40): price-protection dates. Nullable, no reader or writer yet.
+  priceProtectedUntil   DateTime?
+  priceNoticeAt         DateTime?
+  foundingLockUntil     DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 

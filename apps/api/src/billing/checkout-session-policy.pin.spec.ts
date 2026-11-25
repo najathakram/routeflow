@@ -16,7 +16,7 @@ const HELPER_FILE = path.join("billing", "checkout-session-params.ts");
 
 /** Sites wrapped via the helper: file (relative to src, posix) -> exact number of create calls. */
 const WRAPPED: Record<string, number> = {
-  "billing/billing.service.ts": 1, // BillingService.createCheckoutSession (inline price_data, anchored)
+  "billing/open-checkout-session.ts": 1, // openCheckoutSession: the ONE ordinary create (admin link + Pay now, W-1338)
   "billing/catchup-checkout.service.ts": 1, // CatchupCheckoutService.open (prorated catch-up session)
 };
 

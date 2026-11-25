@@ -764,6 +764,13 @@ model ProductAlias {
   rawText           String
   productId         String?
   expenseCategoryId String?
+  // SA-1207 S1 (migration 20261122000000_product_alias_pack_memory): the supplier pack answer for this text, SCHEMA ONLY.
+  // Nothing reads or writes these until S2a. packSize = pieces in ONE supplier unit (null = never answered; CHECK > 0 in raw SQL).
+  // splitFamilyId = the family this text is spread across (kept apart from productId). splitRecipe = [{ productId, pieces }].
+  // Plain scalars, no FK.
+  packSize          Int?
+  splitFamilyId     String?
+  splitRecipe       Json?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
