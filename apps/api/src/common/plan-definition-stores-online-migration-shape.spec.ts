@@ -5,7 +5,7 @@ import { join } from "path";
  * SA-1269 (P-40b): "PlanDefinition"."storesOnlineIncluded", one nullable INTEGER in one additive migration folder
  * (null = no cap). No default, no backfill, no reader or writer yet. Pins the SQL text.
  */
-const FOLDER = "20261124000100_plan_definition_stores_online_included";
+const FOLDER = "20261124000300_plan_definition_stores_online_included";
 const MIGRATIONS_DIR = join(__dirname, "..", "..", "prisma", "migrations");
 const sql = readFileSync(join(MIGRATIONS_DIR, FOLDER, "migration.sql"), "utf8");
 const executable = sql
@@ -17,8 +17,8 @@ const squash = (s: string) => s.replace(/\s+/g, " ").trim();
 describe("SA-1269 P-40b migration folder", () => {
   it("sorts after the newest earlier migration and owns its timestamp", () => {
     const all = readdirSync(MIGRATIONS_DIR).filter((n) => n !== "migration_lock.toml");
-    expect(FOLDER > "20261122000100_void_date").toBe(true);
-    expect(all.filter((n) => n.startsWith("20261124000100"))).toEqual([FOLDER]);
+    expect(FOLDER > "20261124000200_po_charges").toBe(true);
+    expect(all.filter((n) => n.startsWith("20261124000300"))).toEqual([FOLDER]);
   });
 
   it("is one bounded transaction", () => {
