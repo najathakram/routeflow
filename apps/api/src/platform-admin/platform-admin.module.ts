@@ -14,6 +14,8 @@ import { AutoLocksAdminController } from "./auto-locks-admin.controller";
 import { AiUsageAdminController } from "./ai-usage-admin.controller";
 import { AiUsageAdminService } from "./ai-usage-admin.service";
 import { EntitlementSweepController } from "./entitlement-sweep.controller";
+import { StaffRefundController } from "./staff-refund.controller";
+import { StaffRefundService } from "./staff-refund.service";
 import { RfInvoicesAdminService } from "./rf-invoices.service";
 import { AppConfig } from "../config/configuration";
 import { EmailModule } from "../email/email.module";
@@ -43,6 +45,7 @@ import { BillingModule } from "../billing/billing.module";
     AutoLocksAdminController,
     AiUsageAdminController,
     EntitlementSweepController,
+    StaffRefundController,
   ],
   providers: [
     PlatformAdminService,
@@ -52,6 +55,7 @@ import { BillingModule } from "../billing/billing.module";
     PlatformAdminBuyersService,
     RfInvoicesAdminService,
     AiUsageAdminService,
+    StaffRefundService,
   ],
   exports: [PlatformConfigService],
 })

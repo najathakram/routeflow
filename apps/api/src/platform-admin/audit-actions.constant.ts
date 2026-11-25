@@ -136,6 +136,9 @@ export const AdminAuditAction = {
   // SA-789 F1: a regulated return or credit note could not be booked on the ledger (its sold line resolves
   // nowhere); meta = ids only. The return / credit note itself went through.
   REGULATED_REVERSAL_UNBOOKED: "REGULATED_REVERSAL_UNBOOKED",
+  // R-2 (SA-1297): a super admin recorded a staff refund of a tenant's yearly payment (a record only; nothing moved). Written in
+  // the same transaction as the refund.staff BillingEvent; meta = { invoiceId, providerRef, refundDate, message }.
+  TENANT_STAFF_REFUND_RECORDED: "TENANT_STAFF_REFUND_RECORDED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -216,6 +219,7 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   APP_LINKS_UPDATED: "Mobile app links updated",
   TENANT_AI_CAP_CHANGED: "AI allowance changed",
   REGULATED_REVERSAL_UNBOOKED: "Regulated reversal not booked (support to resolve)",
+  TENANT_STAFF_REFUND_RECORDED: "Staff refund recorded",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */
