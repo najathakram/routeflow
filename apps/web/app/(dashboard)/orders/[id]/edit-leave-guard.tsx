@@ -56,22 +56,60 @@ export function isEditDirty(
 }
 
 /**
+ * The address a click would leave this page for, or null when the click is not a leave: not a plain left click, not
+ * on a link, a new tab or a download, another site (the browser's own unload prompt covers that), or the page itself
+ * (a hash or a same-page link).
+ */
+export function leavingHref(e: MouseEvent): string | null {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+    return null;
+  const anchor = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+  if (!anchor || anchor.hasAttribute("download")) return null;
+  const target = anchor.getAttribute("target");
+  if (target && target !== "_self") return null;
+  let url: URL;
+  try {
+    url = new URL(anchor.getAttribute("href") ?? "", window.location.href);
+  } catch {
+    return null;
+  }
+  if (url.origin !== window.location.origin) return null;
+  if (url.pathname === window.location.pathname && url.search === window.location.search)
+    return null;
+  return url.pathname + url.search + url.hash;
+}
+
+/**
  * Edit Items must never lose typed edits silently. While `dirty`: a sentinel history entry is pushed once so browser
  * Back stays on the order and asks "Discard your changes?" (Keep editing is focused); a tab close/reload gets the
  * browser's own prompt; `requestLeave(proceed)` lets an in-page link ask the same question. Same shape as the counter's
  * `useCounterBackGuard`. Discard runs `onDiscard()` (drops the working copy), then walks past the sentinel and the re-push.
+ *
+ * A click on any link that leaves the page (the side menu, a breadcrumb, a row link) is asked the same question
+ * (UX audit 2026-11-24 F03: a typed price was lost by one click on "Customers" with no prompt). The hook listens on
+ * the document in the capture phase, so no link on the page has to be wired by hand and none can be forgotten.
+ * `options.what` names the record in the dialog ("order", "product"); `options.navigate` is the page's router push,
+ * used to follow the link after Discard (without it the browser loads the address).
  */
 export function useEditLeaveGuard(
   dirty: boolean,
   onDiscard: () => void,
   onNoPreviousPage: () => void,
+  options: { what?: string; navigate?: (href: string) => void } = {},
 ): { requestLeave: (proceed: () => void) => boolean; dialog: React.ReactNode } {
   const [pending, setPending] = React.useState<(() => void) | null>(null);
-  const live = React.useRef({ onDiscard, onNoPreviousPage });
-  live.current = { onDiscard, onNoPreviousPage };
+  const what = options.what ?? "order";
+  const live = React.useRef({ onDiscard, onNoPreviousPage, navigate: options.navigate });
+  live.current = { onDiscard, onNoPreviousPage, navigate: options.navigate };
   const wasDirty = React.useRef(false);
   const popping = React.useRef(false);
   const viaLink = React.useRef(false);
+  /**
+   * The history steps this guard took itself (walking off its sentinel). `history.back()` lands later, as its own
+   * event; if the form is dirty again by then (the person typed back to the saved value and on past it), that
+   * event must not be read as the person pressing Back.
+   */
+  const ownPops = React.useRef(new WeakSet<Event>());
 
   /** Row 604 S2: walk off the extra sentinel entry once, so the next Back goes where the person expects. */
   const popSentinel = React.useCallback((then?: () => void) => {
@@ -79,8 +117,9 @@ export function useEditLeaveGuard(
     popping.current = true;
     window.addEventListener(
       "popstate",
-      () => {
+      (e) => {
         popping.current = false;
+        ownPops.current.add(e);
         then?.();
       },
       { once: true },
@@ -104,8 +143,20 @@ export function useEditLeaveGuard(
         window.location.href,
       );
     }
-    const onPop = () => {
+    const pushSentinel = () =>
+      window.history.pushState(
+        { ...window.history.state, [SENTINEL]: true },
+        "",
+        window.location.href,
+      );
+    const onPop = (e: PopStateEvent) => {
       if (popping.current) return;
+      if (ownPops.current.has(e)) {
+        // Our own step off the sentinel landed after the form went dirty again: no question, and put the sentinel
+        // back so a real Back is still asked.
+        if (!window.history.state?.[SENTINEL]) pushSentinel();
+        return;
+      }
       viaLink.current = false;
       window.history.pushState(
         { ...window.history.state, [SENTINEL]: true },
@@ -140,6 +191,24 @@ export function useEditLeaveGuard(
     [dirty],
   );
 
+  // Links: while dirty, a plain left click on an <a> that goes to another page asks first.
+  React.useEffect(() => {
+    if (!dirty || typeof document === "undefined") return;
+    const onClick = (e: MouseEvent) => {
+      const href = leavingHref(e);
+      if (href === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      viaLink.current = true;
+      setPending(() => () => {
+        if (live.current.navigate) live.current.navigate(href);
+        else window.location.assign(href);
+      });
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, [dirty]);
+
   const dialog = (
     <ConfirmDialog
       open={pending !== null}
@@ -152,11 +221,52 @@ export function useEditLeaveGuard(
         go?.();
       }}
       title="Discard your changes?"
-      description="You have unsaved edits to this order. If you leave now they are lost."
+      description={`You have unsaved edits to this ${what}. If you leave now they are lost.`}
       confirmLabel="Discard"
       cancelLabel="Keep editing"
       variant="danger"
     />
   );
   return { requestLeave, dialog };
+}
+
+/**
+ * The order page's guard: with no previous page, Back goes to the orders list; after Discard a clicked link is
+ * followed through the page's router. Kept here so the order page (at its size limit) carries one line for it.
+ */
+export function useOrderEditLeaveGuard(
+  dirty: boolean,
+  onDiscard: () => void,
+  router: { push: (href: string) => void },
+) {
+  return useEditLeaveGuard(dirty, onDiscard, () => router.push("/orders"), {
+    navigate: (href) => router.push(href),
+  });
+}
+
+/**
+ * The guard for a form held as one draft object (the product Details form). The draft as it stood when editing began
+ * is the baseline: the form is dirty only when the draft differs from it, so an opened and untouched form asks
+ * nothing. `cancel` is a ref the page points at its own cancel function (declared after this hook runs); Discard
+ * calls it. With no previous page, Back goes to `backHref`; after Discard a clicked link is followed by the router.
+ */
+export function useDraftEditLeaveGuard(
+  what: string,
+  draft: unknown,
+  editing: boolean,
+  router: { push: (href: string) => void },
+  backHref: string,
+) {
+  const seed = React.useRef<string | null>(null);
+  const cancel = React.useRef<() => void>(() => {});
+  const now = JSON.stringify(draft);
+  if (!editing) seed.current = null;
+  else if (seed.current === null) seed.current = now;
+  const guard = useEditLeaveGuard(
+    editing && now !== seed.current,
+    () => cancel.current(),
+    () => router.push(backHref),
+    { what, navigate: (href) => router.push(href) },
+  );
+  return { dialog: guard.dialog, cancel };
 }
