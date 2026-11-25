@@ -30,7 +30,9 @@ describe("paymentRefusalCopy (mobile reads the ruled words)", () => {
     const copy = paymentRefusalCopy(err({ code: "INVOICE_NOT_PAYABLE", reason }));
     expect(copy).toBe(sentence);
     expect(copy).not.toContain("raw server text");
-    expect(INVOICE_NOT_PAYABLE_COPY[reason]).toBe(sentence);
+    expect(INVOICE_NOT_PAYABLE_COPY[reason as keyof typeof INVOICE_NOT_PAYABLE_COPY]).toBe(
+      sentence,
+    );
   });
 
   it("INVOICE_NOT_PAYABLE with no or an unknown reason makes no claim about the status", () => {

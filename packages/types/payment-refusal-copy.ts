@@ -7,9 +7,10 @@
  * Staff press "Send" on the invoice page, so the DRAFT sentence says "Send".
  */
 import { API_ERROR_CODES } from "./api/error-codes";
+import type { InvoiceStatus } from "./api/enums";
 
 /** INVOICE_NOT_PAYABLE: one sentence per body `reason` (DRAFT, VOID, WRITTEN_OFF). */
-export const INVOICE_NOT_PAYABLE_COPY: Record<string, string> = {
+export const INVOICE_NOT_PAYABLE_COPY: Partial<Record<InvoiceStatus, string>> = {
   DRAFT: "This invoice is still a draft. Send it to the customer first, then record the payment.",
   VOID: "This invoice is void, so it can't take a payment.",
   WRITTEN_OFF: "This invoice was written off, so it can't take a payment.",
@@ -34,7 +35,7 @@ export function paymentRefusalCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.INVOICE_NOT_PAYABLE) {
     return typeof reason === "string" &&
       Object.prototype.hasOwnProperty.call(INVOICE_NOT_PAYABLE_COPY, reason)
-      ? INVOICE_NOT_PAYABLE_COPY[reason]
+      ? (INVOICE_NOT_PAYABLE_COPY[reason as InvoiceStatus] as string)
       : INVOICE_NOT_PAYABLE_DEFAULT_COPY;
   }
   if (code === API_ERROR_CODES.DRAFT_PAYMENT_HAS_EXCESS) return DRAFT_PAYMENT_HAS_EXCESS_COPY;
