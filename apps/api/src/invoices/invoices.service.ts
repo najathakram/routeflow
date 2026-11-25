@@ -277,7 +277,7 @@ import type { InvoiceEditHeaders } from "./locked-invoice-edit";
 import { resolveLineUnits } from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
-import { standaloneAllocationTotals } from "./standalone-payment-totals";
+import { assertDraftHasNoExcess, standaloneAllocationTotals } from "./standalone-payment-totals";
 import { retryCreditTx, retryOnTxConflict } from "../common/tx-retry";
 import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
@@ -285,6 +285,7 @@ import {
   lockInvoicesForPayment,
   nextSentStatus,
   paymentRefusal,
+  standalonePaymentRefusal,
   sendRefusal,
   voidRefusal,
   externalPaidOn,
@@ -4970,15 +4971,7 @@ export class InvoicesService {
     const status = dto.status ?? "PAID";
     // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
     const { excess } = standaloneAllocationTotals(dto);
-    // B1385: a DRAFT payment's leftover would book an advance with no source: spendable credit from unconfirmed money.
-    if (status !== "PAID" && excess > 0.001) {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.DRAFT_PAYMENT_HAS_EXCESS,
-        message:
-          "A draft payment cannot be more than the invoices it pays. Allocate the full amount, or record it as paid.",
-        excess,
-      });
-    }
+    assertDraftHasNoExcess(status, excess); // B1385: a draft's leftover must never become an advance
     // 681 (R5-5): the AdvancePayment below stores dto.customerId, and `allocations: []` (an advance-only receipt)
     // skips the per-allocation customer match, so the customer is proven here at the writer, before the payment
     // number is reserved and before the tx opens. Covers the payment-request callers too. No ArrayMinSize.
@@ -5031,11 +5024,7 @@ export class InvoicesService {
           });
           if (!invoice)
             throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
-          // SA-404f F1: on the LOCKED row. B1385: a standalone payment never lands on a DRAFT invoice (its status
-          // would not move); this is the standalone site only, paymentRefusal stays shared with pickup and counter.
-          const refused =
-            paymentRefusal(invoice.status) ??
-            (invoice.status === "DRAFT" && opts?.source !== "STRIPE_SETTLE" ? "a draft" : null);
+          const refused = standalonePaymentRefusal(invoice.status, opts?.source); // SA-404f F1 + B1385: LOCKED row
           if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
           // SA-1124 PR-1b: staff money waits for the price review; money that already moved at the processor never does
           if (opts?.source !== "STRIPE_SETTLE" && invoice.orderId)
