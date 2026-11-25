@@ -2,6 +2,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { estimateClosedLine, estimateRevisionTag } from "@routeflow/types/api/estimate-moves";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios";
 import {
@@ -9,6 +10,7 @@ import {
   useConvertEstimateToInvoice,
   useDeclineEstimate,
   useEstimate,
+  useRevertEstimateToDraft,
   useSendEstimate,
   useVoidEstimate,
 } from "../../../lib/api/estimates";
@@ -41,6 +43,7 @@ export default function EstimateDetailScreen() {
   const convertMut = useConvertEstimateToInvoice();
   const rw = useRestrictionWarningRetry(); // row 510: staff warning + override dialog
   const voidMut = useVoidEstimate();
+  const revertMut = useRevertEstimateToDraft();
 
   if (isLoading || !estimate) {
     return (
@@ -55,6 +58,8 @@ export default function EstimateDetailScreen() {
 
   const s = estimatePillFor(estimate.status);
   const flags = estimateActionFlags(estimate.status);
+  const revTag = estimateRevisionTag(estimate.status, estimate.revision);
+  const closedLine = estimateClosedLine(estimate.status);
 
   const handleSend = () => {
     if (!id) return;
@@ -109,6 +114,26 @@ export default function EstimateDetailScreen() {
     });
   };
 
+  // Mirrors web: an accepted quote is the customer's yes, so confirm before undoing it; a sent one moves at once.
+  const handleRevert = () => {
+    if (!id) return;
+    const run = () =>
+      revertMut.mutate(id, {
+        onSuccess: () => {
+          showToast(`${estimate.estimateNumber} is a draft again`);
+          refetch();
+        },
+        onError: onErr,
+      });
+    if (estimate.status !== "ACCEPTED") return run();
+    confirm(
+      "Move the accepted estimate back to draft?",
+      "As a draft, it needs to be sent and accepted again.",
+      run,
+      { confirmText: "Back to draft" },
+    );
+  };
+
   const handleVoid = () => {
     if (!id) return;
     confirm(
@@ -140,6 +165,7 @@ export default function EstimateDetailScreen() {
             <Pill variant={s.variant} dot>
               {s.label}
             </Pill>
+            {revTag ? <Text style={styles.contact}>{revTag}</Text> : null}
             <Text style={styles.customer}>{estimate.customer?.businessName ?? "Customer"}</Text>
             {estimate.customer?.contactName ? (
               <Text style={styles.contact}>{estimate.customer.contactName}</Text>
@@ -152,7 +178,12 @@ export default function EstimateDetailScreen() {
           </View>
 
           {/* Actions */}
-          {flags.canSend || flags.canAcceptDecline || flags.canConvert || flags.canVoid ? (
+          {closedLine ? <Text style={styles.contact}>{closedLine}</Text> : null}
+          {flags.canSend ||
+          flags.canAcceptDecline ||
+          flags.canConvert ||
+          flags.canRevert ||
+          flags.canVoid ? (
             <View style={styles.actionsGrid}>
               {flags.canSend ? (
                 <ActionTile
@@ -181,6 +212,13 @@ export default function EstimateDetailScreen() {
                   icon="swap-horizontal-outline"
                   label={convertMut.isPending ? "Converting…" : "Convert to invoice"}
                   onPress={handleConvert}
+                />
+              ) : null}
+              {flags.canRevert ? (
+                <ActionTile
+                  icon="arrow-undo-outline"
+                  label={revertMut.isPending ? "Moving…" : "Back to draft"}
+                  onPress={handleRevert}
                 />
               ) : null}
               {flags.canVoid ? (

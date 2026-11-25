@@ -305,6 +305,8 @@ packages/types/api/fulfilment-methods.ts | FulfillPath | 1 | pending:B3 | object
 packages/types/api/fulfilment-methods.ts | ItemStatus | 3 | pending:B3 | array {PENDING,CONFIRMED,DELIVERED}: order-status lists that SA-1101 REFUSED in OrderStatus re-scored against ItemStatus
 packages/types/api/fulfilment.ts | FulfillPath | 1 | pending:B3 | union {ROUTE,SHIP,PICKUP}
 packages/types/api/inline-returns.ts | ReturnStatus | 1 | pending:B3 | union {RECEIVED,REFUNDED,REJECTED,CANCELLED}
+apps/api/src/estimates/estimate-moves.ts | EstimateStatus | 4 | subset | array {DRAFT,SENT,ACCEPTED}: the estimate allowed-moves TABLE (SA-1263), the api's copy of the shared table, pinned equal by estimate-moves.parity.spec.ts; each list is one action's from-states, not the status set
+packages/types/api/estimate-moves.ts | EstimateStatus | 4 | subset | array {DRAFT,SENT,ACCEPTED}: the estimate allowed-moves TABLE (SA-1263), each list is one action's from-states, not the status set
 packages/types/api/messaging-delivery.ts | NotificationEvent | 1 | subset | array {STAFF_NEW_ORDER,BUYER_ORDER_EDITED,BUYER_ORDER_CANCELLED}: the three emails the office gets about a customer order (SA-1063), the one list the rules card and EMAIL_KIND_VALUES share
 packages/types/api/messaging-matrix.ts | MessageChannel | 1 | pending:B3 | array {EMAIL,WHATSAPP,SMS,PORTAL}
 packages/types/api/permissions.ts | OperatorPermissionGroup | 1 | pending:B3 | object {ORDERS,DISPATCH,CUSTOMERS,CATALOG,PRICING,REGU…

@@ -1,7 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { EstimatesService } from "./estimates.service";
-import * as EstimatesServiceModule from "./estimates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
@@ -9,6 +8,15 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { computeLineSubtotal } from "@routeflow/pricing";
+import {
+  ESTIMATE_ACTION_VALUES,
+  ESTIMATE_MOVES,
+  ESTIMATE_STATUS_VALUES,
+  TERMINAL_ESTIMATE_STATUSES,
+  canMoveEstimate,
+  type EstimateAction,
+  type EstimateStatus,
+} from "@routeflow/types";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { NO_PRICE_RIGHTS } from "../common/testing/no-rights-actor";
 
@@ -105,7 +113,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       // finding 2 — { id, status }, no tenant key) so a stray extra key would
       // fail this test instead of silently passing.
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith({
-        where: { id: "est-1", status: { notIn: ["CONVERTED"] } },
+        where: { id: "est-1", status: { in: [...ESTIMATE_MOVES.accept] } },
         data: { status: "ACCEPTED" },
       });
       // A losing claim must never fall through to the final read/return.
@@ -120,7 +128,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
 
       expect(result).toEqual({ id: "est-1", status: "ACCEPTED" });
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith({
-        where: { id: "est-1", status: { notIn: ["CONVERTED"] } },
+        where: { id: "est-1", status: { in: [...ESTIMATE_MOVES.accept] } },
         data: { status: "ACCEPTED" },
       });
     });
@@ -149,7 +157,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       );
 
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith({
-        where: { id: "est-1", status: "ACCEPTED" },
+        where: { id: "est-1", status: { in: [...ESTIMATE_MOVES.convert] } },
         data: { status: "CONVERTED" },
       });
       expect(prisma.invoice.create).not.toHaveBeenCalled();
@@ -186,7 +194,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       expect(inv).toMatchObject({ id: "inv-1", customerId: "cust-1", status: "DRAFT" });
       expect(prisma.invoice.create).toHaveBeenCalledTimes(1);
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith({
-        where: { id: "est-1", status: "ACCEPTED" },
+        where: { id: "est-1", status: { in: [...ESTIMATE_MOVES.convert] } },
         data: { status: "CONVERTED" },
       });
 
@@ -500,7 +508,6 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
   // the TERMINAL_ESTIMATE_STATUSES export) doesn't exist until fix-b70 lands.
   const VOID_MSG = "Converted estimates cannot be voided";
   const VOID_STATUS = "DECLINED";
-  const TERMINAL_NOT_IN = ["CONVERTED", VOID_STATUS];
 
   // Builds a single stateful in-memory estimate row shared by every mocked
   // prisma call (forTenant() and tenantTransaction()'s `tx` are literally the
@@ -525,14 +532,17 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       const predicate = args?.where?.status;
       let matches: boolean;
       if (predicate && typeof predicate === "object") {
-        if ("notIn" in predicate) matches = !predicate.notIn.includes(row.status);
+        if ("in" in predicate) matches = predicate.in.includes(row.status);
+        else if ("notIn" in predicate) matches = !predicate.notIn.includes(row.status);
         else if ("not" in predicate) matches = row.status !== predicate.not;
         else matches = false;
       } else {
         matches = row.status === predicate;
       }
       if (!matches) return Promise.resolve({ count: 0 });
-      Object.assign(row, args.data);
+      for (const [k, v] of Object.entries(args.data) as [string, any][]) {
+        row[k] = v && typeof v === "object" && "increment" in v ? row[k] + v.increment : v; // { increment: n }
+      }
       return Promise.resolve({ count: 1 });
     });
 
@@ -561,7 +571,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       await expect(service.send("est-1")).rejects.toThrow("Converted estimates cannot be re-sent");
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ id: "est-1", status: { notIn: TERMINAL_NOT_IN } }),
+          where: expect.objectContaining({ id: "est-1", status: { in: [...ESTIMATE_MOVES.send] } }),
           data: { status: "SENT" },
         }),
       );
@@ -578,7 +588,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       await expect(service.send("est-1")).rejects.toThrow("Declined estimates cannot be re-sent");
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ id: "est-1", status: { notIn: TERMINAL_NOT_IN } }),
+          where: expect.objectContaining({ id: "est-1", status: { in: [...ESTIMATE_MOVES.send] } }),
           data: { status: "SENT" },
         }),
       );
@@ -637,7 +647,10 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       );
       expect(prisma.estimate.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ id: "est-1", status: { notIn: TERMINAL_NOT_IN } }),
+          where: expect.objectContaining({
+            id: "est-1",
+            status: { in: [...ESTIMATE_MOVES.decline] },
+          }),
           data: { status: "DECLINED" },
         }),
       );
@@ -671,43 +684,24 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       await expect(service.accept("nope")).rejects.toThrow("Estimate not found");
     });
 
-    // Ownership note (owner/lead ruling 2026-09-13): an earlier fix round made
-    // accept() exclude the full TERMINAL_ESTIMATE_STATUSES set (CONVERTED +
-    // DECLINED/voided) and mutated the two accept() tests above this describe
-    // block to match — silently dropping the pre-existing DECLINED->ACCEPTED
-    // invariant instead of catching the regression. This test is the restored
-    // original PIN-B70 T26 (bug-test-plan.md), un-skipped: accept() must keep
-    // allowing DECLINED->ACCEPTED (staff can override a decline OR un-void an
-    // estimate — the schema has no separate VOID enum value, so "voided" and
-    // "declined" are the same status and cannot be told apart without a schema
-    // change, which is out of scope for F27). The laundering chain B70 exists to
-    // close does not depend on this exclusion: voidEstimate()/send()/decline()
-    // each refuse to act on an already-CONVERTED row, and convertToInvoice()'s
-    // own ACCEPTED->CONVERTED claim is the actual gate against a second invoice.
-    it("PIN-B70 accept() still allows DECLINED->ACCEPTED", async () => {
-      prisma.estimate.updateMany.mockResolvedValue({ count: 1 });
-      prisma.estimate.findUniqueOrThrow.mockResolvedValue({ id: "est-1", status: "ACCEPTED" });
-
-      await expect(service.accept("est-1")).resolves.toEqual({ id: "est-1", status: "ACCEPTED" });
-
-      const whereStatus = prisma.estimate.updateMany.mock.calls[0][0].where.status;
-      expect(whereStatus).not.toEqual(
-        expect.objectContaining({ notIn: expect.arrayContaining([VOID_STATUS]) }),
-      );
-    });
-
-    // The test above stubs updateMany to unconditionally resolve { count: 1 },
-    // which pins the WHERE shape but never proves a real DECLINED row would
-    // actually match it. This one drives the same claim through
-    // createLaunderingHarness's stateful predicate evaluator instead, so the
-    // transition only succeeds if the notIn check genuinely admits DECLINED —
-    // this is the invariant an earlier fix round broke once (L-132); a
-    // structural-only assertion could not have caught that.
-    it("PIN-B70 accept() genuinely succeeds from a DECLINED row (end-to-end via the laundering harness)", async () => {
+    // SA-1263 A1 (W-1335), T6: this was PIN-B70 T26 ("accept() still allows DECLINED->ACCEPTED"), kept because the
+    // schema had no VOID value, so a void (stored as DECLINED) could not be told from a decline. #4391 added VOID,
+    // and the move was the void-to-invoice path: void, accept, convert minted an invoice from a closed quote. It is
+    // closed now. The claim is an allowlist (`in`), so a status nobody listed has no move.
+    it("T6 accept() refuses a DECLINED (voided) estimate, naming Declined", async () => {
       const row = createLaunderingHarness(prisma, { id: "est-1", status: VOID_STATUS });
 
-      await expect(service.accept("est-1")).resolves.toEqual({ id: "est-1", status: "ACCEPTED" });
-      expect(row.status).toBe("ACCEPTED");
+      await expect(service.accept("est-1")).rejects.toThrow(
+        "Declined estimates cannot be re-accepted",
+      );
+      expect(row.status).toBe(VOID_STATUS);
+    });
+
+    it("T6 accept() refuses a VOID row too (VOID is absorbing)", async () => {
+      const row = createLaunderingHarness(prisma, { id: "est-1", status: "VOID" });
+
+      await expect(service.accept("est-1")).rejects.toThrow("Void estimates cannot be re-accepted");
+      expect(row.status).toBe("VOID");
     });
   });
 
@@ -871,6 +865,140 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
     });
   });
 
+  // SA-1263 A1 pins M1-M4: ONE table, read by the api claim and by both clients.
+  describe("ESTIMATE_MOVES (SA-1263 A1)", () => {
+    // Master's answer for every cell at 0762a57ee4, except the cells SA-1263 names: DECLINED -> ACCEPTED closed and
+    // VOID with no moves. The cells below are typed by hand on purpose: a changed cell must fail here.
+    const LITERAL: Record<EstimateAction, EstimateStatus[]> = {
+      edit: ["DRAFT"],
+      send: ["DRAFT", "SENT", "ACCEPTED"],
+      accept: ["DRAFT", "SENT", "ACCEPTED"],
+      decline: ["DRAFT", "SENT", "ACCEPTED"],
+      void: ["DRAFT", "SENT", "ACCEPTED"],
+      revert: ["SENT", "ACCEPTED"],
+      convert: ["ACCEPTED"],
+    };
+
+    it("M1 every (status, action) cell equals the literal table", () => {
+      const cells = (read: (a: EstimateAction, st: EstimateStatus) => boolean) =>
+        Object.fromEntries(
+          ESTIMATE_ACTION_VALUES.map((a) => [
+            a,
+            ESTIMATE_STATUS_VALUES.filter((st) => read(a, st)),
+          ]),
+        );
+      expect(cells((a, st) => canMoveEstimate(st, a))).toEqual(LITERAL);
+      expect(cells((a, st) => ESTIMATE_MOVES[a].includes(st))).toEqual(LITERAL);
+    });
+
+    it("M2 the table has a row for every action and lists only real statuses", () => {
+      expect(Object.keys(ESTIMATE_MOVES).sort()).toEqual([...ESTIMATE_ACTION_VALUES].sort());
+      for (const from of Object.values(ESTIMATE_MOVES)) {
+        for (const st of from) expect(ESTIMATE_STATUS_VALUES).toContain(st);
+      }
+    });
+
+    it("M3 CONVERTED and VOID have no move out, in the table and in every api claim", async () => {
+      expect([...TERMINAL_ESTIMATE_STATUSES].sort()).toEqual(["CONVERTED", "VOID"]);
+      for (const st of TERMINAL_ESTIMATE_STATUSES) {
+        for (const a of ESTIMATE_ACTION_VALUES) expect(canMoveEstimate(st, a)).toBe(false);
+        const call: Record<string, (id: string) => Promise<unknown>> = {
+          send: (id) => service.send(id),
+          accept: (id) => service.accept(id),
+          decline: (id) => service.decline(id),
+          void: (id) => service.voidEstimate(id),
+          revert: (id) => service.revertToDraft(id),
+        };
+        for (const [name, run] of Object.entries(call)) {
+          const row = createLaunderingHarness(prisma, {
+            id: "est-1",
+            status: st,
+            revision: 1,
+            items: [],
+          });
+          await expect(run("est-1")).rejects.toThrow(BadRequestException);
+          expect({ name, status: row.status, revision: row.revision }).toEqual({
+            name,
+            status: st,
+            revision: 1,
+          });
+        }
+      }
+    });
+
+    it("M1 the api claims agree with the table: each action succeeds from exactly its listed statuses", async () => {
+      const call: Record<string, (id: string) => Promise<unknown>> = {
+        send: (id) => service.send(id),
+        accept: (id) => service.accept(id),
+        decline: (id) => service.decline(id),
+        void: (id) => service.voidEstimate(id),
+        revert: (id) => service.revertToDraft(id),
+      };
+      const succeeded: Record<string, EstimateStatus[]> = {};
+      for (const [name, run] of Object.entries(call)) {
+        succeeded[name] = [];
+        for (const st of ESTIMATE_STATUS_VALUES) {
+          createLaunderingHarness(prisma, { id: "est-1", status: st, revision: 1, items: [] });
+          // eslint-disable-next-line no-await-in-loop
+          await run("est-1").then(
+            () => succeeded[name].push(st),
+            () => undefined,
+          );
+        }
+      }
+      expect(succeeded).toEqual({
+        send: LITERAL.send,
+        accept: LITERAL.accept,
+        decline: LITERAL.decline,
+        void: LITERAL.void,
+        revert: LITERAL.revert,
+      });
+    });
+
+    // Send, revert, send, accept, convert: one invoice, at revision 2 (a re-send never bumps it, the revert does).
+    it("M4 send, revert, send, accept, convert gives exactly one invoice, at revision 2", async () => {
+      const row = createLaunderingHarness(prisma, {
+        id: "est-1",
+        tenantId: "test-tenant",
+        status: "DRAFT",
+        revision: 1,
+        customerId: "c-1",
+        subtotal: 100,
+        taxAmount: 0,
+        discount: 0,
+        total: 100,
+        notes: null,
+        terms: null,
+        items: [
+          { productId: "prod-1", description: "Widget", qty: 1, unitPrice: 100, subtotal: 100 },
+        ],
+      });
+
+      await service.send("est-1");
+      await service.revertToDraft("est-1");
+      await service.send("est-1");
+      await service.send("est-1"); // a re-send changes nothing
+      await service.accept("est-1");
+      await service.convertToInvoice("est-1");
+
+      expect({ invoices: prisma.invoice.create.mock.calls.length, revision: row.revision }).toEqual(
+        { invoices: 1, revision: 2 },
+      );
+      expect(row.status).toBe("CONVERTED");
+    });
+
+    it("T3 reverting a DECLINED quote refuses naming Declined, and writes no revision", async () => {
+      const row = createLaunderingHarness(prisma, { id: "est-1", status: "DECLINED", revision: 1 });
+      await expect(service.revertToDraft("est-1")).rejects.toThrow(
+        "Declined estimates cannot be moved back to draft",
+      );
+      expect({ status: row.status, revision: row.revision }).toEqual({
+        status: "DECLINED",
+        revision: 1,
+      });
+    });
+  });
+
   describe("where-clause key-set parity and the terminal-status set", () => {
     it("PIN-B70 where-clause key-set parity across accept/send/decline/voidEstimate", async () => {
       const row = { id: "est-1", status: "SENT" };
@@ -900,10 +1028,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       // export) — accessed via the namespace import + `any` cast so a missing
       // export fails this assertion's value check, not the whole file's
       // compilation.
-      expect((EstimatesServiceModule as any).TERMINAL_ESTIMATE_STATUSES).toEqual([
-        "CONVERTED",
-        VOID_STATUS,
-      ]);
+      expect(TERMINAL_ESTIMATE_STATUSES).toEqual(["CONVERTED", "VOID"]);
     });
   });
 
@@ -1003,7 +1128,7 @@ describe("EstimatesService — B8 accept/convert duplicate-invoice race", () => 
       // First updateMany call only — the ACCEPTED claim, unaffected by
       // whatever the B17 link write (asserted separately above) looks like.
       expect(prisma.estimate.updateMany.mock.calls[0][0]).toMatchObject({
-        where: expect.objectContaining({ status: "ACCEPTED" }),
+        where: expect.objectContaining({ status: { in: [...ESTIMATE_MOVES.convert] } }),
         data: { status: "CONVERTED" },
       });
       expect(result).toMatchObject(mintedInvoice);

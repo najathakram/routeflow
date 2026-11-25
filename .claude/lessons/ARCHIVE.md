@@ -4936,3 +4936,12 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the test mocked `BarcodeScannerButton` and scanned "300", which is under the detector's 6-character gate (`sequence.length >= 6`, `BarcodeScannerButton.tsx:110`), so neither the detector nor the dropped key was exercised.
 - **Lesson:** **A test of a focus hand-over during a scan runs the real detector and types a full-length code (13 digits) with the scanner's key gaps, then asserts the lookup got the whole code once. A mock of the component that reads the keys removes the thing under test.**
 - **Guard:** `apps/web/app/(dashboard)/orders/_components/CreateOrderModal.scan-from-handle.test.tsx`: the real detector, a 13-digit code from handles 1 and 2 and from the search box; removing the dispatch in `SortableLines.tsx` turns two cells red. Open: only Enter is sent, a CR+LF ending from a handle is not covered. Cf. [[L-376]].
+
+## Archived 2026-11-25 — zero outside citations, real spec guard; headroom for L-409 (bookkeeping for window 47)
+
+### L-370 · 2026-11-06 · domain · a capture gate on a diagnostic is keyed by every field the reader groups by, under one global budget and a bounded map; a coarser key hides the second site (B1285)
+
+- **Symptom:** the dark tenant-context guard captured one stack per second per `kind|model|op`; one hot call site (1,000 reads) took the second's capture and a second site under the same key never reached the log, though the counter stayed true. Scheduled jobs logged no job name at all.
+- **Root cause:** the gate key named what the counter answers (what kind of access), not what the log answers (where from); a cron job has no request route to name itself.
+- **Lesson:** **Key a rate gate by every field the log line is read by (kind, model, op, call place), put one global per-second budget over it (20) and a backstop on the map size (5,000 entries), and check the shape of the place string before it enters a key. Name each scheduled job's place where the job starts (`@LeaderCron` runs the body at `<area>.<method>`), so the log says which job.**
+- **Guard:** `prisma/tenant-context-guard.spec.ts` rows B5-1 (key without `where`), B5-2 (no budget) and B5-4 (no shape check), each red by mutation; `common/call-place.ts`. Open: B1295 (the two queue processors have no row). Cf. [[L-369]].
