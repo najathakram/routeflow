@@ -74,3 +74,37 @@ describe("useUrlSort", () => {
     expect(q.get("sort")).toBe("customer");
   });
 });
+
+/**
+ * R-137: on a page that also keeps filters in the URL, the sort must go out through that page's ONE writer. A
+ * `history.replaceState` beside a `router.replace` in the same handler made Next drop the `replace`.
+ */
+describe("useUrlSort with the page's own writer", () => {
+  const run = (query: string) => {
+    window.history.replaceState(null, "", `/orders${query}`);
+    const params = new URLSearchParams(window.location.search);
+    const writer = jest.fn((mutate: (p: URLSearchParams) => void, _opts?: { keepPage?: boolean }) =>
+      mutate(params),
+    );
+    const replaceState = jest.spyOn(window.history, "replaceState");
+    const { result } = renderHook(() => useUrlSort(COLS, "createdAt", "desc", writer));
+    return { result, writer, params, replaceState };
+  };
+  afterEach(() => jest.restoreAllMocks());
+
+  it("a sort goes through the writer, asks to keep the page, and never touches history itself", () => {
+    const { result, writer, params, replaceState } = run("?status=PENDING&page=3");
+    act(() => result.current[2]("total", "asc"));
+    expect(writer).toHaveBeenCalledTimes(1);
+    expect(writer.mock.calls[0][1]).toEqual({ keepPage: true });
+    expect(params.toString()).toBe("status=PENDING&page=3&sort=total&dir=asc");
+    expect(replaceState).not.toHaveBeenCalled();
+  });
+
+  it("back to the default removes both params through the writer", () => {
+    const { result, params, replaceState } = run("?sort=total&dir=asc&urgent=1");
+    act(() => result.current[2]("createdAt", "desc"));
+    expect(params.toString()).toBe("urgent=1");
+    expect(replaceState).not.toHaveBeenCalled();
+  });
+});

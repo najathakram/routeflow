@@ -14,8 +14,9 @@ jest.mock("@/lib/api/addons", () => ({
   useDeliveryAccess: () => ({ enabled: false, resolved: true }),
 }));
 jest.mock("@/lib/tenant-features", () => ({ useTenantFeatures: () => ({ data: undefined }) }));
+const mockReplace = jest.fn();
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: mockReplace }),
   usePathname: () => "/orders",
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
@@ -51,6 +52,7 @@ const tableOrder = () =>
 
 beforeEach(() => {
   window.history.replaceState(null, "", "/orders");
+  mockReplace.mockReset();
   rows = [order("1", 30, false), order("2", 10, false), order("3", 99, true)];
 });
 
@@ -62,26 +64,29 @@ describe("Orders list: the sort lives in the URL", () => {
     expect(tableOrder()).toEqual(["ORD-3", "ORD-1", "ORD-2"]);
   });
 
-  it("clicking the Total header writes the sort to the URL and keeps the status filter", async () => {
+  it("clicking the Total header writes the sort in one router write and keeps the status filter", async () => {
     window.history.replaceState(null, "", "/orders?status=PENDING");
+    const replaceState = jest.spyOn(window.history, "replaceState");
     renderWithProviders(<OrdersPage />);
     await userEvent.setup().click(screen.getByRole("columnheader", { name: /Total/ }));
 
-    const q = new URLSearchParams(window.location.search);
-    expect(q.get("sort")).toBe("total");
-    expect(q.get("dir")).toBe("asc");
-    expect(q.get("status")).toBe("PENDING");
+    // the same writer the filters use, never a second mechanism beside it (R-137)
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(mockReplace.mock.calls[0][0]).toBe("/orders?status=PENDING&sort=total&dir=asc");
+    replaceState.mockRestore();
   });
 
   it("no sort in the URL is the default: newest first, urgent on top, nothing written", () => {
     renderWithProviders(<OrdersPage />);
     expect(tableOrder()).toEqual(["ORD-3", "ORD-2", "ORD-1"]);
     expect(window.location.search).toBe("");
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });
 
 describe("Orders list: says why urgent rows are out of the sorted order", () => {
-  const note = () => screen.queryByText("Urgent orders stay on top. The rest are sorted.");
+  const note = () => screen.queryByText("Urgent orders stay on top, then the sort applies.");
 
   it("a sort is on and some rows are urgent: the line shows", () => {
     window.history.replaceState(null, "", "/orders?sort=total&dir=asc");

@@ -2,8 +2,12 @@
 
 import * as React from "react";
 import { usePathname, useSearchParams } from "next/navigation";
+import type { UrlParamsWriter } from "./useUrlFilters";
 
 export type SortDir = "asc" | "desc";
+
+/** The two query params a sort lives in. A handler that clears the sort with other params deletes these. */
+export const SORT_PARAM_KEYS = ["sort", "dir"] as const;
 
 /**
  * List sort (column + direction) that survives drilling into a row and pressing
@@ -15,16 +19,22 @@ export type SortDir = "asc" | "desc";
  * of both params, and a column that is not in `allowed` reads as the default,
  * so a hand-edited or stale link cannot sort by a key the page does not know.
  *
- * Writes use a shallow `history.replaceState` built from the live query string,
- * for the reasons `useUrlSearch` documents (one history entry, never cancels an
- * in-flight `router.push`, never resurrects a param another writer removed).
- * `page` is left alone: these lists sort the rows of the page on screen, so a
+ * ONE URL WRITER PER PAGE. A page that also uses `useUrlFilters` MUST pass that
+ * hook's `writeParams` as `write`: the sort then goes out on the same
+ * `router.replace` path as the filters, builds on a filter write still on its
+ * way, and a handler that changes filters and sort together does it in one
+ * write. (Mixing the two mechanisms in one handler dropped the filter write:
+ * Next discards a pending `replace` when a `replaceState` lands beside it.)
+ * A page with no filter hook omits `write` and gets a shallow
+ * `history.replaceState` built from the live query string, as `useUrlSearch`
+ * does. `page` is left alone: these lists sort the rows of the page on screen, so a
  * new sort must not throw the operator back to page 1.
  */
 export function useUrlSort<C extends string>(
   allowed: readonly C[],
   defaultCol: C,
   defaultDir: SortDir,
+  write?: UrlParamsWriter,
 ): [C, SortDir, (col: string, dir: SortDir) => void] {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -37,25 +47,31 @@ export function useUrlSort<C extends string>(
 
   const setSort = React.useCallback(
     (nextCol: string, nextDir: SortDir) => {
-      const params = new URLSearchParams(window.location.search);
-      const before = params.toString();
       const isDefault =
         !(allowed as readonly string[]).includes(nextCol) ||
         (nextCol === defaultCol && nextDir === defaultDir);
-      if (isDefault) {
-        params.delete("sort");
-        params.delete("dir");
-      } else {
-        params.set("sort", nextCol);
-        params.set("dir", nextDir);
+      const apply = (params: URLSearchParams) => {
+        if (isDefault) {
+          for (const key of SORT_PARAM_KEYS) params.delete(key);
+        } else {
+          params.set("sort", nextCol);
+          params.set("dir", nextDir);
+        }
+      };
+      if (write) {
+        write(apply, { keepPage: true });
+        return;
       }
+      const params = new URLSearchParams(window.location.search);
+      const before = params.toString();
+      apply(params);
       const qs = params.toString();
       if (qs === before) return;
       window.history.replaceState(window.history.state, "", qs ? `${pathname}?${qs}` : pathname);
     },
     // `allowed` is a module-level constant at every call site.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pathname, defaultCol, defaultDir],
+    [pathname, defaultCol, defaultDir, write],
   );
 
   return [col, dir, setSort];

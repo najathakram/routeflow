@@ -43,7 +43,7 @@ import { useShippedWeek } from "@/lib/tenant-timezone";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
-import { useUrlSort } from "@/lib/hooks/useUrlSort";
+import { SORT_PARAM_KEYS, useUrlSort } from "@/lib/hooks/useUrlSort";
 import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
@@ -151,6 +151,8 @@ interface PagerMeta {
   totalPages?: number;
 }
 
+/** The filters behind "Clear filters" (the search box and the status chips are not among them). */
+const SECONDARY_FILTER_KEYS = ["urgent", "fulfillPath", "productId", "dateFrom", "dateTo"] as const;
 /** The columns the list can be sorted by; `?sort=` accepts only these. */
 const SORT_COLUMNS = [
   "createdAt",
@@ -371,7 +373,7 @@ export default function OrdersPage() {
   }, [setTitle]);
 
   // URL-backed filter state
-  const [urlFilters, setFilter, clearFilters, setFilters] = useUrlFilters({
+  const [urlFilters, setFilter, clearFilters, setFilters, writeParams] = useUrlFilters({
     status: "",
     urgent: false,
     dateFrom: "",
@@ -472,7 +474,7 @@ export default function OrdersPage() {
   const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   // URL-backed like the search, chips and page, so Back from an order (or a reload) keeps the sort.
-  const [sortCol, sortDir, setSort] = useUrlSort(SORT_COLUMNS, "createdAt", "desc");
+  const [sortCol, sortDir, setSort] = useUrlSort(SORT_COLUMNS, "createdAt", "desc", writeParams);
   // Below md the secondary filters live behind one "Filters" button (orders apple-ux r4 Q01); md+ keeps them inline.
   const narrow = useBelowBreakpoint("md");
   const [filtersOpen, setFiltersOpen] = React.useState(false);
@@ -801,10 +803,12 @@ export default function OrdersPage() {
     (dateFrom || dateTo ? 1 : 0) +
     (sortCol !== "createdAt" || sortDir !== "desc" ? 1 : 0);
   // ONE write: separate setFilter calls each start from the URL as it was, so only the last would stick.
-  const clearSecondary = () => {
-    setFilters({ urgent: false, fulfillPath: "", productId: "", dateFrom: "", dateTo: "" });
-    setSort("createdAt", "desc");
-  };
+  // The sort is in the URL too, so it is cleared in the SAME write as the filters (never a second one beside it).
+  const clearSecondary = () =>
+    writeParams((params) => {
+      for (const key of SECONDARY_FILTER_KEYS) params.delete(key);
+      for (const key of SORT_PARAM_KEYS) params.delete(key);
+    });
   const closeFilters = () => setFiltersOpen(false);
 
   // The five controls are the same inline (md+) and in the Filters panel (below md); only the width differs.
@@ -1333,7 +1337,7 @@ export default function OrdersPage() {
               shows (some rows urgent, some not), or "Total, low to high" looks broken. */}
           {sortActive && urgentPinned && (
             <p className="mb-2 text-xs text-navy/70" data-testid="urgent-first-note">
-              Urgent orders stay on top. The rest are sorted.
+              Urgent orders stay on top, then the sort applies.
             </p>
           )}
           {/* Card list — below md the desktop table only scrolled sideways with TOTAL
