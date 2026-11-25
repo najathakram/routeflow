@@ -37,7 +37,7 @@ export const routes: MarketingRoute[] = [
     slug: "pricing",
     label: "Pricing",
     title: "Pricing",
-    description: `${site.name} plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed. Pay for a year and get 2 months free.`,
+    description: `${site.name} plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed.`,
   },
   {
     slug: "company",

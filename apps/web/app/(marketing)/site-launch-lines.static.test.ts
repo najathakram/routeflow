@@ -14,23 +14,34 @@ const REPO = path.resolve(__dirname, "../../../..");
 const page = (name: Parameters<typeof readServedSitePage>[0], brand = SITE_BRAND) =>
   readServedSitePage(name, { websiteId: undefined, brand });
 
-const PRICE_LINE = "Plans from $99 a month. Pay for a year and get 2 months free.";
+const PRICE_LINE = "Plans from $99 a month.";
+const YEAR_OFFER = /a year|annual|2 months free/i;
 const BRIDGE = "RouteFlow is now Rovio. Your sign-in, data and account stay the same.";
 
 describe("T9: the pricing line", () => {
-  // The line is true in checkout today (annual = 10 months, Starter $99): apps/api/src/billing/billing-math.ts.
+  // The line is true in checkout today (Starter $99): apps/api/src/billing/billing-math.ts. A year is not
+  // sold: a new subscription is monthly only (billing.service.ts refuses an annual checkout).
   it("is pinned to the checkout's own numbers", () => {
     const math = fs.readFileSync(path.join(REPO, "apps/api/src/billing/billing-math.ts"), "utf8");
     expect(math).toContain("Starter $99/mo");
-    expect(math).toContain("Annual price = 10 months (2 months free)");
+    const billing = fs.readFileSync(
+      path.join(REPO, "apps/api/src/billing/billing.service.ts"),
+      "utf8",
+    );
+    expect(billing).toContain("CHECKOUT_ANNUAL_NOT_SUPPORTED");
   });
 
-  it("the pricing page says it once, as the heading and the line under it", () => {
+  it("the pricing page says it once, as the heading", () => {
     const html = page("pricing");
     expect(html).toContain("Plans from $<span");
     expect(html).toMatch(/<h1[^>]*>Plans from \$<span[^>]*>99<\/span> a month\.<\/h1>/);
-    expect(html).toContain('<p class="lede">Pay for a year and get 2 months free.</p>');
     expect(PRICE_LINE).toContain("$99");
+  });
+
+  it("offers no year: no yearly price or pay-for-a-year line in the page text or its meta", () => {
+    const html = page("pricing");
+    expect(html).not.toMatch(YEAR_OFFER);
+    expect(html).not.toMatch(/<[/]h1><p class="lede">/);
   });
 
   it("shows no table and no plan ladder", () => {
