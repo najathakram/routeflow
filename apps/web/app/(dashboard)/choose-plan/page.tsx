@@ -198,10 +198,9 @@ export default function ChoosePlanPage() {
                 isCommitting && "cursor-not-allowed opacity-50",
               )}
             >
+              {/* No "2 months free" label: yearly Stripe checkout is refused
+                  (CHECKOUT_ANNUAL_NOT_SUPPORTED), so the offer is not honored (B1392). */}
               {c === "MONTHLY" ? "Monthly" : "Annual"}
-              {c === "ANNUAL" && (
-                <span className="ml-1 text-xs text-emerald-600">2 months free</span>
-              )}
             </button>
           ))}
         </div>
