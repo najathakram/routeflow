@@ -1239,7 +1239,7 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
   });
 
   it("subscribe() re-subscribe of an override row ENTERING the paying set books the fee", async () => {
-    const { svc, tx, events, prisma } = make({
+    const { svc, tx, events } = make({
       tenantStatus: "READ_ONLY",
       readOnlyReason: "subscription_cancelled",
       sub: { planKey: "BUSINESS", priceOverrideMonthly: 80, basePriceSnapshot: 80 },

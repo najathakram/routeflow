@@ -292,7 +292,7 @@ describeDb(
           discount: 0,
           cycle: "MONTHLY",
           periodStart: new Date(Date.now() - 15 * 86_400_000),
-          periodEnd: new Date(Date.now() + 15 * 86_400_000),
+          periodEnd: null, // B58: no live period, so subscribe() heals it (SA-1304 BP-1 test ruling, path b)
         },
       });
       if (holdsForecasting) {
@@ -310,10 +310,10 @@ describeDb(
       return tenant.id;
     }
 
-    // A cycle change is the one ACTIVE pick the B58 guard lets through subscribe().
+    // An ACTIVE row with no periodEnd is the one pick the B58 guard lets through subscribe() (B1406: never a year here).
     const toScale = {
       planKey: "SCALE",
-      cycle: "ANNUAL" as any,
+      cycle: "MONTHLY" as any,
       addons: [{ sku: "FORECASTING", quantity: 1 }],
     };
 
