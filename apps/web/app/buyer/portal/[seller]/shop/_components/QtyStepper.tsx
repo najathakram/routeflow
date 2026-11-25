@@ -4,10 +4,9 @@ import * as React from "react";
 import { Plus, Minus, Trash2 } from "lucide-react";
 import { useToast } from "@routeflow/ui/web";
 import { BUYER_LINE_QTY_MAX } from "@routeflow/pricing";
+import { limitLine } from "@/lib/buyer-cart-line";
 import { useUndo } from "@/lib/undo";
 
-const limitLine = (max: number, word?: string) =>
-  `The most you can order at once is ${max.toLocaleString("en-US")}${word ? ` ${word}` : ""}.`;
 const ENTRY_LINE = "Enter 1 or more. Enter 0 to remove.";
 
 // ─── Quantity Stepper ─────────────────────────────────────────────────────────

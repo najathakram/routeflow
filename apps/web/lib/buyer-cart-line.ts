@@ -139,6 +139,11 @@ export function lineLimit(l: CartLineShape): { max: number; maxWord?: string } {
     : { max: lineMaxCount(l) };
 }
 
+/** The one limit sentence (shop stepper, cart row, Add): "The most you can order at once is 8,333 cases." */
+export function limitLine(max: number, word?: string): string {
+  return `The most you can order at once is ${max.toLocaleString("en-US")}${word ? ` ${word}` : ""}.`;
+}
+
 /** Set the count in the line's CURRENT unit (what the stepper and its typed field mean). */
 export function setLineCount<T extends CartLineShape>(l: T, count: number): T {
   const n = Math.min(Math.max(0, Math.trunc(Number(count) || 0)), lineMaxCount(l));
@@ -245,6 +250,14 @@ export function completeLineFromCatalog<T extends CartLineShape>(
  * line keeps its Case count, a stored EACH line keeps its pieces.
  */
 export function mergeCartLines<T extends CartLineShape>(existing: T, incoming: T): T {
+  return mergeCartLinesChecked(existing, incoming).line;
+}
+
+/** `mergeCartLines` plus whether the cap clamped the merge (the caller shows the limit line). */
+export function mergeCartLinesChecked<T extends CartLineShape>(
+  existing: T,
+  incoming: T,
+): { line: T; clamped: boolean } {
   const ex = packOf(existing);
   const inc = packOf(incoming);
   let base = existing;
@@ -253,9 +266,8 @@ export function mergeCartLines<T extends CartLineShape>(existing: T, incoming: T
   else if (inc === 0 && ex > 0) add = completeLineFromCatalog(incoming, ex);
   const merged = normalizeCartLine({ ...base, qty: base.qty + add.qty });
   // B1382 (SA-1292): a repeat Add clamps too, or the create DTO answers 400 at checkout. The server fold stays uncapped.
-  return lineCount(merged) > lineMaxCount(merged)
-    ? setLineCount(merged, lineMaxCount(merged))
-    : merged;
+  if (lineCount(merged) <= lineMaxCount(merged)) return { line: merged, clamped: false };
+  return { line: setLineCount(merged, lineMaxCount(merged)), clamped: true };
 }
 
 /**

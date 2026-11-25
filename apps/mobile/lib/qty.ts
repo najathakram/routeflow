@@ -26,14 +26,6 @@ export function sanitizeIntInput(text: string | null | undefined): string {
   return digits.replace(/^0+(?=\d)/, "");
 }
 
-/**
- * True for a typed entry that is negative ("-5"). `sanitizeIntInput` strips the "-", which would turn "-5" into 5;
- * a buyer qty box reverts instead and never reads it as positive (B1382).
- */
-export function isNegativeEntry(text: string | null | undefined): boolean {
-  return text != null && /^[	 ]*-/.test(String(text));
-}
-
 /** True for "" or whole digits only (no sign, point, exponent or space). */
 export function isDigitsOnly(text: string | null | undefined): boolean {
   return text == null || /^[0-9]*$/.test(String(text));

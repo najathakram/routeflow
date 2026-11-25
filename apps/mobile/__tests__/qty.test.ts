@@ -87,19 +87,6 @@ describe("commitQtyDraft", () => {
   });
 });
 
-import { isNegativeEntry as isNeg, sanitizeIntInput as sanitize } from "../lib/qty";
-
-describe("isNegativeEntry (B1382)", () => {
-  it("flags -5 (which sanitizeIntInput would turn into 5) and not plain digits", () => {
-    expect(sanitize("-5")).toBe("5");
-    expect(isNeg("-5")).toBe(true);
-    expect(isNeg(" -5")).toBe(true);
-    expect(isNeg("5")).toBe(false);
-    expect(isNeg("")).toBe(false);
-    expect(isNeg(null)).toBe(false);
-  });
-});
-
 import { isDigitsOnly } from "../lib/qty";
 
 describe("isDigitsOnly (B1382)", () => {

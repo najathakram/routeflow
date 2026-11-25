@@ -2,7 +2,13 @@
 
 import * as React from "react";
 import { Minus, Plus } from "lucide-react";
-import { lineCount, lineLimit, type CartLineShape, type CartUnit } from "@/lib/buyer-cart-line";
+import {
+  limitLine,
+  lineCount,
+  lineLimit,
+  type CartLineShape,
+  type CartUnit,
+} from "@/lib/buyer-cart-line";
 import { CartLineUnit } from "./CartLineUnit";
 
 /**
@@ -41,7 +47,7 @@ export function CartRowQty({
   const [note, setNote] = React.useState<string | null>(null);
   React.useEffect(() => setVal(String(count)), [count]);
   const { max, maxWord } = lineLimit(item);
-  const limitNote = `The most you can order at once is ${max.toLocaleString("en-US")}${maxWord ? ` ${maxWord}` : ""}.`;
+  const limitNote = limitLine(max, maxWord);
 
   const commit = (raw: string) => {
     const t = raw.trim();
