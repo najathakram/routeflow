@@ -113,3 +113,49 @@ describe("SA-1214 A1 sites pin: advance balances are summed in available-credit.
     expect(readers).toEqual(Object.keys(ADVANCE_BALANCE_CENSUS).sort());
   });
 });
+
+/**
+ * B1385 inventory pin: every non-spec file that reads advance rows is classified. A file that OFFERS or SUMS advances as
+ * credit must route through `filterAvailableAdvances` / the statement helper (a DRAFT group's leftover is not credit);
+ * the rest answer a different question. A NEW reader fails here until it is classified.
+ */
+const ADVANCE_READERS: Record<string, string> = {
+  "customers/account-statement.ts": "OFFERS: the portal credit list, via isAdvanceAvailable",
+  "customers/available-credit.ts": "the one reader (and filterAvailableAdvances)",
+  "customers/customer-delete-preflight.ts": "liability check, any status by design",
+  "customers/customer-statement.ts": "OFFERS: the ledger rows and tiles, via the helper",
+  "customers/customers.service.ts":
+    "OFFERS: getAdvancePayments and the apply, via filterAvailableAdvances",
+  "invoices/invoices.service.ts": "writers, restores and voids of advances",
+  "invoices/payment-list-query.ts": "OFFERS: the Payments tile, via filterAvailableAdvances",
+  "invoices/payment-receipt-group.ts": "receipt 'unapplied' line, gated on a confirmed header",
+  "invoices/payment-ref-dedupe.ts": "duplicate-reference check, not a balance",
+  "payment-requests/connect-charge-review.service.ts": "charge review, not an offer of credit",
+  "routes/routes.service.ts": "run-cash settle writer",
+};
+const MUST_FILTER = [
+  "customers/customers.service.ts",
+  "invoices/payment-list-query.ts",
+  "customers/account-statement.ts",
+  "customers/customer-statement.ts",
+];
+
+describe("B1385 pin: advance readers are classified and the offering ones are filtered", () => {
+  it("no unclassified file reads advance rows", () => {
+    const readers = walk(SRC)
+      .filter((f) =>
+        /advancePayment\s*\.\s*(findMany|aggregate|groupBy)/.test(
+          stripComments(fs.readFileSync(f, "utf8")),
+        ),
+      )
+      .map((f) => path.relative(SRC, f).split(path.sep).join("/"))
+      .sort();
+    expect(readers).toEqual(Object.keys(ADVANCE_READERS).sort());
+  });
+
+  it.each(MUST_FILTER)("%s runs the availability predicate", (rel) => {
+    expect(stripComments(read(rel))).toMatch(
+      /filterAvailableAdvances|isAdvanceAvailable|loadAvailableCredit/,
+    );
+  });
+});
