@@ -70,6 +70,21 @@ export function isEvidenceRow(m: { type: string; quantityDelivered: unknown }): 
   );
 }
 
+/**
+ * SA-1506 A2 (NEW-M1): the ONE test of who wrote an evidence row. A row is "route" when it is evidence and a stop or a
+ * driver wrote it (`routeRunStopId != null || driverId != null`); every other row is "office". Callers filter
+ * `isEvidenceRow` first. No other file tests those two columns on a DeliveryMutation (structure pin:
+ * `evidence-origin.pin.spec.ts`).
+ */
+export function evidenceOrigin(m: {
+  type: string;
+  quantityDelivered: unknown;
+  routeRunStopId?: string | null;
+  driverId?: string | null;
+}): "office" | "route" {
+  return isEvidenceRow(m) && (m.routeRunStopId != null || m.driverId != null) ? "route" : "office";
+}
+
 export async function deliveredBasisByLine(
   db: TxOrClient,
   orderId: string,
