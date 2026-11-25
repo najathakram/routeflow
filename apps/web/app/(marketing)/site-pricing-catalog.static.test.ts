@@ -713,8 +713,8 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
         }
       }
     }
-    // SA-1282: the home plan cards no longer carry the three yearly spans, so the floor is at least 28 spans (was 31).
-    expect(seen).toBeGreaterThan(27);
+    // exact, as on master (42 there); 28 here because this branch's pricing page is one line, with no plan cards or table
+    expect(seen).toBe(28);
     expect(bad).toEqual([]);
   });
 
@@ -737,6 +737,40 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
       }
     }
     expect(seen).toBeGreaterThan(3);
+    expect(bad).toEqual([]);
+  });
+
+  it("no page shows a yearly price or a pay-yearly offer while checkout refuses a year", () => {
+    // SA-1282 item 3. Tied to the code fact: billing.service.ts throws CHECKOUT_ANNUAL_NOT_SUPPORTED for
+    // interval "year". While that refusal is there, a visible yearly figure or pay-yearly sentence is a claim the
+    // code does not prove. The yearly number stays in prices.js as data. When yearly checkout ships the refusal
+    // goes, and this case has nothing left to guard.
+    const billing = fs.readFileSync(
+      path.join(ROOT, "apps/api/src/billing/billing.service.ts"),
+      "utf8",
+    );
+    if (!/CHECKOUT_ANNUAL_NOT_SUPPORTED/.test(billing)) return;
+    const offer = /a year|each year|per year|yearly|annual|months free/gi;
+    const bad: string[] = [];
+    for (const f of pages()) {
+      const text = html(f);
+      if (/data-field="yearly"/.test(text)) bad.push(`${f}: data-field="yearly" span`);
+      for (const m of text.matchAll(offer)) {
+        const at = m.index ?? 0;
+        bad.push(`${f}: ...${text.slice(Math.max(0, at - 30), at + 30).replace(/\s+/g, " ")}...`);
+      }
+    }
+    // The marketing lib holds the same pages' titles and descriptions (metadata, sitemap), so it is read too.
+    const LIB = path.resolve(__dirname, "lib");
+    for (const f of fs.readdirSync(LIB).filter((n) => n.endsWith(".ts"))) {
+      const text = fs.readFileSync(path.join(LIB, f), "utf8");
+      for (const m of text.matchAll(offer)) {
+        const at = m.index ?? 0;
+        bad.push(
+          `lib/${f}: ...${text.slice(Math.max(0, at - 30), at + 30).replace(/\s+/g, " ")}...`,
+        );
+      }
+    }
     expect(bad).toEqual([]);
   });
 

@@ -6,7 +6,9 @@
  * (ROUTE and SHIP both offered, ROUTE the default). Never reads the raw feature modes.
  */
 import {
+  DELIVERY_STEPS_ABSENT_COPY,
   UNSET_FULFILMENT_CAPABILITIES,
+  deliveryStepsAbsentReason,
   type FulfilmentCapability,
 } from "@routeflow/types/api/fulfilment";
 
@@ -38,4 +40,17 @@ export function staffFormFulfilment(features: FeaturesLike): {
     formMethods: caps.methods.filter((m): m is FormFulfilPath => m === "ROUTE" || m === "SHIP"),
     formDefault: toFormPath(caps.staffDefault),
   };
+}
+
+/** W-1306: the one sentence saying why this order shows no delivery steps, or null (web `DeliveryStepsAbsentNote`). */
+export function staffDeliveryAbsentNote(
+  features: FeaturesLike,
+  order: { fulfillPath?: string | null; counterSale?: boolean | null },
+): string | null {
+  const reason = deliveryStepsAbsentReason({
+    fulfillPath: order.fulfillPath,
+    counterSale: order.counterSale,
+    capability: fulfilmentCapsFrom(features),
+  });
+  return reason ? DELIVERY_STEPS_ABSENT_COPY[reason] : null;
 }

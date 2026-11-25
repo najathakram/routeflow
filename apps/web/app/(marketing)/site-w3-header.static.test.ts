@@ -207,7 +207,7 @@ describe("P01 and the band line", () => {
     expect(supportsBlock?.[0]).toMatch(/\.pgrid--4 \.pfor\{min-height:0\}/);
   });
 
-  it("one plan card order on / and /pricing: heading, from, price, year, for, button, then the list; the card spans one row per child (SA-1200 A4)", () => {
+  it("one plan card order on / and /pricing: heading, from, price, for, the bar, then the button; the card spans one row per child (SA-1200 A4)", () => {
     const span = Number(css.match(/\.pgrid--4 \.pcard\{[^}]*grid-row:span (\d+)/)?.[1]);
     expect(span).toBeGreaterThan(0);
     expect(css).not.toContain("pfoot");
@@ -223,10 +223,9 @@ describe("P01 and the band line", () => {
         page === "home" ? "h3" : "h2",
         ".pfrom",
         ".pprice",
-        ".pyear",
         ".pfor",
-        "a.pbtn",
         page === "home" ? ".pm" : "ul.checks",
+        "a.pbtn",
       ];
       for (const c of cards) {
         const kids = Array.from(c.children);

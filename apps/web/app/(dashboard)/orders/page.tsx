@@ -43,6 +43,7 @@ import { useShippedWeek } from "@/lib/tenant-timezone";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { SORT_PARAM_KEYS, useUrlSort } from "@/lib/hooks/useUrlSort";
 import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
@@ -150,6 +151,18 @@ interface PagerMeta {
   totalPages?: number;
 }
 
+/** The filters behind "Clear filters" (the search box and the status chips are not among them). */
+const SECONDARY_FILTER_KEYS = ["urgent", "fulfillPath", "productId", "dateFrom", "dateTo"] as const;
+/** The columns the list can be sorted by; `?sort=` accepts only these. */
+const SORT_COLUMNS = [
+  "createdAt",
+  "deliveryDate",
+  "orderNumber",
+  "customer",
+  "total",
+  "status",
+] as const;
+
 /** "Showing X to Y of N" / an empty-result message. */
 function PagerInfo({
   meta,
@@ -167,10 +180,10 @@ function PagerInfo({
       {meta.total > 0 ? (
         <>
           Showing{" "}
-          <span className="font-mono tabular-nums text-navy">
+          <span className="tabular-nums text-navy">
             {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
           </span>{" "}
-          of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
+          of <span className="tabular-nums text-navy">{meta.total}</span>
           {customerSearch ? " (filtered)" : ""}
         </>
       ) : customerSearch ? (
@@ -360,7 +373,7 @@ export default function OrdersPage() {
   }, [setTitle]);
 
   // URL-backed filter state
-  const [urlFilters, setFilter, clearFilters, setFilters] = useUrlFilters({
+  const [urlFilters, setFilter, clearFilters, setFilters, writeParams] = useUrlFilters({
     status: "",
     urgent: false,
     dateFrom: "",
@@ -460,8 +473,8 @@ export default function OrdersPage() {
   const [cancelConfirm, setCancelConfirm] = React.useState(false);
   const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
-  const [sortCol, setSortCol] = React.useState<string>("createdAt");
-  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
+  // URL-backed like the search, chips and page, so Back from an order (or a reload) keeps the sort.
+  const [sortCol, sortDir, setSort] = useUrlSort(SORT_COLUMNS, "createdAt", "desc", writeParams);
   // Below md the secondary filters live behind one "Filters" button (orders apple-ux r4 Q01); md+ keeps them inline.
   const narrow = useBelowBreakpoint("md");
   const [filtersOpen, setFiltersOpen] = React.useState(false);
@@ -472,11 +485,8 @@ export default function OrdersPage() {
   const filtersButtonRef = React.useRef<HTMLButtonElement>(null);
 
   const toggleSort = (col: string) => {
-    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortCol(col);
-      setSortDir("asc");
-    }
+    if (sortCol === col) setSort(col, sortDir === "asc" ? "desc" : "asc");
+    else setSort(col, "asc");
   };
 
   const SortIcon = ({ col }: { col: string }) => {
@@ -499,11 +509,8 @@ export default function OrdersPage() {
   const showDelivery = fleet || !!dateFrom || !!dateTo;
   // A sort left on the hidden Delivery Date column would order rows by a key the user can no longer see.
   React.useEffect(() => {
-    if (!showDelivery && sortCol === "deliveryDate") {
-      setSortCol("createdAt");
-      setSortDir("desc");
-    }
-  }, [showDelivery, sortCol]);
+    if (!showDelivery && sortCol === "deliveryDate") setSort("createdAt", "desc");
+  }, [showDelivery, sortCol, setSort]);
 
   const savedViews = SAVED_VIEWS.map((v) => ({
     ...v,
@@ -705,6 +712,8 @@ export default function OrdersPage() {
       return dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     });
   }, [orders, sortCol, sortDir]);
+  const sortActive = sortCol !== "createdAt" || sortDir !== "desc";
+  const urgentPinned = filtered.some((o) => o.urgent) && filtered.some((o) => !o.urgent);
 
   const urgentCount = orders.filter((o) => o.urgent).length;
 
@@ -794,11 +803,12 @@ export default function OrdersPage() {
     (dateFrom || dateTo ? 1 : 0) +
     (sortCol !== "createdAt" || sortDir !== "desc" ? 1 : 0);
   // ONE write: separate setFilter calls each start from the URL as it was, so only the last would stick.
-  const clearSecondary = () => {
-    setFilters({ urgent: false, fulfillPath: "", productId: "", dateFrom: "", dateTo: "" });
-    setSortCol("createdAt");
-    setSortDir("desc");
-  };
+  // The sort is in the URL too, so it is cleared in the SAME write as the filters (never a second one beside it).
+  const clearSecondary = () =>
+    writeParams((params) => {
+      for (const key of SECONDARY_FILTER_KEYS) params.delete(key);
+      for (const key of SORT_PARAM_KEYS) params.delete(key);
+    });
   const closeFilters = () => setFiltersOpen(false);
 
   // The five controls are the same inline (md+) and in the Filters panel (below md); only the width differs.
@@ -821,8 +831,7 @@ export default function OrdersPage() {
           onChange={(e) => {
             const col = e.target.value;
             if (col === sortCol) return;
-            setSortCol(col);
-            setSortDir(col === "createdAt" || col === "deliveryDate" ? "desc" : "asc");
+            setSort(col, col === "createdAt" || col === "deliveryDate" ? "desc" : "asc");
           }}
           className="h-10"
         />
@@ -1324,6 +1333,13 @@ export default function OrdersPage() {
         // fixed gap whatever the draft state. The dock is pinned to the bottom (and a pill on narrow screens, B668), so only
         // the bottom clearance below the pager is needed.
         <div id="orders-list">
+          {/* Urgent orders are pinned above the sorted rows. Say so when a sort is on and the pin
+              shows (some rows urgent, some not), or "Total, low to high" looks broken. */}
+          {sortActive && urgentPinned && (
+            <p className="mb-2 text-xs text-navy/70" data-testid="urgent-first-note">
+              Urgent orders stay on top, then the sort applies.
+            </p>
+          )}
           {/* Card list — below md the desktop table only scrolled sideways with TOTAL
               off-screen and no visible affordance that it could scroll at all (B823).
               One tappable card per order instead, mirroring the buyer orders list
