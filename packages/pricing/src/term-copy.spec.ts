@@ -1,17 +1,13 @@
 /**
- * SA-1304 C2 (W-1433; copy ruling 7172194631 over 7170572581): the one home for the yearly words.
+ * SA-1304 C2 (W-1433; copy ruling 7172194631 over 7170572581; placement per pc-sa-3 ruling 7175523856): the one home for
+ * the yearly words, in @routeflow/pricing (a built dist the api, web and mobile can all value-import).
  *
  * C-T13: every builder returns its exact sentence for placeholder values, and the module computes nothing
- * (no arithmetic operator, no Math., no toFixed, no import at all, so no price helper).
- * Dark pin: no file outside tests imports `term-copy` (the barrel line in packages/types/index.ts is the one
- * reviewed exception). PR-7 (labels, emails) and PR-8 (site, chooser) each change ALLOWED_IMPORTERS in their own diff.
- *
- * The module is imported by RELATIVE path: the api never value-imports `@routeflow/types` at runtime
- * (no-runtime-workspace-imports.spec.ts), and a linked node_modules would resolve the package name to another tree.
+ * (no arithmetic operator, no Math., no toFixed, no import at all, so no price helper). The dark pin is in
+ * term-copy.dark.pin.spec.ts.
  */
 import * as fs from "fs";
 import * as path from "path";
-import { execFileSync } from "child_process";
 import {
   TERM_POLICY,
   TERM_TOGGLE_LABELS,
@@ -33,10 +29,9 @@ import {
   TERM_ADDON_BLOCKED_LINE,
   refundDoneMessage,
   refundOutsideWindowMessage,
-} from "../../../../packages/types/term-copy";
+} from "./term-copy";
 
-const REPO_ROOT = path.resolve(__dirname, "../../../..");
-const MODULE_PATH = path.join(REPO_ROOT, "packages/types/term-copy.ts");
+const MODULE_PATH = path.join(__dirname, "term-copy.ts");
 
 describe("term-copy builders (C-T13)", () => {
   it("S1 toggle labels", () => {
@@ -184,33 +179,5 @@ describe("term-copy computes nothing (C-T13)", () => {
   it("the scan itself sees an operator (probe)", () => {
     expect(stripComments("const a = b * 2;")).toMatch(/\*/);
     expect(stripComments("/** a * b */ const a = 1;")).not.toMatch(/\*/);
-  });
-});
-
-/** Importers allowed outside tests. PR-7 (labels, emails) and PR-8 (site, chooser) add rows in their own diffs. */
-const ALLOWED_IMPORTERS: readonly string[] = ["packages/types/index.ts"];
-
-describe("term-copy is dark: no importer outside tests (dark pin)", () => {
-  const files = execFileSync("git", ["ls-files", "--", "apps", "packages"], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  })
-    .split("\n")
-    .filter((f) => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
-    .filter((f) => !/(\.spec\.|\.test\.|[\\/]__tests__[\\/]|[\\/]e2e[\\/])/.test(f))
-    .filter((f) => f !== "packages/types/term-copy.ts");
-
-  it("walks a real file list", () => {
-    expect(files.length).toBeGreaterThan(500);
-  });
-
-  it("only the reviewed list references term-copy", () => {
-    const hits = files.filter((f) => {
-      const full = path.join(REPO_ROOT, f);
-      if (!fs.existsSync(full)) return false;
-      return /term-copy/.test(fs.readFileSync(full, "utf8"));
-    });
-    expect(hits.sort()).toEqual([...ALLOWED_IMPORTERS].sort());
   });
 });

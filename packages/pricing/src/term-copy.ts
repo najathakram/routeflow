@@ -8,8 +8,9 @@
  * import and no arithmetic; the spec scans the source for both. The yearly saving figure comes from the pricing helper
  * at the call site, never from here.
  *
- * Dark: nothing outside tests imports this module until PR-7 (labels, emails) and PR-8 (site, chooser). The dark pin
- * in apps/api/src/billing/term-copy.spec.ts lists the reviewed importers and each of those PRs changes the list.
+ * Dark: this module is NOT exported from the pricing index, so `@routeflow/pricing` cannot reach it. PR-7 (labels, emails)
+ * and R-1 add the index export and flip term-copy.dark.pin.spec.ts to its allowlist; api, web and mobile then import the
+ * builders from `@routeflow/pricing`. Words only: no import from the pricing math.
  * Customer surfaces say "yearly"; the internal ANNUAL word never appears here.
  */
 
