@@ -4946,7 +4946,7 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **Key a rate gate by every field the log line is read by (kind, model, op, call place), put one global per-second budget over it (20) and a backstop on the map size (5,000 entries), and check the shape of the place string before it enters a key. Name each scheduled job's place where the job starts (`@LeaderCron` runs the body at `<area>.<method>`), so the log says which job.**
 - **Guard:** `prisma/tenant-context-guard.spec.ts` rows B5-1 (key without `where`), B5-2 (no budget) and B5-4 (no shape check), each red by mutation; `common/call-place.ts`. Open: B1295 (the two queue processors have no row). Cf. [[L-369]].
 
-## Archived 2026-11-25 (bookkeeping for the 2026-11-25 merges) — zero outside citations, real test or spec guard; headroom for L-410 to L-413
+## Archived 2026-11-25 (bookkeeping for the 2026-11-25 merges) — real test or spec guards; zero outside citations except L-381, which active L-394 cites in its Guard line (Cf. [[L-381]], now an archived id); headroom for L-410 to L-413
 
 ### L-381 · 2026-11-13 · web · after print, restore the scroll place on the first ScrollTrigger refresh, not at `afterprint` and not on a timer (B1324)
 
