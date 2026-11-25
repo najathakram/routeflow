@@ -8,6 +8,7 @@ import { Badge, Button, Modal, ScrollShadow, cn, useToast } from "@routeflow/ui/
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useBelowBreakpoint } from "@/lib/hooks/useBelowBreakpoint";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import {
@@ -209,14 +210,30 @@ function StockTable({
   const rowRefs = React.useRef<Map<string, HTMLTableRowElement>>(new Map());
   const [flashId, setFlashId] = React.useState<string | null>(null);
 
+  // W-1299: ONE layout is built, the one this width shows. Both used to be built for every product (the
+  // other hidden by CSS), so a 2,500-product catalog mounted 5,000 rows. The hook alone decides: the table
+  // shell carries no `hidden md:block`, because the hook asks `max-width: 767px` and Tailwind's `md` asks
+  // `min-width: 768px`, and at a fractional width between the two (zoom, display scaling) neither matches,
+  // which would leave the table built and hidden.
+  const isPhone = useBelowBreakpoint("md");
+  const cardsRef = React.useRef<HTMLDivElement>(null);
+
   React.useEffect(() => {
     if (!scrollToId) return;
-    const el = rowRefs.current.get(scrollToId);
+    // The phone layout has no table rows: find the product's card by its title link. The href is compared as
+    // a string, never placed in a selector, so no id can break the lookup.
+    const href = `/products/${scrollToId}`;
+    const el = isPhone
+      ? (Array.from(cardsRef.current?.querySelectorAll<HTMLElement>("a[href]") ?? [])
+          .find((a) => a.getAttribute("href") === href)
+          ?.closest<HTMLElement>("li") ?? null)
+      : rowRefs.current.get(scrollToId);
     if (!el) return;
     el.scrollIntoView({ block: "center", behavior: "smooth" });
-    setFlashId(scrollToId);
+    // Only table rows draw the flash; setting it on a phone would re-render every card for nothing.
+    if (!isPhone) setFlashId(scrollToId);
     onScrolled?.();
-  }, [scrollToId, sorted, onScrolled]);
+  }, [scrollToId, sorted, onScrolled, isPhone]);
 
   React.useEffect(() => {
     if (!flashId) return;
@@ -237,10 +254,10 @@ function StockTable({
     );
   }
 
-  return (
-    <>
-      {/* Phone cards (below md): same rows, sort and actions as the table; the table takes over from md up. */}
-      <div className="space-y-3 p-3 md:hidden">
+  if (isPhone) {
+    return (
+      // Phone cards (below md): same rows, sort and actions as the table; the table takes over from md up.
+      <div ref={cardsRef} className="space-y-3 p-3 md:hidden">
         <InventorySortControl sortKey={sortKey} sortDir={sortDir} onSort={setSort} />
         <InventoryCards
           items={sorted}
@@ -254,7 +271,12 @@ function StockTable({
           onAssignToVariants={(item) => onAssignToVariants(item as StockItem)}
         />
       </div>
-      <div className="hidden overflow-x-auto md:block">
+    );
+  }
+
+  return (
+    <>
+      <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
             <tr>
