@@ -26,6 +26,14 @@ export function buyerOrderQuery(filter: BuyerOrderFilterId): {
   return { status: filter };
 }
 
+/**
+ * B1391: the list shows the server's stored order total, never a client `qty * unitPrice` (12x on a
+ * boxed line when a genuine $0 total fell through to the gross).
+ */
+export function buyerOrderListTotal(order: { total: number | string }): number {
+  return Number(order.total);
+}
+
 /** Empty-state headline: "No orders yet" only on All; a filter names itself, as a phrase of its own. */
 export function buyerOrdersEmptyText(filter: BuyerOrderFilterId): string {
   return BUYER_ORDER_FILTERS.find((f) => f.id === filter)?.empty ?? "No orders yet.";

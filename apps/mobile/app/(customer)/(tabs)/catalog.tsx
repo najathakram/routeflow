@@ -32,7 +32,7 @@ import {
   type LockedCategory,
   type ReplenishmentEstimate,
 } from "../../../lib/api/buyer";
-import { useCartStore } from "../../../store/cartStore";
+import { maxLineUnits, useCartStore } from "../../../store/cartStore";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 import { QtyTextInput } from "../../../components/QtyStepper";
 import { QTY_INPUT_WIDTH } from "../../../lib/row-layout";
@@ -413,6 +413,8 @@ function ProductCard({
           <QtyTextInput
             value={units}
             min={1}
+            max={maxLineUnits(product.unitsPerBox)}
+            rejectNonDigits
             emptyMeansZero={false}
             onChangeQty={(n) => setUnits(product.id, n)}
             style={[styles.qtyText, styles.qtyInputReset]}

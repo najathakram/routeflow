@@ -34,3 +34,15 @@ export function unitLineCount(li: {
   }
   return null;
 }
+
+/**
+ * The most a line may count in its selling unit when its PIECE total may not pass `cap`: `cap` for Each lines, and
+ * `floor(cap / unitsPerBox)` Cases for a boxed Case line (cases x unitsPerBox = pieces). `unitsPerBox` null,
+ * missing, below 2 or not a whole number returns `cap`; it never divides by 0. B1382: the one bound the buyer cart
+ * hook and mobile cart store clamp to.
+ */
+export function maxLineCount(cap: number, unitsPerBox?: unknown): number {
+  const factor = unitsPerBox == null ? null : Number(unitsPerBox);
+  if (factor == null || !Number.isInteger(factor) || factor < 2) return cap;
+  return Math.floor(cap / factor);
+}

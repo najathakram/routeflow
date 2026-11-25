@@ -34,7 +34,7 @@ import {
 } from "@/lib/api/buyer";
 import { promotionRuleLabel } from "@/lib/api/promotions";
 import { useBuyerCart } from "@/lib/buyer-cart";
-import { lineCount, newCartLine } from "@/lib/buyer-cart-line";
+import { lineCount, lineLimit, newCartLine } from "@/lib/buyer-cart-line";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { QtyStepper } from "./_components/QtyStepper";
 import { CartLineUnit } from "../_components/CartLineUnit";
@@ -680,6 +680,7 @@ export default function BuyerShopPage() {
                                             cartItem ? () => cart.addItem(cartItem) : undefined
                                           }
                                           size="sm"
+                                          {...(cartItem ? lineLimit(cartItem) : {})}
                                         />
                                         {cartItem && (
                                           <CartLineUnit

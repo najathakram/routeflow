@@ -198,10 +198,9 @@ export default function ChoosePlanPage() {
                 isCommitting && "cursor-not-allowed opacity-50",
               )}
             >
+              {/* No "2 months free" label: yearly Stripe checkout is refused
+                  (CHECKOUT_ANNUAL_NOT_SUPPORTED), so the offer is not honored (B1392). */}
               {c === "MONTHLY" ? "Monthly" : "Annual"}
-              {c === "ANNUAL" && (
-                <span className="ml-1 text-xs text-emerald-600">2 months free</span>
-              )}
             </button>
           ))}
         </div>
@@ -310,11 +309,8 @@ export default function ChoosePlanPage() {
                 )}
               </span>
             </div>
-            {preview.annualSaving > 0 && (
-              <p className="text-xs text-emerald-600">
-                You save {money(preview.annualSaving)} a year.
-              </p>
-            )}
+            {/* No "You save $X a year" line: annualSaving is the 2-months-free offer, off while
+                yearly checkout is refused (CHECKOUT_ANNUAL_NOT_SUPPORTED, B1392). */}
             {changeAction === "DOWNGRADE" && preview.change?.effectiveAt ? (
               <p className="text-xs text-slate-400">
                 Takes effect {fmtDate(preview.change.effectiveAt)}.

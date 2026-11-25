@@ -190,6 +190,11 @@ export function allocationTotals(
   };
 }
 
+/** B1385: a draft payment cannot carry a leftover (it would become spendable credit), so the screen blocks that save. */
+export function draftBlockedByExcess(asDraft: boolean, excess: number): boolean {
+  return asDraft && excess > 0.001;
+}
+
 /**
  * SA-824: while this payment's attempt is unknown or in flight (`hasUnknown()`), "Change customer"
  * is blocked — the attempt must never be re-scoped to another customer. Same copy as the web

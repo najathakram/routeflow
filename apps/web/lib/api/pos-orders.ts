@@ -7,17 +7,6 @@ import { usePreferences } from "@/lib/api/users";
 import type { Order } from "@/lib/api/orders";
 import { PREF, type RestrictionAck } from "@routeflow/types";
 
-/**
- * POS mode (SA-763r P-2): a staff order created with `fulfillPath: PICKUP` from Create Order.
- * The order's own `fulfillPath` is the snapshot; there is no `Order.posMode` column, and counter sales
- * (PICKUP + `counterSale: true`) are NOT POS-mode orders, so every predicate is the pair below.
- */
-export function isPosOrder(
-  order: { fulfillPath?: string | null; counterSale?: boolean | null } | null | undefined,
-): boolean {
-  return order?.fulfillPath === "PICKUP" && order?.counterSale !== true;
-}
-
 export interface PosModeState {
   /** The switch position. Seeded from GET /users/me/preferences, then follows the operator's flips. */
   posMode: boolean;

@@ -632,6 +632,10 @@ export const API_ERROR_CODES = {
   WALLET_LOCK_BUSY: "WALLET_LOCK_BUSY",
   /** An advance payment can only be applied to an invoice of its own customer (customers). 400. */
   ADVANCE_CUSTOMER_MISMATCH: "ADVANCE_CUSTOMER_MISMATCH",
+  /** B1385: an advance from an unconfirmed (DRAFT/PENDING/VOID) payment cannot be applied (customers). 400. */
+  ADVANCE_NOT_AVAILABLE: "ADVANCE_NOT_AVAILABLE",
+  /** B1385: a DRAFT payment cannot carry a leftover; it would become spendable credit (invoices). 400. */
+  DRAFT_PAYMENT_HAS_EXCESS: "DRAFT_PAYMENT_HAS_EXCESS",
   PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
   UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
   INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",

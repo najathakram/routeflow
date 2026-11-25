@@ -4,6 +4,7 @@ import { NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { clampLimit } from "../common/pagination";
 import { RECEIVED_METHOD_FILTER } from "./payment-predicates";
+import { filterAvailableAdvances } from "../customers/available-credit";
 import {
   RECEIPT_INVOICE_SELECT,
   readListReceipts,
@@ -126,10 +127,15 @@ export async function listAllPayments(
   const totalReceived = paidPayments.reduce((s, p) => s + Number(p.amount), 0);
 
   const advanceWhere: any = customerId ? { customerId } : {};
-  const advances = await deps.prisma.forTenant().advancePayment.findMany({
-    where: advanceWhere,
-    select: { balance: true },
-  });
+  const advanceDb = deps.prisma.forTenant();
+  // B1385: only spendable credit (the same predicate the apply list and the statements use)
+  const advances = await filterAvailableAdvances(
+    advanceDb,
+    await advanceDb.advancePayment.findMany({
+      where: advanceWhere,
+      select: { balance: true, sourcePaymentId: true },
+    }),
+  );
   const advanceBalance = advances.reduce((s, a) => s + Number(a.balance), 0);
 
   // M1-03: an office check's rows carry that check's receipt figures (one read per check), so the list never adds rows up.

@@ -65,6 +65,65 @@ export const UNSET_FULFILMENT_CAPABILITIES: FulfilmentCapability = {
   consistent: true,
 };
 
+/**
+ * POS mode (SA-763r P-2): an order with `fulfillPath: PICKUP` that is NOT a counter sale. There is no
+ * `Order.posMode` column, so the pair is the whole predicate. The ONE copy (web and mobile import it).
+ */
+export function isPosOrder(
+  order: { fulfillPath?: string | null; counterSale?: boolean | null } | null | undefined,
+): boolean {
+  return order?.fulfillPath === "PICKUP" && order?.counterSale !== true;
+}
+
+/** Why an order shows no delivery steps (W-1306, SA-1277). `null` = the steps are shown. */
+export type DeliveryStepsAbsentReason =
+  "PICKUP_MODEL" | "POS_MODE" | "NO_FLEET" | "CUSTOMER_PICKUP";
+
+/** The facts the helper reads. A `FulfilmentCapability` (staff) and a `BuyerSellerCapability` both fit. */
+export interface DeliveryStepsCapability {
+  /** Staff only. Absent on a buyer's capability read. */
+  methods?: readonly FulfilmentMethod[];
+  portalMethods?: readonly FulfilmentMethod[];
+  /** `null` = an unset account (today's behaviour, never "no fleet"). */
+  portalDefault?: FulfilmentMethod | null;
+  fleet: boolean;
+}
+
+/**
+ * The ONE answer to "why are the delivery steps missing on this order?", read by the web order page,
+ * the mobile order screen and the buyer timeline, so no surface hides a step without a reason.
+ * - PICKUP order: PICKUP_MODEL when the business offers pickup; else POS_MODE (staff view) or
+ *   CUSTOMER_PICKUP (no staff facts). There is no column, so POS_MODE is known only by elimination.
+ * - Counter sale: its own one-step flow, `null`.
+ * - ROUTE order of a configured seller with no fleet: NO_FLEET. SHIP keeps its own steps.
+ */
+export function deliveryStepsAbsentReason(input: {
+  fulfillPath?: string | null;
+  counterSale?: boolean | null;
+  capability?: DeliveryStepsCapability | null;
+}): DeliveryStepsAbsentReason | null {
+  const { fulfillPath, capability } = input;
+  if (fulfillPath === "PICKUP") {
+    if (!isPosOrder(input)) return null;
+    if ((capability?.methods ?? capability?.portalMethods)?.includes("PICKUP")) {
+      return "PICKUP_MODEL";
+    }
+    return capability?.methods ? "POS_MODE" : "CUSTOMER_PICKUP";
+  }
+  if (fulfillPath === "SHIP") return null;
+  const configured = capability?.portalDefault != null;
+  return configured && capability?.fleet === false ? "NO_FLEET" : null;
+}
+
+/** One sentence per reason, each naming where to fix it. POS_MODE and CUSTOMER_PICKUP read the same. */
+export const DELIVERY_STEPS_ABSENT_COPY: Record<DeliveryStepsAbsentReason, string> = {
+  PICKUP_MODEL:
+    "This business is set up for pickup only. To deliver, go to Settings > Fulfillment.",
+  POS_MODE: "This order is pickup. To deliver, change Fulfillment to Delivery.",
+  CUSTOMER_PICKUP: "This order is pickup. To deliver, change Fulfillment to Delivery.",
+  NO_FLEET: "Delivery tracking is off. Turn on the delivery add-on to see each step.",
+};
+
 export interface TenantCapabilities {
   fulfilment: FulfilmentCapability;
 }

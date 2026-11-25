@@ -1,4 +1,4 @@
-import { computeLineSubtotal } from "@routeflow/pricing";
+import { BUYER_LINE_QTY_MAX, computeLineSubtotal } from "@routeflow/pricing";
 import {
   canSellByCase,
   cartOrderItems,
@@ -6,6 +6,7 @@ import {
   hydrateCartLine,
   isLineConsistent,
   lineCount,
+  lineMaxCount,
   lineQtyText,
   lineUnit,
   mergeCartLines,
@@ -340,5 +341,54 @@ describe("completeLineFromCatalog: no catalog row vs a row that is not boxed (R1
   it("a plain line against a not-boxed row is returned as-is", () => {
     const plain = { qty: 3, unitsPerBox: null } as CartLineShape;
     expect(completeLineFromCatalog(plain, null)).toBe(plain);
+  });
+});
+
+describe("buyer line limit (B1382, SA-1283, SA-1285)", () => {
+  it("a 12-pack Case line is bounded at 8,333 Cases; 8,334 clamps to it", () => {
+    expect(lineMaxCount(line())).toBe(8333);
+    const at = setLineCount(line(), 8333);
+    expect(at.qty).toBe(8333 * UPB);
+    const over = setLineCount(line(), 8334);
+    expect(lineCount(over)).toBe(8333);
+    expect(over.qty).toBeLessThanOrEqual(BUYER_LINE_QTY_MAX);
+  });
+
+  it("99999999 on a 12-pack Case line clamps to 8,333 Cases", () => {
+    expect(lineCount(setLineCount(line(), 99_999_999))).toBe(8333);
+  });
+
+  it("a non-boxed line (unitsPerBox null) is bounded at 100,000", () => {
+    const plain: CartLineShape = { qty: 1, unitsPerBox: null };
+    expect(lineMaxCount(plain)).toBe(100_000);
+    expect(setLineCount(plain, 99_999_999).qty).toBe(100_000);
+  });
+
+  it("an Each line is bounded at 100,000 pieces", () => {
+    const each = line({ sellBy: "EACH", qty: 5, boxes: 0, pieces: 5 });
+    expect(lineMaxCount(each)).toBe(100_000);
+    expect(setLineCount(each, 100_001).qty).toBe(100_000);
+  });
+
+  it("switching Each to Case re-clamps a line stored over the cap", () => {
+    const stored = line({ sellBy: "EACH", qty: 120_000, boxes: 10_000, pieces: 0 });
+    const toCase = setLineUnit(stored, "CASE");
+    expect(toCase.qty).toBeLessThanOrEqual(BUYER_LINE_QTY_MAX);
+    expect(lineCount(toCase)).toBe(8333);
+  });
+
+  it("a line at the cap plus another Add stays at the cap (was 100,001)", () => {
+    const at: CartLineShape = { qty: 100_000, unitsPerBox: null };
+    expect(mergeCartLines(at, { qty: 1, unitsPerBox: null }).qty).toBe(100_000);
+  });
+
+  it("60,000 + 60,000 merges to the cap, not 120,000", () => {
+    const a: CartLineShape = { qty: 60_000, unitsPerBox: null };
+    expect(mergeCartLines(a, { qty: 60_000, unitsPerBox: null }).qty).toBe(100_000);
+  });
+
+  it("a Case line at 8,333 Cases plus one more Case stays at 8,333", () => {
+    const at = setLineCount(line(), 8333);
+    expect(lineCount(mergeCartLines(at, line()))).toBe(8333);
   });
 });

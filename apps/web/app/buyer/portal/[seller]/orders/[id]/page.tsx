@@ -36,7 +36,9 @@ import {
 import {
   billedChargeLines,
   computeLineSubtotal,
+  invoiceLineQtyText,
   normalizeBoxesPieces,
+  packFromOwnSplit,
   roundMoney,
 } from "@routeflow/pricing";
 import { buyerEditPayloadItems } from "@/lib/buyer-edit-payload";
@@ -61,6 +63,7 @@ import {
   PICKUP_STEP_LABELS,
   SHIP_STEP_LABELS,
   buyerOrderStatusLabel,
+  buyerTimelineNote,
   noFleetStepIndex,
   orderTravelView,
   pickupStepIndex,
@@ -125,6 +128,32 @@ function buyerLineFreeUnits(item: BuyerEditLine, boxes: number | null): number {
   const base = Math.max(0, Math.trunc(Number(item.promoBaseUnits ?? units) || 0));
   const earned = base > 0 ? Math.floor((stored * units) / base) : stored;
   return Math.min(stored, earned, units - 1);
+}
+
+/**
+ * B1387: Delivered / Remaining on the read view. `deliveredQty` is written against `qty`
+ * (delivered-stamp.ts), so on a split line it counts PIECES: "12" on a 3-box line of 12 is one box.
+ * Re-denominate at the line's OWN stored pack (never the live product's) through the shared
+ * formatter. A line with no split, or whose pack the split cannot recover, keeps the plain number.
+ */
+function splitProgressText(
+  li: {
+    qty: number | string;
+    boxes: number | null;
+    pieces: number | null;
+    unitLabel: string | null;
+  },
+  pieces: number,
+): string {
+  const pack = li.boxes != null ? packFromOwnSplit({ ...li, qty: Number(li.qty) }) : null;
+  if (pack == null || !Number.isInteger(pieces)) return String(pieces);
+  const n = normalizeBoxesPieces({ qty: pieces, unitsPerBox: pack });
+  return invoiceLineQtyText({
+    qty: n.qty,
+    boxes: n.boxes,
+    pieces: n.pieces,
+    unitLabel: li.unitLabel,
+  });
 }
 
 /** The free whole units `buyerLineAmount` nets off this line — also the label. */
@@ -848,6 +877,11 @@ export default function BuyerOrderDetailPage() {
       {timelineView !== "loading" && (
         <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
           <OrderTimeline order={order} view={timelineView} />
+          {buyerTimelineNote(timelineView) && (
+            <p className="mt-3 text-xs text-navy/70" data-testid="timeline-note">
+              {buyerTimelineNote(timelineView)}
+            </p>
+          )}
         </div>
       )}
 
@@ -1173,13 +1207,11 @@ export default function BuyerOrderDetailPage() {
                           <ComponentSubLines components={li.components} />
                         </td>
                         <td className="px-4 py-3 text-right text-sm text-navy">
-                          <span>{Number(li.qty)}</span>
-                          {li.boxes != null && li.boxes > 0 && (
-                            <p className="text-[10px] text-navy/70">
-                              {li.boxes} box{li.boxes > 1 ? "es" : ""}
-                              {li.pieces ? ` + ${li.pieces} pcs` : ""}
-                            </p>
-                          )}
+                          {/* B1387: the ONE shared qty text ("3 boxes", "3 Cases"), never the raw
+                              piece count beside the box price; the piece total stays as a title. */}
+                          <span title={li.boxes != null ? `${Number(li.qty)} pcs` : undefined}>
+                            {invoiceLineQtyText(li)}
+                          </span>
                           {/* BUY_N_GET_M: without this the reduced subtotal reads as a
                           pricing error to the buyer. */}
                           {Number(li.promoFreeUnits ?? 0) > 0 && (
@@ -1191,13 +1223,15 @@ export default function BuyerOrderDetailPage() {
                         {showDeliveryProgress && (
                           <>
                             <td className="px-4 py-3 text-right text-sm text-success font-medium">
-                              {Number(li.deliveredQty ?? 0)}
+                              {splitProgressText(li, Number(li.deliveredQty ?? 0))}
                             </td>
                             <td className="px-4 py-3 text-right text-sm">
                               {(() => {
                                 const remaining = Number(li.qty) - Number(li.deliveredQty ?? 0);
                                 return remaining > 0 ? (
-                                  <span className="text-warning font-medium">{remaining}</span>
+                                  <span className="text-warning font-medium">
+                                    {splitProgressText(li, remaining)}
+                                  </span>
                                 ) : (
                                   <span className="text-success">0</span>
                                 );

@@ -7,7 +7,7 @@ import { Package, Heart, Plus, Bell } from "lucide-react";
 import { pricedPerLabel, type PromotionRule, type PromoResult } from "@routeflow/pricing";
 import type { BuyerProduct, BuyerPromotion, ReplenishmentEstimate } from "@/lib/api/buyer";
 import type { CartItem } from "@/lib/buyer-cart";
-import { lineCount, type CartUnit } from "@/lib/buyer-cart-line";
+import { lineCount, lineLimit, type CartUnit } from "@/lib/buyer-cart-line";
 import { CartLineUnit } from "../../_components/CartLineUnit";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { isOrderBlocked, stockLine } from "@/lib/buyer-backorder";
@@ -237,6 +237,7 @@ export function ProductTile({
               onRemove={() => onUpdateQty(0)}
               onRestore={onRestore ? () => onRestore(cartItem) : undefined}
               stack
+              {...lineLimit(cartItem)}
             />
           ) : outOfStock && onToggleStockAlert ? (
             <button

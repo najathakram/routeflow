@@ -1,5 +1,6 @@
 import {
   API_ERROR_CODES,
+  deliveryStepsAbsentReason,
   type BuyerSellerCapability,
   type FulfilmentMethod,
 } from "@routeflow/types";
@@ -71,7 +72,9 @@ export function orderTravelView(
   if (capLoading) return "loading";
   if (!isConfiguredSeller(cap)) return "route";
   if (fulfillPath === "SHIP") return "shipment";
-  return cap.fleet ? "route" : "none";
+  return deliveryStepsAbsentReason({ fulfillPath, capability: cap }) === "NO_FLEET"
+    ? "none"
+    : "route";
 }
 
 interface ShipFields {
@@ -184,4 +187,12 @@ export function isFulfilMethodNotOffered(err: unknown): boolean {
   const res = (err as { response?: { status?: number; data?: { code?: unknown } } } | null)
     ?.response;
   return res?.status === 400 && res.data?.code === API_ERROR_CODES.FULFIL_METHOD_NOT_OFFERED;
+}
+
+/**
+ * W-1306: the line under a timeline that has no route steps. It names the fact, never the seller's
+ * add-ons or billing (a buyer is told nothing about those, SA-733r6).
+ */
+export function buyerTimelineNote(view: BuyerOrderTravelView): string | null {
+  return view === "none" ? "This seller does not show each delivery step for this order." : null;
 }
