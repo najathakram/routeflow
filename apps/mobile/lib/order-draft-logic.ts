@@ -1,5 +1,5 @@
 import { isPlanGateError, normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
-import type { ProductUnitLevel } from "@routeflow/types";
+import { API_ERROR_CODES, type ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "./unit-options";
 import { isFamilyProduct } from "./sellable-products";
 
@@ -97,7 +97,9 @@ export function decideResumeHydrationStart(
   if (!pricesErrored || isPlanGateError(pricesError)) return "start";
   const res = (pricesError as { response?: { status?: unknown; data?: { code?: unknown } } } | null)
     ?.response;
-  return res?.status === 403 && res.data?.code !== "PLAN_GATE_UNAVAILABLE" ? "denied" : "failed";
+  return res?.status === 403 && res.data?.code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE
+    ? "denied"
+    : "failed";
 }
 
 /** The parked line's own fields `decideResumeUnitPrice` needs — a structural slice of
