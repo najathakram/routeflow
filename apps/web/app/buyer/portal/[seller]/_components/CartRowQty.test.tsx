@@ -132,3 +132,43 @@ describe("CartRowQty - neutral stepper (P26)", () => {
     expect(screen.getByRole("spinbutton").className).not.toMatch(/text-buyer-\d/);
   });
 });
+
+describe("CartRowQty limits (B1382, SA-1283)", () => {
+  const type = (value: string) => {
+    const field = screen.getByRole("spinbutton");
+    fireEvent.change(field, { target: { value } });
+    fireEvent.blur(field);
+    return field;
+  };
+
+  it("a 12-pack Case line clamps 8,334 to 8,333 cases and says so", () => {
+    render(<Harness start={caseLine} />);
+    expect(type("8334")).toHaveValue(8333);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The most you can order at once is 8,333 cases.",
+    );
+  });
+
+  it("99999999 on an Each line clamps to 100,000", () => {
+    render(<Harness start={{ qty: 5, boxes: 0, pieces: 5, unitsPerBox: 12, sellBy: "EACH" }} />);
+    expect(type("99999999")).toHaveValue(100_000);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The most you can order at once is 100,000.",
+    );
+  });
+
+  it("the + button stops at the limit", () => {
+    render(<Harness start={{ ...caseLine, qty: 8333 * 12, boxes: 8333 }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Increase Widget" }));
+    expect(screen.getByRole("spinbutton")).toHaveValue(8333);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it.each(["-5", "0", "", "12.5", "1e9"])("%j reverts, never removes, and says why", (value) => {
+    const onRemove = jest.fn();
+    render(<Harness start={caseLine} onRemove={onRemove} />);
+    expect(type(value)).toHaveValue(1);
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("Enter 1 or more.");
+  });
+});

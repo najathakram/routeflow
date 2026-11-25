@@ -6,7 +6,7 @@ import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
-import { useCartStore } from "../../../store/cartStore";
+import { maxLineUnits, useCartStore } from "../../../store/cartStore";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY, isQtySplitMismatch } from "../../../lib/buyer-qty-split";
 import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer";
 import {
@@ -242,6 +242,8 @@ export default function CartScreen() {
                         <QtyTextInput
                           value={units}
                           min={1}
+                          max={maxLineUnits(item.unitsPerBox)}
+                          rejectNonDigits
                           emptyMeansZero={false}
                           onChangeQty={(n) => setUnits(item.productId, n)}
                           style={[styles.qtyText, styles.qtyInputReset]}
