@@ -243,3 +243,30 @@ export function useOrderEditLeaveGuard(
     navigate: (href) => router.push(href),
   });
 }
+
+/**
+ * The guard for a form held as one draft object (the product Details form). The draft as it stood when editing began
+ * is the baseline: the form is dirty only when the draft differs from it, so an opened and untouched form asks
+ * nothing. `cancel` is a ref the page points at its own cancel function (declared after this hook runs); Discard
+ * calls it. With no previous page, Back goes to `backHref`; after Discard a clicked link is followed by the router.
+ */
+export function useDraftEditLeaveGuard(
+  what: string,
+  draft: unknown,
+  editing: boolean,
+  router: { push: (href: string) => void },
+  backHref: string,
+) {
+  const seed = React.useRef<string | null>(null);
+  const cancel = React.useRef<() => void>(() => {});
+  const now = JSON.stringify(draft);
+  if (!editing) seed.current = null;
+  else if (seed.current === null) seed.current = now;
+  const guard = useEditLeaveGuard(
+    editing && now !== seed.current,
+    () => cancel.current(),
+    () => router.push(backHref),
+    { what, navigate: (href) => router.push(href) },
+  );
+  return { dialog: guard.dialog, cancel };
+}
