@@ -16,11 +16,7 @@ function normalizeSegment(segment: string): string {
 }
 
 export function normalizeItemName(raw: string): string {
-  return raw
-    .split(":")
-    .map(normalizeSegment)
-    .filter((s) => s.length > 0)
-    .join(":");
+  return raw.split(":").map(normalizeSegment).join(":");
 }
 
 /** The full "Parent:Child" name, trimmed and nothing else. */

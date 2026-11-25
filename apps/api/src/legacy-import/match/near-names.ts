@@ -16,7 +16,7 @@ function parts(name: string): Parts {
   const cut = normalised.lastIndexOf(":");
   const parent = cut === -1 ? "" : normalised.slice(0, cut);
   const child = cut === -1 ? normalised : normalised.slice(cut + 1);
-  const numbers = (child.match(/\p{N}+/gu) ?? []).sort().join(",");
+  const numbers = (normalised.match(/\p{N}+/gu) ?? []).join(",");
   return { parent, child, numbers, compact: child.replace(/\s+/g, "") };
 }
 
@@ -45,17 +45,29 @@ function dice(a: string, b: string): number {
  * the numbers in the name must be the same, and when both names carry a parent the parents
  * must match. Failing a gate scores 0.
  */
-export function nearNameScore(a: string, b: string): number {
+/** Both hard gates: the same numbers in the same order, and the same parent when both have one. */
+export function gatesPass(a: string, b: string): boolean {
   const pa = parts(a);
   const pb = parts(b);
-  if (pa.numbers !== pb.numbers) return 0;
-  if (pa.parent !== "" && pb.parent !== "" && pa.parent !== pb.parent) return 0;
-  return dice(pa.compact, pb.compact);
+  if (pa.numbers !== pb.numbers) return false;
+  return !(pa.parent !== "" && pb.parent !== "" && pa.parent !== pb.parent);
+}
+
+export function nearNameScore(a: string, b: string): number {
+  if (!gatesPass(a, b)) return 0;
+  return dice(parts(a).compact, parts(b).compact);
+}
+
+/** Plain code-point order: never the machine's locale. */
+export function compareCodePoint(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /** Groups of two or more near source names. A suggestion only: `confirmed` is always false. */
 export function groupNearNames(names: string[]): NearNameGroup[] {
-  const unique = [...new Set(names.map((n) => n.trim()).filter((n) => n.length > 0))].sort();
+  const unique = [...new Set(names.map((n) => n.trim()).filter((n) => n.length > 0))].sort(
+    compareCodePoint,
+  );
   const root = unique.map((_, i) => i);
   const find = (i: number): number => {
     while (root[i] !== i) {
@@ -64,11 +76,15 @@ export function groupNearNames(names: string[]): NearNameGroup[] {
     }
     return i;
   };
+  const inGroup = (r: number): string[] => unique.filter((_, k) => find(k) === r);
   for (let i = 0; i < unique.length; i++) {
     for (let j = i + 1; j < unique.length; j++) {
-      if (nearNameScore(unique[i], unique[j]) >= NEAR_NAME_THRESHOLD) {
-        root[find(j)] = find(i);
-      }
+      if (find(i) === find(j)) continue;
+      if (nearNameScore(unique[i], unique[j]) < NEAR_NAME_THRESHOLD) continue;
+      // Every cross pair must pass both gates, so a parentless name cannot bridge two parents.
+      const left = inGroup(find(i));
+      const right = inGroup(find(j));
+      if (left.every((x) => right.every((y) => gatesPass(x, y)))) root[find(j)] = find(i);
     }
   }
   const byRoot = new Map<number, string[]>();
@@ -79,7 +95,7 @@ export function groupNearNames(names: string[]): NearNameGroup[] {
   return [...byRoot.values()]
     .filter((members) => members.length > 1)
     .map((members) => ({ members, confirmed: false as const }))
-    .sort((x, y) => x.members[0].localeCompare(y.members[0]));
+    .sort((x, y) => compareCodePoint(x.members[0], y.members[0]));
 }
 
 /** Nearest catalog rows for a source name, best first. Never confirms a match. */
@@ -93,7 +109,9 @@ export function suggestNearNames(
     .filter((s) => s.score >= NEAR_NAME_THRESHOLD)
     .sort(
       (a, b) =>
-        b.score - a.score || a.name.localeCompare(b.name) || a.productId.localeCompare(b.productId),
+        b.score - a.score ||
+        compareCodePoint(a.name, b.name) ||
+        compareCodePoint(a.productId, b.productId),
     )
     .slice(0, Math.max(0, limit));
 }

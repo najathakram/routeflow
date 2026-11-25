@@ -1,5 +1,5 @@
 import { itemSourceKey, normalizeItemName } from "./normalize-item-name";
-import { suggestNearNames } from "./near-names";
+import { compareCodePoint, suggestNearNames } from "./near-names";
 import type { CatalogItemRow, ItemAliasRow, ItemMatchResult, ItemSuggestion } from "./types";
 
 function result(
@@ -11,7 +11,9 @@ function result(
 }
 
 function asSuggestions(rows: CatalogItemRow[]): ItemSuggestion[] {
-  return rows.map((r) => ({ productId: r.id, name: r.name, score: 1 }));
+  return rows
+    .map((r) => ({ productId: r.id, name: r.name, score: 1 }))
+    .sort((a, b) => compareCodePoint(a.name, b.name) || compareCodePoint(a.productId, b.productId));
 }
 
 /**
@@ -26,10 +28,20 @@ export function resolveItem(
 ): ItemMatchResult {
   const sourceKey = itemSourceKey(name);
 
-  const alias = aliases.find(
+  if (sourceKey === "") return result("UNMATCHED", sourceKey);
+
+  const hits = aliases.filter(
     (a) => a.sourceItemKey === sourceKey && (a.ignore || a.productId !== null),
   );
-  if (alias) {
+  const outcomes = new Set(hits.map((a) => (a.ignore ? "ignore" : `product:${a.productId}`)));
+  if (outcomes.size > 1) {
+    const rows = [
+      ...new Set(hits.map((a) => a.productId).filter((p): p is string => p !== null)),
+    ].map((id) => ({ id, name: catalog.find((c) => c.id === id)?.name ?? "" }));
+    return result("AMBIGUOUS", sourceKey, { suggestions: asSuggestions(rows) });
+  }
+  if (hits.length > 0) {
+    const alias = hits[0];
     return result("ALIAS", sourceKey, {
       productId: alias.ignore ? null : alias.productId,
       ignore: alias.ignore,
