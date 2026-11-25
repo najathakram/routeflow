@@ -1188,11 +1188,12 @@ describe("SubscriptionMutationService.subscribe — A2b plan-transition hook", (
 // entering the paying set books the fee; catalog rows are unchanged.
 describe("#2223 SA-444c — subscribe() and the downgrade preview keep the override fee", () => {
   it("subscribe() cycle change on a paying override row: both upsert branches write the fee, Δ0", async () => {
-    const { svc, tx, events } = make({
+    const { svc, tx, events, prisma } = make({
       tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
         cycle: "ANNUAL",
+        stripeSubId: null, // manual-activation shape: no provider subscription (SA-A, BP-1 test ruling)
         priceOverrideMonthly: 80,
         basePriceSnapshot: 80,
       },
@@ -1202,6 +1203,7 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
       priceOverrideMonthly: 80,
       basePriceSnapshot: 80,
     });
+    expect((await prisma.tenantSubscription.findUnique({} as any)).stripeSubId).toBeNull();
     await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
     const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
     expect(arg.create.basePriceSnapshot).toBe(80);
@@ -1213,11 +1215,12 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
   // SA-464b: a paying override row whose snapshot is NULL (not yet counted) — the cycle change writes
   // the fee and books it in full, so snapshot MRR and ledger MRR re-agree.
   it("SA-464b: subscribe() cycle change on a paying override row with a NULL snapshot writes the fee and books +fee", async () => {
-    const { svc, tx, events } = make({
+    const { svc, tx, events, prisma } = make({
       tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
         cycle: "ANNUAL",
+        stripeSubId: null, // manual-activation shape: no provider subscription (SA-A, BP-1 test ruling)
         priceOverrideMonthly: 80,
         basePriceSnapshot: null,
       },
@@ -1227,6 +1230,7 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
       priceOverrideMonthly: 80,
       basePriceSnapshot: null,
     });
+    expect((await prisma.tenantSubscription.findUnique({} as any)).stripeSubId).toBeNull();
     await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
     const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
     expect(arg.update.basePriceSnapshot).toBe(80);
@@ -1235,7 +1239,7 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
   });
 
   it("subscribe() re-subscribe of an override row ENTERING the paying set books the fee", async () => {
-    const { svc, tx, events } = make({
+    const { svc, tx, events, prisma } = make({
       tenantStatus: "READ_ONLY",
       readOnlyReason: "subscription_cancelled",
       sub: { planKey: "BUSINESS", priceOverrideMonthly: 80, basePriceSnapshot: 80 },
@@ -1251,10 +1255,11 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
   });
 
   it("subscribe()'s locked re-read selects the override it keeps", async () => {
-    const { svc, tx } = make({
+    const { svc, tx, prisma } = make({
       tenantStatus: "ACTIVE",
-      sub: { planKey: "STARTER", cycle: "ANNUAL" },
+      sub: { planKey: "STARTER", cycle: "ANNUAL", stripeSubId: null }, // no provider subscription (SA-A)
     });
+    expect((await prisma.tenantSubscription.findUnique({} as any)).stripeSubId).toBeNull();
     await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
     expect(tx.tenantSubscription.findUnique.mock.calls[0][0].select).toMatchObject({
       priceOverrideMonthly: true,
