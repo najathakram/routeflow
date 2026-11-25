@@ -10,9 +10,7 @@ import type {
   ConfirmBusinessProfileRequest,
   BusinessProfileApplyResponse,
   BusinessProfileKey,
-  BusinessProfileListResponse,
   BusinessProfilePreviewResponse,
-  BusinessProfileSummary,
   FeatureModeState,
 } from "@routeflow/types";
 
