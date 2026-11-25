@@ -38,7 +38,8 @@ import { OrderStatusBadge } from "@/components/OrderStatusBadge";
 import { HandOverStamp } from "@/components/HandOverStamp";
 import { seesHandOverStamp } from "@/lib/handover-stamp";
 import { useTenantTimeZone } from "@/lib/tenant-timezone";
-import { useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { useFulfilmentCaps, useStaffFulfilment } from "@/lib/fulfilment-caps";
+import { DeliveryStepsAbsentNote } from "./_components/DeliveryStepsAbsentNote";
 import { OrderFulfilmentRow, fulfillPathErrorCopy } from "../_components/OrderFulfilmentRow";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import { OrdersMoreMenu } from "../_components/OrdersMoreMenu";
@@ -102,7 +103,6 @@ import { ReadyEmailLine } from "./_components/ReadyEmailLine";
 import { DeleteOrderTier } from "./_components/DeleteOrderTier";
 import { ReopenDeliveredTier } from "./_components/ReopenDeliveredTier";
 import { DeliverAgainTier } from "./_components/DeliverAgainTier";
-import { isPosOrder } from "@/lib/api/pos-orders";
 import { FulfillPathMoveConfirm } from "./_components/FulfillPathMoveConfirm";
 import { OrderStaffFlags } from "./_components/OrderStaffFlags";
 import { EditClosedChip } from "./_components/EditClosedChip";
@@ -117,7 +117,12 @@ import { parseSellingRestricted } from "@/lib/api/selling-restricted";
 import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
 import { useRestrictionWarningRetry } from "@/lib/use-restriction-warning-retry";
 import { postDeliveryInvoicePrompt, routeHeldNotice, type BlockedLine } from "@routeflow/types";
-import { isPostDeliveryOrderStatus, isTerminalOrderStatus } from "@routeflow/types";
+import {
+  deliveryStepsAbsentReason,
+  isPosOrder,
+  isPostDeliveryOrderStatus,
+  isTerminalOrderStatus,
+} from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { customerTierFor, roundMoney } from "@routeflow/pricing";
@@ -161,6 +166,7 @@ export default function OrderDetailPage() {
   const orderUiV2 = useOrderUiV2();
   const OrderLines = orderUiV2.enabled ? OrderLineItemCards : OrderLineItemsTable;
   const staffFulfilment = useStaffFulfilment();
+  const fulfilmentCaps = useFulfilmentCaps();
   // Keep the Fulfillment row rendered once it has been shown for this order: a PICKUP -> SHIP move on a
   // ship-only account would otherwise hide the select the moment the order's path becomes an offered one.
   const [fulfilRowPinned, setFulfilRowPinned] = React.useState(false);
@@ -459,6 +465,12 @@ export default function OrderDetailPage() {
 
   // SA-763r P-2: a POS-mode order = PICKUP and not a counter sale (counter sales keep their own flow).
   const isPos = isPosOrder(order);
+  // W-1306: one reason, shown where the "Out for delivery" button would be.
+  const deliveryAbsent = deliveryStepsAbsentReason({
+    fulfillPath: order.fulfillPath,
+    counterSale: order.counterSale,
+    capability: fulfilmentCaps,
+  });
 
   // Fulfillment path can only change while the order is open — mirrors the
   // server's PATCH /orders/:id/fulfill-path rejection rule exactly.
@@ -1235,6 +1247,7 @@ export default function OrderDetailPage() {
           {/* CONFIRMED actions */}
           {access.staff && localStatus === "CONFIRMED" && !isEditing && (
             <>
+              <DeliveryStepsAbsentNote reason={deliveryAbsent} />
               {!isPos && (
                 <ConfirmedPrimaryAction
                   fulfillPath={order.fulfillPath}

@@ -77,11 +77,8 @@ import {
 } from "../../../../lib/shipment-display";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
 import { ReasonSheet } from "../../../../components/ReasonSheet";
-import {
-  canDeleteOrder,
-  demotionRequiresReason,
-  isPosOrder,
-} from "../../../../lib/order-status-flow";
+import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
+import { isPosOrder } from "@routeflow/types/api/fulfilment";
 import {
   POS_COPY,
   POS_READY_FAILED,
@@ -114,6 +111,7 @@ import {
   useMoveOrderOffPickup,
 } from "../../../../lib/api/pos-orders";
 import { statusActions, type StatusAction } from "../../../../lib/order-actions";
+import { staffDeliveryAbsentNote } from "../../../../lib/fulfilment-caps";
 import { useStaffFulfilment, useTenantFeatures } from "../../../../lib/tenant-features";
 import { COUNTER_COPY } from "@routeflow/types/counter-copy";
 import { isTerminalOrderStatus } from "@routeflow/types/api/enums";
@@ -268,6 +266,7 @@ export default function OrderDetailScreen() {
   );
   // SA-763r P-2: a POS-mode order = PICKUP and not a counter sale. One primary per state.
   const isPos = isPosOrder(order);
+  const deliveryAbsentNote = staffDeliveryAbsentNote(tenantFeatures, order);
   const moveOptions = posMoveOptions(staffFulfilment.formMethods, staffFulfilment.formDefault);
   const posActions = isPos ? posOrderActions(order, order.status, moveOptions) : [];
   const posSteps =
@@ -1116,6 +1115,11 @@ export default function OrderDetailScreen() {
                 <Text style={styles.shipHint}>{posCutNote(order, order.status)}</Text>
               ) : null}
             </View>
+          ) : null}
+
+          {/* W-1306: why there is no Out for delivery step on this order (the one helper). */}
+          {order.status === "CONFIRMED" && deliveryAbsentNote ? (
+            <Text style={styles.shipHint}>{deliveryAbsentNote}</Text>
           ) : null}
 
           {/* Status transitions */}

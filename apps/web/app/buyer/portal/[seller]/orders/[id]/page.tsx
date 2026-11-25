@@ -61,6 +61,7 @@ import {
   PICKUP_STEP_LABELS,
   SHIP_STEP_LABELS,
   buyerOrderStatusLabel,
+  buyerTimelineNote,
   noFleetStepIndex,
   orderTravelView,
   pickupStepIndex,
@@ -727,6 +728,8 @@ export default function BuyerOrderDetailPage() {
         expectedRevisionNumber: openedRevision.current,
       });
       setEditMode(false);
+      // The numbers changing was the only sign the save worked; say it.
+      toast({ title: "Changes saved", variant: "success" });
     } catch (err: any) {
       const data = err?.response?.data;
       if (err?.response?.status === 409 && data?.code === "REGULATED_AUTH_REQUIRED") {
@@ -846,6 +849,11 @@ export default function BuyerOrderDetailPage() {
       {timelineView !== "loading" && (
         <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
           <OrderTimeline order={order} view={timelineView} />
+          {buyerTimelineNote(timelineView) && (
+            <p className="mt-3 text-xs text-navy/70" data-testid="timeline-note">
+              {buyerTimelineNote(timelineView)}
+            </p>
+          )}
         </div>
       )}
 
@@ -996,7 +1004,8 @@ export default function BuyerOrderDetailPage() {
                 className="max-lg:min-h-11"
                 onClick={() => setEditMode(false)}
               >
-                Cancel
+                {/* Not "Cancel": the red "Cancel order" on this page kills the order, and the two were mixed up. */}
+                Discard changes
               </Button>
               <Button
                 size="sm"
@@ -1286,7 +1295,8 @@ export default function BuyerOrderDetailPage() {
       </div>
 
       {/* Actions */}
-      {canCancel && (
+      {/* Hidden while editing items: beside "Discard changes" a red "Cancel order" was one mis-tap from losing the order. */}
+      {canCancel && !editMode && (
         <div className="flex justify-end">
           <Button
             variant="danger-outline"
