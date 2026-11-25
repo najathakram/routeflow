@@ -39,6 +39,11 @@ const ALLOWED_DIRECT_READERS: Record<string, string> = {
   // Arrived from master in the C1 catch-up (#4393, B1371); lanes never edit master's tests.
   "app/(marketing)/no-login-cutoff-claims.static.test.ts":
     "master's claim scan: reads the raw pages for the login-cutoff wording",
+  // Arrived from master in the catch-up (#4474); lanes never edit master's tests.
+  "app/(marketing)/site-guarded-phrases.static.test.ts":
+    "master's claims guard: scans the raw page sentences against the ledger",
+  "app/(marketing)/site-pricing-catalog.static.test.ts":
+    "master's price guard: reads the raw price spans and prices.js",
 };
 
 // The file-size budget test (replaced by the wheel budget in W1) is matched by its suffix.
