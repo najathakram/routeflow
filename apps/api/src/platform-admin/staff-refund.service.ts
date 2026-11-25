@@ -170,7 +170,7 @@ export class StaffRefundService {
   async listBillingEvents(tenantId: string): Promise<BillingEventView[]> {
     const rows = await this.prisma.billingEvent.findMany({
       where: { tenantId },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      orderBy: { createdAt: "desc" },
       take: BILLING_EVENTS_TAKE,
     });
     const names = await this.actorNames(

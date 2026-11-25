@@ -579,7 +579,7 @@ describe("R-2: the billing-events list", () => {
     const q = h.billingEvent.findMany.mock.calls[0][0];
     expect(q.where).toEqual({ tenantId: TENANT_A });
     expect(q.take).toBe(100);
-    expect(q.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
+    expect(q.orderBy).toEqual({ createdAt: "desc" });
     expect(rows[0]).toEqual({
       id: "ev-b",
       type: "refund.staff",
