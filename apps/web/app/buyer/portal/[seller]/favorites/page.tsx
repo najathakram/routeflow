@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { pricedPerLabel } from "@routeflow/pricing";
 import { useParams, useRouter } from "next/navigation";
 import { Heart, Plus, Package, Loader2, Trash2, Store, AlertTriangle } from "lucide-react";
 import { Button } from "@routeflow/ui/web";
@@ -108,7 +109,9 @@ function FavoriteCard({
         <div className={`flex items-end justify-between gap-2 ${cartQty > 0 ? "flex-wrap" : ""}`}>
           <div>
             <p className="text-lg font-bold text-navy">{fmt(item.buyerPrice)}</p>
-            <p className="text-[11px] text-navy/70">per {item.unit}</p>
+            <p className="text-[11px] text-navy/70">
+              {pricedPerLabel({ unit: item.unit, unitsPerBox: item.unitsPerBox }).perText}
+            </p>
           </div>
 
           {cartQty > 0 && cartItem ? (

@@ -55,6 +55,7 @@ import { saveTripDraft } from "@/lib/trip-draft";
 import { bulkCancelFailureTitle } from "@/lib/bulk-cancel-summary";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
+import { dismissOrderCreatedToast } from "./_components/order-created-toast";
 import { BatchShipActions } from "./_components/BatchShipActions";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
 import { isStoreOnly, newOrderEntry, newOrderIntent } from "@/lib/counter-sale";
@@ -497,7 +498,14 @@ export default function OrdersPage() {
       <ChevronDown className="h-3 w-3 ml-1 inline text-brand-700" />
     );
   };
-  const { toast } = useToast();
+  const { toast, dismiss: dismissToast } = useToast();
+  // F39: the order-created toast belongs to this list; leaving the list takes it down (see dismissOrderCreatedToast).
+  const dismissToastRef = React.useRef(dismissToast);
+  dismissToastRef.current = dismissToast;
+  React.useEffect(
+    () => () => dismissOrderCreatedToast({ dismiss: (id) => dismissToastRef.current(id) }),
+    [],
+  );
   // Status words come from the shared fulfilment table (display only): per ORDER by its fulfillPath,
   // and the account's default method for the filters below.
   const statusLabel = useOrderStatusLabel();
