@@ -35,7 +35,7 @@ export const routes: MarketingRoute[] = [
     label: "Pricing",
     title: "Pricing",
     description:
-      "RouteFlow plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed. Pay for a year and get 2 months free.",
+      "RouteFlow plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed.",
   },
   {
     slug: "company",

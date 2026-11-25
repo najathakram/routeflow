@@ -292,6 +292,17 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
         bad.push(`${f}: ...${text.slice(Math.max(0, at - 30), at + 30).replace(/\s+/g, " ")}...`);
       }
     }
+    // The marketing lib holds the same pages' titles and descriptions (metadata, sitemap), so it is read too.
+    const LIB = path.resolve(__dirname, "lib");
+    for (const f of fs.readdirSync(LIB).filter((n) => n.endsWith(".ts"))) {
+      const text = fs.readFileSync(path.join(LIB, f), "utf8");
+      for (const m of text.matchAll(offer)) {
+        const at = m.index ?? 0;
+        bad.push(
+          `lib/${f}: ...${text.slice(Math.max(0, at - 30), at + 30).replace(/\s+/g, " ")}...`,
+        );
+      }
+    }
     expect(bad).toEqual([]);
   });
 
