@@ -27,25 +27,31 @@ const HAND_BUILT_PER = [
 // Files that keep a hand-written "/ {unit}" on purpose, each with its reason (PR-B scan decisions).
 const ALLOW_PER = [
   // boxed lines print "/ box" first; the unit fallback is reached only for a line with no pack
-  [path.join("(customer)", "orders", "cart.tsx"), "boxed branch is separate; fallback is unboxed"],
-  [path.join("edit-items", "ProductPicker.tsx"), "boxed branch is separate; fallback is unboxed"],
-  ["invoice-line-display.ts", "pack lines (upb > 1) return first; fallback is a factor-1 line"],
+  [path.join("(customer)", "orders", "cart.tsx"), "B1398: boxed branch first; fallback is unboxed"],
+  [path.join("edit-items", "ProductPicker.tsx"), "B1398: boxed branch first; fallback is unboxed"],
+  ["invoice-line-display.ts", "B1398: pack lines (upb > 1) return first; fallback is factor-1"],
   // staff order editors that carry their own pack-aware price unit; converting needs a behaviour change
-  [path.join("scan", "PriceEditor.tsx"), "staff scan editor: follow-up (own priceUnit logic)"],
-  ["LineItemRow.tsx", "staff unlisted-line price input: follow-up"],
+  [path.join("scan", "PriceEditor.tsx"), "B1398: staff scan editor, own priceUnit logic"],
+  ["LineItemRow.tsx", "B1398: staff unlisted-line price input"],
   // mobile rows with a separate boxed branch ("case of N" / "box") ahead of the unit fallback; the hardcoded
-  // pack word that ignores the tenant's pack name is its own MEDIUM bug (PR-A follow-ups)
-  ["CartRow.tsx", "boxed branch is separate; fallback is unboxed"],
-  ["ProductRow.tsx", "boxed branch is separate; fallback is unboxed"],
-  [path.join("invoices", "new.tsx"), "boxed branch is separate; fallback is unboxed"],
+  // pack word that ignores the tenant's pack name is B1398
+  ["CartRow.tsx", "B1398: boxed branch first; fallback is unboxed"],
+  ["ProductRow.tsx", "B1398: boxed branch first; fallback is unboxed"],
+  [path.join("invoices", "new.tsx"), "B1398: boxed branch first; fallback is unboxed"],
   // not a product price label
-  [path.join("_components", "CounterLinePriceEdit.tsx"), "the order-line editor's own item label"],
-  [path.join("price-history", "PriceHistoryChart.tsx"), "chart caption (average per unit)"],
-  // need a behaviour change (follow-ups named in the PR): not converted here
-  [path.join("(customer)", "invoices", "[id].tsx"), "follow-up: own bug (pieces before box price)"],
-  [path.join("(customer)", "orders", "[id].tsx"), "follow-up: needs a behaviour change"],
-  [path.join("[id]", "edit-items.tsx"), "follow-up: needs a behaviour change"],
+  [
+    path.join("_components", "CounterLinePriceEdit.tsx"),
+    "B1398: not a price row, the editor's item label",
+  ],
+  [path.join("price-history", "PriceHistoryChart.tsx"), "B1398: not a price row, a chart caption"],
+  // need a behaviour change, each with its own bug: not converted here
+  [path.join("(customer)", "invoices", "[id].tsx"), "B1402: pieces printed before the box price"],
+  [path.join("(customer)", "orders", "[id].tsx"), "B1401: needs a behaviour change"],
+  [path.join("[id]", "edit-items.tsx"), "B1395: that bug rewrites this file through the helper"],
 ] as const;
+
+// shrink-only (OP-7): lower this when an entry goes, never raise it
+const ALLOW_PER_MAX = 13;
 
 function strip(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, " ");
@@ -107,6 +113,11 @@ describe("no hand-built price label outside pricedPerLabel (B1383)", () => {
       .filter((f) => handBuiltPer(fs.readFileSync(f, "utf8")))
       .map((f) => path.relative(REPO_ROOT, f));
     expect(hits).toEqual([]);
+  });
+
+  it("the allowlist is count-pinned (shrink-only) and every reason names a bug id", () => {
+    expect(ALLOW_PER.length).toBeLessThanOrEqual(ALLOW_PER_MAX);
+    for (const [, reason] of ALLOW_PER) expect(reason).toMatch(/^B\d{3,4}:/);
   });
 
   it("every allowlisted file still needs its entry", () => {
