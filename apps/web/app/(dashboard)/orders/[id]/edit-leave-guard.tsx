@@ -229,3 +229,17 @@ export function useEditLeaveGuard(
   );
   return { requestLeave, dialog };
 }
+
+/**
+ * The order page's guard: with no previous page, Back goes to the orders list; after Discard a clicked link is
+ * followed through the page's router. Kept here so the order page (at its size limit) carries one line for it.
+ */
+export function useOrderEditLeaveGuard(
+  dirty: boolean,
+  onDiscard: () => void,
+  router: { push: (href: string) => void },
+) {
+  return useEditLeaveGuard(dirty, onDiscard, () => router.push("/orders"), {
+    navigate: (href) => router.push(href),
+  });
+}
