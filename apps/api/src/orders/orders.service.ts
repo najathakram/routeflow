@@ -75,10 +75,9 @@ import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import {
   loadLiveUnitsPerBoxByProduct,
   noPackEditQty,
-  packForLineEdit,
-  storedLineEditShape,
   storedLinePackForEdit,
 } from "./live-pack-map";
+import { resolveEditedLineQty } from "./edited-line-qty";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -3060,61 +3059,13 @@ export class OrdersService implements OnApplicationBootstrap {
                   await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false, li.qty);
                   continue;
                 }
-                // A zero boxes+pieces payload is "not using box entry", not "zero
-                // quantity" (see create()) — a POSITIVE check keeps it from
-                // silently discarding a real item.qty typed alongside it (the
-                // `if (editHasSplit)` branch below ignores item.qty entirely).
-                const editHasSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
-                const wasBoxSplit = li.boxes != null || li.pieces != null;
-                // Resolve the box size for a catalog line even on a qty-ONLY edit. A STORED split line reads the
-                // pack it was sold in, never today's product pack; one that can't be read is refused (SA-1097, L-332).
-                const {
-                  pack: unitsPerBox,
-                  soldWithNoPack,
-                  stored,
-                } = await packForLineEdit(tx as any, li, editHasSplit);
-                const upb = Number(unitsPerBox ?? 0);
-
-                // Resolve qty + the box/piece split, PRESERVING the line's denomination:
-                //  - an explicit boxes/pieces edit wins;
-                //  - else a box-split line re-derives its split from the new qty (box
-                //    price prorated, stale boxes/pieces refreshed);
-                //  - else a selling-unit / non-boxed line keeps boxes/pieces null.
-                let qty: number;
-                let boxes: number | null;
-                let pieces: number | null;
-                if (stored) {
-                  // SA-1097: a stored split line is edited at the pack it was sold in, never today's (live-pack-map.ts).
-                  ({ qty, boxes, pieces } = storedLineEditShape(
-                    item,
-                    li.qty,
-                    unitsPerBox,
-                    soldWithNoPack,
-                  ));
-                } else if (editHasSplit) {
-                  this.warnSplit("orders.update", { ...item, productId: li.productId }, upb);
-                  const split = normalizeBoxesPieces({
-                    boxes: item.boxes,
-                    pieces: item.pieces,
-                    qty: item.qty ?? Number(li.qty),
-                    unitsPerBox: upb,
-                  });
-                  qty = split.qty;
-                  boxes = split.boxes;
-                  pieces = split.pieces;
-                } else if (wasBoxSplit && upb > 1) {
-                  const split = normalizeBoxesPieces({
-                    qty: item.qty ?? Number(li.qty),
-                    unitsPerBox: upb,
-                  });
-                  qty = split.qty;
-                  boxes = split.boxes;
-                  pieces = split.pieces;
-                } else {
-                  qty = item.qty ?? Number(li.qty);
-                  boxes = null;
-                  pieces = null;
-                }
+                // qty + box/piece split, denomination preserved (edited-line-qty.ts: SA-1097, L-332)
+                const { qty, boxes, pieces, upb } = await resolveEditedLineQty(
+                  tx as any,
+                  li,
+                  item,
+                  (u) => this.warnSplit("orders.update", { ...item, productId: li.productId }, u),
+                );
                 if (qty <= 0) continue;
                 assertQtyNotBelowDelivered(
                   flooredDelivered.get(li.id) ?? li.deliveredQty,
