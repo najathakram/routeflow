@@ -16,7 +16,7 @@ import { readServedSitePage } from "@/lib/read-site-page";
 import { STATIC_SITE_PAGE_NAMES, type StaticSitePage } from "@/lib/static-site-page";
 import { SiteFrame } from "@/components/site-frame/SiteFrame";
 import { SHARE_IMAGE, SHARE_IMAGE_LINES, marketingMetadata } from "./lib/metadata";
-import { demoEmail, routes, site } from "./lib/site";
+import { routes, site } from "./lib/site";
 import { UMAMI_OWN_DOMAIN, umamiScriptProps } from "@/lib/umami-tag";
 import { CURRENT_BRAND, isFileExempt } from "@/lib/test-support/site-brand-exemptions";
 import { GET as ogGet } from "./opengraph-image/route";
@@ -236,15 +236,11 @@ describe("metadata, site and the share image", () => {
       JSON.stringify({
         site,
         routes,
-        demo: demoEmail({ name: "a", email: "b", company: "c", notes: "" }),
       }),
     );
     expect(site).toEqual({ name: FIXTURE.name, origin: FIXTURE.origin, email: FIXTURE.email });
     const contact = routes.find((r) => r.slug === "contact");
     expect(contact?.description).toContain(FIXTURE.email);
-    expect(demoEmail({ name: "a", email: "b", company: "c", notes: "" })).toContain(
-      encodeURIComponent(`${FIXTURE.name} demo request`),
-    );
   });
 
   it("metadata.ts reads the fixture", () => {

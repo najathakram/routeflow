@@ -114,20 +114,3 @@ export const PLANS: PricingPlan[] = [
     ],
   },
 ];
-
-export interface DemoFormValues {
-  name: string;
-  email: string;
-  company: string;
-  notes: string;
-}
-
-/** Builds the `mailto:` draft the DemoForm hands off to the visitor's mail app. */
-export function demoEmail(values: DemoFormValues): string {
-  const body = `Hello ${site.name},\n\nI'd like a demo for ${values.company}.\n\nName: ${values.name}\nWork email: ${values.email}\nCompany: ${values.company}\n\nWorkflow to discuss:\n${
-    values.notes || "Orders, delivery routes, and customer accounts."
-  }\n\nPlease get in touch to arrange a walkthrough.`;
-  return `mailto:${site.email}?subject=${encodeURIComponent(
-    `${site.name} demo request — ` + values.company,
-  )}&body=${encodeURIComponent(body)}`;
-}

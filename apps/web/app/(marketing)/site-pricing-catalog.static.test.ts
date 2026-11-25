@@ -246,8 +246,8 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
         }
       }
     }
-    // SA-1282: the home plan cards no longer carry the three yearly spans, so the floor follows (31 -> 28).
-    expect(seen).toBeGreaterThan(25);
+    // SA-1282: the home plan cards no longer carry the three yearly spans, so the floor is exactly 28 spans (was 31).
+    expect(seen).toBeGreaterThan(27);
     expect(bad).toEqual([]);
   });
 
