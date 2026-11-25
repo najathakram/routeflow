@@ -19,8 +19,9 @@ that day. This is the staff refund runbook (deliverable R-1) of the yearly billi
 
 - A staff member with access to the provider dashboard for the live account, and a platform
   super admin login for the admin console.
-- OPEN: which staff role may issue the refund, and does a second person approve it before the
-  money moves?
+- OPEN (owner decision pending): who may refund a yearly payment, and does a second person approve
+  each refund first? Recommended: only a platform super admin, no second approver, every refund
+  recorded (R-2). The alternative adds a delay inside the 14-day window.
 
 ## 1. Check the customer is eligible
 
@@ -34,11 +35,15 @@ that day. This is the staff refund runbook (deliverable R-1) of the yearly billi
    covered by this runbook.
 5. If any check fails, stop. Do not refund. Tell the lead.
 
-- OPEN: does day 14 itself still count (paid exactly 14 days ago)? State the cut-off time.
-- OPEN: if the customer also paid a mid-year add-on or upgrade charge, is that refunded together
-  with the yearly payment ("the whole yearly payment" reads as the year only)?
-- OPEN: what to do for a yearly plan sold by RouteFlow invoice (design step O1, interim sale
-  outside the provider)? This runbook covers provider-billed rows only.
+- Eligible if the request arrives no more than 14 x 24 hours after the yearly payment's paid time
+  shown in the provider dashboard (UTC). Day 14 counts up to that same clock time.
+- OPEN (owner decision pending): if the customer also paid for an add-on or an upgrade during
+  those same 14 days, is that refunded too? Recommended: yes, every charge on that yearly plan paid
+  within the 14 days, because the plan ends that day. The alternative refunds only the yearly
+  payment.
+- A year sold by RouteFlow invoice is refunded in full by the original method (bank transfer or
+  check), outside the app. Staff then end the manual activation in the admin console and record
+  it as in step 4.
 
 ## 2. Refund the whole payment
 
@@ -50,7 +55,9 @@ that day. This is the staff refund runbook (deliverable R-1) of the yearly billi
 5. Wait until the provider shows the refund as succeeded. If it shows failed or pending
    for more than a few minutes, stop and tell the lead.
 
-- OPEN: what to do if the refund fails (card closed or expired): another method, or escalate?
+- OPEN (owner decision pending): what happens when the refund fails (card closed)? Recommended:
+  tell the owner, then pay it back by bank transfer once the owner approves. Never retry on a
+  different card. The alternative is that the owner handles every failed refund personally.
 
 ## 3. Cancel the subscription immediately
 
@@ -65,23 +72,23 @@ Do this **after** the refund, in the same sitting.
 
 - Cancelling "at period end" is wrong here: the customer would keep service for the paid year
   they were refunded for.
-- OPEN: what the customer can still do after the tenant is `CANCELLED` (read their data, export
-  it), and for how long. State it so staff can tell the customer.
+- After cancel the tenant follows the standard cancelled-tenant access and retention rules.
+  Nothing is special for yearly.
 
 ## 4. Record it
 
 The code has no refund event: the refund itself is not seen by RouteFlow, only the cancellation.
 
-1. Write the record in the place the lead names (see OPEN). It must hold: tenant slug (or
+1. Write the record. It must hold: tenant slug (or
    `acme` in examples), the date, "yearly 14-day refund, full amount, subscription cancelled
    immediately", and the staff member who did it.
 2. Do not put the refund amount from a live customer, or any real invoice or order number,
    into the repo.
 
-- OPEN: where staff record a refund. There is no admin endpoint that writes a free-form billing
-  event or note (the only writers are fixed billing events emitted by the billing code), and the
-  tenant has no internal-notes field. Options: a new admin note, a new billing event type, or
-  the provider note plus a ticket. Which one, and who builds it, if it is not the provider note?
+- Build gap, taken by PR R-2 (before yearly is turned on): an admin "Record staff refund" action
+  writes one `refund.staff` billing event (provider refund id, amount shown by the provider, reason,
+  eligibility time) and one audit-log row. It moves no money. Until R-2 is merged, do not sell
+  yearly: there is no place to record a refund.
 
 ## 5. Ledger check
 
@@ -95,13 +102,11 @@ The code has no refund event: the refund itself is not seen by RouteFlow, only t
    (`needsReconcile`) is raised, or you see two cancel events, stop and tell the lead. Do
    not edit rows by hand and do not run any script against production.
 
-- OPEN: where staff read a tenant's billing events. The platform audit-log page and the billing
-  page were not confirmed to list `BillingEvent` rows. Which screen shows them, or does the lead
-  read them for staff?
+- Build gap, taken by PR R-2: the admin tenant billing page will list that tenant's billing events,
+  newest first.
 
-- OPEN: the expected size of the run-rate drop for a yearly row. Today the figure for a yearly
-  plan is not final (design bug B869, annual divided by 12, ships with the yearly checkout).
-  What number should staff expect, and what difference is acceptable?
+- The run-rate drop equals the yearly price divided by 12, as shown on the plan. Before the yearly
+  checkout ships (design PR-4) there are no yearly checkouts, only RouteFlow-invoice or manual rows.
 
 ## 6. Tell the customer
 
@@ -113,8 +118,8 @@ day, the refund goes to the original payment method.
 > goes back to the payment method you used. Your bank decides how long it takes to show.
 
 - Do not promise a number of days for the refund to appear. Do not mention other customers.
-- OPEN: who sends it (staff by email or support chat), from which address, and whether the
-  wording is final once SA-C signs.
+- A platform super admin sends it by email from the support address the app uses for billing mail.
+  The words are SA-C's two R-1 messages, final once owner box 1 (terms line) is answered.
 
 ## If something is wrong
 
