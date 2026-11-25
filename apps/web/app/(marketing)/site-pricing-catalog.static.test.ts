@@ -201,6 +201,8 @@ function normalizeText(html: string): string {
     .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
     .replace(/<[^>]+>/g, " ")
+    .replace(/&#([0-9]+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
     .replace(/&([a-z]+);/gi, (m, n) => ENTITY[n.toLowerCase()] ?? m)
     .replace(/[\u2018\u2019]/g, "'")
     .replace(/\s+/g, " ")
@@ -282,13 +284,31 @@ function subjectPatterns(plans: ReadonlyArray<FeePlan>): RegExp[] {
   return [/\bregulated\b/i, ...plans.map((p) => new RegExp(`\\b${p.name}\\b`))];
 }
 
+/** The value of one attribute in a tag: double-quoted, single-quoted or unquoted. */
+function attrValue(tag: string, name: string): string | undefined {
+  const m = new RegExp(
+    String.raw`(?:^|[\s"'/<])${name}\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>=]+))`,
+    "i",
+  ).exec(tag);
+  return m ? (m[1] ?? m[2] ?? m[3]) : undefined;
+}
+
+/** Meta tags whose content is public text: the descriptions, the titles and the share-image text. */
+const META_TEXT =
+  /^(?:description|og:description|twitter:description|og:title|twitter:title|og:image:alt|twitter:image:alt)$/i;
+
 function attributeSentences(page: string): string[] {
-  const values = [...page.matchAll(/\b(?:alt|aria-label|title)="([^"]*)"/gi)].map((m) => m[1]);
-  for (const m of page.matchAll(/<meta\b[^>]*>/gi)) {
-    if (!/name="description"|property="og:description"|name="twitter:description"/i.test(m[0]))
-      continue;
-    const content = /\bcontent="([^"]*)"/i.exec(m[0]);
-    if (content) values.push(content[1]);
+  const values: string[] = [];
+  for (const tag of page.matchAll(/<[a-z][^>]*>/gi)) {
+    for (const name of ["alt", "aria-label", "title", "placeholder"]) {
+      const v = attrValue(tag[0], name);
+      if (v !== undefined) values.push(v);
+    }
+    if (/^<meta[ \t\r\n/>]/i.test(tag[0])) {
+      const key = attrValue(tag[0], "name") ?? attrValue(tag[0], "property");
+      const content = attrValue(tag[0], "content");
+      if (key && META_TEXT.test(key) && content !== undefined) values.push(content);
+    }
   }
   const out: string[] = [];
   for (const v of values)
@@ -594,6 +614,52 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
       const text = "Growth includes regulated items at no charge.";
       const meta = `<meta name="description" content="${text}">`;
       expect(run(`${meta}${valid}`)).toEqual([unclassified(text)]);
+    });
+
+    it.each([
+      [
+        "a single-quoted aria-label",
+        "<svg aria-label='Growth includes regulated items at no charge.'></svg>",
+      ],
+      ["an unquoted alt", "<img alt=Scale>"],
+      ["a title attribute", '<a title="Growth includes regulated items at no charge.">x</a>'],
+      ["a placeholder", '<input placeholder="Growth includes regulated items at no charge.">'],
+      [
+        "og:title",
+        '<meta property="og:title" content="Growth includes regulated items at no charge.">',
+      ],
+      [
+        "twitter:title",
+        '<meta name="twitter:title" content="Growth includes regulated items at no charge.">',
+      ],
+      [
+        "og:image:alt",
+        '<meta property="og:image:alt" content="Growth includes regulated items at no charge.">',
+      ],
+      [
+        "a single-quoted meta",
+        "<meta property='og:description' content='Growth includes regulated items at no charge.'>",
+      ],
+    ])("red: %s is read and unclassified", (_n, markup) => {
+      const text = markup.includes("alt=Scale")
+        ? "Scale"
+        : "Growth includes regulated items at no charge.";
+      expect(run(`${markup}${valid}`)).toEqual([unclassified(text)]);
+    });
+
+    it.each([
+      ["a decimal entity", "<p>Growth includes &#114;egulated items at no charge.</p>"],
+      ["a hex entity", "<p>Growth includes &#x72;egulated items at no charge.</p>"],
+    ])("red: %s cannot hide the add-on word", (_n, markup) => {
+      expect(run(`${markup}${valid}`)).toEqual([
+        unclassified("Growth includes regulated items at no charge."),
+      ]);
+    });
+
+    it("red: a plan name written with a numeric entity is still found", () => {
+      expect(run(`<p>&#71;rowth is great.</p>${valid}`)).toEqual([
+        unclassified("Growth is great."),
+      ]);
     });
 
     it("red: the backstop catches a fee sentence that names neither the add-on nor a plan", () => {
