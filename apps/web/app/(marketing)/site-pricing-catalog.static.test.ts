@@ -153,6 +153,31 @@ const pages = () => fs.readdirSync(SITE).filter((f) => f.endsWith(".html"));
 const html = (f: string) => fs.readFileSync(path.join(SITE, f), "utf8");
 const num = (s: string) => Number(s.replace(/,/g, ""));
 
+/** SA-1287: the regulated-items fee sentence, derived from the catalog. The add-on's own list item names the
+ *  waived plans when it names any plan; with no plan name, "no fee on the largest plans." stands only while
+ *  the waived plans are the catalog's top two or more and not all of them. Returns null when the line is true. */
+function regulatedFeeLineProblem(
+  page: string,
+  plans: ReadonlyArray<{ planKey: string; name: string }>,
+  includedAt: string | null | undefined,
+): string | null {
+  const li = page.match(/<li><span><b>Regulated items<\/b>[\s\S]*?<\/li>/)?.[0];
+  if (!li) return "no Regulated items list item";
+  const i = plans.findIndex((p) => p.planKey === includedAt);
+  if (i < 0) return `includedAtPlan ${String(includedAt)} is not a catalog plan`;
+  if (i === 0) return "the add-on is free on every plan; the page must not sell it as a fee";
+  const waived = plans.slice(i).map((p) => p.name);
+  if (plans.some((p) => new RegExp(`\\b${p.name}\\b`).test(li))) {
+    const named = `No fee on ${waived.join(" and ")}.`;
+    return li.includes(named) ? null : `named sentence missing: "${named}"`;
+  }
+  if (waived.length < 2)
+    return `"the largest plans" is plural, but only ${waived[0]} waives the fee`;
+  return /\bno fee on the largest plans\./i.test(li)
+    ? null
+    : "no fee sentence for the waived plans";
+}
+
 describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})`, () => {
   const catalog = catalogOnSale();
   const site = sitePrices();
@@ -226,9 +251,50 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
     }
   });
 
+  const feePlans = () => catalog.plans as unknown as Array<{ planKey: string; name: string }>;
+  const FEE_MASTER =
+    "<li><span><b>Regulated items</b><small>We turn it on for you. $39 a month on Starter and Growth. No fee on Scale and Enterprise.</small></span></li>";
+  const FEE_ONE_LINE =
+    "<li><span><b>Regulated items</b><small>We turn it on for you. $39 a month, and no fee on the largest plans.</small></span></li>";
+
   it("the regulated-items fee line follows the catalog's included-at plan", () => {
-    expect(sku("REGULATED_ITEMS")?.includedAtPlan).toBe("SCALE");
-    expect(html("pricing.html")).toMatch(/No fee on Scale and Enterprise\./);
+    const at = sku("REGULATED_ITEMS")?.includedAtPlan as string | null | undefined;
+    expect(at).toBe("SCALE"); // kept tripwire: a catalog move re-opens SA-1287
+    expect(regulatedFeeLineProblem(html("pricing.html"), feePlans(), at)).toBeNull();
+  });
+
+  it("G1 both wordings pass at the catalog's included-at plan", () => {
+    expect(regulatedFeeLineProblem(FEE_MASTER, feePlans(), "SCALE")).toBeNull();
+    expect(regulatedFeeLineProblem(FEE_ONE_LINE, feePlans(), "SCALE")).toBeNull();
+  });
+
+  it.each([
+    [
+      "R1 the plural line is false when only the top plan waives the fee",
+      FEE_ONE_LINE,
+      "ENTERPRISE",
+      /only Enterprise waives the fee/,
+    ],
+    [
+      "R2 the fee is not sold when every plan waives it",
+      FEE_ONE_LINE,
+      "STARTER",
+      /free on every plan/,
+    ],
+    [
+      "R3 a line that names plans must name the waived ones",
+      FEE_ONE_LINE.replace("$39 a month,", "$39 a month on Starter and Growth,"),
+      "SCALE",
+      /named sentence missing: "No fee on Scale and Enterprise\."/,
+    ],
+    [
+      "R4 a fee with no waiver sentence is red",
+      FEE_ONE_LINE.replace(", and no fee on the largest plans", ""),
+      "SCALE",
+      /no fee sentence for the waived plans/,
+    ],
+  ])("%s", (_name, li, at, message) => {
+    expect(regulatedFeeLineProblem(li, feePlans(), at)).toMatch(message);
   });
 
   it("every data-bound price span holds the value prices.js gives it", () => {
