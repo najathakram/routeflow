@@ -41,6 +41,7 @@ import {
 import { type SpecialLine } from "@/lib/useCustomerLinePricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { PriceEditRow } from "../price-edit-row";
+import { lineFarFromListReference } from "./line-far-from-list";
 import { DecimalInput } from "@/components/MoneyInput";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { newProductPrefill, type PrefillDoor } from "@/lib/product-prefill";
@@ -124,6 +125,10 @@ export interface EditItemState {
   /** List/catalog price for this line — the strikethrough baseline and the
    * amount-off anchor. `originalPrice ?? unitPrice` when loaded from the order. */
   basePrice: number;
+  /** B1423: the catalog list price in this line's sold unit, for the far-from-list note only (see
+   *  `lineFarFromListReference`). Null or absent when the page cannot know it (unlisted, promo, a loose piece). */
+  listReference?: number | null;
+  originalListReference?: number | null;
   /** Optional note explaining a price override (DRAFT only). */
   overrideReason?: string;
   cancelled: boolean;
@@ -293,6 +298,7 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
   return {
     ...(it.originalUnitPrice != null ? { unitPrice: it.originalUnitPrice } : {}),
     ...(it.originalBasePrice != null ? { basePrice: it.originalBasePrice } : {}),
+    listReference: it.originalListReference,
     overrideReason: it.originalOverrideReason,
     // B465 fix round 5: undoing a substitution must drop the substitute's own
     // reason-required baseline too — the comparison falls back to
@@ -326,6 +332,14 @@ function restoredUnitWords(it: EditItemState): Partial<EditItemState> {
  * correct, since `unitPrice` on a unit line is already PER UNIT (mirrors the existing "a boxed
  * line added without a split keeps qty in selling units" convention just above).
  */
+/** B1423: a saved line's list price is its stored `originalPrice`, except on a promo line (the tier price before the
+ *  promo) and an unlisted line (no catalog price at all). */
+function savedLineListReference(li: OrderItem, isUnlisted: boolean) {
+  const list =
+    isUnlisted || li.priceType === "PROMO" ? null : Number(li.originalPrice ?? li.unitPrice);
+  return { listReference: list, originalListReference: list };
+}
+
 export function buildEditItemFromLine(li: OrderItem): EditItemState {
   const isUnlisted = !li.productId;
   const label = orderLineName(li) ?? li.productId ?? "Custom item";
@@ -359,6 +373,7 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
     qty: count,
     unitPrice: Number(li.unitPrice),
     basePrice: Number(li.originalPrice ?? li.unitPrice),
+    ...savedLineListReference(li, isUnlisted),
     originalUnitPrice: Number(li.unitPrice),
     originalBasePrice: Number(li.originalPrice ?? li.unitPrice),
     originalOverrideReason: li.overrideReason ?? undefined,
@@ -997,6 +1012,7 @@ export function EditableLineItems({
       qty: refresh && current.unitLabel === option.value ? current.qty : 1,
       unitPrice: option.price,
       basePrice: option.listPrice,
+      listReference: option.listPrice,
       overrideReason: undefined,
       reasonBaselinePrice: option.price,
       priceEdited: false, // #2381: a unit change prices from the ladder
@@ -1327,6 +1343,7 @@ export function EditableLineItems({
             !isLocked(item.id) && (
               <PriceEditRow
                 basePrice={item.basePrice}
+                listReference={lineFarFromListReference(item)}
                 unitPrice={item.unitPrice}
                 unitWord={priceFieldUnitWord(item)}
                 // B465 fix round 5: a substitution's own baseline wins over the
@@ -1421,6 +1438,7 @@ export function EditableLineItems({
                   // price edit AFTER this substitution should trip the guard.
                   reasonBaselinePrice: tierPriceFor(p),
                   basePrice: Number(p.pricePerUnit ?? 0),
+                  listReference: Number(p.pricePerUnit ?? 0) || null,
                   overrideReason: undefined,
                   qty: split.qty,
                   unitsPerBox: upb,
