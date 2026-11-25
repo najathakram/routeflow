@@ -36,6 +36,7 @@ import { sellingRestrictedCopy } from "./selling-restricted-copy";
 import { RULE_ERROR_COPY } from "./restriction-rule-errors";
 import { PRICE_RIGHTS_COPY } from "./price-rights-copy";
 import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
+import { paymentRefusalCopy } from "@routeflow/types/payment-refusal-copy";
 
 /**
  * B980 (owner rule: no raw strings in the UI): the app-wide mutation error toast shows FIXED copy,
@@ -540,6 +541,9 @@ export function codedToastCopy(err: unknown): string | null {
   if (Object.prototype.hasOwnProperty.call(CUSTOMER_CODE_COPY, code))
     return CUSTOMER_CODE_COPY[code];
   if (code === API_ERROR_CODES.INVOICE_TAX_STATE_STALE) return taxStateStaleCopy(data);
+  // SA-1299 P4: INVOICE_NOT_PAYABLE (by reason), DRAFT_PAYMENT_HAS_EXCESS, ADVANCE_NOT_AVAILABLE: the shared words, same as mobile.
+  const paymentRefusal = paymentRefusalCopy(err);
+  if (paymentRefusal) return paymentRefusal;
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
   // UXG B14: optimize refused because stops have no map position; count and names come from STRUCTURED fields.
   const unplaced = routeStopsNotPlacedFromBody(data, API_ERROR_CODES.ROUTE_STOPS_NOT_PLACED);

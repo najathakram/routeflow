@@ -1046,3 +1046,35 @@ describe("genericToastCopy: UXG B14 stops without a map position", () => {
     );
   });
 });
+
+describe("genericToastCopy: SA-1299 P4 payment refusals (B1396, B1385)", () => {
+  it.each([
+    [
+      "DRAFT",
+      "This invoice is still a draft. Send it to the customer first, then record the payment.",
+    ],
+    ["VOID", "This invoice is void, so it can't take a payment."],
+    ["WRITTEN_OFF", "This invoice was written off, so it can't take a payment."],
+  ])("INVOICE_NOT_PAYABLE (%s) shows its own sentence", (reason, sentence) => {
+    expect(genericToastCopy(err(400, { code: API_ERROR_CODES.INVOICE_NOT_PAYABLE, reason }))).toBe(
+      sentence,
+    );
+  });
+
+  it("INVOICE_NOT_PAYABLE with no or an unknown reason never claims a status", () => {
+    const copy = genericToastCopy(err(400, { code: API_ERROR_CODES.INVOICE_NOT_PAYABLE }));
+    expect(copy).toBe("This invoice can't take a payment right now.");
+    expect(
+      genericToastCopy(err(400, { code: API_ERROR_CODES.INVOICE_NOT_PAYABLE, reason: "PAID" })),
+    ).toBe(copy);
+  });
+
+  it("DRAFT_PAYMENT_HAS_EXCESS and ADVANCE_NOT_AVAILABLE each show their own sentence, not the generic 400", () => {
+    expect(genericToastCopy(err(400, { code: API_ERROR_CODES.DRAFT_PAYMENT_HAS_EXCESS }))).toBe(
+      "A draft payment can't be more than the invoices it pays. Allocate the full amount, or save it as paid.",
+    );
+    expect(genericToastCopy(err(400, { code: API_ERROR_CODES.ADVANCE_NOT_AVAILABLE }))).toBe(
+      "This advance comes from a payment that isn't confirmed yet, so it can't be applied. Once that payment is confirmed, you can apply it.",
+    );
+  });
+});

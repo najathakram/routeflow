@@ -1,4 +1,6 @@
+import { BadRequestException } from "@nestjs/common";
 import { InvoiceStatus, Prisma } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { formatMoney } from "../messaging/messaging.helpers";
 import { isBlockingPayment, roundMoney } from "@routeflow/pricing";
 
@@ -71,21 +73,67 @@ export function writeOffRefusal(status: InvoiceStatus): string | null {
   return open.includes(status) ? null : `Cannot write off an invoice with status ${status}`;
 }
 
-/** A payment may not land on a VOID or WRITTEN_OFF invoice (checked on the LOCKED row). */
-export function paymentRefusal(status: InvoiceStatus): string | null {
-  if (status === InvoiceStatus.VOID) return "voided";
-  if (status === InvoiceStatus.WRITTEN_OFF) return "written-off";
+/** Why an invoice cannot take a payment: the `reason` of the coded 400 INVOICE_NOT_PAYABLE. */
+export type PaymentRefusalReason = "DRAFT" | "VOID" | "WRITTEN_OFF";
+
+const NOT_PAYABLE_WORD: Record<PaymentRefusalReason, string> = {
+  DRAFT: "a draft",
+  VOID: "voided",
+  WRITTEN_OFF: "written-off",
+};
+
+/**
+ * SA-1299 P4 (B1396): the ONE refusal for money on an invoice (checked on the LOCKED row): money lands only on an
+ * issued invoice, so a DRAFT, VOID or WRITTEN_OFF invoice takes no payment. Every caller of `writeInvoicePayment` (the
+ * staff route, the counter tender, the pickup hand-over; the last two issue every invoice first) and the standalone
+ * writer go through it; pin: invoices.service.payment-not-payable.spec.ts.
+ */
+export function paymentRefusal(status: InvoiceStatus): PaymentRefusalReason | null {
+  if (status === InvoiceStatus.DRAFT) return "DRAFT";
+  if (status === InvoiceStatus.VOID) return "VOID";
+  if (status === InvoiceStatus.WRITTEN_OFF) return "WRITTEN_OFF";
   return null;
 }
 
 /**
- * B1385: the standalone writer's refusal: paymentRefusal plus a DRAFT invoice (a standalone payment never moves its
- * status, so the PAID row would sit on a DRAFT). Standalone site only; paymentRefusal stays shared with pickup and
- * counter. STRIPE_SETTLE is exempt: that money already moved at the processor.
+ * The standalone writer's refusal: `paymentRefusal` and nothing else, except that STRIPE_SETTLE is exempt for a DRAFT
+ * (that money already moved at the processor; SA-NOTE-4512).
  */
-export function standalonePaymentRefusal(status: InvoiceStatus, source?: string): string | null {
-  if (status === InvoiceStatus.DRAFT && source !== "STRIPE_SETTLE") return "a draft";
+export function standalonePaymentRefusal(
+  status: InvoiceStatus,
+  source?: string,
+): PaymentRefusalReason | null {
+  if (status === InvoiceStatus.DRAFT && source === "STRIPE_SETTLE") return null;
   return paymentRefusal(status);
+}
+
+/** The coded 400 for a refusal above (body: `code`, `reason`); with `invoiceId` the message names that invoice. */
+function invoiceNotPayable(reason: PaymentRefusalReason, invoiceId?: string) {
+  const word = NOT_PAYABLE_WORD[reason];
+  return new BadRequestException({
+    statusCode: 400,
+    code: API_ERROR_CODES.INVOICE_NOT_PAYABLE,
+    reason,
+    message: invoiceId
+      ? `Invoice ${invoiceId} is ${word}`
+      : `Cannot record payment on ${word} invoice`,
+  });
+}
+
+/** Throws the coded 400 INVOICE_NOT_PAYABLE when `paymentRefusal` refuses `status`. The staff writer's call. */
+export function assertPayable(status: InvoiceStatus): void {
+  const refusal = paymentRefusal(status);
+  if (refusal) throw invoiceNotPayable(refusal);
+}
+
+/** The standalone writer's call: `standalonePaymentRefusal`, naming `invoiceId` in the message. */
+export function assertStandalonePayable(
+  status: InvoiceStatus,
+  invoiceId: string,
+  source?: string,
+): void {
+  const refusal = standalonePaymentRefusal(status, source);
+  if (refusal) throw invoiceNotPayable(refusal, invoiceId);
 }
 
 /**

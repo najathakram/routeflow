@@ -64,6 +64,9 @@ module.exports = {
       "<rootDir>/../../packages/types/stock-count-commit-copy.ts",
     // SA-776: the shared read-only copy composer, same subpath trick (the package root is stubbed).
     "^@routeflow/types/read-only-copy$": "<rootDir>/../../packages/types/read-only-copy.ts",
+    // SA-1299 P4: the shared payment-refusal sentences (web + mobile), same subpath trick.
+    "^@routeflow/types/payment-refusal-copy$":
+      "<rootDir>/../../packages/types/payment-refusal-copy.ts",
     // CQ-06: the shared license-refusal sentence (it imports only the pure error-code constants), same subpath trick.
     "^@routeflow/types/regulated-auth-copy$":
       "<rootDir>/../../packages/types/regulated-auth-copy.ts",
