@@ -17,6 +17,7 @@ import {
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
 import { formatMoney } from "@/lib/format";
+import { farFromListText } from "@/lib/far-from-list";
 import { PriceChips, PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
@@ -337,6 +338,10 @@ export function LineItemRow({
   const showQtyNote = qtyBelowMin && !li.unitsPerBox; // only the plain (unit-sold) stepper can type a 0
   const qtyNoteId = React.useId();
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
+  // UX audit 2026-11-24 F32: a typed price far from list (60 for 6.00) had no words here; the order page's price edit
+  // already says it. A customer's special price is not a typed slip, so it is left alone.
+  const farFromList =
+    li.priceType === "SPECIAL" ? null : farFromListText(li.unitPrice, li.listPrice);
   // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
   // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
   const priceUnit = li.unitsPerBox && li.unitsPerBox > 1 && !li.unitLabel ? w.pack.lower : li.unit;
@@ -440,6 +445,8 @@ export function LineItemRow({
                 "flex flex-wrap items-center gap-1.5",
                 onTapPrice ? "cursor-pointer" : "",
               )}
+              // F33: the price sheet hands focus back to this control when it closes.
+              data-line-price-trigger={onTapPrice ? "" : undefined}
               onClick={qtyLocked ? undefined : onTapPrice}
               onKeyDown={
                 onTapPrice
@@ -535,6 +542,14 @@ export function LineItemRow({
           {li.unitsPerBox && li.unitsPerBox > 1 && (
             <div className="mt-0.5 text-[10px] text-navy/70">
               {formatMoney(perUnitPrice(li.unitPrice, li.unitsPerBox))} / {w.base.lower}
+            </div>
+          )}
+          {farFromList && (
+            <div
+              data-testid="line-price-far-from-list"
+              className="mt-0.5 text-[11px] text-amber-700"
+            >
+              {farFromList}
             </div>
           )}
           {unitSlot && <div className="mt-1">{unitSlot}</div>}
