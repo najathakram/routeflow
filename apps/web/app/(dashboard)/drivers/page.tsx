@@ -66,7 +66,8 @@ export default function DriversPage() {
 
   // Client-side filtering
   const filtered = React.useMemo(() => {
-    const q = search.toLowerCase();
+    // Trimmed: this list filters on the box's own text, so a space in front of "acme" would match nobody.
+    const q = search.trim().toLowerCase();
     return drivers.filter((d) => {
       if (statusFilter && d.status !== statusFilter) return false;
       if (q) {
