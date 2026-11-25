@@ -371,6 +371,16 @@ describe("MyRunsPage: a run that finished itself stays for Undo (A-2, D-32, D-33
       expect(screen.queryByText(/Your next route is/)).not.toBeInTheDocument();
     });
 
+    // Review R-143, N1: a driver's list has no date filter, so a run from yesterday that was never started is still
+    // on the page under "Earlier, still open". It is the next job; the line must not point past it to Wednesday.
+    it("an open run from yesterday and one tomorrow: tomorrow is not called the next route", async () => {
+      serveList(() => [on("23"), on("25")]);
+      renderWithProviders(<MyRunsPage />);
+      expect(await screen.findByText("No runs scheduled for you today.")).toBeInTheDocument();
+      expect(screen.queryByText(/Your next route is/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Nothing to deliver today/)).not.toBeInTheDocument();
+    });
+
     it("a cancelled run tomorrow and a finished one after it are passed over for the first open run", async () => {
       serveList(() => [
         on("28"),

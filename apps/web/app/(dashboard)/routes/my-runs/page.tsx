@@ -479,7 +479,12 @@ export default function MyRunsPage() {
   }, [data?.data]);
   // The next run the driver will really drive. An operator's list (drive mode) also carries cancelled and finished
   // runs, and a cancelled run tomorrow is not "your next route" (review R-138, M1).
-  const nextRun = upcomingRuns.find((r) => r.status === "SCHEDULED" || r.status === "IN_PROGRESS");
+  // Not while an earlier run is still open (review R-143): that run sits right below in "Earlier, still open" and is
+  // the driver's real next job, so "nothing to deliver, next route is Wednesday" above it would be false.
+  const nextRun =
+    earlierRuns.length > 0
+      ? undefined
+      : upcomingRuns.find((r) => r.status === "SCHEDULED" || r.status === "IN_PROGRESS");
 
   // Today's active/next run gets promoted to the drive-mode hero card — the rest
   // of today's runs (if more than one) still render in the compact list below it.
