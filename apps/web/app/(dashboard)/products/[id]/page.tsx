@@ -45,7 +45,7 @@ import {
   getTierPrice,
   applyLadderChange,
   ladderChangeNote,
-  perUnitPrice,
+  pricedPerLabel,
   unitWords,
   type TierField,
 } from "@routeflow/pricing";
@@ -1014,16 +1014,21 @@ export default function ProductDetailPage() {
   };
 
   // Display-only per-unit hint for a case-packed product's price fields (Tier 1 row + tier
-  // grid). NEVER enters a payload — perUnitPrice is a display derivation, not line math.
+  // grid). NEVER enters a payload — pricedPerLabel (perUnitPrice) is a display derivation, not line math.
   // Reads `activeUnitsPerBox` (the in-progress edit draft while editing, the saved value
   // otherwise) — NOT `product.unitsPerBox` directly — so accepting a pack-size suggestion
   // shows the resulting per-piece price immediately, live, before the operator ever saves.
+  const activeUnit = isEditing ? (editDraft.unit as string) : product.unit;
   const perUnitHint = (v: number) => {
-    if (!(activeUnitsPerBox > 1)) return null;
-    const pu = perUnitPrice(v, activeUnitsPerBox);
-    return pu != null ? (
+    // B1383: the piece and its word come from pricing ("≈ $0.10 / can"); the label beside it names the box
+    const pp = pricedPerLabel({
+      unit: activeUnit,
+      unitsPerBox: activeUnitsPerBox,
+      price: v,
+    }).perPiece;
+    return pp ? (
       <p className="mt-0.5 text-[11px] text-navy/50">
-        ≈ <MoneyFigure value={pu} /> / {UW.base.short.one}
+        ≈ <MoneyFigure value={pp.price} /> / {pp.word}
       </p>
     ) : null;
   };
@@ -1032,10 +1037,9 @@ export default function ProductDetailPage() {
   // other product keeps them where they always were.
   const priceEachRow = (
     <InfoRow
-      label={priceRowLabel(
-        isEditing ? (editDraft.unit as string) : product.unit,
-        tierOneLabel(tierLabels),
-      )}
+      label={priceRowLabel(activeUnit, tierOneLabel(tierLabels), {
+        unitsPerBox: activeUnitsPerBox,
+      })}
       value={
         isEditing ? (
           <>

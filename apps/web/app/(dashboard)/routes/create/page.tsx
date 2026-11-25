@@ -32,6 +32,7 @@ import {
   type RoutePlanningDriverOption,
 } from "@/components/RoutePlanningControls";
 import { CreateRouteLeftPanel } from "./CreateRouteLeftPanel";
+import { startPointHint } from "./start-point-hint";
 import { CreateRouteMap } from "./CreateRouteMap";
 
 // ─── Schema ────────────────────────────────────────────────────────────────────
@@ -206,7 +207,7 @@ export default function CreateRoutePage() {
   const { data: customersData } = useCustomers({ page: 1, limit: 500 } as any);
   const { data: driversData } = useDrivers({ page: 1, limit: 100 });
   const { data: assignments } = useCustomerRouteAssignments();
-  const { data: routeSettings } = useRouteSettings();
+  const { data: routeSettings, isError: routeSettingsFailed } = useRouteSettings();
 
   const customers: CustomerForMap[] = customersData?.data ?? [];
 
@@ -464,6 +465,12 @@ export default function CreateRoutePage() {
             planningOpen={optionsOpen}
             onTogglePlanning={() => setOptionsOpen((v) => !v)}
             originReady={originReady}
+            startPointHint={startPointHint({
+              originReady,
+              originKind,
+              settings:
+                routeSettings !== undefined ? "ready" : routeSettingsFailed ? "error" : "loading",
+            })}
             settingsChanged={settingsChanged}
           />
         </div>

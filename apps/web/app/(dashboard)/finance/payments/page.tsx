@@ -514,7 +514,9 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={() => handleSave("DRAFT")}
-            disabled={record.isPending || overAllocated || statusCheck.unknown}
+            // B1385: a draft cannot carry a leftover (it would become spendable credit); save as paid, or allocate it all
+            disabled={record.isPending || overAllocated || statusCheck.unknown || excess > 0.001}
+            title={excess > 0.001 ? "Allocate the full amount to save as a draft" : undefined}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised disabled:opacity-50"
           >
             Save as draft

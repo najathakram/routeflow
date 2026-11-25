@@ -1,5 +1,6 @@
 import * as React from "react";
 import Link from "next/link";
+import { pricedPerLabel } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import { stockCountLabel } from "../_components/product-status";
 import { UNITS_V2_TESTIDS } from "./units-v2-testids";
@@ -28,6 +29,7 @@ export function ProductHeaderLine({
     parent?: { name: string } | null;
     kind?: string | null;
     unit?: string | null;
+    unitsPerBox?: number | null;
     pricePerUnit?: number | string | null;
   };
   currentStock: number;
@@ -64,7 +66,9 @@ export function ProductHeaderLine({
               className="font-medium text-brand-600 hover:underline"
             >
               {formatMoney(price)}
-              {product.unit ? ` / ${product.unit}` : ""}
+              {product.unit
+                ? ` / ${pricedPerLabel({ unit: product.unit, unitsPerBox: product.unitsPerBox }).word}`
+                : ""}
             </a>
           </>,
         );
