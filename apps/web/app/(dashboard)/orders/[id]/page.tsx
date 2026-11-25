@@ -133,7 +133,7 @@ import { useCustomerLinePricing } from "@/lib/useCustomerLinePricing";
 import { MoneyInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { formatUnitCounts, summarizeLineCounts } from "@routeflow/pricing";
-import { isEditDirty, useEditLeaveGuard } from "./edit-leave-guard";
+import { isEditDirty, useOrderEditLeaveGuard } from "./edit-leave-guard";
 import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { toSplitInvoiceLine } from "@/lib/split-invoice-line";
@@ -377,7 +377,7 @@ export default function OrderDetailPage() {
       },
       { items: editItems, pendingDeletes, shippingFee: editShippingFee, creditsTouched },
     );
-  const leaveGuard = useEditLeaveGuard(editDirty, cancelEditMode, () => router.push("/orders"));
+  const leaveGuard = useOrderEditLeaveGuard(editDirty, cancelEditMode, router);
   // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef, (_why, message) =>

@@ -1,11 +1,14 @@
 "use client";
 
 import * as React from "react";
+import { useOptionalToast } from "@routeflow/ui/web";
 import {
   completeLineFromCatalog,
   hydrateCartLine,
   lineCount,
-  mergeCartLines,
+  limitLine,
+  lineLimit,
+  mergeCartLinesChecked,
   normalizeCartLine,
   setLineCount,
   setLineUnit,
@@ -88,6 +91,9 @@ function writeCart(key: string, state: CartState) {
 export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
   const key = buyerAccountId && sellerSlug ? getCartKey(buyerAccountId, sellerSlug) : null;
   const [cart, setCart] = React.useState<CartState>({ items: [] });
+  const toastCtx = useOptionalToast();
+  const cartRef = React.useRef(cart);
+  cartRef.current = cart;
 
   // Load from localStorage on mount
   React.useEffect(() => {
@@ -114,6 +120,15 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
 
   const addItem = React.useCallback(
     (item: CartItem) => {
+      // B1382: a merge that hits the cap says so (when the call site has a ToastProvider; never throws without one).
+      const current = cartRef.current.items.find((i) => i.productId === item.productId);
+      if (current) {
+        const checked = mergeCartLinesChecked(current, normalizeCartLine(item));
+        if (checked.clamped) {
+          const { max, maxWord } = lineLimit(checked.line);
+          toastCtx?.toast({ title: limitLine(max, maxWord), variant: "info" });
+        }
+      }
       setCart((prev) => {
         const incoming = normalizeCartLine(item);
         const existing = prev.items.find((i) => i.productId === item.productId);
@@ -122,7 +137,7 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
           // Merge in PIECES, then re-derive the split: never add a qty onto a stale split.
           next = {
             items: prev.items.map((i) =>
-              i.productId === item.productId ? mergeCartLines(i, incoming) : i,
+              i.productId === item.productId ? mergeCartLinesChecked(i, incoming).line : i,
             ),
           };
         } else {
@@ -132,7 +147,7 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
         return next;
       });
     },
-    [key],
+    [key, toastCtx],
   );
 
   const removeItem = React.useCallback(

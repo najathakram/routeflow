@@ -26,6 +26,11 @@ export function sanitizeIntInput(text: string | null | undefined): string {
   return digits.replace(/^0+(?=\d)/, "");
 }
 
+/** True for "" or whole digits only (no sign, point, exponent or space). */
+export function isDigitsOnly(text: string | null | undefined): boolean {
+  return text == null || /^[0-9]*$/.test(String(text));
+}
+
 /** Parse free-typed text to a non-negative integer, falling back when blank. */
 export function parseIntQty(text: string | null | undefined, fallback = 0): number {
   const s = sanitizeIntInput(text);

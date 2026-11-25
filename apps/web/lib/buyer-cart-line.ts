@@ -1,4 +1,10 @@
-import { normalizeBoxesPieces, plural, unitLineCount } from "@routeflow/pricing";
+import {
+  BUYER_LINE_QTY_MAX,
+  maxLineCount,
+  normalizeBoxesPieces,
+  plural,
+  unitLineCount,
+} from "@routeflow/pricing";
 
 /**
  * The ONE place a buyer cart line's quantity is computed (row 531, the "2 each = 1 box" P0).
@@ -116,9 +122,31 @@ export function normalizeCartLine<T extends CartLineShape>(l: T): T {
   return { ...next, sellBy: lineUnit(next) };
 }
 
+/**
+ * The most the line may count in its CURRENT unit (B1382): its piece total stays within BUYER_LINE_QTY_MAX, so a
+ * Case line is bounded at floor(cap / pack) Cases and an Each line at the cap. Every cart write clamps to it
+ * (`setLineCount`, `setLineUnit`); a repeat Add merging into a line clamps too (SA-1292); Undo restoring an absent line does not merge, so it restores exactly.
+ */
+export function lineMaxCount(l: CartLineShape): number {
+  const upb = packOf(l);
+  return maxLineCount(BUYER_LINE_QTY_MAX, upb > 0 && lineUnit(l) === "CASE" ? upb : null);
+}
+
+/** What a stepper needs to show the limit: the bound and, on a Case line, its word (`<QtyStepper {...lineLimit(l)} />`). */
+export function lineLimit(l: CartLineShape): { max: number; maxWord?: string } {
+  return packOf(l) > 0 && lineUnit(l) === "CASE"
+    ? { max: lineMaxCount(l), maxWord: "cases" }
+    : { max: lineMaxCount(l) };
+}
+
+/** The one limit sentence (shop stepper, cart row, Add): "The most you can order at once is 8,333 cases." */
+export function limitLine(max: number, word?: string): string {
+  return `The most you can order at once is ${max.toLocaleString("en-US")}${word ? ` ${word}` : ""}.`;
+}
+
 /** Set the count in the line's CURRENT unit (what the stepper and its typed field mean). */
 export function setLineCount<T extends CartLineShape>(l: T, count: number): T {
-  const n = Math.max(0, Math.trunc(Number(count) || 0));
+  const n = Math.min(Math.max(0, Math.trunc(Number(count) || 0)), lineMaxCount(l));
   const upb = packOf(l);
   if (upb > 0 && lineUnit(l) === "CASE") {
     return normalizeCartLine({ ...l, sellBy: "CASE" as const, qty: n * upb });
@@ -135,8 +163,12 @@ export function canSellByCase(l: CartLineShape): boolean {
 /** Switch the stepper's unit. `qty` (pieces) never changes, so neither does the subtotal. */
 export function setLineUnit<T extends CartLineShape>(l: T, unit: CartUnit): T {
   if (packOf(l) === 0) return l;
-  if (unit === "CASE" && !canSellByCase(l)) return normalizeCartLine({ ...l, sellBy: "EACH" });
-  return normalizeCartLine({ ...l, sellBy: unit });
+  const next =
+    unit === "CASE" && !canSellByCase(l)
+      ? normalizeCartLine({ ...l, sellBy: "EACH" as const })
+      : normalizeCartLine({ ...l, sellBy: unit });
+  // Switching unit re-clamps: a count that fits one unit may pass the cap in the other (a line stored over it).
+  return lineCount(next) > lineMaxCount(next) ? setLineCount(next, lineMaxCount(next)) : next;
 }
 
 /**
@@ -218,13 +250,24 @@ export function completeLineFromCatalog<T extends CartLineShape>(
  * line keeps its Case count, a stored EACH line keeps its pieces.
  */
 export function mergeCartLines<T extends CartLineShape>(existing: T, incoming: T): T {
+  return mergeCartLinesChecked(existing, incoming).line;
+}
+
+/** `mergeCartLines` plus whether the cap clamped the merge (the caller shows the limit line). */
+export function mergeCartLinesChecked<T extends CartLineShape>(
+  existing: T,
+  incoming: T,
+): { line: T; clamped: boolean } {
   const ex = packOf(existing);
   const inc = packOf(incoming);
   let base = existing;
   let add = incoming;
   if (inc > 0 && ex !== inc) base = completeLineFromCatalog(existing, inc);
   else if (inc === 0 && ex > 0) add = completeLineFromCatalog(incoming, ex);
-  return normalizeCartLine({ ...base, qty: base.qty + add.qty });
+  const merged = normalizeCartLine({ ...base, qty: base.qty + add.qty });
+  // B1382 (SA-1292): a repeat Add clamps too, or the create DTO answers 400 at checkout. The server fold stays uncapped.
+  if (lineCount(merged) <= lineMaxCount(merged)) return { line: merged, clamped: false };
+  return { line: setLineCount(merged, lineMaxCount(merged)), clamped: true };
 }
 
 /**
