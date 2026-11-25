@@ -27,7 +27,10 @@ const ALLOWLIST = [
   "packages/types/brand/index.ts",
 ].sort();
 
-const SKIP_DIRS = new Set(["node_modules", ".next", ".turbo", "dist", ".git", ".jest-cache"]);
+const { GENERATED_DIRS } = require("../../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+const SKIP_DIRS = new Set([...GENERATED_DIRS, ".git"]);
 const SOURCE = /\.(?:ts|tsx|mjs|cjs|js)$/;
 const TEST = /\.(?:test|spec)\.[a-z]+$|[\\/](?:e2e|__tests__|test-support)[\\/]/;
 /** The site view's names, and a direct read of the overlay block. */
