@@ -8,6 +8,7 @@ window.RF_PRICES = {
   catalogVersion: 13,
   currency: "USD",
   yearlyMonthsBilled: 10,
+  yearlyOffer: false,
   trialDays: 14,
   plans: {
     STARTER: { name: "Starter", monthly: 99, customers: 100 },

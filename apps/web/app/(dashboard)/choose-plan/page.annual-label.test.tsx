@@ -30,10 +30,16 @@ const annualQuote = {
   change: null,
 };
 
+jest.mock("@tanstack/react-query", () => ({
+  ...jest.requireActual("@tanstack/react-query"),
+  useQueryClient: () => ({ invalidateQueries: jest.fn() }),
+}));
+
 jest.mock("@/lib/api/billing", () => ({
   usePlans: () => ({
     isLoading: false,
     data: {
+      annualCheckout: true,
       plans: [
         {
           planKey: "GROWTH",

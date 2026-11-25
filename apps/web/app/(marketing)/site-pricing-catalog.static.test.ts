@@ -16,6 +16,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vm from "vm";
 import * as ts from "typescript";
+import { collectScanFiles, yearlyOfferViolations } from "./yearly-offer-guard.testkit";
 
 /** The catalog version on sale today. Change it only in the PR that publishes the next catalog and its page. */
 const ON_SALE_VERSION = 13;
@@ -124,6 +125,7 @@ function catalogOnSale() {
 type SitePrices = {
   catalogVersion: number;
   yearlyMonthsBilled: number;
+  yearlyOffer: boolean;
   trialDays: number;
   plans: Record<string, { name: string; monthly: number; customers: number; yearly: number }>;
   enterprise: { custom: boolean };
@@ -272,38 +274,25 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
     expect(bad).toEqual([]);
   });
 
-  it("no page shows a yearly price or a pay-yearly offer while checkout refuses a year", () => {
-    // SA-1282 item 3. Tied to the code fact: billing.service.ts throws CHECKOUT_ANNUAL_NOT_SUPPORTED for
-    // interval "year". While that refusal is there, a visible yearly figure or pay-yearly sentence is a claim the
-    // code does not prove. The yearly number stays in prices.js as data. When yearly checkout ships the refusal
-    // goes, and this case has nothing left to guard.
-    const billing = fs.readFileSync(
-      path.join(ROOT, "apps/api/src/billing/billing.service.ts"),
-      "utf8",
-    );
-    if (!/CHECKOUT_ANNUAL_NOT_SUPPORTED/.test(billing)) return;
-    const offer = /a year|each year|per year|yearly|annual|months free/gi;
-    const bad: string[] = [];
-    for (const f of pages()) {
-      const text = html(f);
-      if (/data-field="yearly"/.test(text)) bad.push(`${f}: data-field="yearly" span`);
-      for (const m of text.matchAll(offer)) {
-        const at = m.index ?? 0;
-        bad.push(`${f}: ...${text.slice(Math.max(0, at - 30), at + 30).replace(/\s+/g, " ")}...`);
-      }
-    }
-    // The marketing lib holds the same pages' titles and descriptions (metadata, sitemap), so it is read too.
-    const LIB = path.resolve(__dirname, "lib");
-    for (const f of fs.readdirSync(LIB).filter((n) => n.endsWith(".ts"))) {
-      const text = fs.readFileSync(path.join(LIB, f), "utf8");
-      for (const m of text.matchAll(offer)) {
-        const at = m.index ?? 0;
-        bad.push(
-          `lib/${f}: ...${text.slice(Math.max(0, at - 30), at + 30).replace(/\s+/g, " ")}...`,
-        );
-      }
-    }
-    expect(bad).toEqual([]);
+  it("the yearly offer is closed, and while it is closed no page, script or lib file words a year", () => {
+    // SA-1304 C1. The guard keys on RF_PRICES.yearlyOffer (prices.js), not on a word in billing.service.ts, so it
+    // survives that word going away. Open (true) only when the server refusal is gone, no guard spec is skipped and
+    // every yearly row of the claims register is `live`. The yearly figure stays in prices.js as data.
+    expect(site.yearlyOffer).toBe(false);
+    const read = (p: string) => fs.readFileSync(p, "utf8");
+    const specs = [
+      __filename,
+      path.join(__dirname, "yearly-offer-guard.test.ts"),
+      path.join(__dirname, "../(dashboard)/choose-plan/page.yearly-offer.test.tsx"),
+    ].map(read);
+    const out = yearlyOfferViolations({
+      yearlyOffer: site.yearlyOffer,
+      billingSource: read(path.join(ROOT, "apps/api/src/billing/billing.service.ts")),
+      files: collectScanFiles(SITE, __dirname),
+      specSources: specs,
+      claimsRegister: read(path.join(ROOT, "docs/product/claims-register.md")),
+    });
+    expect(out).toEqual([]);
   });
 
   it("no page promises 'no customer limit' while the priced plans on sale carry one", () => {

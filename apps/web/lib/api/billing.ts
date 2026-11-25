@@ -52,6 +52,8 @@ export interface PublicCatalog {
   effectiveAt: string | null;
   plans: PlanDef[];
   addons: AddonSkuDef[];
+  /** True only when the server can take a yearly checkout. Absent on today's API, so every yearly offer stays hidden. */
+  annualCheckout?: boolean;
 }
 
 export type { MeterKey };
