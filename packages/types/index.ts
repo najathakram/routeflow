@@ -165,6 +165,7 @@ export * from "./counter-copy";
 export * from "./order-route-stop-copy";
 export * from "./counter-default-tender";
 export * from "./no-longer-fits-copy";
+export * from "./term-copy";
 export * from "./api/purchase-orders";
 export * from "./api/customers";
 export * from "./api/statement";
