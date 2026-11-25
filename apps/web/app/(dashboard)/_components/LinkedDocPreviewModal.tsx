@@ -4,7 +4,7 @@ import * as React from "react";
 import { Modal, Button } from "@routeflow/ui/web";
 import { AlertTriangle, ArrowUpRight, Loader2 } from "lucide-react";
 import { isTerminalOrderStatus } from "@routeflow/types";
-import { fmt } from "@/lib/formatting";
+import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { useOrder } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { useInvoice } from "@/lib/api/invoices";
@@ -92,6 +92,76 @@ function qtyLabel(li: { qty: number; boxes?: number | null; pieces?: number | nu
   return String(li.qty);
 }
 
+/**
+ * These previews open from a plain button, not a Radix trigger, so on close focus would fall to <body>. Remember what
+ * had focus as the dialog opened and hand it back as it closes (B1424).
+ */
+function useFocusReturn() {
+  const opener = React.useRef<HTMLElement | null>(null);
+  return {
+    onOpenAutoFocus: () => {
+      opener.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    },
+    onCloseAutoFocus: (event: Event) => {
+      if (opener.current && opener.current.isConnected) {
+        event.preventDefault();
+        opener.current.focus();
+      }
+    },
+  };
+}
+
+/**
+ * Pinned beside the X in the dialog header (outside the scrolling body), so the way to the document's own page is
+ * always on screen. A real link: middle-click and Ctrl/Cmd-click open a new tab.
+ */
+function HeaderLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      aria-label={label}
+      title={label}
+      className="rounded p-1 text-brand-500 transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500"
+    >
+      <ArrowUpRight className="h-4 w-4" />
+    </a>
+  );
+}
+
+/**
+ * The invoice page's "Linked Order" row: the order number IS the link to the order page, and "Preview" is the
+ * secondary button beside it (it wraps under the link on a phone). Tap targets are at least 44 px high.
+ */
+export function LinkedOrderLine({
+  orderId,
+  orderNumber,
+  onPreview,
+}: {
+  orderId: string;
+  orderNumber?: string | null;
+  onPreview: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      <a
+        href={`/orders/${orderId}`}
+        className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-brand-500 hover:underline"
+      >
+        {`Order ${orderNumber ?? ""}`.trim()}
+        <ArrowUpRight className="h-4 w-4" />
+      </a>
+      <button
+        type="button"
+        onClick={onPreview}
+        className="min-h-11 text-sm text-navy/70 hover:underline"
+      >
+        Preview
+      </button>
+    </div>
+  );
+}
+
 function ModalState({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-col gap-4">{children}</div>;
 }
@@ -106,7 +176,8 @@ export function OrderPreviewModal({
   onClose: () => void;
   orderId: string;
 }) {
-  const { data: order, isLoading } = useOrder(open ? orderId : "");
+  const { data: order, isLoading, isError } = useOrder(open ? orderId : "");
+  const focusReturn = useFocusReturn();
   const liveLines = React.useMemo(
     // a CANCELLED order keeps its header total (levy included) while every line is cancelled: name the levy from them
     () =>
@@ -122,6 +193,10 @@ export function OrderPreviewModal({
   const nonVoid = (order?.invoices ?? []).filter((i) => i.status !== "VOID");
   const invoicedTotal = nonVoid.reduce((s, i) => s + Number(i.total), 0);
   const fullyInvoiced = isTerminalOrderStatus(order?.status) && nonVoid.length > 0;
+  const cancelledCount =
+    order?.status === "CANCELLED"
+      ? 0
+      : (order?.lineItems ?? []).filter((li) => li.status === "CANCELLED").length;
   const rows = (order?.lineItems ?? [])
     .filter((li) => li.status !== "CANCELLED")
     .map((li) => ({
@@ -137,25 +212,63 @@ export function OrderPreviewModal({
       open={open}
       onClose={onClose}
       title={order ? `Order ${order.orderNumber ?? ""}`.trim() : "Order"}
+      headerActions={
+        <HeaderLink
+          href={`/orders/${orderId}`}
+          label={order ? `Open order ${order.orderNumber ?? ""}`.trim() : "Open order"}
+        />
+      }
       className="max-w-2xl"
+      scroll
+      {...focusReturn}
       footer={
         order ? (
-          <Button href={`/orders/${order.id}`} variant="secondary" size="sm">
-            Open full order <ArrowUpRight className="ml-1 h-4 w-4" />
+          <Button
+            href={`/orders/${order.id}`}
+            variant="secondary"
+            size="sm"
+            className="w-full sm:w-auto"
+          >
+            Open order <ArrowUpRight className="ml-1 h-4 w-4" />
           </Button>
-        ) : null
+        ) : (
+          <Button
+            href={`/orders/${orderId}`}
+            variant="secondary"
+            size="sm"
+            className="w-full sm:w-auto"
+          >
+            Open order
+          </Button>
+        )
       }
     >
-      {isLoading || !order ? (
+      {isError && !order ? (
+        <p className="py-6 text-sm text-navy/70">We couldn&apos;t load this order.</p>
+      ) : isLoading || !order ? (
         <div className="flex items-center justify-center py-10">
           <Loader2 className="h-6 w-6 animate-spin text-navy/50" />
         </div>
       ) : (
         <ModalState>
+          <p className="text-xs text-navy/70">
+            {[
+              order.status,
+              fmtCalendarDate(order.orderDate ?? order.createdAt),
+              order.customer?.businessName,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
           {fullyInvoiced && (
             <DivergenceNote orderTotal={Number(order.total)} invoicedTotal={invoicedTotal} />
           )}
           <LineTable rows={rows} />
+          {cancelledCount > 0 && (
+            <p className="text-xs text-navy/60">
+              {cancelledCount} cancelled {cancelledCount === 1 ? "line" : "lines"} not shown.
+            </p>
+          )}
           <div className="flex justify-end">
             <dl className="w-56 space-y-1 text-sm">
               {orderPreviewTotalsRows({
@@ -199,7 +312,8 @@ export function InvoicePreviewModal({
   /** The source order's total (for the divergence note). */
   orderTotal?: number;
 }) {
-  const { data: invoice, isLoading } = useInvoice(open ? invoiceId : "");
+  const { data: invoice, isLoading, isError } = useInvoice(open ? invoiceId : "");
+  const focusReturn = useFocusReturn();
   const taxSplit = useInvoiceTaxSplit(invoice, open); // Tax apart from each named levy charge
   const rows = (invoice?.items ?? []).map((it) => ({
     id: it.id,
@@ -217,16 +331,40 @@ export function InvoicePreviewModal({
       open={open}
       onClose={onClose}
       title={invoice ? `Invoice ${invoice.invoiceNumber}` : "Invoice"}
+      headerActions={
+        <HeaderLink
+          href={`/invoices/${invoiceId}`}
+          label={invoice ? `Open invoice ${invoice.invoiceNumber}` : "Open invoice"}
+        />
+      }
       className="max-w-2xl"
+      scroll
+      {...focusReturn}
       footer={
         invoice ? (
-          <Button href={`/invoices/${invoice.id}`} variant="secondary" size="sm">
-            Open full invoice <ArrowUpRight className="ml-1 h-4 w-4" />
+          <Button
+            href={`/invoices/${invoice.id}`}
+            variant="secondary"
+            size="sm"
+            className="w-full sm:w-auto"
+          >
+            Open invoice <ArrowUpRight className="ml-1 h-4 w-4" />
           </Button>
-        ) : null
+        ) : (
+          <Button
+            href={`/invoices/${invoiceId}`}
+            variant="secondary"
+            size="sm"
+            className="w-full sm:w-auto"
+          >
+            Open invoice
+          </Button>
+        )
       }
     >
-      {isLoading || !invoice ? (
+      {isError && !invoice ? (
+        <p className="py-6 text-sm text-navy/70">We couldn&apos;t load this invoice.</p>
+      ) : isLoading || !invoice ? (
         <div className="flex items-center justify-center py-10">
           <Loader2 className="h-6 w-6 animate-spin text-navy/50" />
         </div>
