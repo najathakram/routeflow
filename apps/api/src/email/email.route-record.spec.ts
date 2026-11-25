@@ -10,6 +10,13 @@ jest.mock("resend", () => ({
   })),
 }));
 import * as nodemailer from "nodemailer";
+import { newDeliveryRefToken } from "./bounces/email-bounce-keys";
+
+// Module boundary for the random per-send ref token: real by default, forced in the case that needs a known value.
+jest.mock("./bounces/email-bounce-keys", () => {
+  const actual = jest.requireActual("./bounces/email-bounce-keys");
+  return { ...actual, newDeliveryRefToken: jest.fn(actual.newDeliveryRefToken) };
+});
 
 /**
  * W-1286 PR-1 (SA-1202 C5, C4', C6, C29): every recorded send says which route it took (`route`), carries a per-send
@@ -151,11 +158,16 @@ describe("C29 / T30: the fallback keeps its class and nothing else", () => {
         },
       ),
     );
+    // A random hex token can contain "535" by chance (about 0.7% of runs); force it so the case is deterministic.
+    (newDeliveryRefToken as jest.Mock).mockReturnValueOnce("af37a70b42342a132e5354bfb0646683");
     const { svc, deliveries } = make({ tenantSmtp: true, platformSmtp: true, tenantSend });
     await svc.send({ ...mail, delivery: ctx });
     const r = row(deliveries);
     expect(r.fallbackReason).toBe("AUTH");
-    expect(JSON.stringify(r)).not.toMatch(/535|Username|jane@/);
+    // refToken is random hex by design, so it is the one field left out of the leak scan; every other field is scanned.
+    const { refToken, ...rest } = r;
+    expect(refToken).toMatch(/^[0-9a-f]{32}$/);
+    expect(JSON.stringify(rest)).not.toMatch(/535|Username|jane@/);
   });
 
   it("a send that never tried a tenant server stores no fallbackReason", async () => {
