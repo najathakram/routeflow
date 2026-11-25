@@ -16,6 +16,7 @@ import { useState } from "react";
 import { useBuyerOrders, type BuyerOrderListItem } from "../../../lib/api/buyer";
 import {
   BUYER_ORDER_FILTERS,
+  buyerOrderListTotal,
   buyerOrderQuery,
   buyerOrdersEmptyText,
   type BuyerOrderFilterId,
@@ -131,9 +132,7 @@ export default function CustomerOrdersScreen() {
                 year: "numeric",
               });
               const itemCount = totalItems(order);
-              const total =
-                Number(order.total) ||
-                order.lineItems.reduce((s, i) => s + Number(i.qty) * Number(i.unitPrice), 0);
+              const total = buyerOrderListTotal(order);
 
               return (
                 <Pressable
