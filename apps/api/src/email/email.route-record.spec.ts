@@ -178,7 +178,7 @@ describe("C29 / T30: the fallback keeps its class and nothing else", () => {
     // A random hex token can contain "535" by chance (about 0.7% of runs); force it so the case is deterministic.
     (newDeliveryRefToken as jest.Mock).mockReturnValueOnce("af37a70b42342a132e5354bfb0646683");
     // sentAt is new Date() in the product: a ".535Z" millisecond part also trips the scan (about 1 run in 1000), so pin Date too.
-    jest.useFakeTimers({ now: new Date("2026-11-25T02:12:03.535Z"), doNotFake: REAL_TIMERS });
+    jest.useFakeTimers({ now: new Date("2026-11-25T02:12:03.535Z"), doNotFake: [...REAL_TIMERS] });
     const { svc, deliveries } = make({ tenantSmtp: true, platformSmtp: true, tenantSend });
     try {
       await svc.send({ ...mail, delivery: ctx });
