@@ -547,7 +547,12 @@ export default function MyRunsPage() {
           />
         ) : (
           <section className="rounded-lg border border-surface-border bg-white p-6 shadow-card">
-            <p className="text-sm text-navy/70">No runs scheduled for you today.</p>
+            {/* "None today" above an Upcoming card that holds tomorrow's run read as "you have no work": name the next one. */}
+            <p className="text-sm text-navy/70">
+              {upcomingRuns[0]
+                ? `No route today. Your next one is ${fmtCalendarDateWithWeekday(upcomingRuns[0].scheduledDate, "short")}.`
+                : "No runs scheduled for you today."}
+            </p>
           </section>
         )}
 

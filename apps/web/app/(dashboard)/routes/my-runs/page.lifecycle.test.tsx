@@ -317,6 +317,23 @@ describe("MyRunsPage: a run that finished itself stays for Undo (A-2, D-32, D-33
     ).not.toBeInTheDocument();
   });
 
+  // UX audit 2026-11-24, F63: "No runs scheduled for you today" sat above an Upcoming card holding tomorrow's run,
+  // and the driver read it as "no work". With a later run on the list the line names its day.
+  it("no run today but one later: the line names the next run's day", async () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    const tomorrow = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T00:00:00.000Z`;
+    serveList(() => [run({ scheduledDate: tomorrow })]);
+    renderWithProviders(<MyRunsPage />);
+
+    expect(
+      await screen.findByText(
+        `No route today. Your next one is ${fmtCalendarDateWithWeekday(tomorrow, "short")}.`,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No runs scheduled for you today.")).not.toBeInTheDocument();
+  });
+
   it("D-33b: a reload after a held run shows no run (the hold is in memory only)", async () => {
     let listed = true;
     serveList(() => (listed ? [live()] : []));

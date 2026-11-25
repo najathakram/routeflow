@@ -155,7 +155,7 @@ export function CreateRouteLeftPanel({
       )}
 
       {/* Route planning (start/end/tolls/objective) — collapsed by default */}
-      <div className="shrink-0 border-b border-surface-border bg-white">
+      <div id="route-options" className="shrink-0 border-b border-surface-border bg-white">
         <button
           type="button"
           onClick={onTogglePlanning}
@@ -263,8 +263,13 @@ export function CreateRouteLeftPanel({
                     <div className="flex items-center gap-1.5">
                       <p className="truncate text-sm font-medium text-navy">{stop.customerName}</p>
                       {!hasCoords && (
-                        <span title="No GPS coordinates">
-                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" />
+                        // Words, not a hover-only tooltip: a phone has no hover, and the triangle alone says nothing.
+                        <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-navy">
+                          <AlertTriangle
+                            className="h-3.5 w-3.5 shrink-0 text-warning"
+                            aria-hidden
+                          />
+                          No map pin
                         </span>
                       )}
                     </div>
@@ -298,6 +303,25 @@ export function CreateRouteLeftPanel({
 
       {/* Action bar (sticky bottom) */}
       <div className="shrink-0 border-t border-surface-border bg-white px-4 py-3">
+        {/* The button below is off until a start point is set. Say so in words (a tooltip is no help on a
+            phone or to someone who does not hover) and take the user to the place that fixes it. */}
+        {!originReady && (
+          <p className="mb-2 text-sm text-navy" role="status">
+            Choose where the route starts.{" "}
+            <button
+              type="button"
+              className="font-semibold text-brand-700 underline underline-offset-2"
+              onClick={() => {
+                if (!planningOpen) onTogglePlanning();
+                document
+                  .getElementById("route-options")
+                  ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+              }}
+            >
+              Set start point
+            </button>
+          </p>
+        )}
         <div className="flex items-center gap-3">
           <Button
             type="button"
