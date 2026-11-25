@@ -2,7 +2,12 @@
 
 import * as React from "react";
 import { Plus, Minus, Trash2 } from "lucide-react";
+import { useToast } from "@routeflow/ui/web";
+import { BUYER_LINE_QTY_MAX } from "@routeflow/types";
 import { useUndo } from "@/lib/undo";
+
+const LIMIT_LINE = `The most you can order at once is ${BUYER_LINE_QTY_MAX.toLocaleString("en-US")}.`;
+const ENTRY_LINE = "Enter 1 or more. Enter 0 to remove.";
 
 // ─── Quantity Stepper ─────────────────────────────────────────────────────────
 
@@ -10,6 +15,8 @@ import { useUndo } from "@/lib/undo";
  * One 44px-high segmented control: [ − or trash | qty | + ]. The left segment is "−" at qty >= 2 and a
  * trash at qty 1, so there is no separate remove button. Removing at any qty (trash, or typing 0 / clearing
  * the field) is one action and shows a "Removed <name>." toast with an Undo that restores the line.
+ * Nothing else removes: a negative or non-whole entry reverts, and a number above BUYER_LINE_QTY_MAX (the
+ * server's own line limit) sets the box to the limit, each with one plain line (B1382).
  */
 export function QtyStepper({
   qty,
@@ -35,6 +42,7 @@ export function QtyStepper({
   stack?: boolean;
 }) {
   const runUndoable = useUndo();
+  const { toast } = useToast();
   const [inputVal, setInputVal] = React.useState(String(qty));
   const skipBlurCommit = React.useRef(false);
 
@@ -53,16 +61,27 @@ export function QtyStepper({
 
   const commit = (raw: string) => {
     const trimmed = raw.trim();
-    const n = parseInt(trimmed, 10);
-    if (trimmed === "" || n <= 0) {
+    if (trimmed === "" || /^0+$/.test(trimmed)) {
       remove();
-    } else if (!isNaN(n)) {
-      if (n !== qty) onUpdate(n);
-      setInputVal(String(n));
+    } else if (/^\d+$/.test(trimmed)) {
+      const n = Number(trimmed);
+      const next = Math.min(n, BUYER_LINE_QTY_MAX);
+      if (n > BUYER_LINE_QTY_MAX) toast({ title: LIMIT_LINE, variant: "info" });
+      if (next !== qty) onUpdate(next);
+      setInputVal(String(next));
     } else {
-      // Revert to current qty if invalid
+      // Negative, decimal, exponent or text: never a removal. Back to the current qty.
+      toast({ title: ENTRY_LINE, variant: "info" });
       setInputVal(String(qty));
     }
+  };
+
+  const increase = () => {
+    if (qty >= BUYER_LINE_QTY_MAX) {
+      toast({ title: LIMIT_LINE, variant: "info" });
+      return;
+    }
+    onUpdate(qty + 1);
   };
 
   // 44px hit area on every segment; only the icon size differs between sm and md.
@@ -119,12 +138,7 @@ export function QtyStepper({
         }}
         className="h-11 min-w-[36px] w-full border-none bg-transparent p-0 text-center text-sm font-semibold tabular-nums text-buyer-700 focus:outline-none focus:ring-1 focus:ring-buyer-400 [appearance:textfield] [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:m-0 [&::-webkit-outer-spin-button]:m-0"
       />
-      <button
-        type="button"
-        onClick={() => onUpdate(qty + 1)}
-        className={btnCls}
-        aria-label={`Increase ${name}`}
-      >
+      <button type="button" onClick={increase} className={btnCls} aria-label={`Increase ${name}`}>
         <Plus className={iconCls} />
       </button>
     </div>

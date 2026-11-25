@@ -23,6 +23,13 @@ import type { InvoiceDisplayUnitView, PerBaseUnit } from "./invoices";
 import type { DecimalWire } from "./decimal";
 import type { InvoiceAccountRow } from "./invoice-account";
 
+/**
+ * The most one buyer order line may carry (qty, boxes or pieces). The API's `BuyerCreateOrderDto` enforces it
+ * (via its type-pinned mirror in `apps/api/src/common/buyer-line-qty.ts`) and the buyer shop stepper stops at it,
+ * so the buyer hears it before submit (B1382).
+ */
+export const BUYER_LINE_QTY_MAX = 100_000;
+
 export interface LockedCategory {
   id: string;
   name: string;
