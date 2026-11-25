@@ -1,5 +1,5 @@
 import { normalizeItemName, itemSourceKey } from "./normalize-item-name";
-import { groupNearNames, suggestNearNames } from "./near-names";
+import { groupNearNames, nearNameScore, suggestNearNames } from "./near-names";
 import { resolveItem } from "./resolve-item";
 import type { CatalogItemRow, ItemAliasRow } from "./types";
 
@@ -188,5 +188,93 @@ describe("T53 near-name groups suggest only", () => {
     expect(s[0].productId).toBe("p-cola");
     expect(s[0].score).toBeGreaterThan(0.5);
     for (let i = 1; i < s.length; i++) expect(s[i - 1].score).toBeGreaterThanOrEqual(s[i].score);
+  });
+});
+
+// R-180 follow-up: each case names the wrong value it guards against.
+describe("T53 hard gates (R-180 F1, F2, F3)", () => {
+  const long = "Acme Paper Cups White Premium Large";
+
+  it("numbers gate: names that differ only in one number score 0 (wrong value: 0.9+)", () => {
+    expect(nearNameScore(`${long} 12 oz`, `${long} 20 oz`)).toBe(0);
+    expect(groupNearNames([`${long} 12 oz`, `${long} 20 oz`])).toEqual([]);
+    const rows: CatalogItemRow[] = [{ id: "p-20", name: `${long} 20 oz` }];
+    expect(resolveItem(`${long} 12 oz`, rows, []).kind).toBe("UNMATCHED");
+  });
+
+  it("numbers gate is ordered: 6 x 12oz vs 12 x 6oz scores 0 (wrong value: 0.8667)", () => {
+    const a = "Acme Paper Cups White Premium 6 x 12oz";
+    const b = "Acme Paper Cups White Premium 12 x 6oz";
+    expect(nearNameScore(a, b)).toBe(0);
+    expect(groupNearNames([a, b])).toEqual([]);
+    expect(resolveItem(a, [{ id: "p-b", name: b }], []).kind).toBe("UNMATCHED");
+  });
+
+  it("numbers gate reads the parent too: Cups 12oz:Lid vs Lid scores 0 (wrong value: 1)", () => {
+    expect(nearNameScore("Cups 12oz:Lid", "Lid")).toBe(0);
+    expect(suggestNearNames("Cups 12oz:Lid", [{ id: "p-lid", name: "Lid" }])).toEqual([]);
+  });
+
+  it("parent gate: different parents score 0 (wrong value: 1)", () => {
+    expect(nearNameScore("Acme East:Cola 12 oz", "Acme West:Cola 12 oz")).toBe(0);
+  });
+
+  it("a parentless name does not bridge two parents into one group (wrong value: 3 members)", () => {
+    const groups = groupNearNames(["Acme East:Cola 12 oz", "Cola 12 oz", "Acme West:Cola 12 oz"]);
+    for (const g of groups) {
+      const both =
+        g.members.includes("Acme East:Cola 12 oz") && g.members.includes("Acme West:Cola 12 oz");
+      expect(both).toBe(false);
+    }
+  });
+
+  it("a parentless name does not bridge two sizes in the parent (wrong value: 3 members)", () => {
+    const groups = groupNearNames(["Cups 12oz:Lid", "Lid", "Cups 16oz:Lid"]);
+    expect(groups).toEqual([]);
+  });
+});
+
+describe("T53 edge cases (R-180 F4 to F7)", () => {
+  it("a blank name is UNMATCHED even beside a blank catalog row (wrong value: EXACT)", () => {
+    const r = resolveItem("   ", [{ id: "g", name: "   " }], []);
+    expect(r.kind).toBe("UNMATCHED");
+    expect(r.productId).toBeNull();
+  });
+
+  it("a trailing or leading colon does not normalise like the plain name (wrong value: equal)", () => {
+    expect(normalizeItemName("Acme Gum:")).not.toBe(normalizeItemName("Acme Gum"));
+    expect(normalizeItemName(":Acme Gum")).not.toBe(normalizeItemName("Acme Gum"));
+    expect(resolveItem(":Acme Gum", [{ id: "p-gum", name: "Acme Gum" }], []).productId).toBeNull();
+  });
+
+  it("AMBIGUOUS suggestions do not depend on catalog order (wrong value: [z, a])", () => {
+    const a: CatalogItemRow = { id: "a", name: "Acme Cola" };
+    const z: CatalogItemRow = { id: "z", name: "ACME  COLA" };
+    const one = resolveItem("acme cola.", [z, a], []).suggestions.map((s) => s.productId);
+    const two = resolveItem("acme cola.", [a, z], []).suggestions.map((s) => s.productId);
+    expect(one).toEqual(two);
+  });
+
+  it("duplicate aliases for one key that disagree are AMBIGUOUS, in any order (wrong value: first wins)", () => {
+    const x: ItemAliasRow = { sourceItemKey: "Acme Gum", productId: "p-chips", ignore: false };
+    const y: ItemAliasRow = { sourceItemKey: "Acme Gum", productId: "p-cola", ignore: false };
+    for (const aliases of [
+      [x, y],
+      [y, x],
+    ]) {
+      const r = resolveItem("Acme Gum", catalog, aliases);
+      expect(r.kind).toBe("AMBIGUOUS");
+      expect(r.productId).toBeNull();
+    }
+  });
+
+  it("duplicate aliases that agree still resolve", () => {
+    const x: ItemAliasRow = { sourceItemKey: "Acme Gum", productId: "p-chips", ignore: false };
+    expect(resolveItem("Acme Gum", catalog, [x, { ...x }]).productId).toBe("p-chips");
+  });
+
+  it("member order is code-point, not locale (wrong value: lowercase first)", () => {
+    const groups = groupNearNames(["acme Gum Large", "Acme Gum Large"]);
+    expect(groups[0].members).toEqual(["Acme Gum Large", "acme Gum Large"]);
   });
 });
