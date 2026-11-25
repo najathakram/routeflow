@@ -6,6 +6,11 @@ import * as path from "path";
  * and a sort in the URL (`useUrlSort`) must hand the sort the filters' `writeParams`. Left to its own
  * `history.replaceState`, the sort write landing beside a filter write made Next drop the filter write: "Clear
  * filters" reset the sort and left every filter on.
+ *
+ * What is pinned: in every non-test source file under `app/` that calls `useUrlFilters(`, EVERY `useUrlSort(` call
+ * names `writeParams` among its arguments (R-142: the first version read only the first call in a file). It is a
+ * text check: it does not prove the name is the filters' own writer, and it does not see a page that splits the
+ * two hooks across files.
  */
 const APP = path.join(__dirname, "..", "..", "app");
 const SORT_CALL = "useUrlSort(";
@@ -22,16 +27,28 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-/** The argument text of the first `useUrlSort(...)` call in a file. */
-function sortCallArgs(src: string): string {
-  const start = src.indexOf(SORT_CALL) + SORT_CALL.length;
-  let depth = 1;
-  let i = start;
-  for (; i < src.length && depth > 0; i++) {
-    if (src[i] === "(") depth++;
-    else if (src[i] === ")") depth--;
+/** The argument text of EVERY `useUrlSort(...)` call in a file, in order. */
+function sortCallArgs(src: string): string[] {
+  const calls: string[] = [];
+  let from = src.indexOf(SORT_CALL);
+  while (from !== -1) {
+    const start = from + SORT_CALL.length;
+    let depth = 1;
+    let i = start;
+    for (; i < src.length && depth > 0; i++) {
+      if (src[i] === "(") depth++;
+      else if (src[i] === ")") depth--;
+    }
+    calls.push(src.slice(start, i - 1));
+    from = src.indexOf(SORT_CALL, i);
   }
-  return src.slice(start, i - 1);
+  return calls;
+}
+
+/** How many `useUrlSort` calls in a file with URL filters do NOT share the filters' writer. */
+function unsharedSortCalls(src: string): number {
+  if (!src.includes(FILTERS_CALL)) return 0;
+  return sortCallArgs(src).filter((args) => !args.includes("writeParams")).length;
 }
 
 const relative = (file: string) => path.relative(APP, file).split(path.sep).join("/");
@@ -45,17 +62,40 @@ describe("one URL writer per page", () => {
     expect(users.map((u) => relative(u.file))).toContain("(dashboard)/orders/page.tsx");
   });
 
-  it("every page with URL filters and a URL sort passes the filters' writeParams to the sort", () => {
+  it("every useUrlSort call on a page with URL filters passes the filters' writeParams", () => {
     const offenders = users
-      .filter(({ src }) => src.includes(FILTERS_CALL))
-      .filter(({ src }) => !sortCallArgs(src).includes("writeParams"))
+      .filter(({ src }) => unsharedSortCalls(src) > 0)
       .map(({ file }) => relative(file));
     expect(offenders).toEqual([]);
   });
+});
 
-  it("the argument reader returns the whole call, nested brackets included", () => {
-    expect(sortCallArgs('const x = useUrlSort(COLS, pick("a"), "desc", writeParams);')).toBe(
+describe("the pin's own reader", () => {
+  const FILTERS = "const [f, set, clear, setMany, writeParams] = useUrlFilters({ status: '' });\n";
+  const GOOD = 'const [a, b, setA] = useUrlSort(COLS, pick("a"), "desc", writeParams);\n';
+  const BAD = 'const [c, d, setC] = useUrlSort(OTHER_COLS, "name", "asc");\n';
+
+  it("returns the whole argument text of each call, nested brackets included", () => {
+    expect(sortCallArgs(GOOD + BAD)).toEqual([
       'COLS, pick("a"), "desc", writeParams',
-    );
+      'OTHER_COLS, "name", "asc"',
+    ]);
+  });
+
+  it("a second call without the writer, after a good first call, is caught (R-142)", () => {
+    expect(unsharedSortCalls(FILTERS + GOOD + BAD)).toBe(1);
+  });
+
+  it("a first call without the writer is caught, and two bad calls count as two", () => {
+    expect(unsharedSortCalls(FILTERS + BAD + GOOD)).toBe(1);
+    expect(unsharedSortCalls(FILTERS + BAD + BAD)).toBe(2);
+  });
+
+  it("every call sharing the writer is clean", () => {
+    expect(unsharedSortCalls(FILTERS + GOOD + GOOD)).toBe(0);
+  });
+
+  it("a page with a URL sort and no URL filters is not held to the rule", () => {
+    expect(unsharedSortCalls(BAD)).toBe(0);
   });
 });
