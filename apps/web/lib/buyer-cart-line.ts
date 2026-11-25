@@ -260,12 +260,6 @@ export function lineQtyText(l: CartLineShape): string {
   return `${n.qty} ${EACH_LABEL}${cases}`;
 }
 
-/** The unit word beside the stepper: "Cases" / "Case" for a CASE line, "Each" for pieces. */
-export function lineUnitWord(l: CartLineShape): string {
-  if (packOf(l) > 0 && lineUnit(l) === "CASE") return plural(CASE_LABEL, lineCount(l));
-  return EACH_LABEL;
-}
-
 /**
  * The `items` array checkout sends (POST /buyer/orders): `{ productId, qty }` for a plain product,
  * plus `boxes` / `pieces` for a boxed one. Each line is re-normalised on the way out, so the

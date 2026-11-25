@@ -15,10 +15,6 @@ export const site = {
   email: "hello@routeflow.info",
 };
 
-// The one label for the call button, on every page (COPY.md section 0 and 4: "video call", never "demo").
-// Sentence case, 3 words, starts with a verb. W4 adds TRIAL_CTA beside it.
-export const DEMO_CTA = "Book a video call";
-
 export interface MarketingRoute {
   slug: string;
   label: string;
@@ -66,12 +62,6 @@ export const routes: MarketingRoute[] = [
     description: "The terms that apply to accessing and using the RouteFlow platform.",
   },
 ];
-
-/**
- * The primary-nav routes, in header order. Contact sits before Company on purpose: the desktop nav
- * hides its LAST link from 901 to 1100 px (marketing.css), and that must stay Company, not Contact.
- */
-export const NAV_SLUGS = ["product", "pricing", "company", "contact"] as const;
 
 /** Slugs excluded from the sitemap (legal shells, R9/T9). */
 // privacy/terms were excluded while they were placeholder shells; now that they carry the
@@ -122,20 +112,3 @@ export const PLANS: PricingPlan[] = [
     ],
   },
 ];
-
-export interface DemoFormValues {
-  name: string;
-  email: string;
-  company: string;
-  notes: string;
-}
-
-/** Builds the `mailto:` draft the DemoForm hands off to the visitor's mail app. */
-export function demoEmail(values: DemoFormValues): string {
-  const body = `Hello RouteFlow,\n\nI'd like a demo for ${values.company}.\n\nName: ${values.name}\nWork email: ${values.email}\nCompany: ${values.company}\n\nWorkflow to discuss:\n${
-    values.notes || "Orders, delivery routes, and customer accounts."
-  }\n\nPlease get in touch to arrange a walkthrough.`;
-  return `mailto:${site.email}?subject=${encodeURIComponent(
-    "RouteFlow demo request — " + values.company,
-  )}&body=${encodeURIComponent(body)}`;
-}
