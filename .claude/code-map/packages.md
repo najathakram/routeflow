@@ -503,3 +503,4 @@ Catch-up (2026-11-23, window 42): [packages/landing-2026-11-23-w42.md](packages/
 Catch-up (2026-11-24, window 43): [packages/landing-2026-11-24-w43.md](packages/landing-2026-11-24-w43.md): `receiptStatusText` over `PaymentStatus`.
 Catch-up (2026-11-24, window 45): [packages/landing-2026-11-24-w45.md](packages/landing-2026-11-24-w45.md): `billPlanFromPO`.
 Catch-up (2026-11-24, window 46): [packages/landing-2026-11-24-w46.md](packages/landing-2026-11-24-w46.md): `lastPaidCapSubtotal`, `PLAN_KEYS` ladder, `PLAN_KEYS_AWAITING_CATALOG`.
+Catch-up (2026-11-25, window 47): [packages/landing-2026-11-25-w47.md](packages/landing-2026-11-25-w47.md): `planDisplayName`, `ESTIMATE_MOVES`, `canMoveEstimate`.

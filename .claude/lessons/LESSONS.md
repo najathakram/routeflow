@@ -86,6 +86,13 @@
 
 ## testing
 
+### L-409 · 2026-11-25 · testing · a change that adds a call to an outside service greps every `*.spec.ts` and every `*.db.spec.ts` rig for its fake, and a billing or ledger PR needs a green Migration replay run at the sha before it merges (#4489, fixed by #4497, W-1338)
+
+- **Symptom:** #4489 merged on a green Verify and broke `billing/trial-addon-checkout.db.spec.ts`: subscribe, upgrade and downgrade now list and expire the business's open Checkout Sessions first, and that rig's Stripe fake had no `checkout.sessions`. Fail-closed code turns a missing Stripe member into one coded 503, so the spec saw a refusal instead of an error naming the missing member.
+- **Root cause:** the search for the service fake did not reach the SA-690 rig, which is a `*.db.spec.ts`, and "Migration replay" (`.github/workflows/db-migrations.yml`) is the only CI lane that runs DB specs, so Verify could not see it. Nothing required a Migration replay run at the merged sha for a billing PR.
+- **Lesson:** **When a change makes existing code call an outside service (Stripe, mail, storage), grep every `*.spec.ts` AND every `*.db.spec.ts` for a fake of that service and give each the new members. Wrap such a fake in `strictFake` so a missing member is named at the end of the test, not read as a refusal later. A billing, ledger or other Tier 1 PR does not merge on Verify alone: the gate needs a green Migration replay run at the exact sha.**
+- **Guard:** `apps/api/src/testing/strict-fake.ts` (`strictFake(target, name, misses)`, pinned by `testing/strict-fake.spec.ts`) wraps the Stripe fakes in `trial-addon-checkout.db.spec.ts`, whose `afterEach` asserts `fakeMisses` is empty. The Tier 1 gate requires a Migration replay run at the sha (a lead rule, not a repo file).
+
 ### L-396 · 2026-11-19 · testing · a change to a hook, or to a file a hook calls, runs every `*-script.spec.ts` that builds a hook fixture; a by-path review run misses them (#4363, fix round 2)
 
 - **Symptom:** a push guard added as the first step of `.husky/pre-push` passed its own self-test and the by-path review runs, then CI Verify went red with 11 failures in two specs that drive the real hook in a temp repo.
@@ -192,13 +199,6 @@
 - **Root cause:** `resolveOperatorPathGuard` trusts the `rf-op-auth` presence cookie, which a normal operator sign-in sets; `setImpersonation` stored the tokens but never set the cookie.
 - **Lesson:** **Every code path that makes a browser an operator (sign-in, impersonation, any future switch) calls the one helper that sets the presence cookie, and every exit path clears it unless the browser holds operator tokens of its own. Test it through the real guard with no mocks of the helpers.**
 - **Guard:** `lib/impersonation.presence.test.ts` (5 tests, real guard and helpers). Open: the automatic exits in `lib/api-client.ts` clear the tokens but not the cookie (see the register). Cf. [[L-369]].
-
-### L-370 · 2026-11-06 · domain · a capture gate on a diagnostic is keyed by every field the reader groups by, under one global budget and a bounded map; a coarser key hides the second site (B1285)
-
-- **Symptom:** the dark tenant-context guard captured one stack per second per `kind|model|op`; one hot call site (1,000 reads) took the second's capture and a second site under the same key never reached the log, though the counter stayed true. Scheduled jobs logged no job name at all.
-- **Root cause:** the gate key named what the counter answers (what kind of access), not what the log answers (where from); a cron job has no request route to name itself.
-- **Lesson:** **Key a rate gate by every field the log line is read by (kind, model, op, call place), put one global per-second budget over it (20) and a backstop on the map size (5,000 entries), and check the shape of the place string before it enters a key. Name each scheduled job's place where the job starts (`@LeaderCron` runs the body at `<area>.<method>`), so the log says which job.**
-- **Guard:** `prisma/tenant-context-guard.spec.ts` rows B5-1 (key without `where`), B5-2 (no budget) and B5-4 (no shape check), each red by mutation; `common/call-place.ts`. Open: B1295 (the two queue processors have no row). Cf. [[L-369]].
 
 ### L-369 · 2026-11-05 · domain · a tenant-scoped accessor never degrades to the unscoped client; with no business in context a secret read and every write throw
 
