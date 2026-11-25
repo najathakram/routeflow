@@ -56,6 +56,7 @@ export function lineRowProps(
     custom: !li.productId,
     components: li.components ?? null,
     backorderPieces: lineBackorderPieces(li, orderStatus),
+    backorderUnit: li.product?.unit ?? null,
   };
 }
 
