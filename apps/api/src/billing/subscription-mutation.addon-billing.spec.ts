@@ -280,6 +280,7 @@ function make(opts: Opts = {}) {
       findUnique: jest.fn().mockResolvedValue({
         slug: "acme",
         name: "Acme Foods",
+        class: "PRODUCTION",
         plan: opts.tenantPlan ?? "STARTER",
       }),
     },

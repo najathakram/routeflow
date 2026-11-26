@@ -275,7 +275,11 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   it("logs TENANT_SUSPENDED against the target tenant with the acting admin", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
       slug: "acme",
@@ -296,7 +300,11 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   it("maps a reactivation to TENANT_REACTIVATED", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
       slug: "acme",
@@ -313,7 +321,11 @@ describe("PlatformAdminService — audit provenance", () => {
   // B461 (SA-1116): the super-admin's tenant-admin password reset also kills a pending login-email change, in the
   // same transaction as the password write (one `$transaction`, the user update first, then the burn).
   it("resetTenantAdminPassword burns the admin's pending email change in the password write's transaction", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.user.findFirst.mockResolvedValue({ id: "adm1", username: "acme_admin" } as any);
     prisma.user.update.mockResolvedValue({} as any);
     (prisma.$transaction as jest.Mock).mockClear();
@@ -364,7 +376,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("READ_ONLY is written with readOnlyReason 'admin_set', never null", async () => {
       before();
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -379,7 +395,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("READ_ONLY over a payment_overdue pause is 'admin_set' too (not nulled)", async () => {
       before({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -393,7 +413,11 @@ describe("PlatformAdminService — audit provenance", () => {
     // (paymentReinstatable) can tell it from a billing suspension (which carries none) and a payment cannot lift it.
     it("SUSPENDED is written with readOnlyReason 'admin_set', never null (a payment must not lift an admin suspension)", async () => {
       before();
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -408,7 +432,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("SUSPENDED over a payment_overdue pause is 'admin_set' too (not nulled)", async () => {
       before({ status: "READ_ONLY", readOnlyReason: "payment_overdue" });
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -422,7 +450,11 @@ describe("PlatformAdminService — audit provenance", () => {
     // a payment / the back-office win-back link CAN lift.
     it("CANCELLED is written with readOnlyReason 'admin_set' (never null, never stripe_cancelled)", async () => {
       before({ status: "CANCELLED", readOnlyReason: "stripe_cancelled" });
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -447,7 +479,11 @@ describe("PlatformAdminService — audit provenance", () => {
       });
       stripeMock.isConfigured = true;
       stripeMock.getSubscription.mockResolvedValue({ status: "active", customer: "cus_1" });
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       const err: any = await service
         .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
         .catch((e) => e);
@@ -467,7 +503,11 @@ describe("PlatformAdminService — audit provenance", () => {
         },
       });
     const cancelOk = async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -496,7 +536,11 @@ describe("PlatformAdminService — audit provenance", () => {
       withSub();
       stripeMock.isConfigured = true;
       stripeMock.getSubscription.mockRejectedValue(new Error("network"));
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       const err: any = await service
         .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
         .catch((e) => e);
@@ -507,7 +551,11 @@ describe("PlatformAdminService — audit provenance", () => {
     it("Stripe not configured with a stored subscription FAILS CLOSED too", async () => {
       withSub();
       stripeMock.isConfigured = false;
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       const err: any = await service
         .updateStatus(TENANT_ID, { status: "CANCELLED" } as any, ADMIN_ID)
         .catch((e) => e);
@@ -517,7 +565,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("CANCELLED with no Stripe subscription is allowed", async () => {
       before();
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -542,7 +594,11 @@ describe("PlatformAdminService — audit provenance", () => {
     it("REG-B402 keeps a tenant's armed downgrade when an admin reactivates a lapsed (SUSPENDED) tenant, and names it in the audit meta", async () => {
       // FINDING-3 shape: the prior-status read is a CAS `updateMany` predicated on
       // status != ACTIVE — count === 1 means THIS call performed a real transition.
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -578,7 +634,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("PR-B3: reactivating a PAUSED tenant clears the dunning clock and then Stripe's pause_collection (after commit)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
         pausedAt: new Date("2026-11-08T09:00:00.000Z"),
@@ -606,7 +666,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("REG-B402 a reactivation with NO armed downgrade audits neither schedule field", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -626,7 +690,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("guard: updateStatus NEVER writes the schedule or cancelAtPeriodEnd — the tenant's to change; its only subscription write clears the dunning clock (SA-733r7)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -652,7 +720,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("guard: an already-ACTIVE tenant set ACTIVE again never even reads the schedule (lost CAS)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       // Lost CAS: the where clause (status != ACTIVE) matched nothing — already ACTIVE.
       prisma.tenant.updateMany.mockResolvedValue({ count: 0 });
       prisma.tenant.update.mockResolvedValue({
@@ -668,7 +740,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("guard: transitioning to a non-ACTIVE status (READ_ONLY) never runs the CAS or reads the schedule", async () => {
-      prisma.tenant.findUnique.mockResolvedValueOnce({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValueOnce({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -691,7 +767,11 @@ describe("PlatformAdminService — audit provenance", () => {
     // after FINDING-4: the schedule the audit line reports must be the row as it stood AT the
     // transition, not one a concurrent downgrade() armed a moment later.
     it("REG-B402 folds the status CAS and the schedule read into ONE transaction (structural pin — see note)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -723,7 +803,11 @@ describe("PlatformAdminService — audit provenance", () => {
   // ACTIVE here → nothing ever creates one).
   describe("updateStatus — B556 fills a missing planKey on activation", () => {
     it("B556 backfills TenantSubscription.planKey (resolved from Tenant.plan) when a TRIAL tenant is activated with no subscription row at all", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -754,7 +838,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("B556 backfills planKey when a subscription row exists but its planKey is null", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -777,7 +865,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("never overwrites an already-resolved planKey (guard against clobbering a real, priced subscription)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -798,7 +890,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("never fills planKey when the target status is not ACTIVE", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -835,7 +931,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
     describe("extendTrial", () => {
       beforeEach(() => {
-        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.findUnique.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          class: "PRODUCTION",
+        } as any);
         prisma.tenant.findUniqueOrThrow.mockResolvedValue({
           id: TENANT_ID,
           slug: "acme",
@@ -921,7 +1021,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
     describe("updateStatus (the status PATCH accepts any TenantStatus)", () => {
       beforeEach(() => {
-        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.findUnique.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          class: "PRODUCTION",
+        } as any);
       });
 
       const prior = (status: string) =>
@@ -985,7 +1089,11 @@ describe("PlatformAdminService — audit provenance", () => {
   // check instead of fixing the underlying data).
   describe("updateStatus — B557 compensates the ledger when a status flip crosses the paying-set boundary", () => {
     it("B557 emits a NEGATIVE compensating delta when an ACTIVE paying tenant is suspended", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -1014,7 +1122,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("B557 emits a POSITIVE compensating delta when a suspended paying tenant is reactivated (the mirror direction)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -1069,7 +1181,11 @@ describe("PlatformAdminService — audit provenance", () => {
         } as any);
 
       it("suspending an ACTIVE paying tenant: -(499 + 24), the comp's 20 is not in it; the paid add-on still is", async () => {
-        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.findUnique.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          class: "PRODUCTION",
+        } as any);
         prisma.tenant.update.mockResolvedValue({
           id: TENANT_ID,
           slug: "acme",
@@ -1088,7 +1204,11 @@ describe("PlatformAdminService — audit provenance", () => {
       });
 
       it("reactivating: +(499 + 24), not +543", async () => {
-        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.findUnique.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          class: "PRODUCTION",
+        } as any);
         prisma.tenant.updateMany.mockResolvedValue({ count: 1 });
         prisma.tenant.update.mockResolvedValue({
           id: TENANT_ID,
@@ -1112,7 +1232,11 @@ describe("PlatformAdminService — audit provenance", () => {
       });
 
       it("the add-on read is billableAddonWhere (isComp: false), asserted on the query itself", async () => {
-        prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+        prisma.tenant.findUnique.mockResolvedValue({
+          id: TENANT_ID,
+          slug: "acme",
+          class: "PRODUCTION",
+        } as any);
         prisma.tenant.update.mockResolvedValue({
           id: TENANT_ID,
           slug: "acme",
@@ -1131,7 +1255,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("emits nothing when the tenant was never in the paying set (TRIAL → SUSPENDED)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -1171,7 +1299,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("emits nothing when suspending and reactivating an already-ACTIVE tenant redundantly (idempotent, no double-count)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.updateMany.mockResolvedValue({ count: 0 }); // lost CAS: already ACTIVE
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
@@ -1290,6 +1422,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("a scheduled downgrade records the reason too", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "PROFESSIONAL",
@@ -1763,6 +1896,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
   it("404s updatePlan when no published plan catalog exists, without writing or invalidating", async () => {
     prisma.tenant.findUnique.mockResolvedValue({
+      class: "PRODUCTION",
       id: TENANT_ID,
       slug: "acme",
       plan: "STARTER",
@@ -1786,6 +1920,7 @@ describe("PlatformAdminService — audit provenance", () => {
     "SA-1254 V2: updatePlan refuses %s while no published catalog row holds it, without writing",
     async (plan) => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "STARTER",
@@ -1825,7 +1960,11 @@ describe("PlatformAdminService — audit provenance", () => {
   it.each(["CORE", "ALL_IN"])(
     "SA-1254 V2: activateManualSubscription refuses %s while no published catalog row holds it, without writing",
     async (plan) => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       planCatalogService.getPublishedVersion.mockResolvedValue(V13_WITHOUT_CORE_OR_ALL_IN);
 
       await expect(
@@ -1876,6 +2015,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("REG-ADMIN-UPDATEPLAN-1 an UPGRADE surfaces proratedNow from the shared ProrationService.proratedDiff, called with the tenant path's own inputs, and still applies instantly", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "STARTER",
@@ -1927,6 +2067,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("REG-ADMIN-UPDATEPLAN-1 a DOWNGRADE schedules at period end (downgradeToPlanKey/downgradeEffectiveAt) and does NOT change the tenant's plan today", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "PROFESSIONAL",
@@ -1972,6 +2113,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("REG-R4 a scheduled downgrade books NO plan.changed ledger delta at request time — billing-cron applyScheduledDowngrades books it when it actually fires", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "PROFESSIONAL",
@@ -2010,6 +2152,7 @@ describe("PlatformAdminService — audit provenance", () => {
     // order, or it can 40P01 against a Tenant-first writer (reconcile/Pricing).
     it("#2551: the scheduled-downgrade tx takes the Tenant lock before its subscription write", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "PROFESSIONAL",
@@ -2056,6 +2199,7 @@ describe("PlatformAdminService — audit provenance", () => {
     // downgrade as accepted while the cron can never apply it) — was untested.
     it("REG a DOWNGRADE with no periodEnd on the subscription rejects with BadRequestException — writes nothing, emits nothing", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "PROFESSIONAL",
@@ -2103,6 +2247,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     beforeEach(() => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "STARTER",
@@ -2219,6 +2364,7 @@ describe("PlatformAdminService — audit provenance", () => {
       "REG-B401 a DOWNGRADE for a %s tenant applies instantly and does not schedule",
       async (status) => {
         prisma.tenant.findUnique.mockResolvedValue({
+          class: "PRODUCTION",
           id: TENANT_ID,
           slug: "acme",
           plan: "PROFESSIONAL",
@@ -2293,6 +2439,7 @@ describe("PlatformAdminService — audit provenance", () => {
       addons?: any[];
     }) {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: opts.from,
@@ -2698,7 +2845,11 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   it("activateManualSubscription disarms every pending transition when it rolls the period (round 3, findings 2/9)", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
       slug: "acme",
@@ -2733,7 +2884,11 @@ describe("PlatformAdminService — audit provenance", () => {
   // the start of the transaction and again just before commit), and what changed - including a row this activation
   // priced. On master the result has no `addons` at all.
   it("C-R1: activateManualSubscription returns addons { before, after, changed } with the row it priced", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.tenant.update.mockResolvedValue({
       id: TENANT_ID,
       slug: "acme",
@@ -2798,7 +2953,11 @@ describe("PlatformAdminService — audit provenance", () => {
         ADMIN_ID,
       );
     const arrange = (catchupState: string | null) => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -2867,7 +3026,11 @@ describe("PlatformAdminService — audit provenance", () => {
   // fee is real, priced-in data), but nothing should be booked until the tenant crosses into
   // the paying set (e.g. via activateManualSubscription — see REG-B864-TRIAL-OVERRIDE below).
   it("REG-B864-TRIAL-OVERRIDE books nothing on a TRIAL tenant (flips REG-OVERRIDE-BACKFILL-TRIAL + :1144, SA-277)", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.tenant.findUniqueOrThrow.mockResolvedValue({
       status: "TRIAL",
       class: "PRODUCTION",
@@ -2890,7 +3053,11 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   it("REG-B864-TRIAL-OVERRIDE override then activation books exactly +1200 once", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.tenant.findUniqueOrThrow.mockResolvedValue({
       status: "TRIAL",
       class: "PRODUCTION",
@@ -2957,7 +3124,11 @@ describe("PlatformAdminService — audit provenance", () => {
   // already in the paying set — the back-fill delta must still book for it, unchanged from
   // before this bug's fix.
   it("price-override on an ACTIVE/PRODUCTION tenant still books the run-rate delta with actorId (P3)", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.tenant.findUniqueOrThrow.mockResolvedValue({
       status: "ACTIVE",
       class: "PRODUCTION",
@@ -2993,7 +3164,11 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   it("price-override leaves a grandfathered basePriceSnapshot alone and emits nothing", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.tenant.findUniqueOrThrow.mockResolvedValue({
       status: "ACTIVE",
       class: "PRODUCTION",
@@ -3052,7 +3227,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
     beforeEach(() => {
       lockMock().mockClear();
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       (prisma as any).tenantSubscription.findUnique.mockResolvedValue({
         priceOverrideMonthly: 100,
         priceOverrideAnnual: null,
@@ -3719,7 +3898,11 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   it("logs IMPERSONATION_STARTED — the controller's audit-logged claim is now true", async () => {
-    prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+    prisma.tenant.findUnique.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    } as any);
     prisma.user.findFirst.mockResolvedValue({
       id: "admin-9",
       username: "acmeadmin",
@@ -3814,6 +3997,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("REG-R8.2 updatePlan(liteTenant, {plan: STARTER}) calls entitlementsService.invalidate(id)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme-lite",
         plan: "LITE",
@@ -4453,6 +4637,7 @@ describe("PlatformAdminService — audit provenance", () => {
     // never a nonzero catalog-price guess.
     it("REG-743-N1 prices the card through MrrService.priceTenant, never the catalog", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         status: "ACTIVE",
@@ -4479,6 +4664,7 @@ describe("PlatformAdminService — audit provenance", () => {
     // what the first REG-743-N1 case above already does.
     it("REG-743-N1 relays whatever priceTenant() returns, without re-deriving or overriding it (e.g. a DEMO tenant priced $0)", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme-demo",
         status: "ACTIVE",
@@ -4494,6 +4680,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("REG-743-N1 never falls back to the catalog even when priceTenant() answers $0", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme-pilot",
         status: "ACTIVE",
@@ -4517,6 +4704,7 @@ describe("PlatformAdminService — audit provenance", () => {
   describe("getTenant — readiness product count (SA-3)", () => {
     it("SA-3 T9 reads the product count for THIS tenant only, via the existing _count select", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         status: "ACTIVE",
@@ -4537,6 +4725,7 @@ describe("PlatformAdminService — audit provenance", () => {
     it("SA-3 a tenant whose only products are inactive reports 0 products (not Ready)", async () => {
       // The filtered relation count is what the DB returns for a tenant with only inactive products.
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         status: "ACTIVE",
@@ -4696,7 +4885,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
   describe("getTenantEntitlements", () => {
     it("returns flags, addons, caps, and the resolved planKey from EntitlementsService plus meter usage from MeterService", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       entitlementsService.resolve.mockResolvedValue({
         tenantId: TENANT_ID,
         planKey: "GROWTH",
@@ -4724,7 +4917,11 @@ describe("PlatformAdminService — audit provenance", () => {
     // Opus review of 8130b204, item 4: this admin-facing view must agree with the tenant's own
     // Overrides table.
     it("a GRANT override on a RequirePlanFlag key adds it to flags", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       entitlementsService.resolve.mockResolvedValue({
         tenantId: TENANT_ID,
         planKey: "STARTER",
@@ -4740,7 +4937,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("a DENY override on a RequirePlanFlag key removes it from flags", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       entitlementsService.resolve.mockResolvedValue({
         tenantId: TENANT_ID,
         planKey: "ENTERPRISE",
@@ -4756,7 +4957,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("an addon-keyed override never touches the SKU-shaped addons array", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       entitlementsService.resolve.mockResolvedValue({
         tenantId: TENANT_ID,
         planKey: "GROWTH",
@@ -4790,6 +4995,7 @@ describe("PlatformAdminService — audit provenance", () => {
   describe("createTenantAdmin — no auto-created driver profile (B125)", () => {
     beforeEach(() => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         name: "Acme",
@@ -4831,6 +5037,7 @@ describe("PlatformAdminService — audit provenance", () => {
   describe("createTenantAdmin — emailSent reports the real send result (row 551)", () => {
     beforeEach(() => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         name: "Acme",
@@ -5368,7 +5575,11 @@ describe("PlatformAdminService — audit provenance", () => {
     } as any;
 
     it("REG-2 refuses to activate LITE when LITE is not in the published catalog", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       planCatalogService.getPublishedVersion.mockResolvedValue({
         id: "v-1",
         definitions: [{ planKey: "STARTER" }],
@@ -5383,7 +5594,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("REG-2 activating LITE on a catalog that has it writes planKey into the upsert and the version through the pin writer", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -5436,6 +5651,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("updatePlan instant UPGRADE: prepare() first, then the hook INSIDE the tx, ahead of the plan write", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "STARTER",
@@ -5479,6 +5695,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("updatePlan on a NON-ACTIVE tenant downgrades instantly, so the hook sees the downgrade", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "PROFESSIONAL",
@@ -5502,6 +5719,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("updatePlan that only SCHEDULES a downgrade (ACTIVE tenant) never calls the hook — the cron applies it later", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "PROFESSIONAL",
@@ -5518,6 +5736,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("a failing hook aborts the instant plan change: no plan write", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "PROFESSIONAL",
@@ -5535,7 +5754,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("activateManualSubscription with the flag OFF issues NO extra tenant read and never touches the hook", async () => {
       planTransition.isEnabled.mockResolvedValue(false);
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "SUSPENDED",
         class: "PRODUCTION",
@@ -5565,7 +5788,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("activateManualSubscription: the plan being left falls back to Tenant.plan and the hook runs in the tx", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         plan: "PROFESSIONAL",
         status: "SUSPENDED",
@@ -5610,12 +5837,20 @@ describe("PlatformAdminService — audit provenance", () => {
     } as any;
 
     beforeEach(() => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       planCatalogService.getPublishedVersion.mockResolvedValue({
         id: "v-9",
         definitions: [{ planKey: "SCALE", monthlyPrice: 499, isCustom: false }],
       } as any);
-      prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.update.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
     });
 
     it("voids the OPEN invoices the new window covers, in the activation transaction, tenant-scoped", async () => {
@@ -5884,7 +6119,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("B557 emits PLAN_CHANGED with a positive amountDelta when this moves a formerly-TRIAL tenant into the paying set", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "TRIAL",
         class: "PRODUCTION",
@@ -5908,7 +6147,11 @@ describe("PlatformAdminService — audit provenance", () => {
     // (override ?? the activated plan's catalog price) — a stale pre-existing snapshot from an
     // earlier plan is never what gets booked.
     it("B557 / SA-464 books the activated plan's price on the crossing, not a stale pre-existing snapshot", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "SUSPENDED",
         class: "PRODUCTION",
@@ -5933,7 +6176,11 @@ describe("PlatformAdminService — audit provenance", () => {
     // racing updateTenantPriceOverride() serializes on it. `prior` (:924) reads the same model
     // OUTSIDE the tx (for the plan-transition hook) and is expected to run before the lock.
     it("P3b: the tenant row lock runs inside the tx, before the paying-set read it gates", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "TRIAL",
         class: "PRODUCTION",
@@ -5956,7 +6203,11 @@ describe("PlatformAdminService — audit provenance", () => {
     // a plan-switching renewal now rebases + books (the #2522 table). A SAME-plan renewal still
     // emits nothing.
     it("emits nothing when the tenant was already ACTIVE on the same plan (no crossing, no plan switch)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "ACTIVE",
         class: "PRODUCTION",
@@ -5988,7 +6239,11 @@ describe("PlatformAdminService — audit provenance", () => {
     // rollCycles() falls through to a 1-month default forever, regardless of the admin's
     // chosen billingPeriodDays). The write must derive MONTHLY/ANNUAL from billingPeriodDays.
     it("REG-B863-CYCLE 30 → MONTHLY", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "TRIAL",
         class: "PRODUCTION",
@@ -6008,7 +6263,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("REG-B863-CYCLE 365 → ANNUAL", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status: "TRIAL",
         class: "PRODUCTION",
@@ -6052,7 +6311,11 @@ describe("PlatformAdminService — audit provenance", () => {
         status: "ACTIVE",
         plan: "PROFESSIONAL",
       } as any);
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       (prisma as any).tenantAddon.findMany.mockResolvedValue([
         {
           sku: "CUSTOMER_PACK_100",
@@ -6324,6 +6587,7 @@ describe("PlatformAdminService — audit provenance", () => {
 
     it("T13-11 updateTenantConfig() mirrors the tenant once and survives a rejecting upsert", async () => {
       prisma.tenant.findUnique.mockResolvedValue({
+        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         status: "ACTIVE",
@@ -6347,6 +6611,7 @@ describe("PlatformAdminService — audit provenance", () => {
     describe("SA-1067 Z-5/Z-6: the zone of a config row created by this save", () => {
       const seen = async (dto: Record<string, unknown>) => {
         prisma.tenant.findUnique.mockResolvedValue({
+          class: "PRODUCTION",
           id: TENANT_ID,
           slug: "acme",
           status: "ACTIVE",
@@ -6548,7 +6813,11 @@ describe("PlatformAdminService — audit provenance", () => {
         ADMIN_ID,
       );
     const setup = (status: string, sub: Record<string, unknown> | null) => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status,
         class: "PRODUCTION",
@@ -6648,7 +6917,11 @@ describe("PlatformAdminService — audit provenance", () => {
   // the same tx. Same-plan renewal still writes nothing; a crossing keeps SA-464 (1).
   describe("#2522 activateManualSubscription plan-switch on an already-paying row", () => {
     const setup = (status: string, sub: Record<string, unknown>) => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         status,
         class: "PRODUCTION",
@@ -6817,7 +7090,11 @@ describe("PlatformAdminService — audit provenance", () => {
 
   describe("PR-B3 fold: leaving a pause by any admin route clears payment_overdue and the Stripe pause", () => {
     it("extendTrial from a pause also nulls readOnlyReason (it writes TRIAL outside the ACTIVE helper)", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.findUniqueOrThrow.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -6838,7 +7115,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("updateStatus to SUSPENDED on a PAUSED tenant clears local pausedAt (and payment_overdue) and unpauses Stripe after commit; the owed marker stays", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",
@@ -6877,7 +7158,11 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("updateStatus on a tenant that was NOT paused for payment touches no subscription row and unpauses nothing", async () => {
-      prisma.tenant.findUnique.mockResolvedValue({ id: TENANT_ID, slug: "acme" } as any);
+      prisma.tenant.findUnique.mockResolvedValue({
+        id: TENANT_ID,
+        slug: "acme",
+        class: "PRODUCTION",
+      } as any);
       prisma.tenant.update.mockResolvedValue({
         id: TENANT_ID,
         slug: "acme",

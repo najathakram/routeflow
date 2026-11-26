@@ -10,6 +10,7 @@ import {
 } from "@routeflow/types";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
+import { LIVE_PAYMENTS_OFF_SENTENCE } from "@routeflow/types/live-payments-off-copy";
 import {
   routeStopsNotPlacedFromBody,
   routeStopsNotPlacedSentence,
@@ -63,6 +64,8 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.SELLER_UNAVAILABLE]: sellerUnavailableCopy(null),
   [API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM]: RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   [API_ERROR_CODES.PROMOTIONS_OFF]: PROMOTIONS_OFF_COPY,
+  // SA-1547 M1: the live-payments wall (W-1464); a tester on a test business sees this on every payment surface
+  [API_ERROR_CODES.LIVE_PAYMENTS_OFF]: LIVE_PAYMENTS_OFF_SENTENCE,
   // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
   // fixed sentences for a surface with no dialog, never the server's text.
   [API_ERROR_CODES.RESTRICTION_WARNING]:
