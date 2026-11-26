@@ -3,6 +3,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders } from "@/test-utils/render";
 import { StockCountTab } from "./StockCountTab";
 import { ReadOnlyGateProvider } from "@/lib/read-only-gate";
+import { readOnlyLine } from "@/lib/subscription-banner-state";
 import { StockCountReviewModal } from "./StockCountReviewModal";
 import type { StockCountLocalRow } from "@/lib/api/stock-count";
 
@@ -211,11 +212,29 @@ describe("R-298: a read-only workspace is never offered New product from the cou
       </ReadOnlyGateProvider>,
     );
 
-  it("the Add as new product action on a short number does not open New product", async () => {
+  it("a short number shows no Add as new product action, and the toast carries the gate line", async () => {
     mockResolve.mockResolvedValue({ notFound: true });
     renderReadOnly();
     await typeCode("40");
-    fireEvent.click(await screen.findByRole("button", { name: "Add as new product" }));
+    expect(await screen.findByText("No product for 40")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add as new product" })).toBeNull();
+    expect(
+      screen.getByText(readOnlyLine({ status: "READ_ONLY" } as never, false)!),
+    ).toBeInTheDocument();
+  });
+
+  it("reads the gate at click time: read-only after the scan, before the click, opens nothing", async () => {
+    mockResolve.mockResolvedValue({ notFound: true });
+    const ui = (view: unknown) => (
+      <ReadOnlyGateProvider view={view as never}>
+        <StockCountTab />
+      </ReadOnlyGateProvider>
+    );
+    const { rerender } = renderWithProviders(ui(null));
+    await typeCode("40");
+    const action = await screen.findByRole("button", { name: "Add as new product" });
+    rerender(ui({ status: "READ_ONLY" }));
+    fireEvent.click(action);
     expect(screen.queryByText(/New product form/)).toBeNull();
   });
 

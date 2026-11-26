@@ -74,6 +74,9 @@ interface SessionMeta {
 export function StockCountTab() {
   const { toast } = useToast();
   const gate = useReadOnlyGate();
+  // Read at click time: a scan toast outlives the render that made it.
+  const gateRef = React.useRef(gate);
+  gateRef.current = gate;
   const { user } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -599,27 +602,34 @@ export function StockCountTab() {
         // B1481: a short bare number is a quantity typed into the wrong box, not a product code (barcodes
         // are 8+ digits, same rule as the counter's date box). Say so rather than offering to create it.
         if (/^\d+$/.test(code) && !looksLikeScanCode(code)) {
+          const gateNow = gateRef.current;
           toast({
             title: `No product for ${code}`,
-            description:
-              "To count a quantity, type it in Qty per scan or in the row's Counted box.",
+            description: gateNow.readOnly
+              ? (gateNow.line ?? undefined)
+              : "To count a quantity, type it in Qty per scan or in the row's Counted box.",
             variant: "error",
-            // A short PLU or UPC-E is a real code too, so the old path stays one tap away.
-            action: {
-              label: "Add as new product",
-              onClick: () => {
-                if (gate.readOnly) return; // creating a product is a write
-                setUnknownCode(code);
-              },
-            },
+            // A short PLU or UPC-E is a real code too, so the old path stays one tap away
+            // (never offered, nor acted on, in a read-only workspace: creating is a write).
+            ...(gateNow.readOnly
+              ? {}
+              : {
+                  action: {
+                    label: "Add as new product",
+                    onClick: () => {
+                      if (gateRef.current.readOnly) return;
+                      setUnknownCode(code);
+                    },
+                  },
+                }),
           });
           return;
         }
-        if (gate.readOnly) {
+        if (gateRef.current.readOnly) {
           // A read-only workspace cannot create the product: say so instead of opening the form.
           toast({
             title: `No product for ${code}`,
-            description: gate.line ?? undefined,
+            description: gateRef.current.line ?? undefined,
             variant: "error",
           });
           return;
