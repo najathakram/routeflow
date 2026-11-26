@@ -1046,3 +1046,11 @@ describe("genericToastCopy: UXG B14 stops without a map position", () => {
     );
   });
 });
+
+describe("genericToastCopy: SA-1547 M1 live-payments wall", () => {
+  it("LIVE_PAYMENTS_OFF maps to the test-business sentence, not the neutral 409", () => {
+    const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF }));
+    expect(copy).toBe("This is a test business. Payments are switched off.");
+    expect(copy).not.toBe(NEUTRAL_409);
+  });
+});

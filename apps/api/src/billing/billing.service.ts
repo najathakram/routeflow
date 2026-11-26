@@ -106,6 +106,12 @@ import { assertCheckoutSurface, type CheckoutSurface } from "./checkout-session-
 import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
 import {
+  assertLivePaymentsAllowed,
+  assertTenantLivePaymentsAllowed,
+  isLivePaymentsRefusal,
+  recordLivePaymentsHeld,
+} from "./live-payments-wall";
+import {
   API_BILLING_CANCEL_PATH,
   API_BILLING_PORTAL_RETURN_PATH,
   API_BILLING_RETURN_PATHS,
@@ -488,6 +494,8 @@ export class BillingService {
     if (tenant.subscription?.stripeCustomerId) {
       return tenant.subscription.stripeCustomerId;
     }
+
+    assertLivePaymentsAllowed(tenant.class); // W-1464: no Stripe customer is created for a non-PRODUCTION business
 
     // Two concurrent checkouts for a tenant with no customer yet would each create one, and the second
     // upsert would orphan the first in Stripe. Serialize the create-and-store per tenant on the shared
@@ -907,6 +915,10 @@ export class BillingService {
       product: priceData.product,
     };
 
+    // W-1464 R-282 M2: a price push changes what the subscription charges. Not a test business, before the flag is
+    // armed and before the Stripe write (the reads above change nothing).
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
+
     // SA-733r3 N4: `needsReconcile` (+ the key/nonce audit row) is COMMITTED before Stripe is touched; the flow
     // clears it after its local write (syncStripeSubscriptionPrice / the override flow). Unwritable => nothing sent.
     const reconcileDeps = { prisma: this.prisma, logger: this.logger };
@@ -1074,6 +1086,7 @@ export class BillingService {
     tenantId: string,
     request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ portalUrl: string }> {
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId); // W-1464: no portal session for a non-PRODUCTION business
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
     });
@@ -1104,6 +1117,26 @@ export class BillingService {
    * Called by the webhook controller after signature verification.
    */
   async handleWebhookEvent(event: any): Promise<void> {
+    try {
+      await this.dispatchWebhookEvent(event);
+    } catch (err) {
+      // W-1464 R-305 M1: a live-payments refusal that escapes ANY handler must not reach Stripe as a 500 (a retry
+      // storm for an event that can never succeed). The handlers that know their tenant record the hold themselves;
+      // this is the catch-all so a future handler cannot reintroduce the storm: held row, then acknowledged.
+      if (!isLivePaymentsRefusal(err)) throw err;
+      await recordLivePaymentsHeld(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId: null,
+          entityType: "stripe_event",
+          entityId: event?.id ?? null,
+          what: `${event?.type ?? "unknown"} event`,
+        },
+      );
+    }
+  }
+
+  private async dispatchWebhookEvent(event: any): Promise<void> {
     this.logger.log(`Processing Stripe event: ${event.type} (${event.id})`);
 
     switch (event.type) {
@@ -1147,7 +1180,7 @@ export class BillingService {
         break;
 
       case "invoice.upcoming":
-        await this.onInvoiceUpcoming(event.data.object);
+        await this.onInvoiceUpcoming(event.data.object, event.id);
         break;
 
       case "invoice.payment_failed":
@@ -2719,6 +2752,19 @@ export class BillingService {
         { waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS },
       );
     } catch (err) {
+      // W-1464 R-305 M1: the wall holds the re-sync for a business that is not PRODUCTION; acknowledged, not retried.
+      if (isLivePaymentsRefusal(err)) {
+        await recordLivePaymentsHeld(
+          { prisma: this.prisma, logger: this.logger },
+          {
+            tenantId,
+            entityType: "stripe_checkout_session",
+            entityId: session?.id ?? null,
+            what: "checkout price re-sync",
+          },
+        );
+        return;
+      }
       this.logger.error(
         `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync threw`,
         err as Error,
@@ -3043,7 +3089,7 @@ export class BillingService {
    * never a double push. A REFUSAL (an annual item, an unresolvable price) is alerted and acknowledged - a
    * redelivery could never succeed.
    */
-  private async onInvoiceUpcoming(invoice: any): Promise<void> {
+  private async onInvoiceUpcoming(invoice: any, eventId?: string): Promise<void> {
     if (!this.scheduledPrice) return;
     const sub = await this.matchStripeSubscription(
       stripeInvoiceSubscriptionId(invoice),
@@ -3059,6 +3105,20 @@ export class BillingService {
         );
       }
     } catch (err) {
+      // W-1464 R-305 M1: the wall holds the push for a business that is not PRODUCTION; acknowledged, not retried.
+      if (isLivePaymentsRefusal(err)) {
+        await recordLivePaymentsHeld(
+          { prisma: this.prisma, logger: this.logger },
+          {
+            tenantId: sub.tenantId,
+            entityType: "stripe_event",
+            entityId: eventId ?? null,
+            what: "scheduled downgrade price push",
+            meta: { stripeSubId: (sub as any).stripeSubId ?? null },
+          },
+        );
+        return;
+      }
       if (!(err instanceof BadRequestException)) throw err;
       this.logger.error(
         `invoice.upcoming: the scheduled downgrade price for tenant ${sub.tenantId} cannot be applied - fix it in Stripe before the renewal: ${err.message}`,

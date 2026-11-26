@@ -42,6 +42,7 @@ function make(opts: { override?: number } = {}) {
     tenant: {
       findUnique: jest.fn(async () => ({
         id: "t1",
+        class: "PRODUCTION",
         plan: "STARTER",
         planVersionId: null,
         subscription: {

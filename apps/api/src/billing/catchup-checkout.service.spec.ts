@@ -72,6 +72,7 @@ function make(
       findUnique: jest.fn(async () => ({
         id: "t1",
         slug: "qa-acme",
+        class: "PRODUCTION",
         status: "ACTIVE",
         deletedAt: null,
         ...(o.tenant ?? {}),
@@ -593,6 +594,23 @@ describe("census()", () => {
 });
 
 describe("open()", () => {
+  // W-1464 PR-B (SA-1538 R5): the wall sits before the claim, so a refused business leaves no trace.
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "W-1464: class %p gets the coded 409, no claim, no customer and no Stripe call",
+    async (cls) => {
+      const h = make({ tenant: { class: cls } });
+      await expect(
+        h.svc.open("t1", { surface: "ADMIN_LINK", now: NOW, expectedStubCents: 31000 }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
+      });
+      expect(h.stripe.client.checkout.sessions.create).not.toHaveBeenCalled();
+      expect(h.billing.ensureStripeCustomer).not.toHaveBeenCalled();
+      expect(h.sub().catchupState ?? null).toBeNull();
+    },
+  );
+
   it("the claim is written BEFORE Stripe is called, the session id stored after, and the amount pinned", async () => {
     const h = make();
     const heldAtCreate: unknown[] = [];
