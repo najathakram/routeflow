@@ -203,11 +203,18 @@ export async function renderPlatformMails(): Promise<Out> {
     }),
   );
   await call("set-password", () =>
-    svc.sendSetPasswordEmail({ to, username: "sam", setPasswordUrl: url, expiryHours: 24 }),
+    svc.sendSetPasswordEmail({
+      tenantId: null,
+      to,
+      username: "sam",
+      setPasswordUrl: url,
+      expiryHours: 24,
+    }),
   );
   for (const payUrl of [null, "https://app.test/pay"]) {
     await call(`welcome-${payUrl ? "pay" : "nopay"}`, () =>
       svc.sendTenantWelcomeEmail({
+        tenantId: null,
         to,
         username: "sam",
         businessName: "Acme Foods",
@@ -221,19 +228,31 @@ export async function renderPlatformMails(): Promise<Out> {
     );
   }
   await call("email-changed", () =>
-    svc.sendEmailChangedNotice({ to, username: "sam", newEmail: "n@acme.test" }),
+    svc.sendEmailChangedNotice({ tenantId: null, to, username: "sam", newEmail: "n@acme.test" }),
   );
   await call("email-change-confirmation", () =>
-    svc.sendEmailChangeConfirmation({ to, username: "sam" }),
+    svc.sendEmailChangeConfirmation({ tenantId: null, to, username: "sam" }),
   );
   await call("email-change-link", () =>
-    svc.sendEmailChangeLink({ to, username: "sam", confirmUrl: url, expiryHours: 24 }),
+    svc.sendEmailChangeLink({
+      tenantId: null,
+      to,
+      username: "sam",
+      confirmUrl: url,
+      expiryHours: 24,
+    }),
   );
   await call("email-change-requested", () =>
-    svc.sendEmailChangeRequestedNotice({ to, username: "sam", maskedNewEmail: "n***@acme.test" }),
+    svc.sendEmailChangeRequestedNotice({
+      tenantId: null,
+      to,
+      username: "sam",
+      maskedNewEmail: "n***@acme.test",
+    }),
   );
   await call("role-changed", () =>
     svc.sendRoleChangedNotice({
+      tenantId: null,
       to,
       username: "sam",
       oldRole: "OPERATOR",
@@ -245,6 +264,7 @@ export async function renderPlatformMails(): Promise<Out> {
     for (const hasFallback of [true, false]) {
       await call(`mailbox-revoked-${provider}-${hasFallback}`, () =>
         svc.sendMailboxRevokedNotice({
+          tenantId: "t-acme",
           to,
           username: "sam",
           accountEmail: "m@acme.test",
@@ -256,6 +276,7 @@ export async function renderPlatformMails(): Promise<Out> {
   }
   await call("low-stock-named", () =>
     svc.sendLowStockDigest({
+      tenantId: "t-acme",
       to,
       businessName: "Acme Foods",
       items: [{ name: "Widget", sku: "W1", currentStock: 1, reorderPoint: 5 }],
@@ -263,6 +284,7 @@ export async function renderPlatformMails(): Promise<Out> {
   );
   await call("low-stock-unnamed", () =>
     svc.sendLowStockDigest({
+      tenantId: "t-acme",
       to,
       businessName: null,
       items: [{ name: "Widget", sku: null, currentStock: 1, reorderPoint: 5 }],

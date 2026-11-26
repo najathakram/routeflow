@@ -823,6 +823,12 @@ describe("CounterDayClose: the drawer count survives a dismissed dialog (R7b 2.3
       note.compareDocumentPosition(submitButton()) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });
+
+  it("B1467: the Z report note sits in the same row as the Close day button, not up in the form", async () => {
+    await openForm();
+    const note = screen.getByText("Closing emails the Z report to admins.");
+    expect(submitButton().closest("div")).toContainElement(note);
+  });
 });
 
 const REOPEN_URL = "/orders/counter-sale/day-close/dc1/reopen";

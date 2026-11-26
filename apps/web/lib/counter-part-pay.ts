@@ -124,8 +124,42 @@ export function counterPaymentAmount(
 export const PART_PAY_AMOUNT_COPY = "Enter an amount above zero, or leave it empty to pay in full.";
 
 /** The refusal for a CHECK or CARD "Amount paying now" above the total: the server refuses it too (COUNTER_PAYMENT_EXCEEDS_TOTAL). */
-export const PART_PAY_OVER_TOTAL_COPY =
-  "Amount paying now can't be more than the total. Lower it, or leave it empty to pay in full.";
+export const partPayOverTotalCopy = (
+  typed: number,
+  total: number,
+  method: "CHECK" | "CARD",
+): string =>
+  `${formatReceiptMoney(typed)} is more than the ${formatReceiptMoney(total)} total. Check the ${
+    method === "CHECK" ? "check" : "card"
+  } amount.`;
+
+/** True for the over-total refusal above, whatever its figures. */
+export const isPartPayOverTotalCopy = (message: string): boolean =>
+  /^\$[\d,]+\.\d{2} is more than the \$[\d,]+\.\d{2} total\. Check the (card|check) amount\.$/.test(
+    message,
+  );
+
+/**
+ * W-1459 / B1468: the over-total refusal alone, readable while the field is still being typed (the screen shows it live and
+ * keeps Complete off until it is fixed). Null for cash, on account, a walk-in, empty or unreadable text, or an amount at or
+ * under the total.
+ */
+export function partPayOverTotalProblem(input: {
+  method: CounterSalePaymentMethod;
+  isWalkIn: boolean;
+  tendered: string;
+  total: number;
+}): string | null {
+  if (input.isWalkIn || (input.method !== "CHECK" && input.method !== "CARD")) return null;
+  const typed = input.tendered.trim();
+  if (typed === "") return null;
+  const raw = withoutDollar(typed);
+  if (!PLAIN_MONEY.test(raw) || !(Number(raw) > 0)) return null;
+  const paid = roundMoney(Number(raw));
+  return paid > roundMoney(input.total)
+    ? partPayOverTotalCopy(paid, input.total, input.method)
+    : null;
+}
 
 /** The most a CHECK or CARD can pay now when the customer holds open credit: the server applies credit first (SA-933 parity). */
 export const partPayOverCreditCopy = (max: number): string =>
@@ -152,7 +186,7 @@ export const isPartPayExceedsTotal = (res: {
 /** True for any "Amount paying now" refusal above, so editing the field can clear a stale one. */
 export const isPartPayProblemCopy = (message: string): boolean =>
   message === PART_PAY_AMOUNT_COPY ||
-  message === PART_PAY_OVER_TOTAL_COPY ||
+  isPartPayOverTotalCopy(message) ||
   message === PART_PAY_CREDIT_PENDING_COPY ||
   message === PART_PAY_CREDIT_FAILED_COPY ||
   message === PART_PAY_CREDIT_COVERS_COPY ||
@@ -181,8 +215,9 @@ export function partPayAmountProblem(input: {
   const raw = withoutDollar(typed); // the one reader of tender text (a lone "$" is not blank: it is refused)
   const plain = PLAIN_MONEY.test(raw);
   if (!plain || !(Number(raw) > 0)) return PART_PAY_AMOUNT_COPY;
-  if (input.total !== undefined && roundMoney(Number(raw)) > roundMoney(input.total)) {
-    return PART_PAY_OVER_TOTAL_COPY;
+  if (input.total !== undefined) {
+    const over = partPayOverTotalProblem({ ...input, total: input.total });
+    if (over) return over;
   }
   if (input.total !== undefined && input.autoApplyCredit !== undefined) {
     // exactly the total states no amount (a full payment: the server charges its own balance); below it the server caps the

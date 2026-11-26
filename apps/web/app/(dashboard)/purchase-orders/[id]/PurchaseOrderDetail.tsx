@@ -276,7 +276,11 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         <h3 id="po-lines-h" className="text-base font-semibold text-navy">
           Lines
         </h3>
-        <PurchaseOrderReadOnlyLines items={po.items ?? []} catalogById={catalogById} />
+        <PurchaseOrderReadOnlyLines
+          items={po.items ?? []}
+          catalogById={catalogById}
+          status={po.status}
+        />
       </section>
 
       <section aria-labelledby="po-receipts-h" className="space-y-2">

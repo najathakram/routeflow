@@ -30,6 +30,17 @@ export function CounterReceiptView({
   /** POS-1: the screen focuses this heading when the receipt appears. */
   headingRef?: React.Ref<HTMLHeadingElement>;
 }) {
+  // B1470: money the customer still owes on a recorded sale is carried on their account: say so, in the checkout's own words
+  // ("On account"). A payment that was not recorded, and a sale with a return on it (the figure nets credit), keep "Balance due".
+  const hasReturn = !!(
+    m.returned ||
+    m.refunded ||
+    m.creditKept ||
+    m.creditUsed ||
+    m.returnPending ||
+    m.returnItems?.length
+  );
+  const onAccountBalance = !m.paymentNotRecorded && !hasReturn && m.balanceDue > 0;
   const hasHeader = logoUrl || m.header.name || m.header.addressLines.length > 0 || m.header.phone;
 
   return (
@@ -239,7 +250,7 @@ export function CounterReceiptView({
         ) : null}
         {m.showBalance ? (
           <div className="flex justify-between">
-            <dt>Balance due</dt>
+            <dt>{onAccountBalance ? "On account" : "Balance due"}</dt>
             <dd>{money(m.balanceDue)}</dd>
           </div>
         ) : null}
