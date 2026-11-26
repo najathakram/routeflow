@@ -178,6 +178,8 @@ import {
   partPayAmountProblem,
   partPaySplit,
   partPayEqualsTotal,
+  partPayOverTotalProblem,
+  isPartPayOverTotalCopy,
   creditMayApply,
   isPartPayExceedsTotal,
   PART_PAY_FULL_COPY,
@@ -680,6 +682,13 @@ export function CounterSaleScreen() {
     tendered: tenderedNum,
   }); // S4: "Pay $X now · $Y goes on account" while an identified customer's tender is short
   // SA-1219: nothing tendered in cash by a named customer is On account (the shared intent), said under the total
+  // W-1459 / B1468: a card or check amount over the total is said while typed and keeps Complete off (no money math changes)
+  const overTotalProblem = partPayOverTotalProblem({
+    method: resolveTender(method, checkNotReceived).method,
+    isWalkIn: walkInBuyer,
+    tendered,
+    total: payTotal,
+  });
   const putOnAccount =
     tenderIntent({
       method: resolveTender(method, checkNotReceived).method,
@@ -1396,7 +1405,8 @@ export function CounterSaleScreen() {
             : null,
     });
     if (partPayProblem) {
-      setError(partPayProblem);
+      // the over-total line is already live under the field (role=alert); a second copy in the bar would announce twice
+      if (!isPartPayOverTotalCopy(partPayProblem)) setError(partPayProblem);
       setTenderFix((n) => n + 1); // focus the Amount paying now field
       return null;
     }
@@ -2530,6 +2540,12 @@ export function CounterSaleScreen() {
               </p>
             ) : null}
 
+            {overTotalProblem ? (
+              <p role="alert" className="text-sm text-red-700" data-testid="counter-part-pay-over">
+                {overTotalProblem}
+              </p>
+            ) : null}
+
             {/* The payment / sale error lives in the bar: below the fold it was out of sight at 390px (row 238). */}
             {error ? (
               <p role="alert" className="text-sm text-red-700">
@@ -2567,7 +2583,8 @@ export function CounterSaleScreen() {
                   locked ||
                   scanBusy ||
                   reprice.blocked ||
-                  parkBusy
+                  parkBusy ||
+                  overTotalProblem !== null
                 }
               >
                 {putOnAccount ? onAccountLabel("show receipt") : "Complete & show receipt"}
@@ -2585,7 +2602,8 @@ export function CounterSaleScreen() {
                   locked ||
                   scanBusy ||
                   reprice.blocked ||
-                  parkBusy
+                  parkBusy ||
+                  overTotalProblem !== null
                 }
               >
                 {putOnAccount ? onAccountLabel("next sale") : "Complete & next sale"}

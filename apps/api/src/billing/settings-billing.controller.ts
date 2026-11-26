@@ -26,6 +26,7 @@ import { ProrationService } from "./proration.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingService } from "./billing.service";
 import { BillingPaymentsService } from "./billing-payments.service";
+import { isLivePaymentsRefusal } from "./live-payments-wall";
 import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
 import { webBaseUrl } from "../config/web-base-url";
@@ -284,9 +285,15 @@ export class SettingsBillingController {
     ]);
     const portalUrl = portal.status === "fulfilled" ? portal.value.portalUrl : null;
     const hostedInvoiceUrl = pay.status === "fulfilled" ? pay.value : null;
+    // SA-1547 S2: the wall refused the portal, so the hosted invoice URL (a Stripe payment page) is withheld too
+    if (portal.status === "rejected" && isLivePaymentsRefusal(portal.reason)) throw portal.reason;
     if (portalUrl || hostedInvoiceUrl) return { portalUrl, hostedInvoiceUrl };
     // Neither is available. A workspace with no Stripe customer (manual / external payment) is a clean 400; a Stripe
     // outage is a retryable 503. Both coded, never a bare 500.
+    // W-1464: the live-payments wall's own coded 409 is not an outage; it reaches the caller as is
+    if (portal.status === "rejected" && isLivePaymentsRefusal(portal.reason)) {
+      throw portal.reason;
+    }
     if (portal.status === "rejected" && portal.reason instanceof BadRequestException) {
       throw new BadRequestException({
         code: API_ERROR_CODES.BILLING_PORTAL_UNAVAILABLE,

@@ -26,7 +26,7 @@ export type ReceiptChannelSender = (
 
 /** The receipt left only when the email transport says `delivered`; an honest result (R5), never "queued". */
 export const sendEmailReceipt: ReceiptChannelSender = async ({ email }, args) => {
-  const result = await email.send(args);
+  const result = await email.send({ ...args, tenantId: args.delivery.tenantId });
   if (!result.delivered) throw new Error("The receipt email was not delivered");
 };
 

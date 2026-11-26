@@ -62,6 +62,9 @@ module.exports = {
     // SA-767 L-2.4 D: the stock-count commit copy, same subpath trick (the package root is stubbed).
     "^@routeflow/types/stock-count-commit-copy$":
       "<rootDir>/../../packages/types/stock-count-commit-copy.ts",
+    // SA-1547 M1: the live-payments-off sentence (pure), same subpath trick (the package root is stubbed).
+    "^@routeflow/types/live-payments-off-copy$":
+      "<rootDir>/../../packages/types/live-payments-off-copy.ts",
     // SA-776: the shared read-only copy composer, same subpath trick (the package root is stubbed).
     "^@routeflow/types/read-only-copy$": "<rootDir>/../../packages/types/read-only-copy.ts",
     // CQ-06: the shared license-refusal sentence (it imports only the pure error-code constants), same subpath trick.
