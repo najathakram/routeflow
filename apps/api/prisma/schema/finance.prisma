@@ -1515,6 +1515,8 @@ model LegacySalesLine {
 
   // Surrogate id leads: a uuid is globally unique, and the lead column serves the cascade delete.
   @@unique([documentId, lineNo])
+  // Customer lookups go through the document join: a document's lines by product (SA-1522 Q1, lead ruling).
+  @@index([tenantId, documentId, productId])
   @@index([tenantId, productId, docDate])
   @@index([tenantId, sourceItemKey])
   // FK-leading: the RESTRICT check on a Product delete runs WHERE "productId" = $1 with no tenantId (Amendment 2 N1).

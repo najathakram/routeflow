@@ -341,6 +341,9 @@ CREATE INDEX "LegacySalesDocument_customerId_idx" ON "LegacySalesDocument"("cust
 CREATE UNIQUE INDEX "LegacySalesLine_documentId_lineNo_key" ON "LegacySalesLine"("documentId", "lineNo");
 
 -- CreateIndex
+CREATE INDEX "LegacySalesLine_tenantId_documentId_productId_idx" ON "LegacySalesLine"("tenantId", "documentId", "productId");
+
+-- CreateIndex
 CREATE INDEX "LegacySalesLine_tenantId_productId_docDate_idx" ON "LegacySalesLine"("tenantId", "productId", "docDate");
 
 -- CreateIndex

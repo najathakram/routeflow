@@ -292,6 +292,18 @@ describe("stage-1 migration shape (SA-1295 sitting 1, SA-1507)", () => {
     expect(body).toContain("to_jsonb(NEW) ->> 'customerId'");
   });
 
+  it("SA-1522 Q1: the covering index (tenantId, documentId, productId) is in the migration and the Prisma model", () => {
+    expect(executable(stage1)).toContain(
+      'CREATE INDEX "LegacySalesLine_tenantId_documentId_productId_idx" ON "LegacySalesLine"("tenantId", "documentId", "productId");',
+    );
+    const prisma = readFileSync(
+      join(__dirname, "..", "..", "prisma", "schema", "finance.prisma"),
+      "utf8",
+    );
+    const model = /model LegacySalesLine \{([\s\S]*?)\n\}/.exec(prisma);
+    expect(model![1]).toContain("@@index([tenantId, documentId, productId])");
+  });
+
   it("the guard function body is found and has the six steps", () => {
     const body = guardBody(stage1);
     expect(body).not.toBeNull();
