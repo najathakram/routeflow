@@ -123,8 +123,29 @@ describe("selfCheckoutEligibility (not live)", () => {
     });
   });
 
-  it("a non-PRODUCTION or deleted business is not a paying row", () => {
-    expect(selfCheckoutEligibility(facts({ class: "TEST" })).reason).toBe("not_paying_row");
+  // Ruling 7203127751 item 1: the class check is the live-payments wall's own predicate (live-payments-wall.ts),
+  // so Pay now is never offered where the wall would refuse the session, and a test key opens every class.
+  it.each(["TEST", "DEMO", "INTERNAL", null, "SOMETHING_NEW"])(
+    "class %p with a live key: not eligible (live_payments_off), the wall's verdict",
+    (cls) => {
+      expect(selfCheckoutEligibility(facts({ class: cls as any, keyMode: "live" }))).toEqual({
+        eligible: false,
+        reason: "live_payments_off",
+      });
+    },
+  );
+
+  it("class TEST with a Stripe TEST key is eligible (the walks run on any class, SA-1547 S5)", () => {
+    expect(selfCheckoutEligibility(facts({ class: "TEST", keyMode: "test" })).eligible).toBe(true);
+  });
+
+  it("a key that is neither live nor test (none) fails closed for a non-PRODUCTION class", () => {
+    expect(selfCheckoutEligibility(facts({ class: "TEST", keyMode: "none" })).reason).toBe(
+      "live_payments_off",
+    );
+  });
+
+  it("a deleted business, or one with no plan, is not a paying row", () => {
     expect(selfCheckoutEligibility(facts({ deletedAt: new Date() })).reason).toBe("not_paying_row");
     expect(selfCheckoutEligibility(facts({ planKey: null })).reason).toBe("not_paying_row");
   });

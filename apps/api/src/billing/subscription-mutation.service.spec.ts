@@ -461,6 +461,11 @@ const deltaOf = (events: any, type: string) => {
   return c ? c[3]?.amountDelta : undefined;
 };
 const emitted = (events: any) => events.emit.mock.calls.map((c: any[]) => c[1]);
+/** The conditional trialConvertedAt writes: updateMany calls that carry the stamp. */
+const stampWrites = (tx: any): any[] =>
+  tx.tenantSubscription.updateMany.mock.calls
+    .map((c: any[]) => c[0])
+    .filter((a: any) => a?.data && "trialConvertedAt" in a.data);
 
 describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
   it("fresh trial: PLAN_CHANGED delta = plan monthly, add-on delta separate; sum = subtotal (no double-count)", async () => {
@@ -3844,11 +3849,39 @@ describe("#2189 subscribe() re-checks under the lock (SA-389)", () => {
     tx.tenantSubscription.findUnique.mockResolvedValue(sub);
     await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
     const written = tx.tenantSubscription.upsert.mock.calls[0][0];
-    expect(written.create.trialConvertedAt).toBeNull();
-    expect(written.update.trialConvertedAt).toBeUndefined();
+    expect(written.create).not.toHaveProperty("trialConvertedAt");
+    expect(written.update).not.toHaveProperty("trialConvertedAt");
+    expect(stampWrites(tx)).toHaveLength(0);
     expect(events.emit.mock.calls.map((c: any[]) => c[1])).not.toContain(
       BILLING_EVENTS.TRIAL_CONVERTED,
     );
+  });
+
+  // SA-1547 round 3 (R-339 / R-340): the stamp is a conditional write, the same shape as the checkout completion's.
+  describe("the trial conversion stamp is conditional (a webhook may stamp first)", () => {
+    it("a trial pick stamps with updateMany where trialConvertedAt IS NULL, never inside the upsert", async () => {
+      const { svc, tx, events } = make({ tenantStatus: "TRIAL" });
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+      expect(stampWrites(tx)).toHaveLength(1);
+      expect(stampWrites(tx)[0].where).toEqual({ tenantId: "t1", trialConvertedAt: null });
+      expect(stampWrites(tx)[0].data.trialConvertedAt).toBeInstanceOf(Date);
+      const written = tx.tenantSubscription.upsert.mock.calls[0][0];
+      expect(written.create).not.toHaveProperty("trialConvertedAt");
+      expect(written.update).not.toHaveProperty("trialConvertedAt");
+      expect(
+        emitted(events).filter((t: string) => t === BILLING_EVENTS.TRIAL_CONVERTED),
+      ).toHaveLength(1);
+    });
+
+    it("the race: a checkout webhook stamped first (the write matches no row) => no second TRIAL_CONVERTED", async () => {
+      const { svc, tx, events } = make({ tenantStatus: "TRIAL" });
+      tx.tenantSubscription.updateMany.mockImplementation(async (args: any) => ({
+        count: args?.data && "trialConvertedAt" in args.data ? 0 : 1,
+      }));
+      await svc.subscribe("t1", { planKey: "TEAM", cycle: "MONTHLY" }, "admin");
+      expect(stampWrites(tx)).toHaveLength(1);
+      expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+    });
   });
 });
 
