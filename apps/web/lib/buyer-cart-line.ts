@@ -271,6 +271,15 @@ export function mergeCartLinesChecked<T extends CartLineShape>(
 }
 
 /**
+ * B1409 (#4509 F4): a NEW line (no line of that product in the cart yet) is clamped like a merge, so an Order Again
+ * line over the cap never enters the cart for the create DTO to refuse at checkout.
+ */
+export function clampNewLine<T extends CartLineShape>(incoming: T): { line: T; clamped: boolean } {
+  if (lineCount(incoming) <= lineMaxCount(incoming)) return { line: incoming, clamped: false };
+  return { line: setLineCount(incoming, lineMaxCount(incoming)), clamped: true };
+}
+
+/**
  * The line Add writes: one Case (one box) of a boxed product, one piece of any other. `boxes` and
  * `pieces` are present only for a boxed product, so a plain product's payload carries `qty` alone.
  */

@@ -797,7 +797,7 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       await expect(
         svc.subscribe(
           "t1",
-          { planKey: "BUSINESS", cycle: "ANNUAL", addons: [{ sku: "FORECASTING", quantity: 1 }] },
+          { planKey: "BUSINESS", cycle: "MONTHLY", addons: [{ sku: "FORECASTING", quantity: 1 }] },
           "admin",
         ),
       ).rejects.toThrow(PLAN_CHANGE_ADDONS_CHANGED);
@@ -1188,11 +1188,12 @@ describe("SubscriptionMutationService.subscribe — A2b plan-transition hook", (
 // entering the paying set books the fee; catalog rows are unchanged.
 describe("#2223 SA-444c — subscribe() and the downgrade preview keep the override fee", () => {
   it("subscribe() cycle change on a paying override row: both upsert branches write the fee, Δ0", async () => {
-    const { svc, tx, events } = make({
+    const { svc, tx, events, prisma } = make({
       tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
-        cycle: "MONTHLY",
+        cycle: "ANNUAL",
+        stripeSubId: null, // manual-activation shape: no provider subscription (SA-A, BP-1 test ruling)
         priceOverrideMonthly: 80,
         basePriceSnapshot: 80,
       },
@@ -1202,7 +1203,8 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
       priceOverrideMonthly: 80,
       basePriceSnapshot: 80,
     });
-    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    expect((await prisma.tenantSubscription.findUnique({} as any)).stripeSubId).toBeNull();
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
     const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
     expect(arg.create.basePriceSnapshot).toBe(80);
     expect(arg.update.basePriceSnapshot).toBe(80);
@@ -1213,11 +1215,12 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
   // SA-464b: a paying override row whose snapshot is NULL (not yet counted) — the cycle change writes
   // the fee and books it in full, so snapshot MRR and ledger MRR re-agree.
   it("SA-464b: subscribe() cycle change on a paying override row with a NULL snapshot writes the fee and books +fee", async () => {
-    const { svc, tx, events } = make({
+    const { svc, tx, events, prisma } = make({
       tenantStatus: "ACTIVE",
       sub: {
         planKey: "STARTER",
-        cycle: "MONTHLY",
+        cycle: "ANNUAL",
+        stripeSubId: null, // manual-activation shape: no provider subscription (SA-A, BP-1 test ruling)
         priceOverrideMonthly: 80,
         basePriceSnapshot: null,
       },
@@ -1227,7 +1230,8 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
       priceOverrideMonthly: 80,
       basePriceSnapshot: null,
     });
-    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    expect((await prisma.tenantSubscription.findUnique({} as any)).stripeSubId).toBeNull();
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
     const arg = tx.tenantSubscription.upsert.mock.calls[0][0];
     expect(arg.update.basePriceSnapshot).toBe(80);
     expect(arg.create.basePriceSnapshot).toBe(80);
@@ -1251,11 +1255,12 @@ describe("#2223 SA-444c — subscribe() and the downgrade preview keep the overr
   });
 
   it("subscribe()'s locked re-read selects the override it keeps", async () => {
-    const { svc, tx } = make({
+    const { svc, tx, prisma } = make({
       tenantStatus: "ACTIVE",
-      sub: { planKey: "STARTER", cycle: "MONTHLY" },
+      sub: { planKey: "STARTER", cycle: "ANNUAL", stripeSubId: null }, // no provider subscription (SA-A)
     });
-    await svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "admin");
+    expect((await prisma.tenantSubscription.findUnique({} as any)).stripeSubId).toBeNull();
+    await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
     expect(tx.tenantSubscription.findUnique.mock.calls[0][0].select).toMatchObject({
       priceOverrideMonthly: true,
     });
@@ -4669,5 +4674,55 @@ describe("SA-1254 (b) 6: the $99 tie rule (STARTER→CORE, LITE→CORE)", () => 
     expect(preview.action).toBe("DOWNGRADE");
     expect(preview.effectiveAt).toEqual(periodEnd);
     expect(preview.proratedNow).toBeNull();
+  });
+});
+
+// SA-1304 Amendment 1 A5 / B1406 / BP-1: subscribe() never enters a year. Unconditional, first statement, no switch read.
+describe("B1406 — subscribe() refuses cycle ANNUAL for every tenant (T31, T32)", () => {
+  const CARD_PAYER = { ...BILLED_SUB, planKey: "STARTER", externalPayment: false };
+  const refusal = async (p: Promise<unknown>) => {
+    const err: any = await p.then(
+      () => null,
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
+    });
+  };
+  const noWrites = (m: ReturnType<typeof make>) => {
+    expect(m.tx.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(m.prisma.$transaction).not.toHaveBeenCalled();
+    expect(emitted(m.events)).not.toContain(BILLING_EVENTS.PLAN_CHANGED);
+  };
+
+  it("T31(i): a card-less trial, card-first flag off, picks ANNUAL: 409, no row written", async () => {
+    const m = make({ tenantStatus: "TRIAL" });
+    await refusal(m.svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "u1"));
+    noWrites(m);
+  });
+
+  it("T31(ii): card-first flag ON, picks ANNUAL: the year refusal answers BEFORE the card-first gate (not CHOOSE_PLAN_AT_CHECKOUT)", async () => {
+    const m = make({ tenantStatus: "TRIAL", sub: CARD_PAYER });
+    (m.svc as any).cardFirst = { isEnabled: jest.fn().mockResolvedValue(true) };
+    (m.prisma as any).auditLog = { findFirst: jest.fn().mockResolvedValue(null) }; // isLinkPending read
+    await refusal(m.svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "u1"));
+    noWrites(m);
+    expect(m.prisma.tenantSubscription.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("T31(iii) control: MONTHLY still converts a trial", async () => {
+    const m = make({ tenantStatus: "TRIAL" });
+    await m.svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "u1");
+    expect(m.tx.tenantSubscription.upsert.mock.calls[0][0].create.cycle).toBe("MONTHLY");
+  });
+
+  it("T32: a row already on a year is refused too, and left unchanged", async () => {
+    const m = make({
+      tenantStatus: "ACTIVE",
+      sub: { planKey: "STARTER", cycle: "ANNUAL", externalPayment: true, basePriceSnapshot: 59 },
+    });
+    await refusal(m.svc.subscribe("t1", { planKey: "STARTER", cycle: "ANNUAL" }, "u1"));
+    noWrites(m);
   });
 });

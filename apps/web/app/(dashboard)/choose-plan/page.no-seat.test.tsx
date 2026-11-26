@@ -34,6 +34,11 @@ const plan = (
 
 const mockQuote = jest.fn();
 const mockDowngrade = jest.fn();
+jest.mock("@tanstack/react-query", () => ({
+  ...jest.requireActual("@tanstack/react-query"),
+  useQueryClient: () => ({ invalidateQueries: jest.fn() }),
+}));
+
 jest.mock("@/lib/api/billing", () => ({
   usePlans: () => ({
     isLoading: false,

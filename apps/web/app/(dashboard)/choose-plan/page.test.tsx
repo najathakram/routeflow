@@ -35,11 +35,17 @@ const plan = (
 let mockRec: { currentPlanKey: string; recommendedPlanKey: string };
 let mockSub: Record<string, unknown> | undefined;
 const mockQuote = jest.fn();
+jest.mock("@tanstack/react-query", () => ({
+  ...jest.requireActual("@tanstack/react-query"),
+  useQueryClient: () => ({ invalidateQueries: jest.fn() }),
+}));
+
 jest.mock("@/lib/api/billing", () => ({
   usePlans: () => ({
     isLoading: false,
     data: {
       plans: [plan("GROWTH", "Growth", 1, 100, 1000), plan("SCALE", "Scale", 2, 300, 3000)],
+      annualCheckout: true,
     },
   }),
   useRecommendation: () => ({ data: mockRec }),
