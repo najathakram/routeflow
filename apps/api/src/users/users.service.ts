@@ -97,6 +97,7 @@ export class UsersService {
       const urls = this.configService.get<AppConfig["urls"]>("urls")!;
       const link = await issueSetPasswordLink(this.prisma, userId, urls.web);
       const result = await this.email.sendSetPasswordEmail({
+        tenantId: this.prisma.getTenantId(),
         to,
         username,
         setPasswordUrl: link.url,
@@ -634,6 +635,7 @@ export class UsersService {
       const urls = this.configService.get<AppConfig["urls"]>("urls")!;
       const confirmUrl = `${urls.web.replace(/\/+$/, "")}/confirm-email-change?token=${token}`;
       const link = await this.email.sendEmailChangeLink({
+        tenantId: this.prisma.getTenantId(),
         to: newEmail,
         username,
         confirmUrl,
@@ -643,6 +645,7 @@ export class UsersService {
         this.logger.error(`Email-change link NOT delivered to the new address for user ${userId}.`);
       }
       const notice = await this.email.sendEmailChangeRequestedNotice({
+        tenantId: this.prisma.getTenantId(),
         to: oldEmail,
         username,
         maskedNewEmail: maskEmail(newEmail),
@@ -672,6 +675,7 @@ export class UsersService {
     try {
       if (previousEmail) {
         const result = await this.email.sendEmailChangedNotice({
+          tenantId: this.prisma.getTenantId(),
           to: previousEmail,
           username,
           newEmail,
@@ -683,6 +687,7 @@ export class UsersService {
         }
       }
       const confirmResult = await this.email.sendEmailChangeConfirmation({
+        tenantId: this.prisma.getTenantId(),
         to: newEmail,
         username,
       });
@@ -709,6 +714,7 @@ export class UsersService {
     if (!to) return;
     try {
       const result = await this.email.sendRoleChangedNotice({
+        tenantId: this.prisma.getTenantId(),
         to,
         username,
         oldRole,

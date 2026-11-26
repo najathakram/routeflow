@@ -173,6 +173,7 @@ describe("B809 — the CTA button refuses a non-http(s) link, and the email stil
     const svc = makeService();
     const htmls = capturePlatformHtml(svc);
     await svc.sendSetPasswordEmail({
+      tenantId: null,
       to: "new.user@example.com",
       username: "newuser",
       setPasswordUrl: "javascript:alert(1)",
@@ -191,6 +192,7 @@ describe("B809 — the CTA button refuses a non-http(s) link, and the email stil
     const svc = makeService();
     const htmls = capturePlatformHtml(svc);
     await svc.sendSetPasswordEmail({
+      tenantId: null,
       to: "new.user@example.com",
       username: "newuser",
       setPasswordUrl: "https://app.example.com/reset-password?token=ab12",

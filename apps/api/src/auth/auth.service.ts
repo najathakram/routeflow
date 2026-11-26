@@ -611,6 +611,7 @@ export class AuthService {
       toEmail: string;
       username: string;
       forcePasswordChange: boolean;
+      tenantId: string | null;
     };
     try {
       // A plain transaction on purpose: the tenant guard only sees forTenant()/tenantTransaction, so this is never reported.
@@ -623,8 +624,9 @@ export class AuthService {
             toEmail: string;
             username: string;
             forcePasswordChange: boolean;
+            tenantId: string | null;
           }[]
-        >`SELECT c."id", c."userId", c."fromEmail", c."toEmail", u."username", u."forcePasswordChange"
+        >`SELECT c."id", c."userId", c."fromEmail", c."toEmail", u."username", u."forcePasswordChange", u."tenantId"
           FROM "UserEmailChange" c JOIN "User" u ON u."id" = c."userId"
           WHERE c."tokenHash" = ${tokenHash} AND c."usedAt" IS NULL AND c."expiresAt" > ${now}`;
         if (!row) throw refused();
@@ -665,6 +667,7 @@ export class AuthService {
     // the login email. A delivery failure never undoes the change.
     try {
       const old = await this.emailService.sendEmailChangedNotice({
+        tenantId: change.tenantId,
         to: change.fromEmail,
         username: change.username,
         newEmail: change.toEmail,
@@ -675,6 +678,7 @@ export class AuthService {
         );
       }
       const added = await this.emailService.sendEmailChangeConfirmation({
+        tenantId: change.tenantId,
         to: change.toEmail,
         username: change.username,
       });

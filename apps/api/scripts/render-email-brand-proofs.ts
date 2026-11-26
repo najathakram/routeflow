@@ -69,6 +69,7 @@ async function main() {
     (
       await capture((svc) =>
         svc.sendSetPasswordEmail({
+          tenantId: null,
           to: "a@b.com",
           username: "Jordan Rivera",
           setPasswordUrl: "https://app.routeflow.info/reset-password?token=demo123",
@@ -83,6 +84,7 @@ async function main() {
     (
       await capture((svc) =>
         svc.sendEmailChangedNotice({
+          tenantId: null,
           to: "old@example.com",
           username: "Jordan Rivera",
           newEmail: "new@example.com",
@@ -95,7 +97,11 @@ async function main() {
     "03-email-change-confirmation",
     (
       await capture((svc) =>
-        svc.sendEmailChangeConfirmation({ to: "new@example.com", username: "Jordan Rivera" }),
+        svc.sendEmailChangeConfirmation({
+          tenantId: null,
+          to: "new@example.com",
+          username: "Jordan Rivera",
+        }),
       )
     ).html,
   );
@@ -105,6 +111,7 @@ async function main() {
     (
       await capture((svc) =>
         svc.sendRoleChangedNotice({
+          tenantId: null,
           to: "a@b.com",
           username: "Jordan Rivera",
           oldRole: "DRIVER",

@@ -584,7 +584,13 @@ export class AddonInvariantJob {
       });
       let delivered = false;
       for (const to of recipients) {
-        const r = await this.email.sendPlatform({ to, subject, html: mail.html, text });
+        const r = await this.email.sendPlatform({
+          tenantId: null,
+          to,
+          subject,
+          html: mail.html,
+          text,
+        });
         delivered = delivered || r.delivered;
       }
       if (!delivered) {

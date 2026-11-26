@@ -159,6 +159,7 @@ export class OnboardingIntakeService {
     let emailed = false;
     if (send) {
       const r = await this.email.sendPlatform({
+        tenantId: c.tenantId,
         to: c.contactEmail,
         ...routeflowFragmentMail({
           subject: "Your RouteFlow order and setup questionnaire",
@@ -486,6 +487,7 @@ export class OnboardingIntakeService {
     });
     if (action === "request_changes") {
       const r = await this.email.sendPlatform({
+        tenantId: c.tenantId,
         to: c.contactEmail,
         ...routeflowFragmentMail({
           subject: `A few questions about your ${SECTION_LABEL[key]} answers`,

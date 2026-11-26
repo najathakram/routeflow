@@ -110,6 +110,7 @@ export class OnboardingLifecycleService {
       let delivered = false;
       try {
         const r = await this.email.sendPlatform({
+          tenantId: c.tenantId,
           to: c.contactEmail,
           ...routeflowFragmentMail({
             subject: "Your RouteFlow setup is waiting for you",

@@ -558,6 +558,7 @@ describe("UsersService", () => {
         }),
       );
       expect(email.sendEmailChangeRequestedNotice).toHaveBeenCalledWith({
+        tenantId: "test-tenant",
         to: "old@acme.example",
         username: "acme_op",
         maskedNewEmail: "n***@a***.example",
