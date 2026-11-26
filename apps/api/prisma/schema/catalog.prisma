@@ -224,6 +224,9 @@ model Product {
   customerUnitPrices       CustomerUnitPrice[]
   familyPurchaseOrderItems PurchaseOrderItem[]    @relation("PurchaseOrderItemFamily")
   familyVendorBillItems    VendorBillItem[]       @relation("VendorBillItemFamily")
+  // SA-1295 A2: imported history that names this product (back-relations only; both FKs are RESTRICT, SA-1507 A1-2).
+  legacySalesLines         LegacySalesLine[]
+  sourceItemAliases        SourceItemAlias[]
 
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
@@ -886,4 +889,30 @@ enum StockCountStatus {
 enum StockCountLineMode {
   REPLACE
   ADD
+}
+
+// ─── SA-1295 A2: QuickBooks history import, Sitting 1 (catalog) ───────────────
+
+/// Tenant-level map from a source's item key to one of our products (or "ignore"). Not a ProductAlias: its unique
+/// has no supplier and it is keyed by import source. Guarded table (legacy_import_tenant_guard, SA-1507 rule 1):
+/// `tenantId` is plain and NOT NULL; `productId` is RESTRICT (a product named by imported history is archived,
+/// never hard-deleted: SA-1507 A1-2).
+model SourceItemAlias {
+  id             String          @id @default(uuid())
+  tenantId       String
+  source         MigrationSource
+  sourceItemKey  String
+  sourceItemText String
+  productId      String?
+  ignore         Boolean         @default(false)
+  createdById    String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  product Product? @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([tenantId, source, sourceItemKey])
+  @@index([tenantId, productId])
+  // FK-leading: the RESTRICT check on a Product delete runs WHERE "productId" = $1 with no tenantId (SA-1295 Amendment 2 N1).
+  @@index([productId])
 }

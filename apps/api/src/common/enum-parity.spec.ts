@@ -177,6 +177,14 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["USER_STATUS_VALUES", "UserStatus"],
   ["BUYER_ACCOUNT_STATUS_VALUES", "BuyerAccountStatus"],
   ["CUSTOMER_LINK_STATUS_VALUES", "CustomerLinkStatus"],
+  // SA-1295 A2: six brand-new Prisma enums of the QuickBooks history import, mirrored immediately; the existing
+  // InvoiceItemSystemKind row above gains IMPORTED_SUMMARY (a value, not an enum). See the triage tripwire below.
+  ["LEGACY_IMPORT_BATCH_STATUS_VALUES", "LegacyImportBatchStatus"],
+  ["LEGACY_IMPORT_FILE_KIND_VALUES", "LegacyImportFileKind"],
+  ["LEGACY_IMPORT_ISSUE_SEVERITY_VALUES", "LegacyImportIssueSeverity"],
+  ["LEGACY_SALES_DOCUMENT_KIND_VALUES", "LegacySalesDocumentKind"],
+  ["LEGACY_SALES_LINE_KIND_VALUES", "LegacySalesLineKind"],
+  ["LEGACY_ITEM_MATCH_METHOD_VALUES", "LegacyItemMatchMethod"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -315,7 +323,13 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // folder adds BAD_DEBT to the existing OperatorPermissionGroup (a value, not an enum, so no count change from it).
 // Triage for OrderReviewFlagKind (SA-1124 PR-0, migration 20261110000000_order_review_flags_offline): a brand-new Prisma
 // enum, mirrored as `ORDER_REVIEW_FLAG_KIND_VALUES` + its `ENUM_TABLE` row above (122 → 123).
-const PINNED_PRISMA_ENUM_COUNT = 123;
+// Triage for LegacyImportBatchStatus, LegacyImportFileKind, LegacyImportIssueSeverity, LegacySalesDocumentKind,
+// LegacySalesLineKind, LegacyItemMatchMethod (SA-1295 A2, migration 20261126000000_legacy_import_stage1): six brand-new
+// Prisma enums, all MIRRORED as LEGACY_IMPORT_BATCH_STATUS_VALUES … LEGACY_ITEM_MATCH_METHOD_VALUES + their ENUM_TABLE
+// rows (the web import screen shows batch status, file kind, issue severity, document kind, line kind and match method)
+// (123 → 129). IMPORTED_SUMMARY is a value on an existing enum, mirrored in INVOICE_ITEM_SYSTEM_KIND_VALUES; it does not
+// move the count.
+const PINNED_PRISMA_ENUM_COUNT = 129;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

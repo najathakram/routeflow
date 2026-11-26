@@ -137,6 +137,7 @@ const MODEL_DOMAIN = {
   StockMovement: "catalog",
   ProductMapping: "catalog",
   ProductAlias: "catalog",
+  SourceItemAlias: "catalog",
   StockAlert: "catalog",
   StockCountSession: "catalog",
   StockCountLine: "catalog",
@@ -234,6 +235,8 @@ const MODEL_DOMAIN = {
   TenantStripeConnect: "finance",
   StripeConnectEvent: "finance",
   BuyerPaymentRequest: "finance",
+  LegacySalesDocument: "finance",
+  LegacySalesLine: "finance",
 
   // ─── platform ──────────────────────────────────────────────────────────────
   TenantSubscription: "platform",
@@ -282,6 +285,9 @@ const MODEL_DOMAIN = {
   EmailDelivery: "platform",
   EmailBounceNotice: "platform",
   EmailBounceSourceState: "platform",
+  LegacyImportBatch: "platform",
+  LegacyImportFile: "platform",
+  LegacyImportIssue: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",
