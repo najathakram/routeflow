@@ -16,7 +16,8 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
-jest.mock("@/lib/api/inventory", () => ({ useStockOverview: () => ({ data: undefined }) }));
+let mockOverview: unknown[] | undefined;
+jest.mock("@/lib/api/inventory", () => ({ useStockOverview: () => ({ data: mockOverview }) }));
 const commit = jest.fn();
 jest.mock("@/lib/api/stock-count", () => {
   const actual = jest.requireActual("@/lib/api/stock-count");
@@ -73,6 +74,7 @@ const found = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockResolve.mockResolvedValue(found);
+  mockOverview = undefined;
 });
 
 describe("B1481(d) a bare number in the scan box", () => {
@@ -82,6 +84,14 @@ describe("B1481(d) a bare number in the scan box", () => {
     await typeCode("40");
     expect(await screen.findByText("No product for 40")).toBeInTheDocument();
     expect(screen.queryByText(/New product form/)).toBeNull();
+  });
+
+  it("keeps the old path one tap away: the toast offers Add as new product, prefilled with the number", async () => {
+    mockResolve.mockResolvedValue({ notFound: true });
+    renderWithProviders(<StockCountTab />);
+    await typeCode("40");
+    fireEvent.click(await screen.findByRole("button", { name: "Add as new product" }));
+    expect(await screen.findByText("New product form, SKU 40")).toBeInTheDocument();
   });
 
   it("a real-looking unknown code (EAN-13) still opens New product with it as the SKU", async () => {
@@ -157,5 +167,37 @@ describe("B1481(a) the review header", () => {
     );
     expect(screen.getByText("2 changes")).toBeInTheDocument();
     expect(screen.queryByText(/changees/)).toBeNull();
+  });
+});
+
+describe("R-291 LOW: a saved-count message never outlives the next added item", () => {
+  it("adding from the suggestion list clears it, so it does not return after Undo last scan", async () => {
+    mockOverview = [
+      { id: "p-1", name: "UX-pos Candy Bar", sku: "UX-CANDY", unit: "each", currentStock: -5 },
+    ];
+    commit.mockResolvedValue({ applied: 1, skipped: 0 });
+    renderWithProviders(<StockCountTab />);
+    await typeCode("UX-CANDY");
+    await waitFor(() => expect(screen.queryByText("No items scanned yet")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /Review & Commit/i }));
+    const commitBtn = await screen.findByRole("button", { name: /^Commit 1 change$/ });
+    await waitFor(() => expect(commitBtn).toBeEnabled());
+    await act(async () => {
+      fireEvent.click(commitBtn);
+    });
+    expect(await screen.findByText("Count saved. 1 change applied to stock.")).toBeInTheDocument();
+
+    fireEvent.change(scanBox(), { target: { value: "Candy" } });
+    fireEvent.focus(scanBox());
+    const option = await screen.findByRole("option", { name: /UX-pos Candy Bar/ });
+    await act(async () => {
+      fireEvent.mouseDown(option);
+    });
+    await waitFor(() => expect(screen.queryByText("No items scanned yet")).toBeNull());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Undo last scan/i }));
+    });
+    expect(await screen.findByText("No items scanned yet")).toBeInTheDocument();
+    expect(screen.queryByText(/Count saved/)).toBeNull();
   });
 });

@@ -519,6 +519,7 @@ export function StockCountTab() {
   ) => {
     const existingRow = rowsRef.current.find((r) => r.productId === product.id);
     const wasNew = !existingRow;
+    setSavedCount(null);
 
     setRows((prev) => {
       const existing = prev.find((r) => r.productId === product.id);
@@ -601,6 +602,8 @@ export function StockCountTab() {
             description:
               "To count a quantity, type it in Qty per scan or in the row's Counted box.",
             variant: "error",
+            // A short PLU or UPC-E is a real code too, so the old path stays one tap away.
+            action: { label: "Add as new product", onClick: () => setUnknownCode(code) },
           });
           return;
         }
