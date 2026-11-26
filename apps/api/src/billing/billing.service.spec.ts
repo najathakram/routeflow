@@ -3875,7 +3875,10 @@ describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
   // R-339 L4: a concurrent subscribe() may have stamped first; the conditional write then matches no row.
   it("L4: when the conditional stamp matches no row (already stamped), no TRIAL_CONVERTED is emitted", async () => {
     const { svc, tx, events } = make({ transitionCount: 1, sub: subOf("TRIAL", null) });
-    tx.tenantSubscription.updateMany.mockResolvedValue({ count: 0 });
+    // only the stamp loses (the plan CAS above it, on the same mock, still wins)
+    tx.tenantSubscription.updateMany.mockImplementation(async (args: any) => ({
+      count: args?.data && "trialConvertedAt" in args.data ? 0 : 1,
+    }));
     await (svc as any).onCheckoutCompleted(session());
     expect(stampWrites(tx)).toHaveLength(1);
     expect(converted(events)).toHaveLength(0);
