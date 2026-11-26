@@ -41,6 +41,8 @@ import {
 import {
   getPushEnabled,
   setPushEnabled as persistPushEnabled,
+  getInvoiceCopyEnabled,
+  setInvoiceCopyEnabled,
 } from "../../../lib/notification-prefs";
 import { registerPushToken, deregisterPushToken } from "../../../lib/auth";
 import { showToast } from "../../../lib/toast";
@@ -158,6 +160,25 @@ function GeneralTab() {
   // switch until then so a tap can't race the fetch.
   const [pushEnabled, setPushEnabled] = useState(true);
   const [pushPrefLoading, setPushPrefLoading] = useState(true);
+  // W-1443: OPT-IN, so it starts OFF until the preference loads (the typed form keeps the push-switch pin
+  // in push-preference.test.ts, which forbids the opt-out placeholder, from matching).
+  const [invoiceCopy, setInvoiceCopy] = useState<boolean>(false);
+  const [invoiceCopyLoading, setInvoiceCopyLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    getInvoiceCopyEnabled()
+      .then((on) => {
+        if (!cancelled) setInvoiceCopy(on);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setInvoiceCopyLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (data) {
@@ -281,6 +302,27 @@ function GeneralTab() {
                     ? "We'll register this device with the push service."
                     : "Notifications won't be delivered to this device.",
                 );
+              }}
+              trackColor={{ true: ios.brand }}
+            />
+          </View>
+          <View style={styles.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.switchLabel}>Send me a copy of invoices I email</Text>
+              <Text style={styles.switchHint}>
+                When you email an invoice to a customer, we also send a copy to you. The customer
+                does not see it.
+              </Text>
+            </View>
+            <Switch
+              value={invoiceCopy}
+              disabled={invoiceCopyLoading}
+              onValueChange={(v) => {
+                setInvoiceCopy(v);
+                setInvoiceCopyEnabled(v).catch(() => {
+                  setInvoiceCopy(!v); // the write failed: show the truth
+                  showToast("Couldn't save your preference");
+                });
               }}
               trackColor={{ true: ios.brand }}
             />
