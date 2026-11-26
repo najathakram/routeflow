@@ -492,6 +492,66 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     expect(Number((await line(o.id)).deliveredQty)).toBe(0);
   });
 
+  it("R-247 red: a below-delivered (restocking) cut on a route order stays a 409 with 0 stock moves, so a later driver return cannot restock twice", async () => {
+    const p = await product("r247");
+    const o = await reopened([plain(p, 10)]);
+    const id = o.lineItems[0].id;
+    await raw.order.update({
+      where: { id: o.id },
+      data: { routeRunStopId: await completedStop() },
+    });
+    await raw.deliveryMutation.create({
+      data: {
+        orderId: o.id,
+        orderItemId: id,
+        productId: p,
+        driverId,
+        routeRunStopId: (await raw.order.findUniqueOrThrow({ where: { id: o.id } })).routeRunStopId,
+        type: "DELIVERED",
+        quantityDelivered: 10,
+        tenantId,
+      },
+    });
+    const before = await stock(p);
+    await expect(edit(o.id, { replaceAll: false, items: [{ id, qty: 8 }] })).rejects.toMatchObject({
+      status: 409,
+      response: { code: "LINE_ALREADY_DELIVERED" },
+    });
+    expect(await stock(p)).toBe(before);
+    expect(await ledgerNet(p)).toBe(0);
+    expect(Number((await line(o.id)).qty)).toBe(10);
+  });
+
+  it("OBSERVE (R-247): a stop-linked order whose line has NO rows, cut 10/10 to 8: logged, not asserted", async () => {
+    const p = await product("r247b");
+    const o = await reopened([plain(p, 10)]);
+    const id = o.lineItems[0].id;
+    await raw.order.update({
+      where: { id: o.id },
+      data: { routeRunStopId: await completedStop() },
+    });
+    const before = await stock(p);
+    let outcome = "accepted";
+    try {
+      await edit(o.id, { replaceAll: false, items: [{ id, qty: 8 }] });
+    } catch (e: any) {
+      outcome = "refused " + (e?.response?.code ?? e?.message);
+    }
+    const a = await line(o.id);
+    require("fs").appendFileSync(
+      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
+      "R247b stop-linked rowless 10/10 qty 8: " +
+        outcome +
+        " stockDelta=" +
+        ((await stock(p)) - before) +
+        " column=" +
+        Number(a.deliveredQty) +
+        " qty=" +
+        Number(a.qty) +
+        String.fromCharCode(10),
+    );
+  });
+
   it("P-3b: the office row a correction writes carries the order's tenantId", async () => {
     const p = await product("p3b");
     const o = await reopened([plain(p, 12, 8)]);
