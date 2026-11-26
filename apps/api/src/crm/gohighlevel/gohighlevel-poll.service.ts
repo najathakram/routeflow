@@ -15,6 +15,7 @@
 import { ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { acceptsAutomatedWrites } from "../../tenant/tenant-automation";
 import { routeflowNotice } from "../../email/routeflow-mail";
+import type { EmailService } from "../../email/email.service";
 
 export interface GoHighLevelPollOptions {
   ignoreCutoff?: boolean;
@@ -83,7 +84,7 @@ export class GoHighLevelPollService {
     private readonly prisma: any,
     private readonly clientFactory: (connection: any) => any,
     private readonly handoffService: any,
-    private readonly emailService: any,
+    private readonly emailService: Pick<EmailService, "send">,
     /** Optional: threads tenant context (ALS) through the tick. Omitted by every unit test. */
     private readonly tenantCtx?: { run<T>(tenantId: string, fn: () => Promise<T>): Promise<T> },
   ) {}
@@ -182,18 +183,22 @@ export class GoHighLevelPollService {
       .map((u: { email?: string }) => u.email)
       .filter((e: unknown): e is string => typeof e === "string" && e.length > 0);
     if (recipients.length === 0) return;
-    await this.emailService.send({
-      to: recipients,
-      senderClass: "platform",
-      ...routeflowNotice({
-        subject: "RouteFlow lost access to GoHighLevel",
-        heading: "RouteFlow lost access to GoHighLevel",
-        lines: [
-          "RouteFlow lost access to GoHighLevel. Re-enter the token in Settings → GoHighLevel to resume syncing leads.",
-        ],
-        why: "You are getting this because you manage this RouteFlow account’s GoHighLevel connection.",
-      }),
-    });
+    // The mail service takes one address, so each recipient gets their own send.
+    for (const to of recipients) {
+      await this.emailService.send({
+        tenantId: connection.tenantId,
+        to,
+        senderClass: "platform",
+        ...routeflowNotice({
+          subject: "RouteFlow lost access to GoHighLevel",
+          heading: "RouteFlow lost access to GoHighLevel",
+          lines: [
+            "RouteFlow lost access to GoHighLevel. Re-enter the token in Settings → GoHighLevel to resume syncing leads.",
+          ],
+          why: "You are getting this because you manage this RouteFlow account’s GoHighLevel connection.",
+        }),
+      });
+    }
   }
 
   private searchParams(connection: any, page: number): Record<string, unknown> {

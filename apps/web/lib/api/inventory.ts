@@ -317,6 +317,8 @@ export function useReceivePurchaseOrder() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory", "purchase-orders"] });
       qc.invalidateQueries({ queryKey: ["inventory"] });
+      // The PO page's On hand reads the products cache (useProductsByIds), which a receipt just changed.
+      qc.invalidateQueries({ queryKey: ["products"] });
     },
   });
 }

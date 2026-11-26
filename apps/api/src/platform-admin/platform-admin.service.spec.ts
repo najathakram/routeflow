@@ -4822,7 +4822,8 @@ describe("PlatformAdminService — audit provenance", () => {
 
       // B421 pinning: the admin-account welcome email carries a password — platform sender only.
       expect(emailServiceMock.send).toHaveBeenCalledWith(
-        expect.objectContaining({ senderClass: "platform" }),
+        // W-1464: the welcome names the target business so the mail wall can hold it.
+        expect.objectContaining({ senderClass: "platform", tenantId: TENANT_ID }),
       );
     });
   });

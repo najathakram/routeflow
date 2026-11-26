@@ -22,6 +22,8 @@ function makeService() {
   // its verified own sending domain, and its business name + customer-facing reply address.
   const prisma = {
     getTenantId: () => "tenant-a",
+    // W-1464: the mail wall reads the business class; these specs are not about a test business.
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
     forTenant: () => ({
       systemConfig: {
         findMany: jest.fn().mockResolvedValue([
@@ -66,6 +68,7 @@ const NOTICE = {
   accountEmail: "sales@acme.test",
   provider: "GOOGLE" as const,
   hasFallback: true,
+  tenantId: "t-acme",
 };
 
 beforeEach(() => jest.clearAllMocks());
@@ -131,7 +134,11 @@ describe("EmailService.sendMailboxRevokedNotice (F-10a)", () => {
   it("without a fallback sender, it says email is stopped instead of promising one", async () => {
     const { svc, resendSend } = makeService();
 
-    await svc.sendMailboxRevokedNotice({ ...NOTICE, provider: "MICROSOFT", hasFallback: false });
+    await svc.sendMailboxRevokedNotice({
+      ...NOTICE,
+      provider: "MICROSOFT",
+      hasFallback: false,
+    });
 
     const { text } = resendSend.mock.calls[0][0];
     expect(text).toContain(
