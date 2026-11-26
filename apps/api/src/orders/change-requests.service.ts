@@ -195,6 +195,8 @@ export class ChangeRequestsService {
     let payload: Record<string, unknown>;
     let orderItemId: string | null = null;
     let productId: string | null = null;
+    // ADD_ITEM's live pack, read once for the split check and handed to the buyer line cap (B1386).
+    let addItemPacks: Map<string, number> | undefined;
     switch (dto.type) {
       case ChangeRequestType.ADD_ITEM: {
         if (!dto.productId || !dto.qty) {
@@ -220,9 +222,8 @@ export class ChangeRequestsService {
         assertSellableLines([product]); // WS8: refuse at filing time, not only at approval
         // SA-1173 K3: a split that contradicts its own qty is refused at the customer, before a request exists.
         // The live pack comes from the shared live-pack lookup (units_v1 step 4), never a direct product read.
-        const livePack = await loadLiveUnitsPerBoxByProduct(this.prisma.forTenant() as any, [
-          product.id,
-        ]);
+        const livePack = await loadLiveUnitsPerBoxByProduct(this.prisma.forTenant(), [product.id]);
+        addItemPacks = livePack;
         checkQtySplitConsistency({
           mode: splitModeFor(user.role),
           path: "orders.cr.file",
@@ -269,7 +270,9 @@ export class ChangeRequestsService {
     }
     // B1386 (SA-1285 section 1): a CUSTOMER's filed quantity is capped on its piece total, rise-only. Staff keep the
     // DTO's own limit.
-    if (user.role === UserRole.CUSTOMER) await this.assertCustomerLineCap(dto, order.lineItems);
+    if (user.role === UserRole.CUSTOMER) {
+      await this.assertCustomerLineCap(dto, order.lineItems, addItemPacks);
+    }
 
     const created = await this.prisma.forTenant().changeRequest.create({
       data: {
@@ -318,6 +321,7 @@ export class ChangeRequestsService {
       boxes?: unknown;
       pieces?: unknown;
     }>,
+    knownPacks?: ReadonlyMap<string, number>,
   ): Promise<void> {
     const li =
       dto.type === ChangeRequestType.CHANGE_QTY
@@ -325,7 +329,9 @@ export class ChangeRequestsService {
         : undefined;
     const productId = dto.type === ChangeRequestType.ADD_ITEM ? dto.productId : li?.productId;
     if (!productId || (dto.type !== ChangeRequestType.ADD_ITEM && !li)) return;
-    const packs = await loadLiveUnitsPerBoxByProduct(this.prisma.forTenant() as any, [productId]);
+    const packs = knownPacks?.has(productId)
+      ? knownPacks
+      : await loadLiveUnitsPerBoxByProduct(this.prisma.forTenant(), [productId]);
     const upb = packs.get(productId) ?? 0;
     const inPieces = li
       ? li.boxes != null || li.pieces != null

@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { buyerLineOverCap } from "@routeflow/pricing";
+import { buyerCreateLinePieces, buyerLineOverCap } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
@@ -29,4 +29,39 @@ export function assertBuyerLinesWithinCap(lines: ReadonlyArray<BuyerCapLine>): v
     message: BUYER_LINE_QTY_OVER_MAX_MESSAGE,
     productIds: [...new Set(over.map((l) => l.productId).filter((id): id is string => !!id))],
   });
+}
+
+/** A line of a buyer's new order or quote, as the DTO carries it (a plain `qty` counts PACKS). */
+export interface BuyerCreateCapItem {
+  productId?: string | null;
+  qty?: number | null;
+  boxes?: number | null;
+  pieces?: number | null;
+}
+
+/**
+ * B1386 (order CREATE, quote and the staff-JWT create for a CUSTOMER): the cap on the piece total the line will be BUILT
+ * to (`buyerCreateLinePieces`, the same figure `OrdersService.create` stores), not on each DTO field alone. Every line
+ * is a new line (`storedPieces` 0). A line with no `productId` (unlisted) is skipped here: a buyer's unlisted line is
+ * refused by create itself. `packByProduct` is `loadLiveUnitsPerBoxByProduct` (the pack create reads for the same
+ * product); a product it does not return counts as a pack of 1. Throws before anything is written or quoted.
+ */
+export function assertBuyerCreateItemsWithinCap(
+  items: ReadonlyArray<BuyerCreateCapItem> | undefined,
+  packByProduct: ReadonlyMap<string, number>,
+): void {
+  assertBuyerLinesWithinCap(
+    (items ?? [])
+      .filter((i) => !!i.productId)
+      .map((i) => ({
+        productId: i.productId,
+        pieces: buyerCreateLinePieces({
+          qty: i.qty,
+          boxes: i.boxes,
+          pieces: i.pieces,
+          unitsPerBox: packByProduct.get(i.productId as string),
+        }),
+        storedPieces: 0,
+      })),
+  );
 }

@@ -41,6 +41,8 @@ import { BuyerCreateOrderDto } from "./dto/buyer-create-order.dto";
 import { UpdateBuyerProfileDto } from "./dto/update-buyer-profile.dto";
 import { OrdersService } from "../orders/orders.service";
 import { assertDeliveryDateNotPast } from "../orders/delivery-date-guard";
+import { assertBuyerCreateItemsWithinCap } from "../orders/buyer-line-cap";
+import { loadLiveUnitsPerBoxByProduct } from "../orders/live-pack-map";
 import { ChangeRequestsService } from "../orders/change-requests.service";
 import { CreateChangeRequestDto } from "../orders/dto/create-change-request.dto";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -621,6 +623,15 @@ export class BuyerController {
     @CurrentBuyerCustomer() ctx: any,
     @Headers("Idempotency-Key") rawIdempotencyKey?: string,
   ) {
+    // B1386: a line whose built PIECE total passes the cap is refused first, before the key, the lock, the create or
+    // the fold into an open order (each incoming line is judged on its own here).
+    assertBuyerCreateItemsWithinCap(
+      dto.items,
+      await loadLiveUnitsPerBoxByProduct(
+        this.prisma.forTenant(),
+        dto.items.map((i) => i.productId),
+      ),
+    );
     // Row 531 F2: a contradictory qty / box split is refused before the key, the lock or any write.
     await assertBuyerQtySplit(
       this.prisma.forTenant(),

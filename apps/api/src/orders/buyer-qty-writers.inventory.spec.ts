@@ -42,21 +42,27 @@ import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 
 type SamplePlan = (qty: number) => object;
 
+/**
+ * The body DTO's own per-field `@Max(BUYER_LINE_QTY_MAX)` on every quantity path. Not the cap: one field alone can be
+ * under 100,000 while the line is not (boxes x pack + pieces; a plain qty counts packs). It stays as the first,
+ * cheap refusal, and is pinned here so it cannot be dropped, next to the piece-total guard that actually certifies.
+ */
+interface FieldBounds {
+  dto: () => Function;
+  /** A request body with `qty` on every quantity path. */
+  sample: SamplePlan;
+  /** Quantity paths this DTO carries that are NOT a buyer sale line, each with why. */
+  exemptPaths?: Record<string, string>;
+}
+
 type Guard =
   | {
-      /** The body DTO itself rejects a quantity above BUYER_LINE_QTY_MAX (`@Max`) on every quantity path. */
-      guard: "dto-max";
-      dto: () => Function;
-      /** A request body with `qty` on every quantity path. */
-      sample: SamplePlan;
-      /** Quantity paths this DTO carries that are NOT a buyer sale line, each with why. */
-      exemptPaths?: Record<string, string>;
-    }
-  | {
-      /** The service refuses a line past the cap via `assertBuyerLinesWithinCap` (orders/buyer-line-cap.ts). */
+      /** The service or controller refuses a line past the cap via `assertBuyerLinesWithinCap` (orders/buyer-line-cap.ts). */
       guard: "service-cap";
       /** The REG id of the test that proves it: `REG-B1386 <id>`. */
       reg: string;
+      /** A body DTO that also bounds each field (pinned below); never what certifies the writer. */
+      fieldBounds?: FieldBounds;
     }
   | { guard: "not-a-line"; reason: string }
   | { guard: "untyped"; reason: string };
@@ -67,26 +73,31 @@ const INLINE_RETURN_STAFF_ONLY =
 const NO_QTY_BODY = (what: string) => `untyped body, but it carries ${what}, no line quantity`;
 
 const INVENTORY: Record<string, Guard> = {
-  // Buyer portal cart: the body DTO caps every line.
+  // Buyer portal cart: the controller caps each line's built PIECE total (assertBuyerCreateItemsWithinCap) before the
+  // create path and the merge path; the body DTO's per-field bound stays pinned.
   "BuyerController.createOrder": {
-    guard: "dto-max",
-    dto: () => BuyerCreateOrderDto,
-    sample: (qty) => ({ items: [line(qty)] }),
+    guard: "service-cap",
+    reg: "REG-B1386 K1",
+    fieldBounds: { dto: () => BuyerCreateOrderDto, sample: (qty) => ({ items: [line(qty)] }) },
   },
   "BuyerQuoteController.quote": {
-    guard: "dto-max",
-    dto: () => BuyerCreateOrderDto,
-    sample: (qty) => ({ items: [line(qty)] }),
+    guard: "service-cap",
+    reg: "REG-B1386 K2",
+    fieldBounds: { dto: () => BuyerCreateOrderDto, sample: (qty) => ({ items: [line(qty)] }) },
   },
-  // Staff-JWT order create (CUSTOMER, OPERATOR, DRIVER): OrderItemDto carries @Max(100_000).
+  // Staff-JWT order create (CUSTOMER, OPERATOR, DRIVER): the piece-total cap runs for a CUSTOMER caller only; staff keep
+  // OrderItemDto's per-field bound (BUYER_LINE_QTY_MAX).
   "OrdersController.create": {
-    guard: "dto-max",
-    dto: () => CreateOrderDto,
-    sample: (qty) => ({ items: [line(qty)] }),
-    exemptPaths: {
-      "inlineReturn[].items[].qty": INLINE_RETURN_STAFF_ONLY,
-      "inlineReturn[].items[].boxes": INLINE_RETURN_STAFF_ONLY,
-      "inlineReturn[].items[].pieces": INLINE_RETURN_STAFF_ONLY,
+    guard: "service-cap",
+    reg: "REG-B1386 K3",
+    fieldBounds: {
+      dto: () => CreateOrderDto,
+      sample: (qty) => ({ items: [line(qty)] }),
+      exemptPaths: {
+        "inlineReturn[].items[].qty": INLINE_RETURN_STAFF_ONLY,
+        "inlineReturn[].items[].boxes": INLINE_RETURN_STAFF_ONLY,
+        "inlineReturn[].items[].pieces": INLINE_RETURN_STAFF_ONLY,
+      },
     },
   },
   // Order edit: a CUSTOMER (portal or staff-JWT) reaches the same buyer-line path, which calls assertBuyerLinesWithinCap.
@@ -307,11 +318,14 @@ describe("B1386 inventory: every CUSTOMER-reachable line-quantity writer is clas
     expect(discovery.loaded.loadFailures).toEqual([]);
   });
 
-  it("sanity: discovery finds the controllers and the four service-cap routes", () => {
+  it("sanity: discovery finds the controllers and the service-cap routes", () => {
     expect(discovery.loaded.files).toBeGreaterThan(20);
     expect(discovery.reachableHandlers).toBeGreaterThan(50);
     expect(discovery.found.size).toBeGreaterThanOrEqual(8);
     for (const key of [
+      "BuyerController.createOrder",
+      "BuyerQuoteController.quote",
+      "OrdersController.create",
       "BuyerController.updateOrderItems",
       "BuyerController.createChangeRequest",
       "OrdersController.updateOrderItems",
@@ -332,7 +346,7 @@ describe("B1386 inventory: every CUSTOMER-reachable line-quantity writer is clas
     const message = [
       "A CUSTOMER-reachable handler carries a line quantity (or an untyped body) and is not in the B1386 inventory.",
       "A new CUSTOMER quantity writer must call assertBuyerLinesWithinCap (apps/api/src/orders/buyer-line-cap.ts)",
-      "or carry @Max(BUYER_LINE_QTY_MAX) on its quantity fields, then be added to INVENTORY in this spec.",
+      "(a per-field @Max alone is not a guard: it cannot see boxes x pack + pieces), then be added to INVENTORY in this spec.",
       unclassified.length ? `Unclassified:\n${detail.join("\n")}` : "",
       stale.length
         ? `Inventory entries no handler matches (renamed or no longer reachable): ${stale.join(", ")}`
@@ -357,16 +371,20 @@ describe("B1386 inventory: every CUSTOMER-reachable line-quantity writer is clas
     }
   });
 
-  const dtoMax = Object.entries(INVENTORY).filter(([, g]) => g.guard === "dto-max") as Array<
-    [string, Extract<Guard, { guard: "dto-max" }>]
-  >;
+  const withBounds = Object.entries(INVENTORY).flatMap(([key, g]) =>
+    g.guard === "service-cap" && g.fieldBounds ? [[key, g.fieldBounds] as const] : [],
+  );
 
-  it("there is at least one dto-max entry to check", () => {
-    expect(dtoMax.length).toBeGreaterThan(0);
+  it("the three create entry points keep their body DTO's per-field bound pinned", () => {
+    expect(withBounds.map(([key]) => key).sort()).toEqual([
+      "BuyerController.createOrder",
+      "BuyerQuoteController.quote",
+      "OrdersController.create",
+    ]);
   });
 
-  it.each(dtoMax.map(([key, g]) => [key, g] as const))(
-    "%s: the body DTO rejects a quantity above BUYER_LINE_QTY_MAX on every quantity path",
+  it.each(withBounds)(
+    "%s: the body DTO still rejects a quantity above BUYER_LINE_QTY_MAX on every quantity path",
     (_key, g) => {
       const dto = g.dto();
       const exempt = new Set(Object.keys(g.exemptPaths ?? {}));

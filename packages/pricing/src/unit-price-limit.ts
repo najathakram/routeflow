@@ -1,3 +1,5 @@
+import { normalizeBoxesPieces } from "./pricing";
+
 /**
  * SA-1067 M3: the most one unit of a line may sell for. The server's `unitPrice` DTOs and the till's price dialog
  * (`OVER_LIMIT`) both read this, so a value the server would answer with a 400 is refused where it is typed. A million
@@ -21,6 +23,34 @@ export function buyerLinePieces(qty: number, inPieces: boolean, unitsPerBox?: un
   const pack = unitsPerBox == null ? NaN : Number(unitsPerBox);
   const factor = Number.isInteger(pack) && pack >= 2 ? pack : 1;
   return inPieces ? qty : qty * factor;
+}
+
+/**
+ * B1386 (SA-1285 section 1, order CREATE): the PIECE total a buyer's new order line is built to, exactly as
+ * `OrdersService.create` builds it. A line that names a split (boxes or pieces above 0) is `boxes x pack + pieces`
+ * through `normalizeBoxesPieces` (the `qty` is ignored when a pack of 2 or more is known; a product with no pack keeps
+ * its `qty`); a plain `qty` counts PACKS (SA-601), so it is `qty x pack`. A pack that is missing, below 2 or not a
+ * whole number counts as 1 (the `maxLineCount` rule). This is the figure the cap is judged on: the DTO bounds each
+ * field alone, so `{ qty: 1, boxes: 100000 }` on a 12-pack is 1,200,000 pieces.
+ */
+export function buyerCreateLinePieces(line: {
+  qty?: number | null;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: unknown;
+}): number {
+  const pack = line.unitsPerBox == null ? NaN : Number(line.unitsPerBox);
+  const factor = Number.isInteger(pack) && pack >= 2 ? pack : 1;
+  const qty = Number(line.qty ?? 0);
+  if ((line.boxes ?? 0) > 0 || (line.pieces ?? 0) > 0) {
+    return normalizeBoxesPieces({
+      boxes: line.boxes,
+      pieces: line.pieces,
+      qty,
+      unitsPerBox: factor,
+    }).qty;
+  }
+  return buyerLinePieces(qty, false, factor);
 }
 
 /**

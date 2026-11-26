@@ -371,7 +371,7 @@ function assertResolvedBuyerLinesWithinCap(
   upbByProduct: ReadonlyMap<string, number>,
   namesLines: boolean,
 ): void {
-  const denom = denominationGate(lineItems as never, true, namesLines);
+  const denom = denominationGate(lineItems, true, namesLines);
   const byId = new Map(lineItems.map((l) => [l.id, l]));
   // A read-only cap figure per entry (never written back): the piece counts of its resolved halves, and its line's.
   const perEntry = new Map<number, { productId: string; halves: number[]; storedPieces: number }>();
@@ -383,7 +383,7 @@ function assertResolvedBuyerLinesWithinCap(
       halves: [],
       storedPieces: 0,
     };
-    entry.halves.push(buyerLinePieces(Number(out.qty ?? 0), denom.isPieces(out as never), upb));
+    entry.halves.push(buyerLinePieces(Number(out.qty ?? 0), denom.isPieces(out), upb));
     const own = out.sourceLineId ? byId.get(out.sourceLineId) : undefined;
     if (own) entry.storedPieces = buyerLinePieces(Number(own.qty ?? 0), isBoxSplit(own), upb);
     perEntry.set(trace[i], entry);

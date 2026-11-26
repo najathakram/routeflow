@@ -314,7 +314,7 @@ export class OrderTemplatesService {
     stored: ReadonlyArray<{ productId: string | null; qty: unknown }>,
   ): Promise<void> {
     const packs = await loadLiveUnitsPerBoxByProduct(
-      this.prisma.forTenant() as any,
+      this.prisma.forTenant(),
       items.map((i) => i.productId),
     );
     const heldQty = (productId: string) =>
