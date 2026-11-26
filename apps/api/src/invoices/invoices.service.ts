@@ -3662,11 +3662,6 @@ export class InvoicesService {
         })
         .catch(() => {});
     }
-    // Non-blocking: the send succeeded (Resend rescued a failing tenant SMTP attempt),
-    // but the operator's own mailbox is still broken and nobody else will tell them —
-    // surface it as a warning, not a failure (the invoice really was emailed). The From
-    // address silently changed too (tenant mailbox → platform address) — disclose it,
-    // not bury it.
     // W-1443 (R-239 M1/M5): LAST, after the SENT flip, the audit and the emit; only the route's explicit copyActorId (never
     // the audit actor) can earn a copy, and it never throws.
     const { prisma, emailService, logger } = this;
@@ -3674,6 +3669,11 @@ export class InvoicesService {
       { prisma, emailService, logger },
       { emailPayload, actorId: opts?.copyActorId ?? null, customerTo: recipientEmail },
     );
+    // Non-blocking: the send succeeded (Resend rescued a failing tenant SMTP attempt),
+    // but the operator's own mailbox is still broken and nobody else will tell them —
+    // surface it as a warning, not a failure (the invoice really was emailed). The From
+    // address silently changed too (tenant mailbox → platform address) — disclose it,
+    // not bury it.
     return {
       success: true,
       sentTo: recipientEmail,

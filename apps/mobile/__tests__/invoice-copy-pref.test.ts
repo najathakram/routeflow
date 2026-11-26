@@ -42,6 +42,17 @@ describe("invoice copy preference (W-1443)", () => {
 });
 
 describe("send toast copy note (W-1443)", () => {
+  it("the operator settings screen gates the switch by role and carries web's hint", () => {
+    const src = readFileSync(join(__dirname, "../app/(operator)/settings/index.tsx"), "utf8");
+    expect(src).toContain('viewerRole === "TENANT_ADMIN" || viewerRole === "OPERATOR"');
+    expect(src.replace(/[ \n]+/g, " ")).toContain("at the email address on your account");
+  });
+  it("the SMTP-fallback notice also carries the copy line", () => {
+    for (const f of ["invoices/[id].tsx", "orders/[id].tsx"]) {
+      const src = readFileSync(join(__dirname, "../app/(operator)/(tabs)", f), "utf8");
+      expect(src).toContain("withCopyNote(notice, res)");
+    }
+  });
   it("adds the line only when the api reports copiedTo", () => {
     expect(withCopyNote("Invoice emailed", { success: true })).toBe("Invoice emailed");
     expect(withCopyNote("Invoice emailed", { copiedTo: "ops@acme.test" })).toBe(

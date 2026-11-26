@@ -637,7 +637,7 @@ export default function OrderDetailScreen() {
           // dead and that the From address changed. A toast is the wrong surface
           // for it (nowrap, 2.2s, and a no-op on iOS), so disclose it in the
           // single-button info dialog instead. Plain successes stay a toast.
-          if (notice) alertInfo("Invoice emailed", notice);
+          if (notice) alertInfo("Invoice emailed", withCopyNote(notice, res));
           else showToast(withCopyNote("Invoice emailed", res));
           closeSendSheet();
         },

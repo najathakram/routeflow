@@ -1771,9 +1771,12 @@ export default function InvoiceDetailPage() {
           if (res.warning) {
             toast({
               title: `${pdfVariant === "draft" ? "Draft" : "Final"} invoice emailed`,
-              description: `Sent via RouteFlow's mail service${
-                res.fromAddress ? ` (from ${res.fromAddress})` : ""
-              } — your own email couldn't send: ${res.warning}.`,
+              description: withCopyNote(
+                `Sent via RouteFlow's mail service${
+                  res.fromAddress ? ` (from ${res.fromAddress})` : ""
+                } — your own email couldn't send: ${res.warning}.`,
+                res.copiedTo,
+              ),
               variant: "warning",
             });
             return;

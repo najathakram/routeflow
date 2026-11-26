@@ -1,5 +1,6 @@
 import { EmailService } from "./email.service";
 import { EMAIL_KINDS, EMAIL_KIND_AUDIENCE } from "./email-kinds";
+import { lookupDeliveriesByMessageId } from "./bounces/email-bounce-keys";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
 // Never reach the real Resend client (B909).
@@ -12,7 +13,7 @@ jest.mock("resend", () => ({
  * customer's INVOICE_SENT row, and a name carrying a line break cannot start a second header line.
  * Mocked at the module boundary: `send()` is spied, nothing is delivered.
  */
-function makeService(): EmailService {
+function makeService(record: jest.Mock = jest.fn()): EmailService {
   const prisma = {
     getTenantId: () => "t1",
     forTenant: () => ({
@@ -30,7 +31,7 @@ function makeService(): EmailService {
     prisma,
     { decrypt: (v: string) => v } as any,
     { trySend: jest.fn() } as any,
-    { record: jest.fn() } as any,
+    { record } as any,
     {} as any,
   );
 }
@@ -102,5 +103,39 @@ describe("EmailService.sendInvoice - staffCopy (W-1443)", () => {
   it("T11: INVOICE_STAFF_COPY is a declared kind with the tenant audience", () => {
     expect(EMAIL_KINDS).toContain("INVOICE_STAFF_COPY");
     expect(EMAIL_KIND_AUDIENCE.INVOICE_STAFF_COPY).toBe("tenant");
+  });
+
+  it("R-264: the copy has its own refToken and Message-ID; a bounce lookup by the customer's Message-ID finds only the customer's row", async () => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const svc = makeService(record);
+    const ids = ["<m-customer@acme.test>", "<m-copy@acme.test>"];
+    jest
+      .spyOn(svc as any, "sendUnrecorded")
+      .mockImplementation(async () => ({ delivered: true, transport: "smtp", id: ids.shift() }));
+
+    await svc.sendInvoice(base); // the customer's email
+    await svc.sendInvoice({ ...base, staffCopy: { sentTo: "buyer@acme.test" } });
+
+    const [customer, copy] = record.mock.calls.map((c) => c[0]);
+    expect(customer.kind).toBe("INVOICE_SENT");
+    expect(copy.kind).toBe("INVOICE_STAFF_COPY");
+    expect(customer.refToken).toBeTruthy();
+    expect(copy.refToken).toBeTruthy();
+    expect(copy.refToken).not.toBe(customer.refToken);
+    expect(copy.providerMessageId).not.toBe(customer.providerMessageId);
+
+    const rows = [customer, copy].map((r, i) => ({ id: "row" + i, tenantId: "t1", ...r }));
+    const prisma = {
+      emailDelivery: {
+        findMany: jest.fn(async ({ where }: any) =>
+          rows.filter((r) => where.providerMessageId.in.includes(r.providerMessageId)),
+        ),
+      },
+    } as any;
+    const found = await lookupDeliveriesByMessageId(prisma, "<m-customer@acme.test>");
+    expect(found).toEqual({
+      status: "MATCHED",
+      rows: [{ id: "row0", tenantId: "t1", ...rows[0] }],
+    });
   });
 });

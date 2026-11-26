@@ -1,6 +1,10 @@
 import { Test } from "@nestjs/testing";
 import { EmailService } from "../email/email.service";
-import { resolveInvoiceCopyRecipient, sendInvoiceStaffCopy } from "./invoice-staff-copy";
+import {
+  STAFF_COPY_TIMEOUT_MS,
+  resolveInvoiceCopyRecipient,
+  sendInvoiceStaffCopy,
+} from "./invoice-staff-copy";
 
 /**
  * W-1443 (SA-1516) T1-T8: who gets the private copy of an invoice email, and that sending it never
@@ -181,6 +185,24 @@ describe("sendInvoiceStaffCopy (R3)", () => {
         customerTo: "b@x.test",
       }),
     ).toEqual({});
+  });
+
+  it("R-264: a copy that never answers is given up on after the bound, with no copiedTo and no throw", async () => {
+    jest.useFakeTimers();
+    try {
+      sendInvoice.mockReturnValue(new Promise(() => {})); // a hung transport
+      const d = await deps({ user: operator, pref: "true" });
+      const pending = sendInvoiceStaffCopy(d, {
+        emailPayload: payload,
+        actorId: "u1",
+        customerTo: "b@x.test",
+      });
+      await jest.advanceTimersByTimeAsync(STAFF_COPY_TIMEOUT_MS + 1);
+      await expect(pending).resolves.toEqual({});
+      expect(logger.warn).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("T7: the preference read itself throws -> {} and no send", async () => {

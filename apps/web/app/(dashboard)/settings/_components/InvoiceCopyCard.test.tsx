@@ -77,6 +77,13 @@ describe("InvoiceCopyCard (W-1443)", () => {
     );
   });
 
+  it("T19: an administrator (TENANT_ADMIN) sees the card and the switch", async () => {
+    role = "TENANT_ADMIN";
+    renderWithProviders(<InvoiceCopyCard />);
+    expect(await screen.findByRole("switch", { name: SWITCH })).toBeInTheDocument();
+    expect(screen.getByText("Copies of emails you send")).toBeInTheDocument();
+  });
+
   it.each(["DRIVER", "CUSTOMER", "SUPER_ADMIN"])("T21: %s does not see the card", (r) => {
     role = r;
     renderWithProviders(<InvoiceCopyCard />);

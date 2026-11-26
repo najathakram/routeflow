@@ -310,7 +310,7 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     home: "userPref",
     kind: "preference",
     status: "live",
-    screen: "/settings?tab=notifications#invoice-copies",
+    screen: "/settings?tab=notifications",
   },
   {
     key: PREF.pushEnabled,

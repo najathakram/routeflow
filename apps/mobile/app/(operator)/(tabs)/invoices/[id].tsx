@@ -298,7 +298,7 @@ export default function InvoiceDetailScreen() {
           // is a disclosure, not an error — but it can't ride a toast: showToast is
           // nowrap/2.2s and a no-op on iOS, and a dead tenant mailbox has to be
           // read. Plain successes keep the toast.
-          if (notice) alertInfo(label, notice);
+          if (notice) alertInfo(label, withCopyNote(notice, res));
           else showToast(withCopyNote(label, res));
           refetch();
         },

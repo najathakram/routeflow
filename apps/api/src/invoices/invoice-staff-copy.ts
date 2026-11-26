@@ -14,6 +14,12 @@ import type { EmailService } from "../email/email.service";
 /** The preference key (`PREF.invoiceEmailCopy` in @routeflow/types; the api cannot value-import that package). */
 const COPY_PREF_KEY = "invoiceEmailCopy";
 const COPY_ROLES = ["TENANT_ADMIN", "OPERATOR"];
+/**
+ * R-264 LOW-1: the copy runs inside the request, AFTER the customer was emailed. A hung transport must not hold the 200:
+ * the client would time out and retry, and the retry emails the customer a second time. Past this the copy is given up
+ * on (no `copiedTo`); a slow send may still land, its own delivery row tells the truth.
+ */
+export const STAFF_COPY_TIMEOUT_MS = 8000;
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type PrismaLike = { forTenant(): any; getTenantId(): string | null | undefined };
@@ -78,11 +84,21 @@ export async function sendInvoiceStaffCopy(
   try {
     const to = await resolveInvoiceCopyRecipient(deps.prisma, p.actorId, p.customerTo);
     if (!to) return {};
-    const res = await deps.emailService.sendInvoice({
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const giveUp = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), STAFF_COPY_TIMEOUT_MS);
+    });
+    const send = deps.emailService.sendInvoice({
       ...p.emailPayload,
       to,
       staffCopy: { sentTo: p.customerTo },
     });
+    send.catch(() => {}); // a send that loses the race must not become an unhandled rejection
+    const res = await Promise.race([send, giveUp]).finally(() => clearTimeout(timer));
+    if (res === null) {
+      deps.logger.warn("invoice staff copy timed out; the customer's email is unaffected");
+      return {};
+    }
     return res?.delivered ? { copiedTo: to } : {};
   } catch (err) {
     deps.logger.warn(
