@@ -606,6 +606,8 @@ module.exports = {
     VERIFICATION_LINK_EXPIRED: "VERIFICATION_LINK_EXPIRED",
     DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
     DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
+    /** 409 from POST /inventory/movements/adjustment: the Idempotency-Key was already used for a different adjustment (another product, quantity, reason or date). Nothing was written (B1415 M1b). */
+    IDEMPOTENCY_KEY_REUSED: "IDEMPOTENCY_KEY_REUSED",
   },
   // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
   FILING_STALE_COPY:

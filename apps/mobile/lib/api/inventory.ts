@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { adjustmentRequest } from "../adjust-stock-request";
 import type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 export type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 
@@ -23,6 +24,8 @@ export interface StockAdjustmentDto {
   quantity: number; // positive = add, negative = remove
   notes?: string;
   reference?: string;
+  /** B1415 M1b: the caller's attempt key; sent as the Idempotency-Key header, never in the body. */
+  idempotencyKey?: string;
 }
 
 export interface StockPurchaseDto {
@@ -133,7 +136,10 @@ export function useRecomputeCosts() {
 export function useRecordAdjustment() {
   const qc = useQueryClient();
   return useMutation<unknown, Error, StockAdjustmentDto>({
-    mutationFn: (dto) => apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data),
+    mutationFn: (dto) => {
+      const { body, config } = adjustmentRequest(dto);
+      return apiClient.post("/inventory/movements/adjustment", body, config).then((r) => r.data);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory"] }),
   });
 }

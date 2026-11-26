@@ -8,6 +8,7 @@ import {
 import { apiClient } from "../api-client";
 import type { ImageUploadFile } from "../product-image";
 import { nextProductPage, type PaginationMeta } from "../product-search-params";
+import { adjustmentRequest } from "../adjust-stock-request";
 
 /** Rows per page for the catalogue pickers. */
 export const PRODUCT_PAGE_SIZE = 50;
@@ -276,9 +277,19 @@ export function useAdjustProductStock() {
   return useMutation<
     unknown,
     Error,
-    { productId: string; quantity: number; notes?: string; reference?: string }
+    {
+      productId: string;
+      quantity: number;
+      notes?: string;
+      reference?: string;
+      /** B1415 M1b: the sheet's attempt key; sent as the Idempotency-Key header, never in the body. */
+      idempotencyKey?: string;
+    }
   >({
-    mutationFn: (dto) => apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data),
+    mutationFn: (dto) => {
+      const { body, config } = adjustmentRequest(dto);
+      return apiClient.post("/inventory/movements/adjustment", body, config).then((r) => r.data);
+    },
     onSuccess: (_, { productId }) => {
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["products", productId] });

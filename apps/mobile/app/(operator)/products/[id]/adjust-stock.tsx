@@ -6,6 +6,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../../components/FormSheet";
 import { useProduct, useAdjustProductStock } from "../../../../lib/api/products";
 import { showToast } from "../../../../lib/toast";
+import { ADJUSTMENT_KEY_REUSED_COPY, isAdjustmentKeyReused } from "@routeflow/types/sale-attempt";
+import {
+  adjustmentFingerprint,
+  createAdjustmentAttemptKey,
+} from "../../../../lib/adjust-stock-request";
 
 const REASONS = [
   { id: "RECEIVED", label: "Received" },
@@ -20,6 +25,8 @@ export default function AdjustStockScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: product } = useProduct(id ?? "");
   const mut = useAdjustProductStock();
+  // B1415 M1b: one Idempotency-Key per attempt, held for this sheet open (see lib/adjust-stock-request.ts).
+  const [attempt] = useState(createAdjustmentAttemptKey);
   const [delta, setDelta] = useState("");
   const [reason, setReason] = useState<string>("COUNT");
   const [notes, setNotes] = useState("");
@@ -34,19 +41,30 @@ export default function AdjustStockScreen() {
     // RF-201: include the selected reason chip in notes so the audit trail is
     // always populated — combine with any free-text the operator typed.
     const combinedNotes = [reason, notes.trim()].filter(Boolean).join(" — ");
+    const dto = {
+      productId: id,
+      quantity: n,
+      reference: reason,
+      notes: combinedNotes || undefined,
+    };
+    const idempotencyKey = attempt.keyFor(adjustmentFingerprint(dto));
     mut.mutate(
-      {
-        productId: id,
-        quantity: n,
-        reference: reason,
-        notes: combinedNotes || undefined,
-      },
+      // the key rides in the args, so two taps carry identical args; it resets on success
+      { ...dto, idempotencyKey },
       {
         onSuccess: () => {
+          attempt.settle(idempotencyKey, { ok: true });
           showToast(`Stock ${n > 0 ? "added" : "removed"}`);
           router.back();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          attempt.settle(idempotencyKey, { ok: false, error: e });
+          showToast(
+            isAdjustmentKeyReused(e)
+              ? ADJUSTMENT_KEY_REUSED_COPY
+              : (e?.response?.data?.message ?? e?.message ?? "Try again."),
+          );
+        },
       },
     );
   };
