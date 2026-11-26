@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from "@nestjs/common";
+import { HttpException, Injectable, Logger, Optional } from "@nestjs/common";
 import { MeterKey } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
@@ -20,6 +20,8 @@ import { billingPauseMode } from "./dunning-config";
 import { isLinkPending } from "./link-pending";
 import { nextCheckoutAnchor, planCheckoutAnchor, MIN_ANCHOR_LEAD_MS } from "./checkout-anchor";
 import { selfCheckoutEligibility } from "./self-checkout-eligibility";
+import { PlatformPricingService } from "./platform-pricing.service";
+import { roundMoney } from "@routeflow/pricing";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
   EMPTY_BILLING_VIEW_EXTRAS,
@@ -67,6 +69,9 @@ export class SubscriptionService {
     // SA-1099 A-4: the cached resolver the add-on list's "already have" state reads. Optional like the three above;
     // absent = the list offers everything, as before.
     @Optional() private readonly authority?: EntitlementAuthority,
+    // SA-1547 (R-339 L3): the resolver checkout bills from, so Pay now prints the price that is charged. Optional like the
+    // four above; absent = the price this view already worked out (the quoted fee, else the catalog).
+    @Optional() private readonly pricing?: PlatformPricingService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionService.name);
@@ -279,7 +284,7 @@ export class SubscriptionService {
     const base = {
       planKey: i.ent.planKey ?? null,
       planName: i.planName ?? null,
-      monthly: i.monthly,
+      monthly: i.monthly == null ? null : roundMoney(i.monthly),
       addons: [] as Array<{ name: string; monthly: number | null }>,
       firstFullChargeAt: null as Date | null,
     };
@@ -306,10 +311,22 @@ export class SubscriptionService {
           select: { class: true, deletedAt: true },
         });
         if (!tenant) return { ...base, eligible: false, reason: "unavailable" as const };
+        // L3: the ONE resolver checkout bills from (OP-14). A business refusal (an unpriceable plan) is "no price".
+        let monthly = facts.monthly;
+        if (this.pricing) {
+          try {
+            monthly = (await this.pricing.resolveTenantPricing(tenantId)).monthly;
+          } catch (err) {
+            if (!(err instanceof HttpException)) throw err;
+            monthly = null;
+          }
+        }
+        base.monthly = monthly == null ? null : roundMoney(monthly);
         verdict = selfCheckoutEligibility({
           ...facts,
           class: tenant.class,
           deletedAt: tenant.deletedAt,
+          monthly,
         });
       }
       const now = new Date();
@@ -327,7 +344,10 @@ export class SubscriptionService {
         ...base,
         addons: i.addons
           .filter((a) => !a.comp && a.monthly != null && !(a.sku && held.has(a.sku)))
-          .map((a) => ({ name: a.name, monthly: a.monthly })),
+          .map((a) => ({
+            name: a.name,
+            monthly: a.monthly == null ? null : roundMoney(a.monthly),
+          })),
         firstFullChargeAt: anchor,
       };
     } catch (err) {
