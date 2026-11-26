@@ -713,6 +713,8 @@ export class DemoBookingService {
   ): Promise<boolean> {
     try {
       const result = await this.email.send({
+        // a public demo request: no business exists for the sender.
+        tenantId: null,
         to,
         subject: mail.subject,
         html: mail.html,

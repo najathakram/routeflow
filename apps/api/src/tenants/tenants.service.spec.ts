@@ -342,7 +342,12 @@ describe("TenantsService", () => {
 
       expect(sent).toBe(true);
       expect(email.send).toHaveBeenCalledWith(
-        expect.objectContaining({ to: "owner@acme.example", senderClass: "platform" }),
+        // W-1464: the resend names the account's business so the mail wall can hold it.
+        expect.objectContaining({
+          to: "owner@acme.example",
+          senderClass: "platform",
+          tenantId: "tenant-1",
+        }),
       );
     });
 

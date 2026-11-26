@@ -99,6 +99,8 @@ describe("LowStockDigestService (N4)", () => {
       expect(email.sendLowStockDigest).toHaveBeenCalledTimes(1);
       expect(email.sendLowStockDigest).toHaveBeenCalledWith({
         to: "admin@acme.example",
+        // W-1464: the digest names its business so the mail wall can hold it for a Test business.
+        tenantId: "t1",
         businessName: "Acme Wholesale",
         items: [
           { name: "Low Widget", sku: "LOW-1", currentStock: 2, reorderPoint: 10 },

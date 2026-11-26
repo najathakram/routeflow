@@ -67,7 +67,7 @@ function make(opts: { platformSmtp: boolean }) {
   return svc;
 }
 
-const mail = { to: "buyer@example.com", subject: "s", html: "<p>x</p>" };
+const mail = { to: "buyer@example.com", subject: "s", html: "<p>x</p>", tenantId: null };
 
 beforeEach(() => jest.clearAllMocks());
 

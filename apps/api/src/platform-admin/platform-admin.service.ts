@@ -3271,6 +3271,7 @@ export class PlatformAdminService {
     let emailSent = false;
     try {
       const sendResult = await this.emailService.send({
+        tenantId: tenantId,
         to: dto.email,
         ...routeflowNotice({
           subject: `Your RouteFlow admin account for ${tenant?.name ?? tenantId}`,

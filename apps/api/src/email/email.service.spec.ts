@@ -88,7 +88,7 @@ function makeService(
 describe("EmailService — honest send (R5)", () => {
   it("send() returns {delivered:false, transport:'none'} when nothing is configured", async () => {
     const svc = makeService();
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
     expect(res).toMatchObject({ delivered: false, transport: "none" });
   });
 
@@ -123,7 +123,7 @@ describe("EmailService — honest send (R5)", () => {
         { key: "email.smtpPort", value: "587" },
       ],
     });
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
     expect(res).toMatchObject({ delivered: true, transport: "smtp" });
     // Without these, nodemailer waits 2 minutes on an unreachable SMTP host and
     // every invoice send/email request hangs before the Resend fallback.
@@ -154,7 +154,7 @@ describe("EmailService — honest send (R5)", () => {
   it("send() never throws when no provider is configured — resolves to a not-sent result", async () => {
     const svc = makeService();
     await expect(
-      svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" }),
+      svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" }),
     ).resolves.toMatchObject({ delivered: false, transport: "none", error: undefined });
   });
 
@@ -179,7 +179,7 @@ describe("EmailService — sentinel recipients refused at the choke point (#2854
     "send() to %s is refused before any transport: delivered:false, transport:'none'",
     async (sentinel) => {
       const svc = makeService({ resendKey: "re_test_key" });
-      const res = await svc.send({ to: sentinel, subject: "x", html: "<p>x</p>" });
+      const res = await svc.send({ tenantId: null, to: sentinel, subject: "x", html: "<p>x</p>" });
       expect(res).toMatchObject({ delivered: false, transport: "none" });
       expect(res.error).toMatch(/placeholder address/i);
     },
@@ -188,6 +188,7 @@ describe("EmailService — sentinel recipients refused at the choke point (#2854
   it("platform-class sends are refused too — the guard sits before the sendPlatform delegation", async () => {
     const svc = makeService({ resendKey: "re_test_key" });
     const res = await svc.send({
+      tenantId: null,
       to: "acme_store@imported.local",
       subject: "x",
       html: "<p>x</p>",
@@ -211,6 +212,7 @@ describe("EmailService — sentinel recipients refused at the choke point (#2854
 
   it("a real recipient still flows past the guard (unconfigured here → honest R5 refusal, not the placeholder error)", async () => {
     const res = await makeService().send({
+      tenantId: null,
       to: "owner@acme.example",
       subject: "x",
       html: "<p>x</p>",
@@ -252,7 +254,13 @@ describe("EmailService — attachments threaded to every transport", () => {
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
     const svc = makeService({ systemConfigRows: smtpRows() });
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>", attachments: [attachment] });
+    await svc.send({
+      tenantId: null,
+      to: "a@b.com",
+      subject: "x",
+      html: "<p>x</p>",
+      attachments: [attachment],
+    });
 
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ attachments: [attachment] }));
   });
@@ -262,7 +270,13 @@ describe("EmailService — attachments threaded to every transport", () => {
     const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_1" }, error: null });
     (svc as any).resend.emails.send = sendSpy;
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>", attachments: [attachment] });
+    await svc.send({
+      tenantId: null,
+      to: "a@b.com",
+      subject: "x",
+      html: "<p>x</p>",
+      attachments: [attachment],
+    });
 
     expect(sendSpy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -275,7 +289,13 @@ describe("EmailService — attachments threaded to every transport", () => {
     const trySend = jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" });
     const svc = makeService({ mailboxSend: { trySend } });
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>", attachments: [attachment] });
+    await svc.send({
+      tenantId: null,
+      to: "a@b.com",
+      subject: "x",
+      html: "<p>x</p>",
+      attachments: [attachment],
+    });
 
     expect(trySend).toHaveBeenCalledWith(
       "t1",
@@ -446,7 +466,7 @@ describe("EmailService — sender resolver never hard-codes a domain (B452)", ()
       tenantConfig: { businessName: "Acme Co" },
     });
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({ delivered: true, transport: "smtp" });
     // The tenant's own authenticated mailbox (email.smtpUser), not the platform's
@@ -474,7 +494,7 @@ describe("EmailService — sender resolver never hard-codes a domain (B452)", ()
       tenantConfig: null,
     });
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ from: "user@example.com" }));
   });
@@ -501,7 +521,7 @@ describe("EmailService — B468: tenant SMTP From only uses smtpUser when it's a
       ],
     });
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({
       delivered: false,
@@ -523,7 +543,7 @@ describe("EmailService — B468: tenant SMTP From only uses smtpUser when it's a
       ],
     });
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({ delivered: false, transport: "smtp" });
     expect(sendMail).not.toHaveBeenCalled();
@@ -541,7 +561,7 @@ describe("EmailService — B468: tenant SMTP From only uses smtpUser when it's a
       ],
     });
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({
       delivered: false,
@@ -562,7 +582,7 @@ describe("EmailService — B468: tenant SMTP From only uses smtpUser when it's a
       ],
     });
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({ delivered: true, transport: "smtp" });
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ from: "billing@tenant.com" }));
@@ -600,7 +620,7 @@ describe("EmailService — platform SMTP transport (B452 owner ruling 2026-09-16
     // No Resend client should even exist — never both transports active.
     expect((svc as any).resend).toBeNull();
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({ delivered: true, transport: "smtp", id: "plat-1" });
     expect(nodemailer.createTransport).toHaveBeenCalledWith(
@@ -630,7 +650,7 @@ describe("EmailService — platform SMTP transport (B452 owner ruling 2026-09-16
       smtpPass: "wrong-pw",
     });
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res.delivered).toBe(false);
     expect(res.transport).toBe("smtp");
@@ -699,7 +719,7 @@ describe("EmailService — B452 review fixes: EMAIL_FROM derivation + tenant bra
       tenantConfig: { businessName: "Acme Co" },
     });
 
-    await svc.send({ to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
 
     expect(sendMail).toHaveBeenCalledWith(
       expect.objectContaining({ from: "Acme Co via RouteFlow <noreply@routeflow.info>" }),
@@ -717,7 +737,7 @@ describe("EmailService — B452 review fixes: EMAIL_FROM derivation + tenant bra
     });
     (svc as any).prisma.getTenantId = () => null;
 
-    await svc.send({ to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
 
     expect(sendMail).toHaveBeenCalledWith(
       expect.objectContaining({ from: "RouteFlow <noreply@routeflow.info>" }),
@@ -747,7 +767,7 @@ describe("EmailService — B452 review fixes: From-header injection via business
       tenantConfig: { businessName: "Acme\r\nBcc: attacker@evil.com" },
     });
 
-    await svc.send({ to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
 
     const from = (sendMail.mock.calls[0][0] as any).from as string;
     expect(from).not.toMatch(/[\r\n]/);
@@ -765,7 +785,7 @@ describe("EmailService — B452 review fixes: From-header injection via business
       tenantConfig: { businessName: "Acme <evil@attacker.com>" },
     });
 
-    await svc.send({ to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "buyer@x.com", subject: "x", html: "<p>x</p>" });
 
     const from = (sendMail.mock.calls[0][0] as any).from as string;
     expect(from).toBe("Acme evil@attacker.com via RouteFlow <noreply@routeflow.info>");
@@ -789,7 +809,7 @@ describe("EmailService — B452 review fixes: From-header injection via business
       tenantConfig: { businessName: "Acme <evil@attacker.com>" },
     });
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     const from = (sendMail.mock.calls[0][0] as any).from as string;
     expect(from).toBe("Acme evil@attacker.com <user@example.com>");
@@ -816,7 +836,7 @@ describe("EmailService — B452 review fixes: replyTo falls back to the tenant a
       adminUser: { email: "admin@acme.com" },
     });
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ replyTo: "admin@acme.com" }));
   });
@@ -834,7 +854,7 @@ describe("EmailService — B452 review fixes: replyTo falls back to the tenant a
       tenantConfig: { businessName: "Acme Co" },
     });
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ replyTo: undefined }));
   });
@@ -856,7 +876,7 @@ describe("EmailService — B452 review fixes: replyTo falls back to the tenant a
       adminUser: { email: "admin@acme.com" },
     });
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect((svc as any).prisma.user.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -932,7 +952,7 @@ describe("EmailService — requireTLS (fail-secure on 587 without SSL)", () => {
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
     const svc = makeService({ systemConfigRows: smtpRows("587", "false") });
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(nodemailer.createTransport).toHaveBeenCalledWith(
       expect.objectContaining({ port: 587, secure: false, requireTLS: true }),
@@ -944,7 +964,7 @@ describe("EmailService — requireTLS (fail-secure on 587 without SSL)", () => {
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
     const svc = makeService({ systemConfigRows: smtpRows("465", "true") });
 
-    await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(nodemailer.createTransport).toHaveBeenCalledWith(
       expect.objectContaining({ port: 465, secure: true, requireTLS: false }),
@@ -984,7 +1004,7 @@ describe("EmailService — smtpFallbackReason (mapped SMTP diagnostic on every b
       .fn()
       .mockResolvedValue({ data: { id: "eml_1" }, error: null });
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({ delivered: true, transport: "resend" });
     expect(res.smtpFallbackReason).toMatch(/Authenticated SMTP/);
@@ -1001,7 +1021,7 @@ describe("EmailService — smtpFallbackReason (mapped SMTP diagnostic on every b
       .fn()
       .mockResolvedValue({ data: null, error: { message: "domain not verified" } });
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({
       delivered: false,
@@ -1016,7 +1036,7 @@ describe("EmailService — smtpFallbackReason (mapped SMTP diagnostic on every b
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
     const svc = makeService({ systemConfigRows: smtpRows() }); // no resendKey → no rescue
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(res).toMatchObject({ delivered: false, transport: "smtp" });
     expect(res.smtpFallbackReason).toMatch(/Authenticated SMTP/);
@@ -1089,7 +1109,12 @@ describe("EmailService — transactional From identity + reply-to (Phase 1)", ()
     const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_1" }, error: null });
     (svc as any).resend.emails.send = sendSpy;
 
-    const res = await svc.send({ to: "buyer@x.com", subject: "Hi", html: "<p>x</p>" });
+    const res = await svc.send({
+      tenantId: null,
+      to: "buyer@x.com",
+      subject: "Hi",
+      html: "<p>x</p>",
+    });
 
     expect(res).toMatchObject({ delivered: true, transport: "resend" });
     expect(sendSpy).toHaveBeenCalledWith(
@@ -1112,7 +1137,7 @@ describe("EmailService — transactional From identity + reply-to (Phase 1)", ()
     const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_2" }, error: null });
     (svc as any).resend.emails.send = sendSpy;
 
-    await svc.send({ to: "buyer@x.com", subject: "Hi", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "buyer@x.com", subject: "Hi", html: "<p>x</p>" });
 
     expect(sendSpy).toHaveBeenCalledWith(
       expect.objectContaining({ from: "Acme Co <invoices@acme.com>" }),
@@ -1130,7 +1155,7 @@ describe("EmailService — transactional From identity + reply-to (Phase 1)", ()
     const sendSpy = jest.fn().mockResolvedValue({ data: { id: "eml_3" }, error: null });
     (svc as any).resend.emails.send = sendSpy;
 
-    await svc.send({ to: "buyer@x.com", subject: "Hi", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "buyer@x.com", subject: "Hi", html: "<p>x</p>" });
 
     // Pending → falls back to the platform verified address.
     expect(sendSpy).toHaveBeenCalledWith(
@@ -2036,6 +2061,7 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
       .mockResolvedValue({ delivered: true, transport: "resend" } as any);
 
     await svc.sendLowStockDigest({
+      tenantId: "t-acme",
       to: "admin@acme.example",
       businessName: "Acme Wholesale",
       items,
@@ -2061,6 +2087,7 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
       .mockResolvedValue({ delivered: true, transport: "resend" } as any);
 
     await svc.sendLowStockDigest({
+      tenantId: "t-acme",
       to: "admin@acme.example",
       businessName: "Acme Wholesale",
       items: [items[0]],
@@ -2077,6 +2104,7 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
       .mockResolvedValue({ delivered: true, transport: "resend" } as any);
 
     await svc.sendLowStockDigest({
+      tenantId: "t-acme",
       to: "admin@acme.example",
       businessName: "Acme Wholesale",
       items: [
@@ -2092,6 +2120,7 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
   it("REG-N4: never resolves tenant SMTP — routes via the platform sender (no tenant ALS context)", async () => {
     const svc = makePlatformService();
     const res = await svc.sendLowStockDigest({
+      tenantId: "t-acme",
       to: "admin@acme.example",
       businessName: "Acme Wholesale",
       items,
@@ -2115,6 +2144,7 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
     }));
 
     await svc.sendLowStockDigest({
+      tenantId: "t-acme",
       to: "admin@acme.example",
       businessName: "Acme Wholesale",
       items: many,
@@ -2241,6 +2271,7 @@ describe("EmailService — brand restyle (2026-09-17): shared layout invariants"
       .mockResolvedValue({ delivered: true, transport: "resend" } as any);
 
     await svc.sendLowStockDigest({
+      tenantId: "t-acme",
       to: "admin@acme.example",
       businessName: "Acme Wholesale",
       items: [{ name: "Acme Widget", sku: "WID-001", currentStock: 3, reorderPoint: 10 }],
@@ -2271,7 +2302,7 @@ describe("EmailService — mailbox add-on gate fall-through", () => {
       ],
     });
 
-    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+    const res = await svc.send({ tenantId: null, to: "a@b.com", subject: "x", html: "<p>x</p>" });
 
     expect(trySend).toHaveBeenCalledTimes(1);
     expect(sendMail).toHaveBeenCalledTimes(1);
@@ -2302,7 +2333,7 @@ describe("EmailService — send() logs never carry a full recipient address; Res
     (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
     const svc = makeService({ systemConfigRows: smtpRows() });
     const read = logged(svc);
-    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
     noFullAddress(read());
   });
 
@@ -2315,7 +2346,7 @@ describe("EmailService — send() logs never carry a full recipient address; Res
       smtpPass: "pw",
     });
     const read = logged(svc);
-    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
     noFullAddress(read());
   });
 
@@ -2326,8 +2357,8 @@ describe("EmailService — send() logs never carry a full recipient address; Res
       .fn()
       .mockResolvedValueOnce({ data: null, error: { message: "rejected" } })
       .mockRejectedValueOnce(new Error("boom"));
-    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
-    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
     noFullAddress(read());
   });
 
@@ -2337,14 +2368,14 @@ describe("EmailService — send() logs never carry a full recipient address; Res
     (svc as any).resend.emails.send = jest
       .fn()
       .mockResolvedValue({ data: { id: "e1" }, error: null });
-    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
     noFullAddress(read());
   });
 
   it("the no-transport 'EMAIL NOT SENT' warning is domain-only", async () => {
     const svc = makeService();
     const read = logged(svc);
-    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
     noFullAddress(read());
   });
 
@@ -2358,9 +2389,9 @@ describe("EmailService — send() logs never carry a full recipient address; Res
       .mockRejectedValueOnce(new Error(leaky))
       .mockRejectedValueOnce(new Error(leaky));
     const results = [
-      await svc.send({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" }),
       await svc.sendPlatform({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" }),
-      await svc.send({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" }),
       await svc.sendPlatform({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" }),
     ];
     for (const r of results) {
@@ -2378,10 +2409,10 @@ describe("EmailService — send() logs never carry a full recipient address; Res
     (svc as any).resend.emails.send = jest
       .fn()
       .mockResolvedValue({ data: null, error: { message: leaky } });
-    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
     await svc.sendPlatform({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
     (svc as any).resend.emails.send = jest.fn().mockRejectedValue(new Error(leaky));
-    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
     await svc.sendPlatform({ tenantId: null, to: TO, subject: "x", html: "<p>x</p>" });
     const text = read();
     expect(text).not.toContain("10.0.1.4");
@@ -2738,7 +2769,7 @@ describe("EmailService — one-line subject at the send seam (B460)", () => {
     const chain = jest
       .spyOn(svc as any, "sendUnrecorded")
       .mockResolvedValue({ delivered: true, transport: "smtp" });
-    await svc.send({ to: "a@acme.test", subject: HOSTILE, html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@acme.test", subject: HOSTILE, html: "<p>x</p>" });
     expect(chain).toHaveBeenCalledTimes(1);
     expect((chain.mock.calls[0][0] as any).subject).toBe(SAFE);
   });
@@ -2749,6 +2780,7 @@ describe("EmailService — one-line subject at the send seam (B460)", () => {
       .spyOn(svc as any, "sendUnrecorded")
       .mockResolvedValue({ delivered: true, transport: "smtp" });
     await svc.send({
+      tenantId: null,
       to: "a@acme.test",
       subject: HOSTILE,
       html: "<p>x</p>",

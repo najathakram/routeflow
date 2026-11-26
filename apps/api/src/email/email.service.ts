@@ -1044,6 +1044,7 @@ export class EmailService {
     });
     // send() is honest-by-result and never throws for a delivery/config problem.
     const result = await this.send({
+      tenantId: this.prisma.getTenantId() ?? null,
       to: toEmail,
       subject: `${businessName} — Test Email`,
       html,
@@ -1210,6 +1211,7 @@ export class EmailService {
     // finds it. No tenant in scope (a system caller) = nothing recorded, as before.
     const tenantId = this.prisma.getTenantId();
     return this.send({
+      tenantId: tenantId ?? null,
       to: params.to,
       subject,
       html,
@@ -1330,7 +1332,14 @@ export class EmailService {
    * recorded (every existing caller is unchanged).
    */
   async send(
-    params: EmailSendParams & { delivery?: EmailDeliveryContext },
+    params: EmailSendParams & {
+      delivery?: EmailDeliveryContext;
+      /**
+       * W-1464: the business this mail is on behalf of, named by the caller (never read off the request,
+       * which a cron or a public route does not have). `null` only where no business exists at all.
+       */
+      tenantId: string | null;
+    },
   ): Promise<EmailSendResult> {
     // B460: the one place a tenant-supplied subject becomes a header line (sendPlatform has its own).
     params = { ...params, subject: headerSafeSubject(params.subject) };
@@ -1339,10 +1348,7 @@ export class EmailService {
     // FAILED row (SA-615(3)); without a ctx nothing is recorded.
     const refusedTo =
       this.refuseSentinel(params.to) ??
-      (await this.holdForTestBusiness(
-        params.delivery?.tenantId ?? this.prisma.getTenantId(),
-        params.to,
-      ));
+      (await this.holdForTestBusiness(params.tenantId, params.to));
     if (refusedTo) {
       const ctx = params.delivery;
       if (ctx) {
@@ -2227,6 +2233,8 @@ export class EmailService {
     // Security review Phase 2: account-merge verification is security mail — platform sender
     // only, never a tenant's connected mailbox/SMTP.
     return this.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: params.to,
       subject: "Confirm account merge — RouteFlow",
       html,
@@ -2283,6 +2291,8 @@ export class EmailService {
       footerNote: "RouteFlow Platform — automated notification.",
     });
     await this.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: params.primaryEmail,
       subject: "Your accounts have been merged — RouteFlow",
       html: primary.html,
@@ -2309,6 +2319,8 @@ export class EmailService {
       footerNote: "RouteFlow Platform — automated notification.",
     });
     await this.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: params.secondaryEmail,
       subject: "This account has been merged — RouteFlow",
       html: secondary.html,
@@ -2600,6 +2612,7 @@ export class EmailService {
    * honest-by-result).
    */
   async sendMailboxRevokedNotice(params: {
+    tenantId: string;
     to: string;
     username: string;
     accountEmail: string;
@@ -2622,6 +2635,7 @@ export class EmailService {
       footerNote: "RouteFlow Platform — automated notification.",
     });
     return this.send({
+      tenantId: params.tenantId,
       to: params.to,
       subject: copy.subject,
       html,
@@ -2646,18 +2660,16 @@ export class EmailService {
    * past one bad address.
    */
   async sendLowStockDigest(params: {
+    tenantId: string;
     to: string;
     /** The tenant's configured name, or null: an unnamed tenant gets the neutral look, never RouteFlow's. */
     businessName: string | null;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
-  }): Promise<{
-    delivered: boolean;
-    transport: "mailbox" | "smtp" | "resend" | "none";
-    error?: string;
-  }> {
+  }): Promise<EmailSendResult> {
     const { html, text } = this.buildLowStockDigestEmail(params);
     const count = params.items.length;
     return this.send({
+      tenantId: params.tenantId,
       to: params.to,
       subject: `Low stock alert — ${count} item${count === 1 ? "" : "s"} below threshold`,
       html,

@@ -183,6 +183,7 @@ export class GoHighLevelPollService {
       .filter((e: unknown): e is string => typeof e === "string" && e.length > 0);
     if (recipients.length === 0) return;
     await this.emailService.send({
+      tenantId: connection.tenantId,
       to: recipients,
       senderClass: "platform",
       ...routeflowNotice({

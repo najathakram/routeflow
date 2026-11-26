@@ -144,6 +144,7 @@ describe("B807 — each tenant/buyer field is HTML-escaped in its email (REG-B80
     const svc = makeService();
     const htmls = captureHtml(svc);
     await svc.sendMailboxRevokedNotice({
+      tenantId: "t-acme",
       to: "owner@example.com",
       username: XSS,
       accountEmail: XSS,

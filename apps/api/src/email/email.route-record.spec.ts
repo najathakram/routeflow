@@ -97,7 +97,7 @@ const REAL_TIMERS = [
   "clearTimeout",
 ] as const;
 const ctx = { tenantId: "t1", kind: "INVOICE_SENT" as const };
-const mail = { to: "buyer@example.com", subject: "s", html: "<p>x</p>" };
+const mail = { to: "buyer@example.com", subject: "s", html: "<p>x</p>", tenantId: null };
 const row = (d: { record: jest.Mock }) => d.record.mock.calls[0][0];
 
 beforeEach(() => jest.clearAllMocks());

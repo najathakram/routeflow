@@ -120,6 +120,8 @@ export class BuyerAuthService {
     const verifyUrl = `${urls.web}/buyer/verify-email?token=${rawToken}`;
 
     return this.emailService.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: account.email,
       ...routeflowNotice({
         subject: "Verify your email for RouteFlow",
@@ -541,6 +543,8 @@ export class BuyerAuthService {
     // Fire-and-forget — email failures must not block the mutation.
     this.emailService
       .send({
+        // a buyer account is global: it belongs to no business.
+        tenantId: null,
         to: account.email,
         ...passwordSetMessage({
           portal: true,
@@ -602,6 +606,8 @@ export class BuyerAuthService {
     // just never blocks the response.
     this.emailService
       .send({
+        // a buyer account is global: it belongs to no business.
+        tenantId: null,
         to: account.email,
         ...routeflowNotice({
           subject: "Reset your RouteFlow password",

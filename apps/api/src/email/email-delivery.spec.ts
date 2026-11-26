@@ -265,7 +265,7 @@ describe("EmailService.send — delivery ctx rows", () => {
   it("no delivery ctx => no row", async () => {
     const mailbox = jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox", id: "x" });
     const { svc, deliveries } = make(mailbox);
-    await svc.send({ to: "a@example.com", subject: "s", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@example.com", subject: "s", html: "<p>x</p>" });
     expect(deliveries.record).not.toHaveBeenCalled();
   });
 
@@ -325,7 +325,12 @@ describe("EmailService.send — delivery ctx rows", () => {
 
   it("sentinel recipient WITHOUT a delivery ctx writes no row", async () => {
     const { svc, deliveries } = make(jest.fn());
-    const res = await svc.send({ to: "x@placeholder.local", subject: "s", html: "<p>x</p>" });
+    const res = await svc.send({
+      tenantId: null,
+      to: "x@placeholder.local",
+      subject: "s",
+      html: "<p>x</p>",
+    });
     expect(res.delivered).toBe(false);
     expect(deliveries.record).not.toHaveBeenCalled();
   });

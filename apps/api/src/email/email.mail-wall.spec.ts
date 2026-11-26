@@ -71,7 +71,13 @@ function makeService(
 }
 
 const LIST = JSON.stringify([LISTED]);
-const mail = (to: string) => ({ to, subject: "x", html: "<p>x</p>" });
+// W-1464: send() takes the business as an explicit required field (null = no business at all).
+const mail = (to: string, tenantId: string | null = T) => ({
+  to,
+  subject: "x",
+  html: "<p>x</p>",
+  tenantId,
+});
 const platformMail = (to: string, tenantId: string | null = T) => ({ ...mail(to), tenantId });
 
 describe("mail wall: a TEST business with a list (R1, R2)", () => {
@@ -122,13 +128,52 @@ describe("mail wall: a TEST business with a list (R1, R2)", () => {
     });
   });
 
-  it("T2: the wall reads the delivery context's business, not the request's", async () => {
-    const { svc, tenantFind } = makeService({ list: LIST, tenantId: null, mailboxDelivers: true });
+  it("T2: the explicit business wins over the delivery context and the request's", async () => {
+    const { svc, tenantFind } = makeService({
+      list: LIST,
+      tenantId: "t-other",
+      mailboxDelivers: true,
+    });
     await svc.send({
       ...mail(OTHER),
-      delivery: { tenantId: T, kind: "INVOICE_SENT", entityType: "Invoice", entityId: "inv1" },
+      delivery: {
+        tenantId: "t-ctx",
+        kind: "INVOICE_SENT",
+        entityType: "Invoice",
+        entityId: "inv1",
+      },
     });
     expect(tenantFind).toHaveBeenCalledWith(expect.objectContaining({ where: { id: T } }));
+    expect(tenantFind).toHaveBeenCalledTimes(1);
+  });
+
+  it("T7 (H1): the four paths that used to reach the wall with no business are held", async () => {
+    // Each runs with NO request business (cron, super-admin, public auth routes), so only the
+    // explicit field can name the business.
+    const digest = makeService({ list: LIST, tenantId: null });
+    const d = await digest.svc.sendLowStockDigest({
+      tenantId: T,
+      to: OTHER,
+      businessName: "Acme",
+      items: [{ name: "Widget", sku: "W-1", currentStock: 1, reorderPoint: 5 }],
+    });
+    expect(d.holdCode).toBe("MAIL_WALL_HELD");
+    expect(digest.resendSend).not.toHaveBeenCalled();
+
+    for (const kind of ["welcome", "resend verification", "password reset"]) {
+      const { svc, resendSend } = makeService({ list: LIST, tenantId: null });
+      const res = await svc.send({ ...mail(OTHER), senderClass: "platform" });
+      expect([kind, res.holdCode]).toEqual([kind, "MAIL_WALL_HELD"]);
+      expect(resendSend).not.toHaveBeenCalled();
+    }
+  });
+
+  it("T7: an explicit null is never held, even when the request carries a Test business", async () => {
+    const { svc, resendSend, tenantFind } = makeService({ list: LIST });
+    const res = await svc.send(mail(OTHER, null));
+    expect(res.delivered).toBe(true);
+    expect(resendSend).toHaveBeenCalledTimes(1);
+    expect(tenantFind).not.toHaveBeenCalled();
   });
 
   it("T2: a platform-class send() is held once, at the send entry", async () => {

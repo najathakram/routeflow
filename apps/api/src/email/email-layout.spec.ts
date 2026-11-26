@@ -453,7 +453,12 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
 
     it("send() with bare html hands the transport marked html in the tenant's look", async () => {
       const { svc, sendMail } = transportService("t1");
-      await svc.send({ to: "buyer@acme.example", subject: "Hi", html: "<p>bare body</p>" });
+      await svc.send({
+        tenantId: null,
+        to: "buyer@acme.example",
+        subject: "Hi",
+        html: "<p>bare body</p>",
+      });
       const sent = sendMail.mock.calls[0][0];
       expect(isLayoutHtml(sent.html)).toBe(true);
       expect(sent.html).toContain("<p>bare body</p>");

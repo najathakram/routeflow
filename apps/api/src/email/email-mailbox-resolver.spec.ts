@@ -76,7 +76,12 @@ describe("EmailService.send — connected-mailbox leading branch (PR-3)", () => 
       ],
     });
 
-    const res = await svc.send({ to: "customer@example.com", subject: "Hi", html: "<p>hi</p>" });
+    const res = await svc.send({
+      tenantId: null,
+      to: "customer@example.com",
+      subject: "Hi",
+      html: "<p>hi</p>",
+    });
 
     expect(res).toMatchObject({ delivered: true, transport: "mailbox", id: "gmail-1" });
     expect(mailboxSend.trySend).toHaveBeenCalledTimes(1);
@@ -95,7 +100,12 @@ describe("EmailService.send — connected-mailbox leading branch (PR-3)", () => 
       ],
     });
 
-    const res = await svc.send({ to: "customer@example.com", subject: "Hi", html: "<p>hi</p>" });
+    const res = await svc.send({
+      tenantId: null,
+      to: "customer@example.com",
+      subject: "Hi",
+      html: "<p>hi</p>",
+    });
 
     expect(mailboxSend.trySend).toHaveBeenCalledTimes(1);
     expect(nodemailerSendMail).toHaveBeenCalledTimes(1);
@@ -112,7 +122,12 @@ describe("EmailService.send — connected-mailbox leading branch (PR-3)", () => 
       ],
     });
 
-    const res = await svc.send({ to: "customer@example.com", subject: "Hi", html: "<p>hi</p>" });
+    const res = await svc.send({
+      tenantId: null,
+      to: "customer@example.com",
+      subject: "Hi",
+      html: "<p>hi</p>",
+    });
 
     expect(mailboxSend.trySend).toHaveBeenCalledTimes(1);
     expect(nodemailerSendMail).toHaveBeenCalledTimes(1);
@@ -130,6 +145,7 @@ describe("EmailService.send — connected-mailbox leading branch (PR-3)", () => 
     });
 
     const res = await svc.send({
+      tenantId: null,
       to: "user@example.com",
       subject: "Verify your email",
       html: "<p>verify</p>",
@@ -149,7 +165,7 @@ describe("EmailService.send — connected-mailbox leading branch (PR-3)", () => 
       tenantId: null,
     });
 
-    await svc.send({ to: "user@example.com", subject: "x", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "user@example.com", subject: "x", html: "<p>x</p>" });
 
     expect(mailboxSend.trySend).not.toHaveBeenCalled();
   });

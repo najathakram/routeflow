@@ -66,6 +66,7 @@ const NOTICE = {
   accountEmail: "sales@acme.test",
   provider: "GOOGLE" as const,
   hasFallback: true,
+  tenantId: "t-acme",
 };
 
 beforeEach(() => jest.clearAllMocks());
@@ -131,7 +132,11 @@ describe("EmailService.sendMailboxRevokedNotice (F-10a)", () => {
   it("without a fallback sender, it says email is stopped instead of promising one", async () => {
     const { svc, resendSend } = makeService();
 
-    await svc.sendMailboxRevokedNotice({ ...NOTICE, provider: "MICROSOFT", hasFallback: false });
+    await svc.sendMailboxRevokedNotice({
+      ...NOTICE,
+      provider: "MICROSOFT",
+      hasFallback: false,
+    });
 
     const { text } = resendSend.mock.calls[0][0];
     expect(text).toContain(

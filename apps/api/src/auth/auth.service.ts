@@ -272,6 +272,7 @@ export class AuthService {
         // Fire-and-forget — email failures must not block the login response.
         this.emailService
           .send({
+            tenantId: (user as any).tenantId ?? null,
             to: (user as any).email as string,
             ...newLoginMessage({
               device: deviceName,
@@ -709,7 +710,7 @@ export class AuthService {
     const MSG = { message: "If that address is registered you will receive a reset link shortly." };
 
     const lower = email.toLowerCase();
-    const select = { id: true, tenant: { select: { name: true } } } as const;
+    const select = { id: true, tenantId: true, tenant: { select: { name: true } } } as const;
     const active = { email: lower, deletedAt: null, status: "ACTIVE" as const };
 
     // One address can belong to several businesses (unique per business, not globally). When the
@@ -779,6 +780,7 @@ export class AuthService {
       });
       this.emailService
         .send({
+          tenantId: user.tenantId,
           to: email,
           subject: resetMail.subject,
           html: resetMail.html,
@@ -938,6 +940,7 @@ export class AuthService {
       // Fire-and-forget — email failures must not block the mutation.
       this.emailService
         .send({
+          tenantId: user.tenantId,
           to: user.email,
           ...passwordSetMessage({
             portal: false,
