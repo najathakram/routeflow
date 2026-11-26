@@ -306,6 +306,7 @@ function installReader(cfg: ReaderCfg): void {
     seenLink: new Map<Element, Set<string>>(),
     tried: new Set<Element>(),
     swept: false,
+    stories: false,
     headerDone: new Set<string>(),
     texts: [] as TextRow[],
     buttons: [] as ButtonRow[],
@@ -574,6 +575,60 @@ function installReader(cfg: ReaderCfg): void {
     },
     // S7: scroll to the first text nobody has read, settle it, read it; one still unread is `text-unread`.
     sweepStep: async () => {
+      // S7b: a pinned story shows one caption at a time, so a caption is read in ITS OWN state: the walk steps through the
+      // story's scroll run, lets the captions settle at each step, and reads what is up. Any caption text still unread after
+      // the run is `text-unread` (no exemption). A story is any [data-pinned-story]; its captions are [data-story-caption].
+      if (!S.stories) {
+        S.stories = true;
+        for (const story of document.querySelectorAll<HTMLElement>("[data-pinned-story]")) {
+          const caps = [...story.querySelectorAll<HTMLElement>("[data-story-caption]")];
+          const topY = story.getBoundingClientRect().top + window.scrollY;
+          const run = Math.max(0, story.offsetHeight - window.innerHeight);
+          const STEPS = 48;
+          for (let i = 0; i <= STEPS; i++) {
+            window.scrollTo({
+              top: topY + (run * i) / STEPS,
+              left: 0,
+              behavior: "instant" as ScrollBehavior,
+            });
+            const t0 = performance.now();
+            let same = 0;
+            let last = "";
+            while (
+              (same < cfg.stableFrames ||
+                (headerEl()
+                  ?.getAnimations({ subtree: false })
+                  .some((a) => a.playState === "running") ??
+                  false)) &&
+              performance.now() - t0 < cfg.settleCapMs
+            ) {
+              await frame();
+              const sig =
+                `${window.scrollY};` +
+                caps
+                  .map((c) => {
+                    const k = getComputedStyle(c);
+                    return k.opacity + k.visibility;
+                  })
+                  .join(",");
+              same = sig === last ? same + 1 : 1;
+              last = sig;
+            }
+            collectInView(headerState());
+          }
+          for (const cap of caps)
+            for (const e of withText())
+              if (cap.contains(e) && e.getClientRects().length > 0 && !seenAny(e))
+                S.unread.push({
+                  el: sp.name(e),
+                  part: partOf(e),
+                  plant: plantOf(e),
+                  exempt: hit(e, "text-unread"),
+                });
+        }
+        window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
+        await settle(body, "plain");
+      }
       // Downward from scroll 0, and each text brought to the middle of the view, so it is never under the sticky header.
       if (!S.swept) {
         S.swept = true;

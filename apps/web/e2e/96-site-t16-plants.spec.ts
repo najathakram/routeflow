@@ -403,6 +403,39 @@ if (process.env.T16_PLANTS === "1") {
     expect.soft(textContrast(textOf(r.planted, "W9"), "W9"), "W9: text contrast").toBeLessThan(3);
   });
 
+  test("T16 plant W13 a low-contrast kicker in a caption that is not up at rest is red", async () => {
+    test.setTimeout(PLANTS_TEST_HARD_MS);
+    const r = await threeRuns({
+      route: "/",
+      size: DESKTOP,
+      tag: async (p) => {
+        const ok = await p.evaluate(() => {
+          const caps = [
+            ...document.querySelectorAll<HTMLElement>("[data-pinned-story] [data-story-caption]"),
+          ];
+          const el = caps[caps.length - 2]?.querySelector<HTMLElement>(".kick");
+          el?.setAttribute("data-t16-plant", "W13");
+          return (
+            Boolean(el) &&
+            getComputedStyle(el!.closest("[data-story-caption]")!).visibility === "hidden"
+          );
+        });
+        expect(ok, "W13 setup: a kicker in a caption that is hidden at rest").toBe(true);
+      },
+      defect: async (p) => {
+        await p.evaluate(() => {
+          const el = document.querySelector<HTMLElement>('[data-t16-plant="W13"]');
+          el?.style.setProperty("color", "#cfcfcf", "important");
+        });
+      },
+    });
+    expectStable(`/ ${sizeName(DESKTOP)}`, r);
+    // the walk reads each caption in its own state: the keyed kicker row exists and is below the threshold
+    expect
+      .soft(textContrast(textOf(r.planted, "W13"), "W13"), "W13: text contrast")
+      .toBeLessThan(3);
+  });
+
   test("T16 plant W12 a faked 400 px snap shows as drift", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
     const r = await threeRuns({
