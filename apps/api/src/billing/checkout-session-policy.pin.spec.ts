@@ -459,3 +459,52 @@ describe("W-1464 - calls that only reduce charges stay unwalled and are listed",
     for (const v of Object.values(REDUCE_ONLY)) expect(v.exempt).not.toBe("");
   });
 });
+
+/**
+ * SA-1547 S1 (W-1464): the live-payments wall's caller pin. `StripeService.createCustomer` and
+ * `StripeService.createBillingPortalSession` are called from exactly the files named here, each of which also
+ * carries a wall call (`assertLivePaymentsAllowed(` / `assertTenantLivePaymentsAllowed(`). A NEW calling file fails
+ * until it is named with its wall call; a vanished caller (zero) fails too, so the pin cannot go stale (G4, L-202).
+ * The final form (a required `tenantId` on each wrapper, wall inside) is a later change.
+ */
+const STRIPE_WRAPPER_CALL =
+  /\bstripe(?:Service)?\s*\.\s*(createCustomer|createBillingPortalSession)\s*\(/g;
+const WRAPPER_WALL_CALL = /\bassert(?:Tenant)?LivePaymentsAllowed\s*\(/;
+
+/** file -> wrapper -> exact call count. */
+const WRAPPER_CALLERS: Record<string, Record<string, number>> = {
+  "billing/billing.service.ts": { createCustomer: 1, createBillingPortalSession: 1 },
+};
+
+function wrapperCalls(text: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const m of text.matchAll(STRIPE_WRAPPER_CALL)) out[m[1]] = (out[m[1]] ?? 0) + 1;
+  return out;
+}
+
+describe("SA-1547 S1 - Stripe customer / portal wrapper callers are pinned per file", () => {
+  const actual = Object.fromEntries(
+    collect(SRC_ROOT)
+      .filter((f) => rel(f) !== "billing/stripe.service.ts")
+      .map((f) => [rel(f), wrapperCalls(fs.readFileSync(f, "utf8"))] as const)
+      .filter(([, c]) => Object.keys(c).length > 0),
+  );
+
+  it("the calling files and counts are exactly the named ones (a new caller fails here)", () => {
+    expect(actual).toEqual(WRAPPER_CALLERS);
+  });
+
+  it("every named caller file carries a wall call", () => {
+    for (const file of Object.keys(WRAPPER_CALLERS)) {
+      expect(WRAPPER_WALL_CALL.test(fs.readFileSync(path.join(SRC_ROOT, file), "utf8"))).toBe(true);
+    }
+  });
+
+  it("self-control: the scanner counts an injected caller and ignores BillingService's own method", () => {
+    expect(wrapperCalls("await this.stripe.createCustomer({});")).toEqual({ createCustomer: 1 });
+    expect(wrapperCalls("this.stripeService\n .createBillingPortalSession(a)")).toEqual({
+      createBillingPortalSession: 1,
+    });
+    expect(wrapperCalls("this.billing.createBillingPortalSession(t)")).toEqual({});
+  });
+});

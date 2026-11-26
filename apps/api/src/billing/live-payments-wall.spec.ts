@@ -4,6 +4,7 @@ import {
   assertLivePaymentsAllowed,
   assertTenantLivePaymentsAllowed,
   recordLivePaymentsHeld,
+  stripeKeyModeOf,
 } from "./live-payments-wall";
 
 /**
@@ -95,5 +96,62 @@ describe("recordLivePaymentsHeld", () => {
       { ...held, tenantId: null },
     );
     expect(create.mock.calls[0][0].data.tenantId).toBeNull();
+  });
+});
+
+/** SA-1547 S5: the wall reads the Stripe key mode. allowed = class === PRODUCTION || keyMode === "test". */
+describe("stripeKeyModeOf (SA-1547 S5)", () => {
+  it.each([
+    ["sk_live_abc", "live"],
+    ["rk_live_abc", "live"],
+    ["sk_test_abc", "test"],
+    ["rk_test_abc", "test"],
+    ["", "none"],
+    [undefined, "none"],
+    ["pk_test_abc", "none"],
+    ["whatever", "none"],
+    ["SK_TEST_abc", "none"],
+  ])("key %p is %s", (key, mode) => {
+    expect(stripeKeyModeOf(key as string | undefined)).toBe(mode);
+  });
+});
+
+describe("assertLivePaymentsAllowed with the key mode (SA-1547 S5 red cases a-d)", () => {
+  it("(a) a TEST business with a live key is refused", () => {
+    expect(() => assertLivePaymentsAllowed("TEST", "live")).toThrow(ConflictException);
+  });
+  it("(b) a TEST business with a test key is allowed", () => {
+    expect(() => assertLivePaymentsAllowed("TEST", "test")).not.toThrow();
+    expect(() => assertLivePaymentsAllowed("DEMO", "test")).not.toThrow();
+    expect(() => assertLivePaymentsAllowed(null, "test")).not.toThrow();
+  });
+  it("(c) key none is refused for a non-PRODUCTION business", () => {
+    expect(() => assertLivePaymentsAllowed("TEST", "none")).toThrow(ConflictException);
+  });
+  it("(d) a PRODUCTION business with a live key is allowed", () => {
+    expect(() => assertLivePaymentsAllowed("PRODUCTION", "live")).not.toThrow();
+  });
+  it("the tenant-reading form takes the key mode too", async () => {
+    const prisma = { tenant: { findUnique: jest.fn(async () => ({ class: "TEST" })) } };
+    await expect(
+      assertTenantLivePaymentsAllowed(prisma as any, "t1", "test"),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertTenantLivePaymentsAllowed(prisma as any, "t1", "live"),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+  it("with no explicit mode it reads the configured STRIPE_SECRET_KEY (unset = none = refused)", () => {
+    const prev = process.env.STRIPE_SECRET_KEY;
+    try {
+      delete process.env.STRIPE_SECRET_KEY;
+      expect(() => assertLivePaymentsAllowed("TEST")).toThrow(ConflictException);
+      process.env.STRIPE_SECRET_KEY = "sk_test_x";
+      expect(() => assertLivePaymentsAllowed("TEST")).not.toThrow();
+      process.env.STRIPE_SECRET_KEY = "sk_live_x";
+      expect(() => assertLivePaymentsAllowed("TEST")).toThrow(ConflictException);
+    } finally {
+      if (prev === undefined) delete process.env.STRIPE_SECRET_KEY;
+      else process.env.STRIPE_SECRET_KEY = prev;
+    }
   });
 });

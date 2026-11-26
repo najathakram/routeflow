@@ -3,6 +3,7 @@ import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { RolesGuard } from "../auth/guards/roles.guard";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { SettingsBillingController } from "./settings-billing.controller";
 
 /**
@@ -65,6 +66,21 @@ describe("SettingsBillingController.createPortal (B4: admin-only portal)", () =>
       maxNetworkRetries: expect.any(Number),
     });
     expect(subscription.openInvoiceUrl).toHaveBeenCalledWith("t1");
+  });
+
+  it("SA-1547 S2: the wall's 409 on the portal withholds the hosted invoice URL too (a Stripe payment page)", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(
+        new ConflictException({
+          code: API_ERROR_CODES.LIVE_PAYMENTS_OFF,
+          message: "This is a test business. Payments are switched off.",
+        }),
+      ),
+    });
+    await expect(controller.createPortal({ tenantId: "t1" } as any)).rejects.toMatchObject({
+      status: 409,
+      response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
+    });
   });
 
   it("a portal failure does NOT lose the pay link", async () => {
