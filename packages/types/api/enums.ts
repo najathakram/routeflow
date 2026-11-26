@@ -779,3 +779,7 @@ export const CUSTOMER_LINK_STATUS_VALUES = [
   "DISCONNECTED",
 ] as const;
 export type CustomerLinkStatusValue = (typeof CUSTOMER_LINK_STATUS_VALUES)[number];
+
+/** SA-1304: TenantSubscription.cycle (Prisma BillingCycle). The one source of every client-side cycle type. */
+export const BILLING_CYCLE_VALUES = ["MONTHLY", "ANNUAL"] as const;
+export type BillingCycle = (typeof BILLING_CYCLE_VALUES)[number];
