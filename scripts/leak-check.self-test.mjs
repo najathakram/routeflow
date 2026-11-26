@@ -394,6 +394,101 @@ try {
         JSON.stringify(r),
       );
     }
+    // 11b. merging master: master's own (public) content is not the branch's to answer for (W-1265)
+    {
+      const mergeRepo = ({ own = {}, evil = null, patterns = FIXTURE } = {}) => {
+        const repo = makeRepo({ patterns });
+        commit(repo, { "a.txt": "hello\n" }, "chore: base");
+        git(repo, ["checkout", "-q", "-b", "feat"]);
+        commit(repo, { "feat.txt": "clean\n", ...own }, "feat: own work");
+        git(repo, ["checkout", "-q", "master"]);
+        // master's public brand: private-pattern file names AND content, already published
+        const tip = commit(
+          repo,
+          {
+            "zzfixture-brand.txt": "zzfixture brand line\n",
+            "site/qqsecret-page.txt": "qqsecret page\n",
+            "zzpriv/page.txt": "public page\n",
+          },
+          "feat: public brand",
+        );
+        git(repo, ["update-ref", "refs/remotes/origin/master", tip]);
+        git(repo, ["checkout", "-q", "feat"]);
+        git(repo, ["merge", "--no-commit", "--no-ff", "master"]);
+        for (const [f, c] of Object.entries(evil ?? {})) {
+          writeFileSync(path.join(repo, f), c);
+          git(repo, ["add", "-f", "--", f]);
+        }
+        git(repo, ["commit", "-q", "-m", "chore: merge master"]);
+        const head = git(repo, ["rev-parse", "HEAD"]);
+        return { repo, head, line: `refs/heads/feat ${head} refs/heads/feat ${ZERO}` };
+      };
+      const probe = (label, m, code, extra) => {
+        const r = hook(m.repo, m.line, extra);
+        check(label, r.code === code && (code === 0 || !leaks(r.out)), JSON.stringify(r));
+      };
+      const A = mergeRepo();
+      probe("merge of master's public brand files and content: 0 hits", A, 0);
+      const rt = cli(A.repo, ["--range", `${A.head}~1..${A.head}`]);
+      check(
+        "merge commit alone: master's brand not flagged (--range)",
+        rt.code === 0,
+        JSON.stringify(rt),
+      );
+      const PAT = `${FIXTURE}\npath:zzpriv/`;
+      probe(
+        "merge of master's files under a private path rule: 0 hits",
+        mergeRepo({ patterns: PAT }),
+        0,
+      );
+      probe(
+        "branch's own file under a private path rule still fails",
+        mergeRepo({ patterns: PAT, own: { "zzpriv/own.txt": "x\n" } }),
+        1,
+      );
+      const B1 = mergeRepo({ own: { "own.txt": "sample zzfixture here\n" } });
+      probe("private name in the branch's own commit still fails after a master merge", B1, 1);
+      probe(
+        "private file name in the branch's own commit still fails",
+        mergeRepo({ own: { "qqsecret-own.txt": "innocent\n" } }),
+        1,
+      );
+      probe(
+        "evil merge adding a private line still fails",
+        mergeRepo({ evil: { "evil.txt": "smuggled zzfixture\n" } }),
+        1,
+      );
+      probe(
+        "evil merge adding a private file name still fails",
+        mergeRepo({ evil: { "qqsecret-evil.txt": "innocent\n" } }),
+        1,
+      );
+      probe(
+        "evil merge editing a master file to add a private line still fails",
+        mergeRepo({
+          evil: { "zzfixture-brand.txt": "zzfixture brand line\nzzfixture smuggled\n" },
+        }),
+        1,
+      );
+      probe(
+        "branch's own copy of a brand-named file is still scanned (own commit)",
+        mergeRepo({ own: { "zzfixture-brand.txt": "zzfixture brand line\n" } }),
+        1,
+      );
+      // RF_REBRAND_PUSH behaves as before on a merge push
+      const rline = `refs/heads/feat ${A.head} refs/heads/rebrand/x ${ZERO}`;
+      check(
+        "rebrand ref carrying the merge refused without the switch",
+        hook(A.repo, rline).code === 1,
+      );
+      check(
+        "rebrand ref carrying the merge allowed with RF_REBRAND_PUSH=launch",
+        hook(A.repo, rline, { RF_REBRAND_PUSH: "launch" }).code === 0,
+      );
+      probe("launch does not unscan a non-rebrand ref with a private line", B1, 1, {
+        RF_REBRAND_PUSH: "launch",
+      });
+    }
     // B2: unreadable / non-UTF-8 patterns files refuse
     {
       const variants = {

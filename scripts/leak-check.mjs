@@ -98,10 +98,43 @@ export function parseHeaderPath(buf) {
   return { name: name.replace(/^b\//, ""), quoted };
 }
 
+/** Paths a commit changes relative to ONE parent (renames as delete + add), or null on a git failure. */
+function changedPaths(cwd, parent, sha, git) {
+  const r = git(cwd, ["diff-tree", "-r", "--no-renames", "--name-only", "-z", parent, sha]);
+  return r.ok ? new Set(r.out.split("\0").filter(Boolean)) : null;
+}
+
+/** Added lines of a `git diff` (bytes) as [{ file, quoted, lines: Buffer[] }], one entry per file section. */
+function parseAddedLines(diffBuf) {
+  const files = [];
+  let cur = null;
+  let inHeader = false;
+  for (const raw of splitLines(diffBuf)) {
+    if (raw.toString("latin1", 0, 11) === "diff --git ") {
+      cur = { file: "", quoted: false, lines: [] };
+      files.push(cur);
+      inHeader = true;
+    } else if (inHeader) {
+      if (raw.toString("latin1", 0, 4) === "+++ ") {
+        const { name, quoted } = parseHeaderPath(raw.subarray(4));
+        cur.file = name;
+        cur.quoted = quoted;
+      } else if (raw[0] === 0x40 && raw[1] === 0x40) inHeader = false;
+    } else if (cur && raw[0] === 0x2b) {
+      cur.lines.push(raw.subarray(1));
+    }
+  }
+  return files;
+}
+
 /**
  * Scan an array of rev-list arguments. Pushes identifier-only hit lines into `hits`.
  * Returns false when ANY git call fails (the caller must then fail closed, never pass).
- * Merge commits are scanned against their FIRST parent (so an evil merge cannot hide content).
+ * Merge commits are scanned against their FIRST parent (so an evil merge cannot hide content), but only the
+ * names and lines the merge ADDS relative to EVERY parent count. What equals what another parent already
+ * holds is that parent's own content: either a commit in this very range (scanned on its own) or already on
+ * origin/master (public, excluded from the range). So merging master into a branch no longer charges the
+ * branch for master's public content, while an evil merge (a name or line found in no parent) is still caught.
  */
 export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
   const list = git(cwd, ["rev-list", "--reverse", ...revArgs]);
@@ -113,7 +146,32 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
     if (matchesBuf(regexes, bytesOf(msgR))) hits.push(`commit ${short}: message or identity`);
     const parR = git(cwd, ["log", "-1", "--format=%P", sha]);
     if (!parR.ok) return false;
-    const parent = parR.out.trim().split(/\s+/)[0];
+    const parents = parR.out.trim().split(/\s+/).filter(Boolean);
+    const parent = parents[0];
+    // Other parents' view of a merge: a path or line is the merge's own only when NEW against all of them.
+    const others = [];
+    for (const op of parents.slice(1)) {
+      const paths = changedPaths(cwd, op, sha, git);
+      const dR = git(cwd, [
+        "diff",
+        "--text",
+        "-M",
+        "-U0",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        op,
+        sha,
+      ]);
+      if (!paths || !dR.ok) return false;
+      const byFile = new Map();
+      for (const f of parseAddedLines(bytesOf(dR))) {
+        const set = byFile.get(f.file) ?? new Set();
+        for (const l of f.lines) set.add(l.toString("latin1"));
+        byFile.set(f.file, set);
+      }
+      others.push({ paths, byFile });
+    }
     const nsR = parent
       ? git(cwd, ["diff-tree", "-r", "-M", "--name-status", "-z", parent, sha])
       : git(cwd, ["diff-tree", "-r", "--root", "--no-commit-id", "--name-status", "-z", sha]);
@@ -125,7 +183,7 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
       if (!st) break;
       const paths = /^[RC]/.test(st) ? [ns[i++], ns[i++]] : [ns[i++]];
       for (const p of paths) {
-        if (p && matchesBuf(regexes, p) && !seen.has(p)) {
+        if (p && others.every((o) => o.paths.has(p)) && matchesBuf(regexes, p) && !seen.has(p)) {
           seen.add(p);
           hits.push(`commit ${short}: file name (withheld)`);
         }
@@ -154,33 +212,20 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
           sha,
         ]);
     if (!diffR.ok) return false;
-    let file = "";
-    let fileQuoted = false;
-    let count = 0;
-    let inHeader = false;
-    const flush = () => {
+    for (const f of parseAddedLines(bytesOf(diffR))) {
+      const seenIn = others.map((o) => o.byFile.get(f.file));
+      let count = 0;
+      for (const l of f.lines) {
+        if (!matchesBuf(regexes, l)) continue;
+        const key = l.toString("latin1");
+        if (seenIn.every((set) => set?.has(key))) count++;
+      }
       if (count) {
         // A quoted name (unusual bytes) is never printed, whatever it decodes to.
-        const shown = fileQuoted || matches(regexes, file) ? "(path withheld)" : file;
+        const shown = f.quoted || matches(regexes, f.file) ? "(path withheld)" : f.file;
         hits.push(`commit ${short}: ${count} added line(s) in ${shown}`);
       }
-      count = 0;
-    };
-    for (const raw of splitLines(bytesOf(diffR))) {
-      if (raw.toString("latin1", 0, 11) === "diff --git ") {
-        flush();
-        inHeader = true;
-        file = "";
-        fileQuoted = false;
-      } else if (inHeader) {
-        if (raw.toString("latin1", 0, 4) === "+++ ") {
-          ({ name: file, quoted: fileQuoted } = parseHeaderPath(raw.subarray(4)));
-        } else if (raw[0] === 0x40 && raw[1] === 0x40) inHeader = false;
-      } else if (raw[0] === 0x2b && matchesBuf(regexes, raw.subarray(1))) {
-        count++;
-      }
     }
-    flush();
   }
   return true;
 }
@@ -195,7 +240,15 @@ function scanPaths(cwd, prefixes, revArgs, hits) {
   for (const sha of list.out.split("\n").filter(Boolean)) {
     const parR = gitOut(cwd, ["log", "-1", "--format=%P", sha]);
     if (!parR.ok) return false;
-    const parent = parR.out.trim().split(/\s+/)[0];
+    const parents = parR.out.trim().split(/\s+/).filter(Boolean);
+    const parent = parents[0];
+    // A merge answers only for paths it changes relative to EVERY parent (see scanRevs).
+    const others = [];
+    for (const op of parents.slice(1)) {
+      const paths = changedPaths(cwd, op, sha, gitOut);
+      if (!paths) return false;
+      others.push(paths);
+    }
     const nsR = parent
       ? gitOut(cwd, ["diff-tree", "-r", "--no-renames", "--name-status", "-z", parent, sha])
       : gitOut(cwd, ["diff-tree", "-r", "--root", "--no-renames", "--name-status", "-z", sha]);
@@ -206,7 +259,7 @@ function scanPaths(cwd, prefixes, revArgs, hits) {
       const st = ns[i++];
       if (!st) break;
       const f = ns[i++];
-      if (st === "D" || !f) continue;
+      if (st === "D" || !f || !others.every((o) => o.has(f))) continue;
       const low = f.toLowerCase();
       prefixes.forEach((pre, idx) => low.startsWith(pre) && ruleHits.add(idx + 1));
     }
