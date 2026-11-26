@@ -311,7 +311,7 @@ describe("InventoryPage: phone cards", () => {
     expect(within(list).getByText(/^0 each$/).className).toContain("text-danger");
     expect(within(list).getByText(/^3 each$/).className).toContain("text-warning");
     // The boxed row (12 per box) reads like the table now: pieces with the box split (B1475), not "24 each".
-    expect(within(list).getByText(/^24 pcs (2 boxes)$/).className).toContain("text-navy/70");
+    expect(within(list).getByText("24 pcs (2 boxes)").className).toContain("text-navy/70");
   });
 
   it("keeps the title and Quick restock on one row below md; the rest is in a More menu", async () => {
