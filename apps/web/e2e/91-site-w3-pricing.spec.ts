@@ -41,7 +41,7 @@ async function tokenColours(page: Page): Promise<Record<"white" | "bone" | "ink"
 // ─── T46b ───────────────────────────────────────────────────────────────────
 
 /** The plan start control a visitor can reach: the plan cards' button, or the phone's list button when the cards are hidden. */
-const PLAN_START = "#plans";
+const PLAN_START = ".pgrid--4 .pbtn, .pl-go .btn";
 
 test.describe("T46b three key presses to the first plan (F04)", () => {
   for (const { w, h } of SCREENS) {
@@ -108,13 +108,13 @@ test.describe("T46b three key presses to the first plan (F04)", () => {
       const target = document.getElementById("plans");
       return {
         text: a.textContent?.trim(),
-        target: !!target && target === document.querySelector(".pg-cta .btn"),
+        target: !!target && target === document.querySelector(".pgrid--4 .pbtn"),
       };
     });
     expect(link, "the wide page has a skip link to #plans").not.toBeNull();
     expect(link?.text).toBe("Skip to plans");
-    expect(link?.target, "#plans is the start-trial button").toBe(true);
-    // C9: the button must also be drawn at this width (a later rule hiding .pg-cta must turn this red)
+    expect(link?.target, "#plans is the first plan's button").toBe(true);
+    // C9: the button must also be drawn at this width (a later rule hiding the plan cards' buttons must turn this red)
     const drawn = await page.evaluate(() => {
       const el = document.getElementById("plans");
       return {
@@ -163,10 +163,9 @@ for (const { w, h } of SCREENS) {
       const top = document.querySelector("main > section#pricing");
       const line = !!top && top.classList.contains("band-line");
       const sections = document.querySelectorAll("main > section").length;
-      const panels = Array.from(document.querySelectorAll(".cta-band")).map((el) => ({
-        cls: el.className,
-        ...bg(el),
-      }));
+      const panels = Array.from(document.querySelectorAll(".pcard.featured, .cta-band")).map(
+        (el) => ({ cls: el.className, ...bg(el) }),
+      );
       return { rows, line, sections, panels };
     }, BANDS);
     const problems: string[] = [];

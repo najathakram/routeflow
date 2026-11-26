@@ -58,8 +58,8 @@ const SHELL_USER_AGENT = ".*RouteFlowShell.*";
 
 // A signed-in visitor's presence cookies (lib/presence-cookies.ts OP_PRESENCE_COOKIE and
 // BUYER_PRESENCE_COOKIE; this file cannot import TypeScript, so the test pins these two names to
-// the imported constants). A visitor who has one stays on the old host, where the middleware reads
-// it and sends them into the app. One list for every host rule.
+// the imported constants). A visitor who has one stays on the old host, where "/" serves the home
+// page for everyone (middleware.ts) and the header offers "Open dashboard". One list for every host rule.
 const PRESENCE_COOKIES = ["rf-op-auth", "rf-buyer-auth"];
 
 /** The `missing` list every host rule carries: not the phone shell, not signed in. */

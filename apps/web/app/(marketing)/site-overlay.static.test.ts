@@ -114,7 +114,7 @@ describe("T2: the overlay differs from the top level (phase A deletes it)", () =
     expect(raw.site).toEqual({
       name: "Rovio",
       officialName: "X-Rovio",
-      origin: "https://www.xrov.io",
+      origin: "https://www.routeflow.info", // held until launch day (R-210 H1)
       logo: {
         onLight: "/site/img/brand/symbol.svg",
         onDark: "/site/img/brand/symbol-reversed.svg",
@@ -134,7 +134,7 @@ describe("T2: the overlay differs from the top level (phase A deletes it)", () =
   it("SITE_BRAND is the top level with the site block laid over it", () => {
     expect(SITE_BRAND.name).toBe("Rovio");
     expect(SITE_BRAND.officialName).toBe("X-Rovio");
-    expect(SITE_BRAND.origin).toBe("https://www.xrov.io");
+    expect(SITE_BRAND.origin).toBe("https://www.routeflow.info");
     expect(SITE_BRAND.symbolOnDark).toBe("/site/img/brand/symbol-reversed.svg");
     // not overlaid: the mailboxes, the legal entity, the old host and the former name
     expect(SITE_BRAND.email).toBe(BRAND.email);
@@ -147,6 +147,6 @@ describe("T2: the overlay differs from the top level (phase A deletes it)", () =
 
   it("the overlay must differ from the top level: when site.name === name it is a dead alias", () => {
     expect(SITE_BRAND.name).not.toBe(BRAND.name);
-    expect(SITE_BRAND.origin).not.toBe(BRAND.origin);
+    // origin is held equal to the old host until launch day (R-210 H1); the name carries the difference
   });
 });

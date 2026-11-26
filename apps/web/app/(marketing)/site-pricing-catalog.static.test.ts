@@ -343,7 +343,20 @@ const NON_FEE_SENTENCES: ReadonlyArray<NonFeeEntry> = [
   ["home.html", "Every trial starts on Starter."],
   ["home.html", "Starter is $99 a month, Growth is $249, and Scale is $499."],
   ["home.html", "Every trial starts on Starter and runs for 14 days."],
+  ["home.html", "for Starter, Growth, and Scale before you start."],
+  ["company.html", "for Starter, Growth, and Scale before you start."],
   ["pricing.html", "Regulated items We turn it on for you."],
+  ["pricing.html", "Starter"],
+  ["pricing.html", "Growth"],
+  ["pricing.html", "Everything in Starter, plus:"],
+  ["pricing.html", "Scale"],
+  ["pricing.html", "Everything in Growth, plus:"],
+  ["pricing.html", "Enterprise"],
+  ["pricing.html", "Everything in Scale, plus:"],
+  ["pricing.html", "Every trial starts on Starter and lasts 14 days."],
+  ["pricing.html", "Starter is $99 a month, Growth is $249, and Scale is $499."],
+  ["pricing.html", "Every trial starts on Starter and runs for 14 days."],
+  ["pricing.html", "Starter, Growth, Scale, and Enterprise."],
   ["product.html", "Sell regulated items Goods like tobacco, with extra legal rules."],
   ["product.html", "Drivers can't complete a stop with regulated items."],
   ["product.html", "Sell regulated items"],
@@ -713,8 +726,8 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
         }
       }
     }
-    // exact, as on master (42 there); 28 here because this branch's pricing page is one line, with no plan cards or table
-    expect(seen).toBe(28);
+    // exact, as on master: the pricing page keeps its plan cards and table (R-210 M2)
+    expect(seen).toBe(42);
     expect(bad).toEqual([]);
   });
 

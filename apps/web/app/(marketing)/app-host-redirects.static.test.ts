@@ -18,6 +18,15 @@ const { checkCustomRoutes } = require("next/dist/lib/load-custom-routes");
 const { tryToParsePath } = require("next/dist/lib/try-to-parse-path");
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
+// The hosts as brand.json holds them today (what next.config.mjs redirects() reads).
+const BRAND_JSON = JSON.parse(
+  fs.readFileSync(path.join(WEB_ROOT, "../../packages/types/brand/brand.json"), "utf8"),
+);
+const HELD = {
+  origin: BRAND_JSON.site.origin,
+  oldOrigin: BRAND_JSON.oldOrigin,
+  aliasOrigins: BRAND_JSON.aliasOrigins,
+};
 
 interface Rule {
   source: string;
@@ -53,6 +62,7 @@ interface Loaded {
   shortIsMain: Rule[];
   shortIsMainBare: Rule[];
   launch: Rule[];
+  held: Rule[];
   sameWithAlias: Rule[];
   twoAliases: Rule[];
   aliasEqualsOld: Rule[];
@@ -155,6 +165,7 @@ function load(): Loaded {
     ` bareShortIsMain: m.buildRedirects({ ...BARE, aliasOrigins: ["https://new.test"] }),` +
     ` bareShortIsMainWww: m.buildRedirects({ ...BARE, aliasOrigins: ["https://www.new.test"] }),` +
     ` launch: m.buildRedirects(${JSON.stringify(LAUNCH)}),` +
+    ` held: m.buildRedirects(${JSON.stringify(HELD)}),` +
     ` sameWithAlias: m.buildRedirects({ ...SAME, aliasOrigins: [${JSON.stringify(SHORT_ORIGIN)}, "https://new.test"] }),` +
     ` twoAliases: m.buildRedirects({ ...MAIN, aliasOrigins: [${JSON.stringify(SHORT_ORIGIN)}, "https://other.short.test"] }),` +
     ` aliasEqualsOld: m.buildRedirects({ ...MAIN, aliasOrigins: [MAIN.oldOrigin] }),` +
@@ -685,10 +696,27 @@ describe("the short domain", () => {
     );
     expect(brand.shortOrigin).toBeUndefined();
     expect(brand.aliasOrigins).toEqual(["https://xrov.io"]);
-    expect(brand.site.origin).toBe("https://www.xrov.io");
-    expect(new URL(brand.site.origin).hostname).toBe(
-      `www.${new URL(brand.aliasOrigins[0]).hostname}`,
-    );
+    // HELD (R-210 H1): until launch day the site shares the old host, so no host rule exists and a
+    // merge is not the domain cutover. Launch day sets site.origin to the alias's www form
+    // ("https://www.xrov.io") in its own diff, after the owner confirms the new domain is serving.
+    expect(brand.site.origin).toBe(brand.oldOrigin);
+    expect(cfg.held).toEqual(cfg.equalAll); // no host rule of any kind: the old addresses keep their 308s
+    // R-210 M1: the eight old addresses that were permanent at the merge base still are
+    for (const src of [
+      "/wholesalers",
+      "/distributors",
+      "/retailers",
+      "/buyer",
+      "/book-a-demo",
+      "/demo",
+      "/sign-in",
+      "/about",
+    ]) {
+      const rule = cfg.held.find((r) => r.source === src);
+      expect(rule).toBeDefined();
+      expect(rule?.permanent).toBe(true);
+      expect(rule?.has).toBeUndefined();
+    }
   });
 });
 

@@ -145,9 +145,11 @@ describe("T31: one page list", () => {
   });
 });
 
-describe("T30: the launch values (two hosts, one alias)", () => {
-  // SA-1253 C4: the A2 hold ("one host, no rule") is gone. The site lives on the overlay's origin;
-  // the app and the contracts stay on the old host; the bare host is an alias.
+describe("T30: the brand values today (launch held, R-210 H1)", () => {
+  // SA-1253 C4 built the two-host launch. R-210 H1: merging it must not be the domain cutover, so
+  // brand.json holds site.origin equal to oldOrigin until launch day and no host rule exists. Launch
+  // day sets site.origin to the new host in its own diff, after the owner confirms the domain serves.
+  // The launch rules are pinned below on fixture hosts (the values differ, T6).
   const brandJson = () =>
     JSON.parse(
       fs.readFileSync(path.join(WEB_ROOT, "../../packages/types/brand/brand.json"), "utf8"),
@@ -160,20 +162,16 @@ describe("T30: the launch values (two hosts, one alias)", () => {
       oldOrigin: brand.oldOrigin,
       aliasOrigins: brand.aliasOrigins,
     });
-    expect(new URL(cfg.hosts.origin).host).not.toBe(new URL(cfg.hosts.oldOrigin).host);
+    expect(new URL(cfg.hosts.origin).host).toBe(new URL(cfg.hosts.oldOrigin).host);
   });
 
-  it("redirects() holds host rules for the old host and for the bare alias host", () => {
-    const hosts = new Set(cfg.today.flatMap((r) => (r.has ?? []).map((h) => h.value)));
-    const pattern = (origin: string) => new URL(origin).hostname.split(".").join(String.raw`\.`);
-    expect(hosts.has(pattern(cfg.hosts.oldOrigin))).toBe(true);
-    expect(hosts.has(pattern(cfg.hosts.aliasOrigins![0]))).toBe(true);
-    // the main host's own www form is the main host (its app-path rule), never an alias
-    expect(hosts.has(pattern(cfg.hosts.origin))).toBe(true);
+  it("redirects() holds no host rule while the launch is held", () => {
+    expect(cfg.today.filter((r) => r.has)).toEqual([]);
   });
 
   it("every redirect with a host condition is temporary (307) until after the demo", () => {
-    const hostRules = cfg.today.filter((r) => r.has);
+    // the launch rules, on two different fixture hosts (the config of the day the values differ)
+    const hostRules = cfg.split.filter((r) => r.has);
     expect(hostRules.length).toBeGreaterThan(30);
     for (const rule of hostRules) {
       expect({ source: rule.source, permanent: rule.permanent }).toEqual({
@@ -353,6 +351,9 @@ describe("T33: the signed-out layouts keep the top-level origin as their base ad
   it.each(LAYOUTS)("%s", (mod) => {
     const { metadata } = require(mod);
     expect(metadata.metadataBase.href).toBe(new URL(BRAND.origin).href);
-    expect(metadata.metadataBase.href).not.toBe(new URL(site.origin).href);
+    // While the launch is held the site shares the app's host (R-210 H1), so there is nothing to differ
+    // from; the day site.origin moves, the layouts must still not follow it.
+    if (new URL(site.origin).host !== new URL(BRAND.origin).host)
+      expect(metadata.metadataBase.href).not.toBe(new URL(site.origin).href);
   });
 });

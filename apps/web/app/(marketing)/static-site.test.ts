@@ -251,8 +251,7 @@ describe("ready-made pages: files and links", () => {
   });
 
   it("L6b: the Enterprise button on home and pricing opens an email to the contact address", () => {
-    // C5: pricing has no plan cards, so only the home page keeps an Enterprise button
-    for (const file of ["home.html"]) {
+    for (const file of ["home.html", "pricing.html"]) {
       const buttons = [...html(file).matchAll(/<a [^>]*data-track="enterprise_click"[^>]*>/g)];
       expect(buttons.length).toBeGreaterThan(0);
       for (const [tag] of buttons) {

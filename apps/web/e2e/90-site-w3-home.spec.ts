@@ -1156,25 +1156,6 @@ for (const { w, h } of MOTION_SIZES) {
   });
 }
 
-// The step is valid only where it finds the two windows the records measured at 407f308294. Run with
-// T47_CALIBRATION=1 against that placement (home.css from 407f308294); any other time this test skips.
-test("T47 calibration: the 0.001 step finds both known windows at the old placement @1440x900", async ({
-  page,
-}) => {
-  test.skip(!process.env.T47_CALIBRATION, "set T47_CALIBRATION=1 with home.css from 407f308294");
-  test.setTimeout(180_000);
-  const { steps, tok } = await seek(page, 1440, 900);
-  assertSweepSees(steps, 1440);
-  const harmKs = steps.filter((s) => judgeRead(s.read, tok).harm.length > 0).map((s) => s.k);
-  if (harmKs.length === 0)
-    throw new Error("the seek found no harm beat at all: the step is not valid");
-  console.log(
-    `T47 calibration: harm at ${harmKs.length} steps, k ${Math.min(...harmKs).toFixed(3)} to ${Math.max(...harmKs).toFixed(3)}; ${harmKs.map((k) => k.toFixed(3)).join(" ")}`,
-  );
-  // one step is 0.001 of the run, 0.0017 window heights
-  expect(missedWindows(harmKs, KNOWN_WINDOWS, 0.002)).toEqual([]);
-});
-
 test("T47 scroll spot check: the two hand-over beats once the scrub has settled @1440x900", async ({
   page,
 }) => {
@@ -1191,7 +1172,6 @@ test("T47 scroll spot check: the two hand-over beats once the scrub has settled 
   const tok = await tokens(page);
   const pin = await pinInfo(page);
   const faults: string[] = [];
-  let harm = 0;
   for (const k of [1.22, 1.25]) {
     const y = Math.round(top + k * h);
     const mapped = Math.min(1, Math.max(0, (y - pin.start) / (pin.end - pin.start)));
@@ -1218,15 +1198,12 @@ test("T47 scroll spot check: the two hand-over beats once the scrub has settled 
     });
     expect(Math.abs(got.progress - mapped), `progress at ${k}`).toBeLessThanOrEqual(0.002);
     const f = judgeRead(got.read, tok);
-    harm += f.harm.length;
     console.log(
       `T47 spot ${k}: progress ${got.progress.toFixed(4)} (mapped ${mapped.toFixed(4)}), line ${got.read.line.opacity.toFixed(3)}; harm: ${f.harm.join(" | ") || "none"}`,
     );
     faults.push(...flatFaults(f, k.toFixed(2)));
   }
-  // with T47_CALIBRATION the old placement is the target: the real scroll must show the harm the seek found
-  if (process.env.T47_CALIBRATION) expect(harm).toBeGreaterThan(0);
-  else expect(faults).toEqual([]);
+  expect(faults).toEqual([]);
 });
 
 test("T47 a phone at rest: the big line overlaps no picture box @393x844", async ({ page }) => {

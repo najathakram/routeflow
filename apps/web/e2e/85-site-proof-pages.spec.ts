@@ -662,7 +662,7 @@ test.describe("T12 R12 nothing is lost", () => {
 const DARK_BAND_ON_PAGE: Record<string, string> = {
   "/": ".end",
   "/landing": ".price",
-  "/pricing": ".cta-band",
+  "/pricing": ".pcard.featured",
 };
 
 test.describe("T16 T18c colour walk", () => {

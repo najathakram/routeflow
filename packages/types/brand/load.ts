@@ -63,7 +63,7 @@ export type SiteBrand = Omit<Brand, "site"> & {
   readonly bridgeLine?: string;
 };
 
-const BRIDGE_TAIL = "Your sign-in, data and account stay the same.";
+const BRIDGE_TAIL = "Your data and account stay the same.";
 
 /** Every key a brand must carry, dotted for the nested ones. The reader checks each. */
 export const BRAND_KEYS = [
@@ -178,6 +178,16 @@ export function loadBrand(): Brand {
   return cached;
 }
 
+/** The bridge says the product has a new name, so it shows only once the site really moves: the name
+ *  differs AND the site is served from another host than the app. While the site shares the app's host
+ *  (the launch is held) the app, emails and sign-in still carry the top-level name, and a bridge would
+ *  promise a rename a new customer does not meet. */
+function bridgeLine(top: Omit<Brand, "site">, site: SiteOverlay): string {
+  if (site.name === top.name) return "";
+  if (new URL(site.origin).host === new URL(top.origin).host) return "";
+  return `${top.name} is now ${site.name}. ${BRIDGE_TAIL}`;
+}
+
 /** The site view of a brand: the overlay laid over the top level, key by key. A brand with no
  *  overlay (a test fixture, or phase A done) is its own site view. index.ts builds it from the
  *  mockable loadBrand(), so a fixture brand flows through. */
@@ -187,7 +197,7 @@ export function siteView(brand: Brand): SiteBrand {
   return Object.freeze({
     ...top,
     ...site,
-    bridgeLine: site.name === top.name ? "" : `${top.name} is now ${site.name}. ${BRIDGE_TAIL}`,
+    bridgeLine: bridgeLine(top, site),
     logo: Object.freeze({ ...top.logo, ...site.logo }),
     icon: Object.freeze({ ...top.icon, ...site.icon }),
   });
