@@ -16,6 +16,7 @@ import { EDIT_CONTROL_H } from "./edit-line-controls";
 // which is what the server stores (net unitPrice + originalPrice strikethrough).
 export function PriceEditRow({
   basePrice,
+  listReference,
   unitPrice,
   originalUnitPrice,
   overrideReason,
@@ -29,6 +30,9 @@ export function PriceEditRow({
   unitWord,
 }: {
   basePrice: number;
+  /** B1423: what the far-from-list note compares with, the catalog list price in the line's sold unit. `basePrice` is
+   *  NOT that (it is the customer's tier price on a line added here). Null or absent: no note. */
+  listReference?: number | null;
   unitPrice: number;
   /** B465 fix round 3: this line's OWN price when the edit session started —
    *  the reason-required check keys on THIS diverging from `unitPrice`, never
@@ -109,7 +113,7 @@ export function PriceEditRow({
 
   // F14: under half or over twice the list price is far more often a slip (3.00 typed into a $6.99 line) than a deal.
   // Display only - nothing blocks.
-  const farFromList = farFromListText(unitPrice, basePrice);
+  const farFromList = farFromListText(unitPrice, listReference ?? 0);
 
   return (
     // r4 Q29: the 44px indent (the product-name column) is sm and up; on a phone every row of the card starts at one edge.
