@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   anyLockedFiling,
@@ -35,13 +35,25 @@ type LockDb = FilingsDb & {
 };
 
 /** (b) the ledger guard: throws LEDGER_PERIOD_LOCKED when any row would book into a locked period. */
-export async function assertLedgerRowsNotLocked(db: LockDb, rows: BucketRef[]): Promise<void> {
+export async function assertLedgerRowsNotLocked(
+  db: LockDb,
+  rows: Array<BucketRef & { tenantId: string }>,
+): Promise<void> {
+  if (rows.length === 0) return;
+  // The tenant comes from the rows: every row must carry the same non-empty tenantId, else fail closed.
+  const tenantIds = new Set(rows.map((r) => r.tenantId ?? ""));
+  const [tenantId] = [...tenantIds];
+  if (tenantIds.size !== 1 || !tenantId) {
+    throw new ForbiddenException("Ledger rows must all carry one tenantId");
+  }
   const unique = [
     ...new Map(rows.map((r) => [`${r.trackedCategoryId}|${r.periodBucket}`, r])).values(),
   ];
   // SA-995 §2: a ROW lock (FOR SHARE) on the covering filing rows, on the writer's own transaction `db`, then LOCKED
   // filtered here: a lock cannot slip in between this check and the writer's insert.
-  const hit = (await lockFilingRowsCovering(db, unique)).find((h) => isLockedFiling(h.filing));
+  const hit = (await lockFilingRowsCovering(db, unique, tenantId)).find((h) =>
+    isLockedFiling(h.filing),
+  );
   if (!hit) return;
   throw new ConflictException({
     code: API_ERROR_CODES.LEDGER_PERIOD_LOCKED,

@@ -41,11 +41,15 @@ const db = (filings: any[], sales: any[] = []) => ({
 
 describe("lockedFilingsCovering", () => {
   it("returns the LOCKED filing whose period covers the bucket, per category", async () => {
-    const r = await lockedFilingsCovering(db([filing()]), [
-      { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
-      { trackedCategoryId: "cat-1", periodBucket: "2026-10" }, // after the period
-      { trackedCategoryId: "cat-2", periodBucket: "2026-09" }, // another category
-    ]);
+    const r = await lockedFilingsCovering(
+      db([filing()]),
+      [
+        { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
+        { trackedCategoryId: "cat-1", periodBucket: "2026-10" }, // after the period
+        { trackedCategoryId: "cat-2", periodBucket: "2026-09" }, // another category
+      ],
+      "t1",
+    );
     expect(r.map((x) => [x.filing.id, x.periodBucket])).toEqual([["f-1", "2026-09"]]);
   });
 
@@ -55,19 +59,27 @@ describe("lockedFilingsCovering", () => {
       periodStart: new Date("2026-07-01T00:00:00Z"),
       periodEnd: new Date("2026-10-01T00:00:00Z"),
     });
-    const r = await lockedFilingsCovering(db([q]), [
-      { trackedCategoryId: "cat-1", periodBucket: "2026-07" },
-      { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
-    ]);
+    const r = await lockedFilingsCovering(
+      db([q]),
+      [
+        { trackedCategoryId: "cat-1", periodBucket: "2026-07" },
+        { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
+      ],
+      "t1",
+    );
     expect(r).toHaveLength(2);
   });
 
   it("asks the database nothing when there are no rows, and when the client has no filings model (a stub)", async () => {
     const d = db([filing()]);
-    expect(await lockedFilingsCovering(d, [])).toEqual([]);
+    expect(await lockedFilingsCovering(d, [], "t1")).toEqual([]);
     expect(d.regulatedFiling.findMany).not.toHaveBeenCalled();
     expect(
-      await lockedFilingsCovering({} as any, [{ trackedCategoryId: "c", periodBucket: "2026-09" }]),
+      await lockedFilingsCovering(
+        {} as any,
+        [{ trackedCategoryId: "c", periodBucket: "2026-09" }],
+        "t1",
+      ),
     ).toEqual([]);
   });
 });
@@ -76,14 +88,29 @@ describe("assertLedgerRowsNotLocked", () => {
   it("throws LEDGER_PERIOD_LOCKED for a row bucketed into a locked period", async () => {
     await expect(
       assertLedgerRowsNotLocked(db([filing()]), [
-        { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
+        { tenantId: "t1", trackedCategoryId: "cat-1", periodBucket: "2026-09" },
       ]),
     ).rejects.toMatchObject({ response: { code: "LEDGER_PERIOD_LOCKED" } });
+  });
+  it("fails closed on mixed tenants and on a missing tenant", async () => {
+    const row = { trackedCategoryId: "cat-1", periodBucket: "2026-10" };
+    await expect(
+      assertLedgerRowsNotLocked(db([filing()]), [
+        { ...row, tenantId: "t1" },
+        { ...row, tenantId: "t2" },
+      ]),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(assertLedgerRowsNotLocked(db([filing()]), [row as any])).rejects.toMatchObject({
+      status: 403,
+    });
+    await expect(
+      assertLedgerRowsNotLocked(db([filing()]), [{ ...row, tenantId: "" }]),
+    ).rejects.toMatchObject({ status: 403 });
   });
   it("passes a row outside every locked period", async () => {
     await expect(
       assertLedgerRowsNotLocked(db([filing()]), [
-        { trackedCategoryId: "cat-1", periodBucket: "2026-10" },
+        { tenantId: "t1", trackedCategoryId: "cat-1", periodBucket: "2026-10" },
       ]),
     ).resolves.toBeUndefined();
   });

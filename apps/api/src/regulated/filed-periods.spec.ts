@@ -23,11 +23,13 @@ import {
 describe("tier 1 - lockedFilingsCovering: LOCKED only, per bucket", () => {
   it("asks for status LOCKED and nothing else", async () => {
     const findMany = jest.fn().mockResolvedValue([]);
-    await lockedFilingsCovering({ regulatedFiling: { findMany } }, [
-      { trackedCategoryId: "c1", periodBucket: "2026-08" },
-    ]);
+    await lockedFilingsCovering(
+      { regulatedFiling: { findMany } },
+      [{ trackedCategoryId: "c1", periodBucket: "2026-08" }],
+      "t1",
+    );
     expect(findMany).toHaveBeenCalledWith({
-      where: { trackedCategoryId: { in: ["c1"] }, status: "LOCKED" },
+      where: { tenantId: "t1", trackedCategoryId: { in: ["c1"] }, status: "LOCKED" },
     });
   });
 
@@ -42,7 +44,7 @@ describe("tier 1 - lockedFilingsCovering: LOCKED only, per bucket", () => {
     };
     const db = { regulatedFiling: { findMany: jest.fn().mockResolvedValue([filing]) } };
     const hit = (b: string, c = "c1") =>
-      lockedFilingsCovering(db, [{ trackedCategoryId: c, periodBucket: b }]);
+      lockedFilingsCovering(db, [{ trackedCategoryId: c, periodBucket: b }], "t1");
     expect(await hit("2026-08")).toHaveLength(1);
     expect(await hit("2026-09")).toHaveLength(0);
     expect(await hit("2026-07")).toHaveLength(0);
@@ -54,12 +56,12 @@ describe("tier 1 - lockedFilingsCovering: LOCKED only, per bucket", () => {
     await anyLockedFiling({ regulatedFiling: { findMany } }, "t1");
     expect(findMany).toHaveBeenCalledWith({ where: { tenantId: "t1", status: "LOCKED" }, take: 1 });
     const findFirst = jest.fn().mockResolvedValue(null);
-    await findLockedFiling(
-      { regulatedFiling: { findFirst } },
-      { trackedCategoryId: "c", periodKey: "k" },
-    );
+    await findLockedFiling({ regulatedFiling: { findFirst } }, "t1", {
+      trackedCategoryId: "c",
+      periodKey: "k",
+    });
     expect(findFirst).toHaveBeenCalledWith({
-      where: { trackedCategoryId: "c", periodKey: "k", status: "LOCKED" },
+      where: { tenantId: "t1", trackedCategoryId: "c", periodKey: "k", status: "LOCKED" },
     });
   });
 
@@ -133,8 +135,9 @@ describe("tier 3 - findFiledPeriod: GENERATED | LOCKED, per bucket (a label, nev
       status: "GENERATED",
       trackedCategoryId: "c1",
     });
-    const r = await findFiledPeriod({ regulatedFiling: { findFirst } }, ["c1"], "2026-08");
+    const r = await findFiledPeriod({ regulatedFiling: { findFirst } }, "t1", ["c1"], "2026-08");
     expect(findFirst.mock.calls[0][0].where).toEqual({
+      tenantId: "t1",
       trackedCategoryId: { in: ["c1"] },
       periodStart: { lte: new Date("2026-08-01T00:00:00.000Z") },
       periodEnd: { gt: new Date("2026-08-01T00:00:00.000Z") },
@@ -145,7 +148,9 @@ describe("tier 3 - findFiledPeriod: GENERATED | LOCKED, per bucket (a label, nev
 
   it("reads nothing for no categories", async () => {
     const findFirst = jest.fn();
-    expect(await findFiledPeriod({ regulatedFiling: { findFirst } }, [], "2026-08")).toBeNull();
+    expect(
+      await findFiledPeriod({ regulatedFiling: { findFirst } }, "t1", [], "2026-08"),
+    ).toBeNull();
     expect(findFirst).not.toHaveBeenCalled();
   });
 });
