@@ -125,6 +125,9 @@ export function StockCountReviewModal({
       </td>
       <td className="py-2 pr-2 text-right text-navy/70">{row.expectedQty}</td>
       <td className="py-2 pr-2">
+        {row.mode === "ADD" && (
+          <span className="mb-0.5 block text-[11px] font-medium uppercase text-warning">Add</span>
+        )}
         <DecimalInput
           value={row.countedQty}
           onChange={(v) => onChangeQty(row.productId, v ?? 0)}

@@ -115,7 +115,7 @@ export function StockCountTab() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [flashId, setFlashId] = React.useState<string | null>(null);
   const [qtyPerScan, setQtyPerScan] = React.useState(1);
-  const [defaultMode, setDefaultMode] = React.useState<StockCountMode>("ADD");
+  const [defaultMode, setDefaultMode] = React.useState<StockCountMode>("REPLACE");
 
   const [scanInput, setScanInput] = React.useState("");
   const scanInputRef = React.useRef<HTMLInputElement>(null);
@@ -954,8 +954,14 @@ export function StockCountTab() {
           </div>
 
           <div className="w-28">
-            <label className="mb-1 block text-xs font-medium text-navy">Qty per scan</label>
+            <label
+              htmlFor="count-qty-per-scan"
+              className="mb-1 block text-xs font-medium text-navy"
+            >
+              Qty per scan
+            </label>
             <input
+              id="count-qty-per-scan"
               type="number"
               min={0}
               step={0.001}
@@ -974,8 +980,8 @@ export function StockCountTab() {
               onChange={(e) => setDefaultMode(e.target.value as StockCountMode)}
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
-              <option value="ADD">Add to existing</option>
               <option value="REPLACE">Replace count</option>
+              <option value="ADD">Add to existing</option>
             </select>
           </div>
 
