@@ -77,7 +77,8 @@
      asks for it (a details toggle, fonts, images, resize), runs with instant scrolling and puts the setting back after. */
   var smoothHeld = 0, smoothWas = "";
   ST.addEventListener("refreshInit", function () { if (!smoothHeld++) { smoothWas = html.style.scrollBehavior; html.style.scrollBehavior = "auto"; } });
-  ST.addEventListener("refresh", function () { if (smoothHeld && !--smoothHeld) html.style.scrollBehavior = smoothWas; });
+  /* ScrollTrigger puts an inline "smooth" back on the page scroller one frame after a refresh (the old wheel's snap kept it off); queued after it, the second write puts the page's own value back. */
+  ST.addEventListener("refresh", function () { if (smoothHeld && !--smoothHeld) { html.style.scrollBehavior = smoothWas; if (typeof requestAnimationFrame === "function") requestAnimationFrame(function () { if (!smoothHeld) html.style.scrollBehavior = smoothWas; }); } });
 
   /* Reveal tweens that are playing when print starts are reverted at once, from the print handler: GSAP's own revert comes a little later
      (after the media-change handlers of every section), and a page printed in that gap would show words half faded. */

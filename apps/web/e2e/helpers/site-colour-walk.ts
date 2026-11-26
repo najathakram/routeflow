@@ -401,9 +401,11 @@ function installReader(cfg: ReaderCfg): void {
     candCache = { n, els: [...out] };
     return candCache.els;
   };
-  /** A text a visitor could see: rendered, and not visibility:hidden (opacity is left to the settle). */
+  /** A text a visitor could see: rendered, not visibility:hidden, not inside an aria-hidden decoration (opacity is left to the settle). */
   const visibleInPrinciple = (e: HTMLElement) =>
-    e.getClientRects().length > 0 && getComputedStyle(e).visibility === "visible";
+    e.getClientRects().length > 0 &&
+    getComputedStyle(e).visibility === "visible" &&
+    !e.closest('[aria-hidden="true"]');
   const inView = (e: Element) => {
     const r = e.getBoundingClientRect();
     return (
