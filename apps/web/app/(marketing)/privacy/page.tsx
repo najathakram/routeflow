@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { BRAND } from "@routeflow/types/brand";
-import { BRAND_DOMAIN } from "@/lib/brand-domain";
 import { SECURITY_POLICY_URL } from "@/lib/repo-links";
 import { routes } from "../lib/site";
 import { marketingMetadata } from "../lib/metadata";
@@ -55,10 +54,7 @@ export default function PrivacyPage() {
         &ldquo;Service&rdquo;). This Privacy Policy explains what personal information we collect,
         how we use it, who we share it with, and the choices available to you.
       </p>
-      <p>
-        This policy applies to the {BRAND.name} marketing website ({BRAND_DOMAIN}), the {BRAND.name}{" "}
-        web dashboard and buyer portal, and the {BRAND.name} mobile app for drivers and operators.
-      </p>
+      <p>This policy covers this website and the {BRAND.name} app.</p>
       <p>
         If you are a customer, driver, or other end user of a business that uses {BRAND.name} (a
         &ldquo;Tenant&rdquo;), please also see{" "}
@@ -143,9 +139,9 @@ export default function PrivacyPage() {
           support/notification features.
         </li>
         <li>
-          <strong>Demo booking requests:</strong> if you book a product walkthrough on{" "}
-          {BRAND_DOMAIN}, we collect your name, email, company, optional phone number and notes,
-          your selected meeting time and time zone, and your IP address. See{" "}
+          <strong>Demo booking requests:</strong> if you book a product walkthrough on this website,
+          we collect your name, email, company, optional phone number and notes, your selected
+          meeting time and time zone, and your IP address. See{" "}
           <a href="#demo-booking">&ldquo;Demo booking requests&rdquo;</a> below for how this is
           stored and scheduled.
         </li>
@@ -429,8 +425,8 @@ export default function PrivacyPage() {
 
       <h3 id="demo-booking">Demo booking requests (marketing site)</h3>
       <p>
-        The &ldquo;Request a demo&rdquo; scheduler on {BRAND_DOMAIN} lets a visitor book a
-        walkthrough meeting directly. When you submit a booking, we collect and{" "}
+        The &ldquo;Request a demo&rdquo; scheduler on this website lets a visitor book a walkthrough
+        meeting directly. When you submit a booking, we collect and{" "}
         <strong>store in {BRAND.name}&rsquo;s own database</strong>: your name, email address,
         company name, phone number (optional), notes on what you&rsquo;d like covered (optional),
         your selected date/time and time zone, the marketing page you booked from, and your IP

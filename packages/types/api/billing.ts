@@ -6,6 +6,7 @@
 // set-equal by `apps/api/src/common/enum-parity.spec.ts`'s WP1 T2 case. Keep both lists in sync
 // by hand.
 
+import type { BillingCycle } from "./enums";
 import type { ApiErrorCode } from "./error-codes";
 
 /** The 21 feature-flag / addon keys enforced server-side (pricing-plans.md §Feature-flag keys). */
@@ -51,7 +52,7 @@ export interface SubscriptionView<TDate = string> {
   planKey: string;
   planName: string;
   status: string;
-  cycle: "MONTHLY" | "ANNUAL";
+  cycle: BillingCycle;
   monthlyPrice: number | null;
   annualPrice: number | null;
   isCustom: boolean;

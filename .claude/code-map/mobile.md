@@ -62,3 +62,4 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-09-28-late.md](mobile/landing-2026-09-28-late.md) | Landing 2026-09-28 late: buyer custom lines skipped (B889), useNewUi flag, one-unit-sold surfaces, return-only-bought guard |
 | [mobile/catchup-2026-09-21.md](mobile/catchup-2026-09-21.md) | Catch-up 2026-09-21: `BlockedLinesModal`, `po-list-logic`, `selling-restricted` |
 | [mobile/landing-2026-11-25-w47.md](mobile/landing-2026-11-25-w47.md) | Window 47: estimate screens on the moves table (Back to draft, Rev tag), dead skeleton and layout components removed |
+| [mobile/landing-2026-11-25-w48.md](mobile/landing-2026-11-25-w48.md) | Window 48: resume only on a plan-gate 403, buyer quantity box and cart clamp, estimate box counts and stored order total, delivery steps note, draft save disabled |

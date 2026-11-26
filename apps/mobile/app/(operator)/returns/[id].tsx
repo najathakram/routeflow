@@ -17,6 +17,7 @@ import {
 } from "../../../lib/api/returns";
 import { returnActionFlags, returnPillFor } from "../../../lib/returns-logic";
 import { showToast } from "../../../lib/toast";
+import { linkedOrderTarget } from "../../../lib/linked-order-route";
 import { refundErrorMessage } from "../../../lib/credit-note-error-copy";
 import { chooseAction, confirm } from "../../../lib/confirm";
 import { refundTenderChoiceActions, resolveReturnRequest } from "../../../lib/standard-refund";
@@ -120,6 +121,7 @@ export default function ReturnDetailScreen() {
   }
 
   const pill = returnPillFor(ret.status, ret);
+  const orderLink = linkedOrderTarget(ret); // B1443: the order number opens that order
   const flags = returnActionFlags(ret.status);
   const anyPending =
     approveMut.isPending ||
@@ -147,7 +149,16 @@ export default function ReturnDetailScreen() {
             </View>
             <Text style={styles.meta}>
               {ret.customer?.businessName ?? "Customer"}
-              {ret.order?.orderNumber ? ` · Order ${ret.order.orderNumber}` : ""}
+              {orderLink ? " · " : ""}
+              {orderLink ? (
+                <Text
+                  accessibilityRole="link"
+                  onPress={() => router.push(orderLink.route as any)}
+                  style={{ color: ios.brand }}
+                >
+                  {orderLink.label}
+                </Text>
+              ) : null}
             </Text>
             <Text style={styles.meta}>
               {ret.reason ? ret.reason.replace(/_/g, " ").toLowerCase() : ""} ·{" "}

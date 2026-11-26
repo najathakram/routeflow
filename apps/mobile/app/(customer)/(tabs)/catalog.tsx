@@ -32,11 +32,11 @@ import {
   type LockedCategory,
   type ReplenishmentEstimate,
 } from "../../../lib/api/buyer";
-import { useCartStore } from "../../../store/cartStore";
+import { maxLineUnits, useCartStore } from "../../../store/cartStore";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 import { QtyTextInput } from "../../../components/QtyStepper";
 import { QTY_INPUT_WIDTH } from "../../../lib/row-layout";
-import type { PromotionRule } from "@routeflow/pricing";
+import { pricedPerLabel, type PromotionRule } from "@routeflow/pricing";
 import {
   alertIdSet,
   behaviorLabel,
@@ -355,7 +355,12 @@ function ProductCard({
         <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
           <Text style={styles.productPrice}>
             {`$${priced.unitPrice.toFixed(2)}`}
-            {product.unit ? <Text style={styles.productUnit}> / {product.unit}</Text> : null}
+            {product.unit ? (
+              <Text style={styles.productUnit}>
+                {" "}
+                / {pricedPerLabel({ unit: product.unit, unitsPerBox: product.unitsPerBox }).word}
+              </Text>
+            ) : null}
           </Text>
           {priced.originalPrice != null ? (
             <Text style={styles.struckPrice}>{`$${priced.originalPrice.toFixed(2)}`}</Text>
@@ -408,6 +413,8 @@ function ProductCard({
           <QtyTextInput
             value={units}
             min={1}
+            max={maxLineUnits(product.unitsPerBox)}
+            rejectNonDigits
             emptyMeansZero={false}
             onChangeQty={(n) => setUnits(product.id, n)}
             style={[styles.qtyText, styles.qtyInputReset]}

@@ -12,6 +12,27 @@
 
 ## process
 
+### L-412 · 2026-11-25 · process · a post to a shared board runs only inside `if leak-check | grep -q clean`; chaining the two commands with `;` posts anyway
+
+- **Symptom:** a board post went out although the leak check had refused it. The check printed its refusal and exited non-zero, and the post ran next.
+- **Root cause:** the check and the post were one line joined by `;`, which runs the second command whatever the first returned. A refusal that only prints text stops nothing; it was tried as a habit (read the output, then post) and the habit failed once.
+- **Lesson:** **Put the post inside the condition: `if node leak-check.mjs --text-file F | grep -q clean; then post; fi`. Never join a check and its action with `;`, and never rely on reading the output before the action runs.**
+- **Guard:** none automatic, the guard is the `if ... grep -q clean` form in the lead's posting commands; builder rules name the leak check before `gh pr create`.
+
+### L-411 · 2026-11-25 · process · a build that links a host tree resolves `@routeflow/*` to the HOST's packages, so the host sits at current master and is refreshed after every merge that touches `packages/*`
+
+- **Symptom:** a build linked to the host `node_modules` stopped on a missing export that #4509 had just added to `@routeflow/pricing`. Its own source had the export; the resolved package did not.
+- **Root cause:** a junctioned `node_modules` carries the host's workspace links, so `@routeflow/pricing` and `@routeflow/types` point at the host's `packages/*`, not the building tree's. A host behind master hides every new export. Cf. [[L-262]].
+- **Lesson:** **Keep one dedicated host tree at current master and refresh it (`merge --ff-only`, rebuild packages, rewrite the ready line) after each merge that touches `packages/*`. A build that changes `packages/*` runs its own install; read the ready line's sha before linking.**
+- **Guard:** `wt/host-ready.txt` names the host sha and its refresh command (builder rules, link step); no repo check.
+
+### L-410 · 2026-11-25 · process · five parallel `npm ci` runs with no free-space check filled C: to 0 bytes; installs go one at a time behind a lock, with more than 10 GB free, and a build that changes no `packages/*` links to a host tree instead
+
+- **Symptom:** C: reached 0 bytes. Builds failed in unrelated ways, a git write was cut short, and disk cleanup waited on the owner.
+- **Root cause:** each builder ran its own `npm ci` for its own tree at the same time. Each install is several GB and nothing counted free space before it started. One builder also ran `npm ci` in the main checkout instead of its own tree. The first answer, "run installs through the heavy slot", capped memory, not disk.
+- **Lesson:** **One install at a time: take the install lock, check more than 10 GB free and no `-ci` job in the slot, install, release the lock in a `finally`. A build that changes no `packages/*` links to the host tree. Print `pwd` before any install so it runs in the tree you mean.**
+- **Guard:** the install lock directory and log in `wt/install-queue/` and the free-space step in the builder rules; no repo check.
+
 ### L-386 · 2026-11-15 · process · a gate names every touched src directory plus repo-truth, auth/permissions and common, runs the FULL web jest for any PR touching apps/web, and rebuilds the workspace dist first; the verdict states the totals (#4327, #4334)
 
 - **Symptom:** two PRs reached review on a narrower api run (15 suites; one without its touched `src/buyer`). A third reached PASS x2 with web files changed and no full web jest, and CI then caught a source pin in a static test. A review tree with a stale gitignored `packages/pricing/dist` ran web and api jest against the old pricing: tsc red, jest green.
@@ -316,26 +337,19 @@
 
 ## web
 
+### L-413 · 2026-11-25 · web · a navigation guard marks the history step it pushes itself and ignores it; otherwise its own `history.back()` reads as the person pressing Back (#4516)
+
+- **Symptom:** in a form guarded against leaving with unsaved edits, clearing a field and typing it back with one more letter opened the "Discard your changes?" question by itself, mid-typing. The order page had the same fault when a quantity was typed back to its saved value and on.
+- **Root cause:** the guard pushes a sentinel history entry while dirty and calls `history.back()` when the form goes clean. If the form went dirty again before that step landed, the landing arrived as a `popstate` and was read as a real Back. The first tests only cleaned once.
+- **Lesson:** **A guard that writes to history tags its own steps, ignores their `popstate`, and puts its sentinel back so a real Back is still asked. Test clean-then-dirty-again before the step lands, not only one clean transition.**
+- **Guard:** `apps/web/app/(dashboard)/orders/[id]/edit-leave-guard.redirty.test.tsx` and `products/[id]/page.leave-guard.test.tsx` (#4516).
+
 ### L-408 · 2026-11-24 · web · a quantity box a scanner can type into holds its text until Enter, Tab or blur, then judges the whole text as one number (#4481, W-1336)
 
 - **Symptom:** a 12-digit barcode scanned into a focused counter quantity box left a 4 or 5 digit quantity with no message.
 - **Root cause:** the box committed on every keystroke and a scanner types digits as keys, so each prefix was a valid quantity and the last one accepted stayed.
 - **Lesson:** **Where a scanner can type into a focused box, hold the text and commit once on a boundary through the screen's own commit path, refuse an out-of-range whole with one sentence, and clear the held ref before the commit so the blur after an Enter refocus finds nothing. Make the mode opt-in per screen; the order builder keeps per-keystroke commit. Cf. [[L-385]].**
 - **Guard:** `use-held-qty.ts`; `CounterSaleScreen.qty-hold.test.tsx`, `CounterLineRow.qty-refusal.test.tsx` (a scanned code, Esc, Undo merge).
-
-### L-398 · 2026-11-21 · web · a file input fires no change when the same file is picked again; clear its value after every pick (#4397)
-
-- **Symptom:** an edited CSV re-picked from the same place kept the old File, and the next Preview ran on stale content.
-- **Root cause:** the browser raises `change` only when the selected path differs, and the panel kept the first File in state; the first fix pass tested picking a different file.
-- **Lesson:** **Set `input.value = ""` after reading the file on every pick, and test the second pick of the same file (a test that picks two different files proves nothing here).**
-- **Guard:** `apps/web/components/import/ImportCsvPanel.repick.test.tsx` (#4397).
-
-### L-397 · 2026-11-21 · web · a Next page file exports only page fields; helpers and components used elsewhere live in their own module (#4370)
-
-- **Symptom:** `tsc` failed TS2344 on two pages (estimates and a platform-admin tenant page), and only in a tree that had a local `.next`; a clean checkout passed.
-- **Root cause:** with `.next` present, tsc reads the per-page type guards Next emits, and a guard rejects any export that is not a page field. Two pages exported a date helper and a section component for other files to import.
-- **Lesson:** **Move any non-page export out of a `page.tsx` (or layout, route) file into a sibling module before another file imports it, and read a type-check in a tree that has run `next build` or `next dev`, not only a clean one.**
-- **Guard:** `apps/web/app/page-file-exports.static.test.ts` (fails on a page file with a non-page export; #4370).
 
 ### L-394 · 2026-11-19 · web · a scroll snap with inertia on reads its speed from the scrub's catch-up, not the hand, and throws a stopped scroll to a far beat; keep inertia off and drive the snap with real wheel input (#4367)
 
@@ -350,20 +364,6 @@
 - **Root cause:** each reveal path (per-element reveal, settle, timelines) kept its own memory of what had played, and a trigger reached inside a ScrollTrigger refresh recorded nothing. `once: true` was tried as the record and abandoned: it removes the trigger, which shifts the trigger list under later refreshes and changes the trigger count against a fresh load.
 - **Lesson:** **Keep ONE played-list for every reveal path. A trigger reached at rest (inside a refresh, from an anchor, on the print return) is pushed to it at once and leaves its content as it is; only a callback from a scroll update plays. Never use `once` as the record.**
 - **Guard:** `apps/web/e2e/85-site-proof-pages.spec.ts` T1 (same trigger count as a fresh load after print) and T2 (no heading waits for a scroll), and its replay cell, which asserts the at-rest precondition before it measures. Cf. [[L-377]].
-
-### L-381 · 2026-11-13 · web · after print, restore the scroll place on the first ScrollTrigger refresh, not at `afterprint` and not on a timer (B1324)
-
-- **Symptom:** leaving print (preview closed, or the print media query ending) put the page back at the wrong place: the reading position was lost.
-- **Root cause:** leaving print rebuilds every trigger. Each refresh records the place, scrolls to the top to measure, puts the place back, then reports. The first refresh after the rebuild recorded the place of the print layout (no pins, a shorter page), so a single restore at `afterprint` was overwritten by the refreshes that run after it.
-- **Lesson:** **Save the place when print starts; for the one frame after print ends, put the saved place back on every `refresh` report, with no timer, then stop. Turn off `overflow-anchor` in print so entering it does not shift the page before the place is read.**
-- **Guard:** spec 85 T1 reads `scrollY` and the trigger count before print and after returning, on 12 pages at 1440x900 and 390x844. The mechanism is commented in `public/site/js/home-up.js` and `js/site.js` (the same toggle in both; `site-motion-always.static.test.ts` pins that).
-
-### L-380 · 2026-11-13 · web · a `gsap.matchMedia` condition whose KEY is `all` always matches, whatever its value says (B1324)
-
-- **Symptom:** a print toggle meant to take page motion off for print never reverted: motion stayed on and pages printed blank bands. Changing the condition's value string to screen-only changed nothing.
-- **Root cause:** GSAP's `matchMedia` treats a condition named `all` as match-everything and never reads its value. `site.js` declared `{ all: "all", desk: "(min-width: 900px)" }`, so the context was live in print.
-- **Lesson:** **Never name a `matchMedia` condition key `all`; name it for what it means (`screen`) and give it the media query. Prove a print branch by emulating print media and reading that the context reverted, not by reading the condition text.**
-- **Guard:** `site-motion-always.static.test.ts` computes the condition from the source and requires it screen-only (ledger row B1324/T1 in `site-pin-ledger.json`); spec 85 T1 asserts no `js-motion` in print.
 
 ### L-376 · 2026-11-12 · web · a text field inside a closing dialog is not a typing target; one predicate decides it for every guard that asks "is a person typing" (#4303)
 

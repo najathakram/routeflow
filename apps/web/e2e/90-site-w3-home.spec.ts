@@ -1028,12 +1028,6 @@ const MOTION_SIZES = [
 const SEEK_FROM = 640;
 const SEEK_COUNT = 281;
 
-/** The two hand-over windows known at 407f308294, 1440x900, in window heights (SA-1191 K4 i). */
-const KNOWN_WINDOWS = [
-  [1.217, 1.223],
-  [1.248, 1.252],
-] as const;
-
 type SeekStep = { x: number; k: number; read: ProblemRead };
 
 /**

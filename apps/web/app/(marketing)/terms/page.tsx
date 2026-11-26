@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { BRAND } from "@routeflow/types/brand";
-import { BRAND_DOMAIN } from "@/lib/brand-domain";
 import { SECURITY_POLICY_URL } from "@/lib/repo-links";
 import { routes } from "../lib/site";
 import { marketingMetadata } from "../lib/metadata";

@@ -2,6 +2,8 @@
 // (plan limits are about customers only, one Enterprise line, no stray lines, one weight) and T37
 // (no sentence ends with the brand name, titles stay short) with a dotted fixture name, plus the
 // SA-1080 rule (no login or seat numbers on any served page). Pages are read as served.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { loadBrand } from "@routeflow/types/brand";
 import { attrValue, isIllustrationTag } from "../../e2e/helpers/site-figure-scope";
 import { readServedSitePage } from "@/lib/read-site-page";
@@ -366,5 +368,27 @@ describe("T10: copy rules over the visible text of every page", () => {
     for (const p of STATIC_SITE_PAGE_NAMES) {
       expect({ p, n: parseVisible(served(p)).figures }).toEqual({ p, n: ILLUSTRATIONS[p] });
     }
+  });
+});
+
+describe("SA-C lines, #4531 M3 and M4: one name and no domain in the legal pages", () => {
+  const read = (rel: string) => readFileSync(join(__dirname, rel), "utf8");
+
+  it("the portal picture on the home page carries the neutral label, no brand token", () => {
+    const html = served("home");
+    expect(html).toContain("<b>Your stores' ordering page</b>");
+    expect(html).not.toContain("<b>Buyer Portal</b>");
+  });
+
+  it.each(["privacy", "terms"])("%s names no domain", (dir) => {
+    const src = read(`${dir}/page.tsx`);
+    expect(src).not.toContain("BRAND_DOMAIN");
+    expect(src).not.toContain("brand-domain");
+  });
+
+  it("privacy covers the website and the app by the ruled sentence", () => {
+    expect(read("privacy/page.tsx")).toContain(
+      "This policy covers this website and the {BRAND.name} app.",
+    );
   });
 });

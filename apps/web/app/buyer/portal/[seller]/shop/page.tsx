@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { pricedPerLabel } from "@routeflow/pricing";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -33,7 +34,7 @@ import {
 } from "@/lib/api/buyer";
 import { promotionRuleLabel } from "@/lib/api/promotions";
 import { useBuyerCart } from "@/lib/buyer-cart";
-import { lineCount, newCartLine } from "@/lib/buyer-cart-line";
+import { lineCount, lineLimit, newCartLine } from "@/lib/buyer-cart-line";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { QtyStepper } from "./_components/QtyStepper";
 import { CartLineUnit } from "../_components/CartLineUnit";
@@ -624,7 +625,14 @@ export default function BuyerShopPage() {
                                     </div>
                                     <div>
                                       <p className="text-sm font-medium text-navy">{p.name}</p>
-                                      <p className="text-xs text-navy/70">per {p.unit}</p>
+                                      <p className="text-xs text-navy/70">
+                                        {
+                                          pricedPerLabel({
+                                            unit: p.unit,
+                                            unitsPerBox: p.unitsPerBox,
+                                          }).perText
+                                        }
+                                      </p>
                                     </div>
                                   </Link>
                                 </td>
@@ -672,6 +680,7 @@ export default function BuyerShopPage() {
                                             cartItem ? () => cart.addItem(cartItem) : undefined
                                           }
                                           size="sm"
+                                          {...(cartItem ? lineLimit(cartItem) : {})}
                                         />
                                         {cartItem && (
                                           <CartLineUnit
