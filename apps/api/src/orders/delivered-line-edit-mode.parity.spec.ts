@@ -64,7 +64,12 @@ describe("line edit mode parity (@routeflow/types vs api)", () => {
   });
 
   it("no sentence tells an admin a delivered line can never be changed (W-1441)", () => {
-    for (const s of [...Object.values(LOCKED_COPY), OPERATOR_NOTE, CORRECT_IDENTITY_MESSAGE])
-      expect(s).not.toMatch(/never|can't ever|cannot ever|no way to change/i);
+    for (const s of [
+      ...Object.values(LOCKED_COPY),
+      ...Object.values(STATUS_COPY),
+      OPERATOR_NOTE,
+      CORRECT_IDENTITY_MESSAGE,
+    ])
+      expect(s).not.toMatch(/can never|never be changed|can't ever|cannot ever|no way to change/i);
   });
 });

@@ -18,6 +18,10 @@ describe("AUDIT_ACTIONS", () => {
     expect(AUDIT_ACTIONS.STANDARD_REFUND_RECORDED).toBe("return.refund-recorded");
   });
 
+  it("pins the delivered-line correction action name (SA-1506 PR-1a)", () => {
+    expect(AUDIT_ACTIONS.ORDER_LINE_CORRECTED).toBe("order.line-corrected");
+  });
+
   it("has unique values and none collides with an API error code (the parity spec bans bare code literals)", () => {
     const values = Object.values(AUDIT_ACTIONS);
     expect(new Set(values).size).toBe(values.length);

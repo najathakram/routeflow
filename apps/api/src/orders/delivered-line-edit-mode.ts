@@ -104,6 +104,16 @@ export type LineEditDecision =
       status?: string;
     };
 
+/**
+ * SEAM (SA-1514 A3 change a): who may correct a delivered line. Today this is the tenant-admin role in a tenant. "Admin"
+ * means `isAdminInTenant` (apps/api/src/common/admin-in-tenant.ts), which lands with SA-1508 PR-2: replace the body of this
+ * function with a call to it and nothing else. Every admin check of the correction path (this decider, the M5 lock class)
+ * goes through here, so that file is the only one that changes.
+ */
+export function isAdminForCorrection(role: string | undefined, hasTenant: boolean): boolean {
+  return role === UserRole.TENANT_ADMIN && hasTenant;
+}
+
 const locked = (reason: LineLockedReason, more: object = {}): LineEditDecision => ({
   mode: "LOCKED",
   reason,
@@ -116,7 +126,7 @@ export function deliveredLineEditMode(
 ): LineEditDecision {
   if (!isLiveDeliveredLine(line)) return { mode: "EDIT" }; // 1
   if (typeof line.unitLabel === "string" && line.unitLabel.trim() !== "") return locked("UNIT"); // 2
-  if (facts.role !== UserRole.TENANT_ADMIN || !facts.hasTenant) {
+  if (!isAdminForCorrection(facts.role, facts.hasTenant)) {
     // 3: today's guards apply unchanged; an operator is also told who can correct, when an admin could.
     const asAdmin = deliveredLineEditMode(line, {
       ...facts,

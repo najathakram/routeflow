@@ -2,6 +2,16 @@ import { ConflictException } from "@nestjs/common";
 import { OrderStatus } from "@prisma/client";
 import { withinStaffOverrideTolerance } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  CORRECT_IDENTITY_MESSAGE,
+  CORRECT_WITH_RETURN_MESSAGE,
+  OPERATOR_BELOW_MESSAGE,
+  OPERATOR_NOTE,
+  OPERATOR_REMOVED_MESSAGE,
+  lockedCopy,
+  statusCopy,
+} from "./delivered-line-copy";
+import type { LineEditDecision } from "./delivered-line-edit-mode";
 import { orderEditMode } from "./order-edit-restrictions";
 
 /**
@@ -58,6 +68,15 @@ export interface DeliveredLockEntry {
   overrideReason?: string | null;
 }
 
+/**
+ * SA-1506 PR-1a: the per-line decisions of `deliveredLineEditMode` (delivered-line-facts.ts), by line id. An empty map is
+ * the pre-SA-1506 behaviour (no CORRECT line, every refusal in today's words), which every caller without the order-level
+ * facts keeps.
+ */
+export type DeliveredModes = ReadonlyMap<string, LineEditDecision>;
+const NO_MODES: DeliveredModes = new Map();
+const EDIT: LineEditDecision = { mode: "EDIT" };
+
 /** True when the order status is one the delivered-line lock applies to. */
 export const deliveredLockApplies = (status: string | null | undefined): boolean =>
   DELIVERED_LOCK_STATUSES.includes(status as OrderStatus);
@@ -72,7 +91,7 @@ const QTY_EPS = 0.0005;
  * Does this payload entry change the line's quantity, price or unit, substitute it, or remove it?
  * An entry that restates the stored values (the web page sends `qty` along with a note edit) is not a change.
  */
-function entryTouchesLine(entry: DeliveredLockEntry, held: DeliveredLockLine): boolean {
+export function entryTouchesLine(entry: DeliveredLockEntry, held: DeliveredLockLine): boolean {
   if (entry.action === "CANCEL" || entry.action === "DELETE") return true;
   if (entry.substituteProductId != null) return true;
   if (entry.productId != null && entry.productId !== (held.productId ?? null)) return true;
@@ -109,15 +128,26 @@ function entryTouchesLine(entry: DeliveredLockEntry, held: DeliveredLockLine): b
 export function assertDeliveredLinesUntouched(
   order: { status: string },
   held: readonly DeliveredLockLine[],
-  dto: { items?: readonly DeliveredLockEntry[]; replaceAll?: boolean },
+  dto: { items?: readonly DeliveredLockEntry[]; replaceAll?: boolean; inlineReturn?: unknown },
   user: { role?: string } | undefined,
   isDiffPayload: boolean,
+  modes: DeliveredModes = NO_MODES,
 ): void {
   const delivered = held.filter(isDeliveredLine);
   if (delivered.length === 0) return;
 
   const mode = orderEditMode(user?.role, dto.replaceAll, isDiffPayload);
   const deliveredById = new Map(delivered.map((l) => [l.id, l]));
+  const decisionOf = (id: string): LineEditDecision => modes.get(id) ?? EDIT;
+  const isCorrect = (id: string) => decisionOf(id).mode === "CORRECT";
+  if (mode.kind === "merge") {
+    // SA-1506: an admin's CORRECT line is judged by the correction's own rules, on every status (the lock below skips it).
+    for (const entry of dto.items ?? []) {
+      const id = entry.id ?? entry.orderItemId;
+      const line = id ? deliveredById.get(id) : undefined;
+      if (line && isCorrect(line.id)) assertCorrectEntry(entry, line, dto);
+    }
+  }
   if (!deliveredLockApplies(order.status)) {
     // SA-1101 §2.7 (verification F): off a PARTIALLY_DELIVERED order only the full change lock stays off. Taking a
     // delivered line away is refused on every status; goods come back through a return. Replace mode keeps
@@ -125,18 +155,54 @@ export function assertDeliveredLinesUntouched(
     if (mode.kind === "merge") {
       for (const entry of dto.items ?? []) {
         const id = entry.id ?? entry.orderItemId;
-        if (id && deliveredById.has(id) && entryRemovesLine(entry)) throw deliveredLineRemoved();
+        if (id && deliveredById.has(id) && !isCorrect(id) && entryRemovesLine(entry))
+          throw deliveredLineRemoved(decisionOf(id));
       }
     }
     return;
   }
-  if (mode.kind === "replace") throw deliveredLineLocked();
+  if (mode.kind === "replace") throw deliveredLineLocked(EDIT);
 
   for (const entry of dto.items ?? []) {
     const id = entry.id ?? entry.orderItemId;
     const line = id ? deliveredById.get(id) : undefined;
-    if (line && entryTouchesLine(entry, line)) throw deliveredLineLocked();
+    if (line && !isCorrect(line.id) && entryTouchesLine(entry, line))
+      throw deliveredLineLocked(decisionOf(line.id));
   }
+}
+
+/** CORRECT restates quantity, box split and price, or takes the line off. It never changes what the line IS. */
+function assertCorrectEntry(
+  entry: DeliveredLockEntry,
+  held: DeliveredLockLine,
+  dto: { inlineReturn?: unknown },
+): void {
+  const unitChange =
+    typeof entry.unitLabel === "string" &&
+    entry.unitLabel.trim() !== "" &&
+    entry.unitLabel !== (held.unitLabel ?? null);
+  const productChange = entry.productId != null && entry.productId !== (held.productId ?? null);
+  if (entry.substituteProductId != null || productChange || unitChange)
+    throw conflict(CORRECT_IDENTITY_MESSAGE);
+  // A return and a correction read the order's stock differently: one save does one of them (SA-1506 C2).
+  if (dto.inlineReturn != null && entryTouchesLine(entry, held))
+    throw conflict(CORRECT_WITH_RETURN_MESSAGE);
+}
+
+const conflict = (message: string) =>
+  new ConflictException({ code: API_ERROR_CODES.LINE_ALREADY_DELIVERED, message });
+
+/**
+ * The words of one refusal. An OPERATOR who could be told an admin can correct this line gets the admin sentence; a
+ * line locked for a named reason (never ROLE, never UNIT, which keep today's words) says that reason's copy; otherwise
+ * today's text stands.
+ */
+function refusalWords(decision: LineEditDecision, today: string, operator: string): string {
+  if (decision.mode !== "LOCKED") return today;
+  if (decision.reason === "ROLE") return decision.operatorNote ? operator : today;
+  if (decision.reason === "UNIT") return today;
+  if (decision.reason === "STATUS") return statusCopy(decision.status);
+  return lockedCopy(decision.reason, { invoiceNumber: decision.invoiceNumber });
 }
 
 /**
@@ -152,6 +218,22 @@ const DELIVERED_LINE_ALLOWED_FIELDS = [
   "overrideReason",
 ] as const;
 
+/** A CORRECT entry keeps its real changes; a price or unit label equal to the held line's is dropped (same entry if none). */
+function withoutUnchangedPriceAndUnit<T extends DeliveredLockEntry>(
+  entry: T,
+  held: DeliveredLockLine,
+): T {
+  const samePrice =
+    entry.unitPrice != null &&
+    withinStaffOverrideTolerance(Number(entry.unitPrice), Number(held.unitPrice ?? 0));
+  const sameUnit = entry.unitLabel != null && entry.unitLabel === (held.unitLabel ?? null);
+  if (!samePrice && !sameUnit) return entry;
+  const out = { ...entry } as Record<string, unknown>;
+  if (samePrice) delete out.unitPrice;
+  if (sameUnit) delete out.unitLabel;
+  return out as T;
+}
+
 /**
  * B1234 (binding stage). The guard lets through an entry that RESTATES a delivered line (the web page sends
  * `qty`, the box split and `unitPrice` along with every note edit). Letting the restated fields reach the write
@@ -165,19 +247,39 @@ export function reduceDeliveredLineEntries<T extends DeliveredLockEntry>(
   order: { status: string },
   held: readonly DeliveredLockLine[],
   items: T[] | undefined,
+  modes: DeliveredModes = NO_MODES,
 ): T[] | undefined {
-  if (!items || !deliveredLockApplies(order.status)) return items;
-  const deliveredIds = new Set(held.filter(isDeliveredLine).map((l) => l.id));
-  if (deliveredIds.size === 0) return items;
-  return items.map((entry) => {
+  if (!items) return items;
+  const pd = deliveredLockApplies(order.status); // the full change lock: every delivered line is cut
+  // A2 M8: on CONFIRMED and PARTIALLY_DELIVERED the strip is keyed per LIVE delivered line, for every role: an entry that
+  // restates it (no real change) is cut, so it never reprices from live promotions or restates a sent invoice.
+  const perLine = pd || order.status === OrderStatus.CONFIRMED;
+  const deliveredLines = new Map(held.filter(isDeliveredLine).map((l) => [l.id, l]));
+  const isCorrect = (id: string) => modes.get(id)?.mode === "CORRECT";
+  if (deliveredLines.size === 0) return items;
+  if (!perLine && ![...deliveredLines.keys()].some(isCorrect)) return items;
+  const out = items.map((entry) => {
     const id = entry.id ?? entry.orderItemId;
-    if (!id || !deliveredIds.has(id)) return entry;
+    const line = id ? deliveredLines.get(id) : undefined;
+    if (!id || !line) return entry;
+    if (isCorrect(id)) {
+      // B8: an admin's DELETE of a delivered line is a take-off (CANCEL): the row is kept, never removed.
+      if (entry.action === "DELETE")
+        return withoutUnchangedPriceAndUnit({ ...entry, action: "CANCEL" } as T, line);
+      // B7: a real change reaches the write loop; a restated entry is cut to its note / reason below.
+      // SA-1514 A3 LOW 9 (A1 B10): a price or unit the entry only restates is dropped on EVERY CORRECT entry, so it never
+      // reprices a sent invoice from a stale price or trips the unit guards.
+      if (entryTouchesLine(entry, line)) return withoutUnchangedPriceAndUnit(entry, line);
+    } else if (!pd && !(perLine && isLiveDeliveredLine(line) && !entryTouchesLine(entry, line))) {
+      return entry;
+    }
     const reduced: Record<string, unknown> = {};
     for (const key of DELIVERED_LINE_ALLOWED_FIELDS) {
       if (entry[key] !== undefined) reduced[key] = entry[key];
     }
     return reduced as T;
   });
+  return out.every((e, i) => e === items[i]) ? items : out; // the same array when nothing was cut
 }
 
 /** A per-line entry that takes a line away: a strike-off, a delete or a substitution (SA-1101 §2.7). */
@@ -187,18 +289,18 @@ const entryRemovesLine = (entry: DeliveredLockEntry): boolean =>
 export const DELIVERED_LINE_REMOVED_MESSAGE =
   "This line was delivered, so it can't be removed. To take goods back, record a return.";
 
-function deliveredLineRemoved(): ConflictException {
-  return new ConflictException({
-    code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
-    message: DELIVERED_LINE_REMOVED_MESSAGE,
-  });
+function deliveredLineRemoved(decision: LineEditDecision): ConflictException {
+  return conflict(refusalWords(decision, DELIVERED_LINE_REMOVED_MESSAGE, OPERATOR_REMOVED_MESSAGE));
 }
 
-function deliveredLineLocked(): ConflictException {
-  return new ConflictException({
-    code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
-    message: DELIVERED_LINE_LOCKED_MESSAGE,
-  });
+function deliveredLineLocked(decision: LineEditDecision): ConflictException {
+  return conflict(
+    refusalWords(
+      decision,
+      DELIVERED_LINE_LOCKED_MESSAGE,
+      `${DELIVERED_LINE_LOCKED_MESSAGE} ${OPERATOR_NOTE}`,
+    ),
+  );
 }
 
 export const DELIVERED_LINE_BELOW_MESSAGE =
@@ -215,15 +317,14 @@ export function assertQtyNotBelowDelivered(
   deliveredQty: unknown,
   heldQty: unknown,
   nextQty: unknown,
+  decision: LineEditDecision = EDIT,
 ): void {
   const delivered = Number(deliveredQty ?? 0);
   if (!(delivered > 0)) return;
+  if (decision.mode === "CORRECT") return; // SA-1506: an admin's correction may cut below what was delivered
   const next = Number(nextQty);
   if (next < delivered - QTY_EPS && next < Number(heldQty ?? 0) - QTY_EPS) {
-    throw new ConflictException({
-      code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
-      message: DELIVERED_LINE_BELOW_MESSAGE,
-    });
+    throw conflict(refusalWords(decision, DELIVERED_LINE_BELOW_MESSAGE, OPERATOR_BELOW_MESSAGE));
   }
 }
 

@@ -65,7 +65,7 @@ export const LINE_LOCKED_COPY: Record<Exclude<LineLockedReason, "ROLE" | "STATUS
   RETURN:
     "An item on this order had a return. Admins can correct it in the next update, landing with this one.",
   RETURN_BASIS:
-    "The box size of {item} is unclear, so its return can't be counted. Check the item's box size, then try again.",
+    "{item} has no Units per box set, so its return can't be counted. Set Units per box on the item, then try again.",
   RETURN_REMAINDER:
     "Part of {item} was never delivered and part was returned, so its quantity can't be lowered here. Mark the order delivered again, then record a return.",
   RETURN_PRICE:
@@ -73,7 +73,7 @@ export const LINE_LOCKED_COPY: Record<Exclude<LineLockedReason, "ROLE" | "STATUS
   SPLIT_BILL:
     "Part of this order is billed on another invoice. Mark the order delivered again, then record a return or add a new order.",
   WRITTEN_OFF:
-    "Invoice {n} was written off, so this order is closed. Add anything missed on a new order.",
+    "Invoice {invoiceNumber} was written off, so this order is closed. Add anything missed on a new order.",
   SHIPMENT_BILLED:
     "This order was billed when it shipped. Mark the order delivered again, then record a return for the difference.",
   UNIT: "{item} is sold by unit and already invoiced. Mark the order delivered again, then record a return.",
@@ -101,5 +101,5 @@ export function fillLockedCopy(
       : LINE_LOCKED_COPY[reason];
   return template
     .replace("{item}", words.item?.trim() || "This item")
-    .replace("{n}", words.invoiceNumber?.trim() || "linked to this order");
+    .replace("{invoiceNumber}", words.invoiceNumber?.trim() || "linked to this order");
 }

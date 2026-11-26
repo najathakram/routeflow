@@ -107,8 +107,8 @@ const INVENTORY: Record<string, Row> = {
   "orders/orders.service.ts::OrdersService.updateOrderItems": {
     how: "NOT_FROM_DRAFT",
     n: 1,
-    why: "the edit's CONFIRMED -> PENDING revert, behind shouldRevert (status CONFIRMED only)",
-    needs: ["shouldRevert", "CONFIRMED"],
+    why: "the edit's CONFIRMED -> PENDING revert, behind shouldRevert (confirmedEditReverts holds the CONFIRMED-only rule, delivered-line-correction.ts)",
+    needs: ["shouldRevert", "confirmedEditReverts"],
   },
   "orders/order-merge-fold.ts::forceConsolidateCustomerImpl": {
     how: "NO_STATUS",

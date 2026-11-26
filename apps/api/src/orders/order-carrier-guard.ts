@@ -112,8 +112,18 @@ const POST_DELIVERY_EDIT_STATUSES: ReadonlySet<string> = new Set([
  * `replayMergeReconcile`, so a replayed merge routes exactly as the fold that landed did (B215:
  * the two may not drift). A with-carrier order re-syncs its shipment invoice in place (D2 / S4).
  */
-export function resyncsInPlace(status: string, guard: CarrierEditGuard): boolean {
-  return POST_DELIVERY_EDIT_STATUSES.has(status) || guard.withCarrier;
+export function resyncsInPlace(
+  status: string,
+  guard: CarrierEditGuard,
+  /**
+   * SA-1506 PR-1a (B4): the order HOLDS a live delivered line (`isLiveDeliveredLine`, computed on the HELD lines). A
+   * reopened order (CONFIRMED / PENDING again) that still carries delivered goods restates its invoice in place, like a
+   * DELIVERED one (B215), instead of flipping to PENDING and reverting the invoice to a draft. REQUIRED, so the compiler
+   * makes every caller say what it knows (the edit, replace-after-delivery, the merge replay, the revert set).
+   */
+  holdsLiveDelivered: boolean,
+): boolean {
+  return POST_DELIVERY_EDIT_STATUSES.has(status) || guard.withCarrier || holdsLiveDelivered;
 }
 
 const IN_TRANSIT: ReadonlySet<string> = new Set([

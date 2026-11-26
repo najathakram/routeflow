@@ -18,7 +18,7 @@ export const LOCKED_COPY = {
   RETURN:
     "An item on this order had a return. Admins can correct it in the next update, landing with this one.",
   RETURN_BASIS:
-    "The box size of {item} is unclear, so its return can't be counted. Check the item's box size, then try again.",
+    "{item} has no Units per box set, so its return can't be counted. Set Units per box on the item, then try again.",
   RETURN_REMAINDER:
     "Part of {item} was never delivered and part was returned, so its quantity can't be lowered here. Mark the order delivered again, then record a return.",
   RETURN_PRICE:
@@ -26,7 +26,7 @@ export const LOCKED_COPY = {
   SPLIT_BILL:
     "Part of this order is billed on another invoice. Mark the order delivered again, then record a return or add a new order.",
   WRITTEN_OFF:
-    "Invoice {n} was written off, so this order is closed. Add anything missed on a new order.",
+    "Invoice {invoiceNumber} was written off, so this order is closed. Add anything missed on a new order.",
   SHIPMENT_BILLED:
     "This order was billed when it shipped. Mark the order delivered again, then record a return for the difference.",
   UNIT: "{item} is sold by unit and already invoiced. Mark the order delivered again, then record a return.",
@@ -60,9 +60,18 @@ export const CORRECT_WITH_RETURN_MESSAGE =
 export const CORRECT_OVERPAY_MESSAGE =
   "This change would leave the invoice below what the customer already paid. For now, mark the order delivered again, then record a return for the difference.";
 
-/** The restatement cannot reach every invoice of the order (a manual line, lost provenance): nothing is written. */
-export const UNCLEAN_PARTITION_MESSAGE =
-  "Invoice {n} has a line added by hand, so order changes can't update it. Revert the invoice to draft and edit it there.";
+/**
+ * UNPROJECTED (SA-1415 table): the restatement cannot reach every invoice of the order (a line added on the invoice
+ * itself, lost provenance), so nothing is written. One sentence and one step per direction; lifted by PR-6.
+ */
+export const UNPROJECTED_ADDING_MESSAGE =
+  "Invoice {invoiceNumber} has a line that was added on the invoice itself, so changes here can't update it. Add these items on a new order.";
+export const UNPROJECTED_CUTTING_MESSAGE =
+  "Invoice {invoiceNumber} has a line that was added on the invoice itself, so changes here can't update it. To bill less, add a credit note.";
+
+/** Filed month (SA-1415 table, until PR-4 / SA-1511 replaces it): a correction that moves money in a filed month. */
+export const FILED_MONTH_MESSAGE =
+  "{month} is already filed. Mark the order delivered again, then record a return.";
 
 /** A2 M5 / lock class: the edit's lock class changed between the pre-transaction read and the Order lock. */
 export const ORDER_CHANGED_DURING_EDIT_MESSAGE =
@@ -82,9 +91,10 @@ export function statusCopy(status: string | null | undefined): string {
 
 export function fill(
   template: string,
-  words: { item?: string | null; invoiceNumber?: string | null } = {},
+  words: { item?: string | null; invoiceNumber?: string | null; month?: string | null } = {},
 ): string {
   return template
     .replace("{item}", words.item?.trim() || "This item")
-    .replace("{n}", words.invoiceNumber?.trim() || "linked to this order");
+    .replace("{invoiceNumber}", words.invoiceNumber?.trim() || "linked to this order")
+    .replace("{month}", words.month?.trim() || "That month");
 }

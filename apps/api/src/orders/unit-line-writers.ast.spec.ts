@@ -1147,6 +1147,9 @@ const REVISIONS: Record<string, RevisionRow> = {
   "orders/office-evidence-completion.ts::completeOfficeEvidencedLines": statusOnly(
     "delivery evidence (deliveredQty), not the sale",
   ),
+  "orders/delivered-line-correction.ts::applyLineCorrections": statusOnly(
+    "delivery evidence (deliveredQty) lowered with a correction; the edit's own EDIT revision covers the sale",
+  ),
   // B692: a manual PARTIALLY_DELIVERED records per-line delivery evidence (deliveredQty recompute), not the sale.
   "orders/order-pd-quantities.ts::writeOfficeDeliveries": statusOnly(
     "delivery evidence (deliveredQty), not the sale",

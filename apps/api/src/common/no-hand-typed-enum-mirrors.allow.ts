@@ -81,6 +81,7 @@ apps/api/src/orders/counter-sale/counter-sale-payment.ts | PaymentMethod | 1 | p
 apps/api/src/orders/counter-sale/counter-sale-today.ts | PaymentMethod | 1 | pending:B7 | array {ADVANCE,CASH,CARD,CHECK,OTHER,STORE_CREDIT}
 apps/api/src/orders/counter-sale/counter-tender-row.ts | PaymentMethod | 1 | pending:B7 | array {CASH,CREDIT_CARD,CHECK}
 apps/api/src/orders/counter-sale/pickup-complete.service.ts | OrderStatus | 1 | pending:B7 | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY}
+apps/api/src/orders/delivered-line-copy.ts | OrderStatus | 1 | subset | object {PENDING,DRAFT,OUT_FOR_DELIVERY,REFUSED,CANCELLED}: the STATUS refusal sentence, one per status that holds a delivered line outside CONFIRMED / PARTIALLY_DELIVERED / DELIVERED (SA-1415 table); the api cannot value-import the shared copy, parity-pinned to it
 apps/api/src/orders/line-author-channel.ts | OrderSource | 1 | pending:B7 | union {APP,PHONE,ROUTE}
 apps/api/src/orders/order-status-transitions.ts | OrderStatus | 3 | pending:B7 | array+object {DRAFT,PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTI…
 apps/api/src/orders/order-status-transitions.ts | ItemStatus | 2 | subset | array {CONFIRMED,DELIVERED,CANCELLED}: SA-1101 added REFUSED to OrderStatus, so the transition table's value lists now score against ItemStatus; they are the order transition TABLE, not a line status set
@@ -323,6 +324,7 @@ packages/types/index.ts | RouteRunStatus | 1 | pending:B3 | enum {SCHEDULED,IN_P
 packages/types/index.ts | RouteRunStopStatus | 1 | pending:B3 | enum {PENDING,IN_PROGRESS,COMPLETED,SKIPPED}
 packages/types/index.ts | TxnStatus | 1 | pending:B3 | enum {UNPAID,PARTIAL,PAID}
 packages/types/index.ts | UserRole | 1 | pending:B3 | enum {OPERATOR,TENANT_ADMIN,CUSTOMER,DRIVER,SUPER_AD…
+packages/types/api/line-edit-mode.ts | OrderStatus | 1 | subset | object {PENDING,DRAFT,OUT_FOR_DELIVERY,REFUSED,CANCELLED}: the STATUS refusal sentence per status that holds a delivered line outside CONFIRMED / PARTIALLY_DELIVERED / DELIVERED (SA-1415 table); a copy table, not a status list
 packages/types/index.ts | UserStatus | 1 | pending:B3 | enum {ACTIVE,INACTIVE,SUSPENDED}
 packages/types/invoice-send-state.ts | InvoiceStatus | 1 | pending:B3 | array {SENT,VIEWED,OVERDUE,PARTIAL,PAID}
 packages/types/order-line-backorder.ts | OrderStatus | 1 | pending:B3 | array {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…

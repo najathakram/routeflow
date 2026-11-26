@@ -29,6 +29,7 @@ import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import type { OrdersService } from "./orders.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertQtyNotBelowDelivered } from "./delivered-line-lock";
+import { deliveredLineEditMode, NO_ORDER_FACTS } from "./delivered-line-edit-mode";
 import { linesPriceAtCustomerTier } from "./driver-line-price";
 
 /**
@@ -478,6 +479,7 @@ export async function updateUnitLine(
       ctx.flooredDelivered.get(lineId) ?? held?.deliveredQty,
       held?.qty,
       rest.qty,
+      held ? deliveredLineEditMode(held, NO_ORDER_FACTS) : undefined, // SA-1506 C2: always LOCKED UNIT
     ); // SA-1149 D2 / F1
   }
   const data = isSubstitute

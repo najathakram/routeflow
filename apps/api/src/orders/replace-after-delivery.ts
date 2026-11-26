@@ -6,6 +6,7 @@ import { assertWalkInSaleEditable } from "./counter-sale/walk-in-sale-lock";
 import * as carrierGuard from "./order-carrier-guard";
 import { withOrderBillingLock } from "../invoices/order-billing-lock";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
+import { holdsLiveDeliveredLine } from "./delivered-line-correction";
 
 export { walkInSaleLocked } from "./counter-sale/walk-in-sale-lock";
 
@@ -43,16 +44,22 @@ const WALK_IN_FLAG = { customer: { select: { isWalkIn: true } } } as const;
  * Returns the routing the edit goes on to use.
  */
 type CarrierArgs = Parameters<typeof carrierGuard.carrierEditGuard>;
+type HeldForRouting = { lineItems: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }> };
 
 export async function editGuards(
   deps: CarrierArgs[0] & { prisma: { forTenant(): any } },
-  order: CarrierArgs[1] & { id: string; status: string },
+  order: CarrierArgs[1] & { id: string; status: string } & HeldForRouting,
   user: { role?: string } | undefined,
   dto: { replaceAll?: boolean },
   isDiffPayload: boolean,
 ) {
   const carrier = await carrierGuard.carrierEditGuard(deps, order);
-  const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrier);
+  // SA-1506 PR-1a (B4): the HELD lines decide the third input (a reopened order that holds a live delivered line)
+  const postDeliveryEdit = carrierGuard.resyncsInPlace(
+    order.status,
+    carrier,
+    holdsLiveDeliveredLine(order.lineItems),
+  );
   const db = deps.prisma.forTenant();
   const flag = await db.order.findUnique({ where: { id: order.id }, select: WALK_IN_FLAG });
   await assertWalkInSaleEditable(db, { id: order.id, customer: flag?.customer });

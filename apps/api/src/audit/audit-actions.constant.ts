@@ -75,6 +75,8 @@ export const AUDIT_ACTIONS = {
   PAYMENT_REF_DUPLICATE_SUSPECT: "payment.ref-duplicate-suspect",
   /** Row 587 (SA-833): PARTIALLY_DELIVERED -> DELIVERED completed an office-evidenced line; meta {orderId, lineId, from, to, summary}. */
   ORDER_LINE_OFFICE_COMPLETED: "order.line-office-completed",
+  /** SA-1506 PR-1a: a TENANT_ADMIN corrected a delivered line of a reopened order (quantity, price or take-off); one row per corrected line, written in the edit transaction; entityId = the order, meta {actor, impersonatedBy, orderId, lineId, taken_off, qty, boxes, pieces, unitPrice, deliveredQty (each {before, after}), evidenceRows [{id, before, after}], stockDeltaPieces}. */
+  ORDER_LINE_CORRECTED: "order.line-corrected",
   /** SA-737: a STANDARD return's cash/card/check refund recorded; meta {returnId, returnNumber, orderId, customerId, invoiceIds, amount, tender, actor, impersonatedBy}. */
   STANDARD_REFUND_RECORDED: "return.refund-recorded",
 } as const;

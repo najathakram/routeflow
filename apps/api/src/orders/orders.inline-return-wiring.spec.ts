@@ -147,7 +147,7 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
   });
 
   it("the customer advisory lock is the tx's FIRST statement: before the Order FOR UPDATE and every write", () => {
-    const lock = at("lockInlineReturnCustomer(");
+    const lock = at("dl.lockFirst(");
     expect(lock).toBeLessThan(at("lockEditedOrder(tx, orderId")); // the Order FOR UPDATE (replace-after-delivery.ts)
     expect(lock).toBeLessThan(at("tx.orderItem.findMany("));
   });
@@ -165,14 +165,14 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
     const reserve = at("reserveEditReturnNumber(");
     expect(reserve).toBeGreaterThan(at("authGuard.assertAuthorizedOrThrow("));
     expect(reserve).toBeGreaterThan(revert);
-    expect(reserve).toBeLessThan(at("lockInlineReturnCustomer("));
+    expect(reserve).toBeLessThan(at("dl.lockFirst("));
     expect(body.split("reserveEditReturnNumber(").length - 1).toBe(1);
   });
 
   it("the edit tx re-runs on a lock error / write conflict via retryStockTx (every edit, SA-767 r-note 3), with the SAME reserved number (SA-340)", () => {
     const retry = at("runEditTx(");
     expect(at("reserveEditReturnNumber(")).toBeLessThan(retry); // reserved ONCE, ahead of the retried tx
-    expect(retry).toBeLessThan(at("lockInlineReturnCustomer(")); // the whole tx is inside the retried callback
+    expect(retry).toBeLessThan(at("dl.lockFirst(")); // the whole tx is inside the retried callback
     expect(body.slice(retry, retry + 60)).not.toContain("inlineRet"); // no return gate: plain edits retry too
   });
 
@@ -188,7 +188,7 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
   });
 
   it("nothing between the customer lock and the commit takes another advisory lock or a tx-less recompute", () => {
-    const window = body.slice(at("lockInlineReturnCustomer("), at("emitInlineReturnCredit("));
+    const window = body.slice(at("dl.lockFirst("), at("emitInlineReturnCredit("));
     for (const forbidden of [
       "withAdvisoryLock",
       "withOrderRecomputeLock",
@@ -196,5 +196,24 @@ describe("OrdersService.updateOrderItems(): inline-return call order (#2094)", (
     ]) {
       expect(window).not.toContain(forbidden);
     }
+  });
+});
+
+describe("delivered-line-correction.ts lockFirst (SA-1506 M5): the edit tx's first statement", () => {
+  const src = strip(fs.readFileSync(path.join(__dirname, "delivered-line-correction.ts"), "utf8"));
+  const start = src.indexOf("async lockFirst(");
+  const body = src.slice(start, src.indexOf("async assertLocked(", start));
+
+  it("takes the returns lock for the correct class, then the inline-return customer lock", () => {
+    expect(start).toBeGreaterThan(-1);
+    const returns = body.indexOf("lockReturnCustomersOf(");
+    const customer = body.indexOf("lockInlineReturnCustomer(");
+    expect(returns).toBeGreaterThan(-1);
+    expect(customer).toBeGreaterThan(returns);
+  });
+
+  it("is the first call of the edit tx, before the Order FOR UPDATE", () => {
+    const edit = methodBody("updateOrderItems");
+    expect(edit.indexOf("dl.lockFirst(")).toBeLessThan(edit.indexOf("lockEditedOrder(tx, orderId"));
   });
 });

@@ -313,6 +313,13 @@ export function bookedTerms(
   held: BookedLine[],
   final: BookedLine[],
   identity: LineIdentity = "stable",
+  /**
+   * SA-1506 PR-1a (B2): the delivered quantity an admin's CORRECTION restated, by line id (default empty: an edit never
+   * rewrites `deliveredQty`). Read in BOTH after-branches below, so the goods the correction says never left come back:
+   * the matched after-term `b` (sized with the FINAL line's pack snapshot, like `a`) and the removed / struck-off
+   * after-term `a` (a struck line has no final line, so it uses the HELD snapshot). The before-terms keep the held d.
+   */
+  corrected?: ReadonlyMap<string, number>,
 ): BookedTerm[] {
   const finalById = new Map<string, BookedLine>();
   if (identity === "stable")
@@ -324,12 +331,18 @@ export function bookedTerms(
   for (const h of held) {
     const d = partsOf(h, h.deliveredQty ?? 0);
     const f = h.id != null ? finalById.get(h.id) : undefined;
+    const cd = h.id != null ? corrected?.get(h.id) : undefined;
     terms.push({ bucket: f ? "matched" : "unmatched", side: "before", a: partsOf(h, h.qty), b: d });
     if (f && !matchedFinal.has(f)) {
       matchedFinal.add(f);
-      terms.push({ bucket: "matched", side: "after", a: partsOf(f, f.qty), b: d });
+      terms.push({
+        bucket: "matched",
+        side: "after",
+        a: partsOf(f, f.qty),
+        b: cd != null ? partsOf(f, cd) : d,
+      });
     } else if (identity === "stable") {
-      terms.push({ bucket: "unmatched", side: "after", a: d }); // removed: delivered stays booked
+      terms.push({ bucket: "unmatched", side: "after", a: cd != null ? partsOf(h, cd) : d }); // removed: delivered stays booked, unless corrected
     } else {
       heldD = plusParts(heldD, d);
     }
@@ -486,6 +499,8 @@ export async function settleStockForEdit(
     markerMode?: "adjust" | "set";
     /** SA-716 M2: held markers captured before a recreate-mode create-merge fold (product + pack group). */
     markerCarry?: ReadonlyMap<string, number>;
+    /** SA-1506 PR-1a (B2): delivered quantities an admin correction restated, by line id; only the edit passes it. */
+    correctedDelivered?: ReadonlyMap<string, number>;
   },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
@@ -564,7 +579,12 @@ export async function settleStockForEdit(
   const terms = new Map(
     productIds.map((id) => [
       id,
-      bookedTerms(heldLines.get(id) ?? [], finalLines.get(id) ?? [], opts?.lineIdentity),
+      bookedTerms(
+        heldLines.get(id) ?? [],
+        finalLines.get(id) ?? [],
+        opts?.lineIdentity,
+        opts?.correctedDelivered,
+      ),
     ]),
   );
   const effTouched = productIds.filter((id) => {

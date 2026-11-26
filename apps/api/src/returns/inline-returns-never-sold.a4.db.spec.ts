@@ -32,6 +32,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { InlineReturnsService } from "./inline-returns.service";
 import { carrierEditGuard, resyncsInPlace } from "../orders/order-carrier-guard";
+import { holdsLiveDeliveredLine } from "../orders/delivered-line-correction";
 import { SHIP_STATE_REOPENED } from "../orders/ship-state-markers";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -217,9 +218,16 @@ describeDb("SA-1060 A-4 - what never sold reads, real Postgres", () => {
   async function note(w: World, editOrderId: string, pieces: number) {
     return tenantCtx.run(tenantId, async () => {
       const db = prisma.forTenant();
-      const order = await db.order.findFirstOrThrow({ where: { id: editOrderId } });
+      const order = await db.order.findFirstOrThrow({
+        where: { id: editOrderId },
+        include: { lineItems: { select: { status: true, deliveredQty: true } } },
+      });
       const guard = await carrierEditGuard({ featureConfig, prisma } as any, order as any);
-      const willRevert = !resyncsInPlace(order.status, guard);
+      const willRevert = !resyncsInPlace(
+        order.status,
+        guard,
+        holdsLiveDeliveredLine(order.lineItems),
+      );
       const dto = {
         customerId: w.customerId,
         orderId: editOrderId,
