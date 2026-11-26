@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { InternalServerErrorException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { monthRange } from "./period";
 
@@ -28,7 +28,11 @@ export type FilingsDb = {
 
 /** Fail closed: an empty tenant id would match no row (`tenantId: null`) and so read as "nothing is locked". */
 function requireTenant(tenantId: string): void {
-  if (!tenantId) throw new ForbiddenException("A filed-period read needs an explicit tenantId");
+  if (!tenantId) {
+    // A caller bug, not a client error: generic to the client, the detail is logged (house pattern).
+    new Logger("FiledPeriods").error("A filed-period read needs an explicit tenantId");
+    throw new InternalServerErrorException();
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -335,6 +339,7 @@ export async function filedThroughOf(
   product: FiledProduct,
   cache: FiledCache,
 ): Promise<FiledThrough | null> {
+  requireTenant(tenantId);
   let best: FiledThrough | null = null;
   if (product.isTobacco) best = await tobaccoFiled(db, tenantId, cache);
   if (product.trackedCategoryId) {

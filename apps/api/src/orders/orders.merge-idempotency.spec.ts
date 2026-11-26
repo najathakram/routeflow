@@ -97,7 +97,12 @@ jest.mock("../common/db-locks", () => {
 
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
-import { ConflictException, ForbiddenException, Logger } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  InternalServerErrorException,
+  Logger,
+} from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
 import { OrdersService } from "./orders.service";
@@ -663,7 +668,7 @@ describe("OrdersService.updateOrderItems — merge idempotency key write (REG-B2
       (service as any).updateOrderItems("ord-1", dto, operatorPayload, {
         idempotency: { key: "K1", responseHash: "h1" },
       }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).rejects.toBeInstanceOf(InternalServerErrorException);
     expect((prisma as any).orderIdempotencyKey.create).not.toHaveBeenCalled();
   });
 

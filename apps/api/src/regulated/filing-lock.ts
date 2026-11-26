@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { ConflictException, InternalServerErrorException, Logger } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   anyLockedFiling,
@@ -44,7 +44,8 @@ export async function assertLedgerRowsNotLocked(
   const tenantIds = new Set(rows.map((r) => r.tenantId ?? ""));
   const [tenantId] = [...tenantIds];
   if (tenantIds.size !== 1 || !tenantId) {
-    throw new ForbiddenException("Ledger rows must all carry one tenantId");
+    new Logger("FilingLock").error("Ledger rows must all carry one tenantId");
+    throw new InternalServerErrorException();
   }
   const unique = [
     ...new Map(rows.map((r) => [`${r.trackedCategoryId}|${r.periodBucket}`, r])).values(),
