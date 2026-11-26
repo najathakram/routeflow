@@ -18,6 +18,7 @@ import type {
   ToCollectState,
   PriceType,
   OrderCancelBlockedReason,
+  BuyerEditClosedReason,
   LineEditModeFields,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
@@ -157,7 +158,7 @@ export interface Order {
   editWindow?: {
     editable: boolean;
     editableUntil: string | null;
-    closedReason: "DISPATCHED" | "STATUS" | null;
+    closedReason: BuyerEditClosedReason | null;
   };
   /** B1116: STAFF-ONLY — whether the order's invoices need review (absent on buyer/driver reads and older API). */
   invoicesNeedReview?: OrderInvoicesNeedReview;

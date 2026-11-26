@@ -398,6 +398,10 @@ export interface BuyerOrderListItem {
 export const BUYER_EDIT_CLOSED_REASONS = ["DISPATCHED", "STATUS", "DELIVERED_LINES"] as const;
 export type BuyerEditClosedReason = (typeof BUYER_EDIT_CLOSED_REASONS)[number];
 
+/** The one sentence a client shows for `closedReason: "DELIVERED_LINES"` (lead decision 2026-11-26, standing in for SA-C). */
+export const DELIVERED_LINES_CLOSED_COPY =
+  "Part of this order was already delivered, so it can't be changed here. Send a change request instead.";
+
 /** P5-08: the server's edit window — editing closes when the order's run dispatches. */
 export interface BuyerOrderEditWindow {
   editable: boolean;

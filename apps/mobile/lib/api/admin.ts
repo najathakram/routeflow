@@ -12,6 +12,7 @@ import type {
   InventorySettings,
   LineComponentView,
   OrderCancelBlockedReason,
+  BuyerEditClosedReason,
   UpdateInventorySettingsRequest,
   TripEligibilityRow,
   TripOrigin,
@@ -252,7 +253,11 @@ export interface AdminOrder {
    * of truth for whether items can be edited — mobile trusts it instead of
    * re-deriving from status, so it tracks the API gate (incl. post-delivery edits).
    */
-  editWindow?: { editable: boolean; editableUntil: string | null; closedReason: string | null };
+  editWindow?: {
+    editable: boolean;
+    editableUntil: string | null;
+    closedReason: BuyerEditClosedReason | null;
+  };
   /**
    * Order-scoped credit-note intents (server: OrderCreditNote). Already returned
    * by GET /orders/:id's include — was untyped, forcing `as any` on the detail screen.
