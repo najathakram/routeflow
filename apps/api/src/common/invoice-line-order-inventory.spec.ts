@@ -33,6 +33,8 @@ const NOT_SHOWN: Record<string, string> = {
   "invoices/invoice-follow-order.ts":
     "re-ranks stored positions after an order reorder; shows no list",
   "invoices/invoice-display-unit.ts": "maps the array it receives, in order",
+  "invoices/invoice-edit-policy.ts":
+    "reads line ids and unit labels to judge an edit; shows no list",
   "invoices/invoice-pdf-template.tsx": "renders the array the PDF service hands it",
   "invoices/invoices.service.ts": "writers and guards; findOne is pinned below",
   "invoices/nsf-line.ts": "a comment names the read",

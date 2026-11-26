@@ -1,8 +1,20 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
+import type { InvoiceEditBlocked } from "@routeflow/types";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { isAdminInTenant } from "../common/admin-in-tenant";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { DISCOUNT_SOURCE_SELECT, discountModeOf } from "../common/discount-tax-mode";
+import { assertSalesNotLockedForEdit } from "../regulated/filing-lock";
+import * as unitAware from "../orders/unit-aware-guard";
+import {
+  INVOICE_EDIT_REFUSAL_MESSAGES,
+  invoiceEditDecision,
+  loadInvoiceEditInputs,
+  type InvoiceEditChange,
+} from "./invoice-edit-policy";
+import { headerKeysChanged, invoiceHeaderData } from "./invoice-edit-plan";
 import { sumConfirmed } from "./payment-predicates";
 import {
   assertTaxStateRecomputable,
@@ -225,6 +237,126 @@ export function assertStillDraft(invoice: { status?: unknown }): void {
   if (invoice.status !== InvoiceStatus.DRAFT) {
     throw new BadRequestException("Only DRAFT invoices can be edited");
   }
+}
+
+/**
+ * SA-1508: how one `update()` save is judged. DRAFT is today's rule, unchanged. ISSUED is an admin's in-place edit of a
+ * SENT, VIEWED or OVERDUE invoice: it needs the editor's `expectedUpdatedAt`, is judged by the policy under the lock,
+ * and its money gates run only when the save can move money.
+ */
+export type EditMode = "DRAFT" | "ISSUED";
+
+/** What the gate needs to know about the request, built once per `update()` after its date stamps. */
+export interface IssuedEditCtx {
+  mode: EditMode;
+  actor?: JwtPayload;
+  /** The request's tenant (`prisma.getTenantId()`): null for a tenantless super admin, who is never an admin here. */
+  tenantId?: string | null;
+  dto: Parameters<typeof invoiceHeaderData>[0] & {
+    discount?: number | null;
+    shippingFee?: number | null;
+  };
+  issueDate?: Date;
+  due: { dueDate: Date | null; depositDueDate: Date | null };
+}
+
+/** The 409 of a refused issued edit: `code` INVOICE_EDIT_REFUSED, `reason` for the client's own copy, plain `message`. */
+export function invoiceEditRefusal(b: InvoiceEditBlocked): ConflictException {
+  return new ConflictException({
+    code: API_ERROR_CODES.INVOICE_EDIT_REFUSED,
+    reason: b.reason,
+    message: INVOICE_EDIT_REFUSAL_MESSAGES[b.reason],
+    ...(b.orderId ? { orderId: b.orderId, orderNumber: b.orderNumber ?? null } : {}),
+  });
+}
+
+/**
+ * The mode of this save, decided BEFORE the transaction from the unlocked read, and the cheap refusals with it: an
+ * issued invoice is editable here only by an admin of this tenant, in an editable status, with no order behind it.
+ * Everything that needs a lock is judged again under it (`assertModeUnderLock`, `assertEditableUnderLock`).
+ */
+export function editModeOf(
+  inv: { status: unknown; orderId?: string | null },
+  actor: JwtPayload | undefined,
+  tenantId: string | null | undefined,
+): EditMode {
+  if (inv.status === InvoiceStatus.DRAFT) return "DRAFT";
+  const { blocked } = invoiceEditDecision({
+    admin: isAdminInTenant(actor, tenantId),
+    status: String(inv.status),
+    orderId: inv.orderId,
+  });
+  if (blocked) throw invoiceEditRefusal(blocked);
+  return "ISSUED";
+}
+
+/**
+ * The first judgment under the lock (r87, replacing `assertStillDraft` in both transaction branches): the mode read
+ * before the lock must still hold, and an issued save carries the editor's token (no legacy grace: the screens send it).
+ */
+export function assertModeUnderLock(
+  invoice: { status?: unknown },
+  mode: EditMode,
+  expectedUpdatedAt: string | null | undefined,
+): void {
+  if (mode === "DRAFT") return assertStillDraft(invoice);
+  if (invoice.status === InvoiceStatus.DRAFT) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+      message: "The invoice changed while it was being edited. Try again.",
+    });
+  }
+  if (expectedUpdatedAt == null) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.INVOICE_STALE,
+      message:
+        "Reload this invoice, then save again. A sent invoice can only be changed from its current copy.",
+    });
+  }
+}
+
+/**
+ * The one gate of an ISSUED edit under the lock (DRAFT: nothing to judge here). `change` says whether the save can move
+ * money; the money gates (filing lock, unit rewrite, payments, credits, a total of zero) are judged only then, so a
+ * figure-free save (notes, due date, terms) goes through on an invoice with a payment waiting. The policy decides every
+ * refusal, in its own order, so the screen's button and this PATCH never disagree.
+ */
+export async function assertEditableUnderLock(
+  tx: any,
+  locked: LockedInvoiceForEdit,
+  edit: IssuedEditCtx,
+  change: InvoiceEditChange,
+): Promise<void> {
+  if (edit.mode === "DRAFT") return;
+  const { invoice: inv } = locked;
+  const admin = isAdminInTenant(edit.actor, edit.tenantId);
+  // The loader reads only what a MONEY edit is judged on; an order-linked invoice is refused before it matters.
+  const loaded =
+    admin && change.money && !inv.orderId
+      ? await loadInvoiceEditInputs(
+          tx,
+          {
+            id: inv.id,
+            customerId: inv.customerId,
+            orderId: inv.orderId,
+            items: locked.storedRows,
+          },
+          { payments: locked.payments },
+        )
+      : {};
+  const keys = headerKeysChanged(invoiceHeaderData(edit.dto, edit.due, edit.issueDate), inv);
+  const { blocked } = invoiceEditDecision(
+    { admin, status: String(inv.status), orderId: inv.orderId, ...loaded },
+    {
+      ...change,
+      issueDateChanged: keys.includes("issueDate"),
+      depositChanged: keys.includes("depositPercent") || keys.includes("depositDueDate"),
+    },
+  );
+  if (blocked) throw invoiceEditRefusal(blocked);
+  if (!change.money) return;
+  await assertSalesNotLockedForEdit(tx, { tenantId: edit.tenantId as string, invoiceId: inv.id });
+  await unitAware.assertInvoiceRewriteAllowed(tx, inv);
 }
 
 /** The two header money fields rounded to cents at intake (B1047): 10.005 must not store as 10.00 while the total counts 10.01. */

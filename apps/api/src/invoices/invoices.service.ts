@@ -12,6 +12,7 @@ import { linePositionAllocator } from "../orders/line-position";
 import { sendAfterCommit } from "./send-after-commit";
 import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
+import { writeIfFigureFree } from "./issued-invoice-edit";
 import {
   assertEditFits,
   assertPaymentFits,
@@ -79,6 +80,7 @@ import {
   inPlacePatch,
   matchEditLines,
   assertEditAuthoredPrices,
+  invoiceHeaderData,
 } from "./invoice-edit-plan";
 import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
@@ -263,8 +265,10 @@ import {
 } from "./manual-invoice-context";
 import {
   assertNotOverpaidByEdit,
+  assertEditableUnderLock,
+  assertModeUnderLock,
   assertSameOrderLink,
-  assertStillDraft,
+  editModeOf,
   intakeMoney,
   loadLockedInvoiceForEdit,
   noTokenWarner,
@@ -3026,14 +3030,16 @@ export class InvoicesService {
     if (dto.items?.some(requestsUnit) && (inv.status !== InvoiceStatus.DRAFT || inv.orderId)) {
       throw new BadRequestException("Selling by a unit can't be set on an invoice edit yet.");
     }
-    if (inv.status !== InvoiceStatus.DRAFT)
-      throw new BadRequestException("Only DRAFT invoices can be edited");
+    const mode = editModeOf(inv, actor, this.prisma.getTenantId()); // SA-1508: DRAFT, or an admin's issued edit
     await this.assertOrderInvoiceUnlocked(inv);
     resolveShipmentText(dto, inv); // row 507: a CHANGED formula-led carrier / tracking is a coded 400
     // B297 PR5 (D4a): a DRAFT can carry regulated SALE rows (split drafts book them at creation): a line,
     // discount or shipping edit re-syncs them, so it is refused when they sit in a LOCKED filing period.
     // (SA-819 MUST 4: after resolveShipmentText, whose 400 names a field the caller can fix.)
-    if (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined)
+    if (
+      mode === "DRAFT" &&
+      (dto.items || dto.discount !== undefined || dto.shippingFee !== undefined)
+    )
       await assertSalesNotLockedForEdit(this.prisma.forTenant(), {
         tenantId: iGate.tenantId(this.prisma),
         invoiceId: id,
@@ -3041,12 +3047,13 @@ export class InvoicesService {
     // #2197: the same literal calendar-day stamp create() writes.
     const issueDate = dto.issueDate ? issueDateStamp(dto.issueDate) : undefined;
     const due = dueDateStamps(dto); // #2256: and the due dates, before either rewrite path runs
+    const edit = { mode, actor, tenantId: this.prisma.getTenantId(), dto, issueDate, due }; // SA-1508 gate context
 
     // units_v1: BOTH rewrite paths — the item replace (re-split at the LIVE pack) and the
     // discount/shipping recompute, whose order back-sync writes onto the linked order's lines.
     // Row 603: a null figure is ABSENT (intakeMoney keeps the stored value), so it triggers neither rewrite path.
     const figureSent = dto.discount != null || dto.shippingFee != null;
-    if (dto.items || figureSent) {
+    if (mode === "DRAFT" && (dto.items || figureSent)) {
       await unitAware.assertInvoiceRewriteAllowed(this.prisma.forTenant(), inv);
     }
 
@@ -3082,7 +3089,7 @@ export class InvoicesService {
         // sees the first's rows and totals instead of writing over them (no P2025, total = its lines).
         // Lock order (SA-137/203): the ORDER row first, then the invoice (loadLockedInvoiceForEdit, B1043).
         const locked = await loadLockedInvoiceForEdit(tx, id, dto.expectedUpdatedAt, warnNoToken);
-        assertStillDraft(locked.invoice); // r87: DRAFT re-checked under the lock
+        assertModeUnderLock(locked.invoice, mode, dto.expectedUpdatedAt); // r87: the mode re-checked under the lock
         assertSameOrderLink(locked.invoice, inv); // the pre-read order is the one we locked
         // SA-816: a NaN sibling refuses BEFORE any write; A's own surviving columns are guarded in buildEditedLines.
         await preflightOrderSiblings(tx, inv.orderId, id);
@@ -3130,6 +3137,8 @@ export class InvoicesService {
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
           override,
         });
+        const free = await writeIfFigureFree(tx, locked, editLines, edit); // SA-1508 A2-N1: a save that moves no money
+        if (free) return { updated: free };
         const preferredRate = await tenantPreferredRate(tx); // the tenant rate wins the inference when it reproduces the tax
         guardItemsEditTaxState({ locked: { ...locked, preferredRate }, items, matches, editLines }); // SA-814 R5-2
         const itemsData = editLines.map((l) => l.data);
@@ -3162,6 +3171,7 @@ export class InvoicesService {
           storedInvoiceTotals(cur),
         ); // B1030 / SA-651: not worse than stored, before any write
         assertNotOverpaidByEdit(locked.payments, total, cur.total); // B1046
+        await assertEditableUnderLock(tx, locked, edit, { money: true, newTotal: total }); // SA-1508
         // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
         // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
         // so the invoice's prior SALE rows must be reversed and re-written from the new
@@ -3175,7 +3185,7 @@ export class InvoicesService {
           const patch = row ? inPlacePatch(l, row) : null;
           if (patch) await tx.invoiceItem.update({ where: { id: l.rowId }, data: patch });
         }
-        await applyComposedLineEdits(tx, inv, editLines, storedRows); // #2717 M3: case 18
+        await applyComposedLineEdits(tx, inv, editLines, storedRows, mode === "ISSUED"); // #2717 M3: case 18
         await auditAttestedPacks(tx, this.prisma.getTenantId(), id, editLines);
         const u = await tx.invoice.update({
           where: { id },
@@ -3230,26 +3240,7 @@ export class InvoicesService {
 
     // RF-012 / B1043: a discount or shippingFee change re-prices the total from the stored lines.
     const needsRecalc = figureSent;
-    const headerData = {
-      ...(due.dueDate && { dueDate: due.dueDate }),
-      ...(issueDate && { issueDate }),
-      ...(dto.notes !== undefined && { notes: dto.notes }),
-      ...(dto.terms !== undefined && { terms: dto.terms }),
-      // "" clears the label (the composer sends it when the operator hand-typed a
-      // due date and the term no longer applies) — same convention as the supplier
-      // and customer default-terms fields.
-      ...(dto.paymentTermsLabel !== undefined && {
-        paymentTermsLabel: dto.paymentTermsLabel || null,
-      }),
-      ...(dto.referenceNumber !== undefined && {
-        referenceNumber: dto.referenceNumber || null,
-      }),
-      ...(dto.subject !== undefined && { subject: dto.subject || null }),
-      ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
-      ...(dto.depositDueDate !== undefined && {
-        depositDueDate: due.depositDueDate,
-      }),
-    };
+    const headerData = invoiceHeaderData(dto, due, issueDate); // SA-1508: one builder, shared with the issued gate
     const include = {
       customer: { select: { id: true, businessName: true } },
       items: true,
@@ -3257,21 +3248,37 @@ export class InvoicesService {
     };
     // Totals untouched: nothing to lock. Totals touched: the SAME locks and locked reads as the items branch,
     // ONE update for the header fields + the totals (F4), the prior for the sanity guard from the LOCKED row.
-    const updated = !needsRecalc
-      ? await updateHeaderOnly(this.prisma, id, dto, headerData, include, warnNoToken)
-      : await this.prisma.tenantTransaction(async (tx: any) => {
-          const locked = await loadLockedInvoiceForEdit(tx, id, dto.expectedUpdatedAt, warnNoToken);
-          assertStillDraft(locked.invoice); // r87
-          assertSameOrderLink(locked.invoice, inv);
-          await preflightOrderSiblings(tx, inv.orderId, null); // SA-816: A's stored rows persist, so judge A too
-          const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto);
-          assertInvoiceTotalsSane(
-            { discount: totals.discount, subtotal, total: totals.total },
-            storedInvoiceTotals(locked.invoice),
-          ); // B1030 / SA-651
-          assertNotOverpaidByEdit(locked.payments, totals.total, locked.invoice.total); // B1046
-          return tx.invoice.update({ where: { id }, data: { ...headerData, ...totals }, include });
-        });
+    const updated =
+      !needsRecalc && mode === "DRAFT"
+        ? await updateHeaderOnly(this.prisma, id, dto, headerData, include, warnNoToken)
+        : await this.prisma.tenantTransaction(async (tx: any) => {
+            const locked = await loadLockedInvoiceForEdit(
+              tx,
+              id,
+              dto.expectedUpdatedAt,
+              warnNoToken,
+            );
+            assertModeUnderLock(locked.invoice, mode, dto.expectedUpdatedAt); // r87
+            assertSameOrderLink(locked.invoice, inv);
+            await preflightOrderSiblings(tx, inv.orderId, null); // SA-816: A's stored rows persist, so judge A too
+            const free = await writeIfFigureFree(tx, locked, null, edit); // SA-1508: figures equal, nothing to re-price
+            if (free) return free;
+            const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto);
+            assertInvoiceTotalsSane(
+              { discount: totals.discount, subtotal, total: totals.total },
+              storedInvoiceTotals(locked.invoice),
+            ); // B1030 / SA-651
+            assertNotOverpaidByEdit(locked.payments, totals.total, locked.invoice.total); // B1046
+            await assertEditableUnderLock(tx, locked, edit, {
+              money: true,
+              newTotal: totals.total,
+            });
+            return tx.invoice.update({
+              where: { id },
+              data: { ...headerData, ...totals },
+              include,
+            });
+          });
     // Backward sync: discount/shipping changes alter the order total too (lines unchanged: no ledger resync).
     if (inv.orderId && needsRecalc) await this.recomputeOrderFromInvoices(inv.orderId);
     return updated;

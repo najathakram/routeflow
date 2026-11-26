@@ -31,6 +31,11 @@ const REGISTRY: Record<string, Entry> = {
     reason:
       "SA-714 R1: writes only OrderItem.backorderedPieces (an informational tag) — no qty, price or composition column",
   },
+  "invoices/issued-invoice-edit.ts::writeIfFigureFree": {
+    kind: "exempt",
+    reason:
+      "SA-1508 A2-N1 rule 3: a figure-free save of an issued invoice patches only description, notes and position on EXISTING rows (never qty, price or a composition column) plus the invoice header",
+  },
   "invoices/invoices.service.ts::create": {
     kind: "exempt",
     reason: "manual invoice lines carry no order provenance and are never composed",
