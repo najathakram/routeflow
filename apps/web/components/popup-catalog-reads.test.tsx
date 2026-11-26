@@ -1,7 +1,7 @@
 import * as React from "react";
 import * as fs from "fs";
 import * as path from "path";
-import { render, waitFor, act } from "@testing-library/react";
+import { render, waitFor, act, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 import { InlineCreateProductModal } from "./InlineCreateProductModal";
@@ -93,6 +93,58 @@ describe.each(Object.keys(popups))("%s catalog read", (name) => {
 });
 
 /**
+ * W-1413 F2 (R-324). A reopen must seed the checkboxes from FRESH data. A product joins the category while the modal is
+ * closed (the product set is invalidated, the disabled query does not refetch); on reopen the stale cache must not seed
+ * the boxes, or Save with no change unassigns that product. Master read the catalog always-on, so it posted nothing.
+ */
+describe("AssignProductsModal reopen", () => {
+  it("saving with no change after a reopen sends no unassign request", async () => {
+    let p2Assigned = false;
+    get.mockImplementation((url: string) => {
+      if (url === "/products") {
+        return Promise.resolve({
+          data: {
+            data: [
+              { id: "p1", name: "Acme One", trackedCategoryId: "cat-1" },
+              { id: "p2", name: "Acme Two", trackedCategoryId: p2Assigned ? "cat-1" : null },
+            ],
+            meta: { total: 2 },
+          },
+        });
+      }
+      return Promise.resolve({ data: [] });
+    });
+    const post = apiClient.post as jest.Mock;
+    post.mockReset();
+    post.mockResolvedValue({ data: {} });
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+    });
+    const tree = (isOpen: boolean) => (
+      <QueryClientProvider client={qc}>{popups.AssignProductsModal(isOpen)}</QueryClientProvider>
+    );
+    const view = render(tree(true));
+    await screen.findByText("Acme Two");
+    view.rerender(tree(false));
+    p2Assigned = true;
+    await act(async () => {
+      await qc.invalidateQueries({ queryKey: ["products"] });
+    });
+    view.rerender(tree(true));
+    await waitFor(() => {
+      const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+      expect(boxes).toHaveLength(2);
+      expect(boxes.every((b) => b.checked)).toBe(true);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * Inventory pin: a popup / sheet / dialog file may not call the products hook with `limit: 0` itself. The gated helper
  * `useCatalogWhenOpen` is the one door, so a fifth popup cannot bring the closed-read back. Only popups the page keeps
  * mounted (they take an `isOpen` prop) can read while closed; one the page mounts only when open is exempt.
@@ -118,7 +170,7 @@ describe("no popup file reads the whole catalog directly", () => {
       .split("\n")
       .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
       .join("\n");
-    if (!/isOpen/.test(code)) return;
+    if (!/\bisOpen\b/.test(code)) return;
     expect(/useProducts\([^)]*limit:\s*0/.test(code)).toBe(false);
   });
 });
