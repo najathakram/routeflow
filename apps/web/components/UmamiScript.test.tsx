@@ -3,7 +3,13 @@
 // string; no real ID belongs in a test, a fixture or git.
 import * as React from "react";
 import { render } from "@testing-library/react";
+import { site } from "@/app/(marketing)/lib/site";
 import { UMAMI_SCRIPT_SRC, UmamiScript, umamiAllowedPath, umamiScriptProps } from "./UmamiScript";
+
+// The live site host, read the way the component reads it, so the tests hold before and after the
+// domain switch. Our own host, its bare form and a tenant host under it never reach a report.
+const LIVE_HOST = new URL(site.origin).hostname;
+const BARE_HOST = LIVE_HOST.replace(/^www./, "");
 
 let mockPathname: string | null = "/";
 // The script's load event, as next/script would fire it.
@@ -69,7 +75,7 @@ describe("umamiScriptProps", () => {
       src: UMAMI_SCRIPT_SRC,
       defer: true,
       "data-website-id": FAKE_ID,
-      "data-domains": "www.xrov.io",
+      "data-domains": LIVE_HOST,
       "data-auto-track": "false",
       "data-exclude-search": "true",
     });
@@ -141,11 +147,11 @@ describe("<UmamiScript /> pageviews", () => {
         sent.push(
           build({
             website: FAKE_ID,
-            hostname: "www.xrov.io",
+            hostname: LIVE_HOST,
             screen: "1440x900",
             language: "en-US",
             title: "A page",
-            url: "https://www.xrov.io/signup?email=owner%40acme.com",
+            url: `https://${LIVE_HOST}/signup?email=owner%40acme.com`,
             referrer,
           } as Parameters<typeof build>[0]),
         ),
@@ -239,7 +245,7 @@ describe("<UmamiScript /> pageviews", () => {
   });
 
   it("never lets the query string out on an allowed page", () => {
-    installTracker("https://www.xrov.io/signup/check-email?email=owner%40acme.com");
+    installTracker(`https://${LIVE_HOST}/signup/check-email?email=owner%40acme.com`);
     render(at("/signup"));
     expect(urls()).toEqual(["/signup"]);
     const body = JSON.stringify(sent);
@@ -253,7 +259,7 @@ describe("<UmamiScript /> pageviews", () => {
     expect(sent).toEqual([
       {
         website: FAKE_ID,
-        hostname: "www.xrov.io",
+        hostname: LIVE_HOST,
         screen: "1440x900",
         url: "/pricing",
         referrer: "https://news.example.com",
@@ -263,9 +269,9 @@ describe("<UmamiScript /> pageviews", () => {
 
   it.each([
     ["our own page, as a path", "/signup/check-email?email=owner%40acme.com", ""],
-    ["our own page, in full", "https://www.xrov.io/login", ""],
-    ["our own host with no www", "https://xrov.io/", ""],
-    ["a tenant's host, which names a client", "https://acme.xrov.io", ""],
+    ["our own page, in full", `https://${LIVE_HOST}/login`, ""],
+    ["our own host with no www", `https://${BARE_HOST}/`, ""],
+    ["a tenant's host, which names a client", `https://acme.${BARE_HOST}`, ""],
     ["an app link", "android-app://com.google.android.gm/", ""],
     ["nonsense", "http://", ""],
     ["no referrer", "", ""],
