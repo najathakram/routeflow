@@ -152,6 +152,8 @@ describe("InventoryService.recordAdjustment: Idempotency-Key (B1415 M1b)", () =>
     expect(stock.written()).toHaveLength(1); // applyStockMovements ran once
     expect(prisma.stockLot.create).toHaveBeenCalledTimes(1);
     expect(prisma.product.update).toHaveBeenCalledTimes(1);
+    // L2: the low-stock alert fired for the first call only; a replay applies nothing, so it alerts nothing.
+    expect(service.fireStockAlerts).toHaveBeenCalledTimes(1);
   });
 
   it("R4: the same key with a different body is 409 IDEMPOTENCY_KEY_CONFLICT (ADJUSTMENT_MISMATCH) and writes nothing", async () => {
@@ -166,6 +168,45 @@ describe("InventoryService.recordAdjustment: Idempotency-Key (B1415 M1b)", () =>
     });
     expect(stock.written()).toHaveLength(1);
   });
+
+  // M2 (R-342): every field the body hash covers is pinned, so dropping one from the hash turns its row red.
+  it.each<[string, unknown]>([
+    ["productId", "prod-2"],
+    ["quantity", 6],
+    ["reason", "DAMAGED"],
+    ["reasonNote", "found on the shelf"],
+    ["notes", "recount"],
+    ["reference", "COUNT-2"],
+    ["effectiveDate", "2026-11-02"],
+  ])(
+    "R4: a change to %s alone under the same key is 409 ADJUSTMENT_MISMATCH and writes nothing",
+    async (field, value) => {
+      await service.recordAdjustment(body, "user-1", "key-1");
+      const err = await service
+        .recordAdjustment({ ...body, [field]: value }, "user-1", "key-1")
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({
+        code: IDEMPOTENCY_KEY_CONFLICT,
+        reason: API_ERROR_CODES.ADJUSTMENT_MISMATCH,
+      });
+      expect(stock.written()).toHaveLength(1);
+      expect(prisma.product.update).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each<[string, Record<string, unknown>]>([
+    ['quantity as the string "5" for 5', { quantity: "5" }],
+    ["notes null for notes absent", { notes: null }],
+  ])(
+    "R3: the same adjustment spelled differently (%s) is a replay, not a conflict",
+    async (_name, change) => {
+      const first = await service.recordAdjustment(body, "user-1", "key-1");
+      const second = await service.recordAdjustment({ ...body, ...change }, "user-1", "key-1");
+      expect(JSON.parse(JSON.stringify(second))).toEqual(JSON.parse(JSON.stringify(first)));
+      expect(stock.written()).toHaveLength(1);
+    },
+  );
 
   it("R2: a key longer than 200 characters is a 400 before anything runs", async () => {
     await expect(service.recordAdjustment(body, "user-1", "k".repeat(201))).rejects.toBeInstanceOf(

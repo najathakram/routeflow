@@ -94,8 +94,8 @@ export const ADJUSTMENT_KEY_REUSED_COPY =
 /**
  * True for the 409 of POST /inventory/movements/adjustment when its Idempotency-Key already recorded a DIFFERENT
  * adjustment (the key's first call landed): `IDEMPOTENCY_KEY_CONFLICT` with reason `ADJUSTMENT_MISMATCH`. The reason
- * keeps an order-scoped CONFLICT from ever being read as an adjustment. The code string is the existing literal the
- * clients already match (`isPaymentKeyConflict`, buyer-order-conflict); it is not a registered API_ERROR_CODES entry.
+ * keeps an order-scoped CONFLICT from ever being read as an adjustment. The reason is `API_ERROR_CODES.ADJUSTMENT_MISMATCH`;
+ * the code string is the existing literal the clients already match (`isPaymentKeyConflict`, buyer-order-conflict).
  */
 export function isAdjustmentKeyReused(err: unknown): boolean {
   const res = (
@@ -104,7 +104,7 @@ export function isAdjustmentKeyReused(err: unknown): boolean {
   return (
     res?.status === 409 &&
     res.data?.code === "IDEMPOTENCY_KEY_CONFLICT" &&
-    res.data?.reason === "ADJUSTMENT_MISMATCH"
+    res.data?.reason === API_ERROR_CODES.ADJUSTMENT_MISMATCH
   );
 }
 

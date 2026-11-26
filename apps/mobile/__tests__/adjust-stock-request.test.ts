@@ -4,10 +4,14 @@
  * unknown outcome carries the same key, and a deliberate second adjustment after a success gets a fresh one.
  */
 import { ADJUSTMENT_KEY_REUSED_COPY, isAdjustmentKeyReused } from "@routeflow/types/sale-attempt";
+import * as fs from "fs";
+import * as path from "path";
 import {
   adjustmentFingerprint,
   adjustmentRequest,
   createAdjustmentAttemptKey,
+  submitAdjustment,
+  type AdjustmentMutateCallbacks,
 } from "../lib/adjust-stock-request";
 
 let n = 0;
@@ -156,5 +160,68 @@ describe("adjustmentRequest: the key is a header, never in the body", () => {
 
   it("without a key it sends the plain body and no config (a legacy caller)", () => {
     expect(adjustmentRequest(dto)).toEqual({ body: dto, config: undefined });
+  });
+});
+
+describe("submitAdjustment: what the sheet does on Apply (R-342 M1)", () => {
+  /** A mutate that records its args and lets the test end each call. */
+  function recorder() {
+    const calls: { args: Record<string, unknown>; cb: AdjustmentMutateCallbacks }[] = [];
+    const mutate = (args: Record<string, unknown>, cb: AdjustmentMutateCallbacks) =>
+      void calls.push({ args, cb });
+    return { calls, mutate };
+  }
+  const then = () => ({ success: jest.fn(), error: jest.fn() });
+
+  it("mints one key per adjust intent and folds it into the args, with the body unchanged", () => {
+    const h = holder();
+    const m = recorder();
+    submitAdjustment(h, dto, m.mutate, then());
+    submitAdjustment(h, { ...dto }, m.mutate, then()); // the second tap
+    expect(m.calls).toHaveLength(2);
+    const key = m.calls[0].args.idempotencyKey;
+    expect(typeof key).toBe("string");
+    expect(m.calls[0].args).toEqual({ ...dto, idempotencyKey: key });
+    expect(m.calls[1].args).toEqual(m.calls[0].args);
+  });
+
+  it("a retry after an unknown outcome reuses the key; a success clears it, so the next intent is fresh", () => {
+    const h = holder();
+    const m = recorder();
+    const t = then();
+    submitAdjustment(h, dto, m.mutate, t);
+    const key = m.calls[0].args.idempotencyKey;
+    const dropped = new Error("Network Error");
+    m.calls[0].cb.onError(dropped);
+    expect(t.error).toHaveBeenCalledWith(dropped);
+    submitAdjustment(h, dto, m.mutate, t);
+    expect(m.calls[1].args.idempotencyKey).toBe(key);
+    m.calls[1].cb.onSuccess();
+    expect(t.success).toHaveBeenCalledTimes(1);
+    expect(h.peek()).toBeNull();
+    submitAdjustment(h, dto, m.mutate, t);
+    expect(m.calls[2].args.idempotencyKey).not.toBe(key);
+  });
+
+  it("the key-reuse 409 clears the key and reaches the error callback", () => {
+    const h = holder();
+    const m = recorder();
+    const t = then();
+    submitAdjustment(h, dto, m.mutate, t);
+    m.calls[0].cb.onError(reused);
+    expect(h.peek()).toBeNull();
+    expect(t.error).toHaveBeenCalledWith(reused);
+  });
+
+  it("the Adjust stock sheet applies through submitAdjustment with its one holder per open", () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "app", "(operator)", "products", "[id]", "adjust-stock.tsx"),
+      "utf8",
+    );
+    expect(src).toContain("const [attempt] = useState(createAdjustmentAttemptKey)");
+    expect(src).toContain("submitAdjustment(attempt, dto, mut.mutate,");
+    // the screen never posts around the helper (that would send an adjustment with no key)
+    expect(src).not.toContain("mut.mutate(");
+    expect(src).not.toContain("mut.mutateAsync(");
   });
 });

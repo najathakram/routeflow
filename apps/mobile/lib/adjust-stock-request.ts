@@ -34,3 +34,37 @@ export function adjustmentRequest<T extends object>(
     config: idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
   };
 }
+
+/** The callbacks a single `mutate` call takes (react-query's per-call options, the part the sheet uses). */
+export interface AdjustmentMutateCallbacks {
+  onSuccess: () => void;
+  onError: (error: unknown) => void;
+}
+
+/**
+ * What the Adjust stock sheet does on Apply (R-342 M1: the screen's key wiring in one pinned place). The key is the
+ * holder's for this body (minted once per adjust intent, the same on a retry of an unknown outcome), folded into the
+ * mutation args (the hook sends it as the header), and settled with the call's outcome: a success or a refusal that
+ * wrote nothing clears it, anything else keeps it for the retry.
+ */
+export function submitAdjustment<T extends object>(
+  attempt: AdjustmentAttemptKey,
+  dto: T,
+  mutate: (args: T & { idempotencyKey: string }, callbacks: AdjustmentMutateCallbacks) => void,
+  then: { success: () => void; error: (error: unknown) => void },
+): void {
+  const idempotencyKey = attempt.keyFor(adjustmentFingerprint(dto));
+  mutate(
+    { ...dto, idempotencyKey },
+    {
+      onSuccess: () => {
+        attempt.settle(idempotencyKey, { ok: true });
+        then.success();
+      },
+      onError: (error) => {
+        attempt.settle(idempotencyKey, { ok: false, error });
+        then.error(error);
+      },
+    },
+  );
+}

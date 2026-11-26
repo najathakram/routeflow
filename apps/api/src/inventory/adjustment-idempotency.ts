@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { createHash } from "crypto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
 
 /**
@@ -19,7 +20,7 @@ import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
 export const ADJUSTMENT_KEY_SCOPE = "stock.adjustment";
 export const ADJUSTMENT_KEY_MAX_LENGTH = 200;
 /** The `reason` of the 409 IDEMPOTENCY_KEY_CONFLICT body (the payments precedent): clients tell an adjustment from an order. */
-export const ADJUSTMENT_MISMATCH_REASON = "ADJUSTMENT_MISMATCH";
+export const ADJUSTMENT_MISMATCH_REASON = API_ERROR_CODES.ADJUSTMENT_MISMATCH;
 
 const logger = new Logger("AdjustmentIdempotency");
 

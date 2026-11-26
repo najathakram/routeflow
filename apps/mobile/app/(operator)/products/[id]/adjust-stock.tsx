@@ -7,10 +7,7 @@ import { FormField, FormSection, FormSheet, FormTextInput } from "../../../../co
 import { useProduct, useAdjustProductStock } from "../../../../lib/api/products";
 import { showToast } from "../../../../lib/toast";
 import { ADJUSTMENT_KEY_REUSED_COPY, isAdjustmentKeyReused } from "@routeflow/types/sale-attempt";
-import {
-  adjustmentFingerprint,
-  createAdjustmentAttemptKey,
-} from "../../../../lib/adjust-stock-request";
+import { createAdjustmentAttemptKey, submitAdjustment } from "../../../../lib/adjust-stock-request";
 
 const REASONS = [
   { id: "RECEIVED", label: "Received" },
@@ -47,26 +44,19 @@ export default function AdjustStockScreen() {
       reference: reason,
       notes: combinedNotes || undefined,
     };
-    const idempotencyKey = attempt.keyFor(adjustmentFingerprint(dto));
-    mut.mutate(
-      // the key rides in the args, so two taps carry identical args; it resets on success
-      { ...dto, idempotencyKey },
-      {
-        onSuccess: () => {
-          attempt.settle(idempotencyKey, { ok: true });
-          showToast(`Stock ${n > 0 ? "added" : "removed"}`);
-          router.back();
-        },
-        onError: (e: any) => {
-          attempt.settle(idempotencyKey, { ok: false, error: e });
-          showToast(
-            isAdjustmentKeyReused(e)
-              ? ADJUSTMENT_KEY_REUSED_COPY
-              : (e?.response?.data?.message ?? e?.message ?? "Try again."),
-          );
-        },
+    // the key rides in the args, so two taps carry identical args; it resets on success
+    submitAdjustment(attempt, dto, mut.mutate, {
+      success: () => {
+        showToast(`Stock ${n > 0 ? "added" : "removed"}`);
+        router.back();
       },
-    );
+      error: (e: any) =>
+        showToast(
+          isAdjustmentKeyReused(e)
+            ? ADJUSTMENT_KEY_REUSED_COPY
+            : (e?.response?.data?.message ?? e?.message ?? "Try again."),
+        ),
+    });
   };
 
   return (

@@ -1,8 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
 import { apiClient } from "../api-client";
-import { adjustmentRequest } from "../adjust-stock-request";
-import { singleFlight } from "./single-flight";
 import type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 export type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 
@@ -19,15 +16,6 @@ export interface StockItem {
   averageCost: number | null;
   totalValue: number | null;
   costingMethod?: string;
-}
-
-export interface StockAdjustmentDto {
-  productId: string;
-  quantity: number; // positive = add, negative = remove
-  notes?: string;
-  reference?: string;
-  /** B1415 M1b: the caller's attempt key; sent as the Idempotency-Key header, never in the body. */
-  idempotencyKey?: string;
 }
 
 export interface StockPurchaseDto {
@@ -134,24 +122,6 @@ export function useRecomputeCosts() {
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
-
-export function useRecordAdjustment() {
-  const qc = useQueryClient();
-  // B1415: the same stock-ledger write as useAdjustProductStock, so the same guard (one per mounted form).
-  // M1b: the attempt key rides in the args (sent as the Idempotency-Key header by adjustmentRequest).
-  const [post] = useState(() =>
-    singleFlight((dto: StockAdjustmentDto) => {
-      const { body, config } = adjustmentRequest(dto);
-      return apiClient
-        .post("/inventory/movements/adjustment", body, config)
-        .then((r) => r.data as unknown);
-    }),
-  );
-  return useMutation<unknown, Error, StockAdjustmentDto>({
-    mutationFn: post,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory"] }),
-  });
-}
 
 export function useRecordPurchase() {
   const qc = useQueryClient();
