@@ -81,6 +81,7 @@ describe("PlatformAdminService — audit provenance", () => {
     computeOverview: jest.Mock;
     priceTenant: jest.Mock;
     priceSubscription: jest.Mock;
+    payingPriceClasses: jest.Mock;
   };
   // WP3b: named so the createTenant — LITE plan describe block can assert on the checkout
   // options passed through and on the welcome email body, instead of re-deriving them via
@@ -181,6 +182,8 @@ describe("PlatformAdminService — audit provenance", () => {
     // Default: zeroed overview — the getStats-enrichment describe block below overrides
     // per-case to prove getStats() reads MrrService, not a re-derived estimate.
     mrrService = {
+      // SA-1539: the tab classifier prices the paying-set rows through MrrService in one batch.
+      payingPriceClasses: jest.fn().mockResolvedValue(new Map()),
       computeOverview: jest.fn().mockResolvedValue({
         mrr: 0,
         baseMrr: 0,
@@ -4584,10 +4587,14 @@ describe("PlatformAdminService — audit provenance", () => {
   });
 
   describe("listTenants filters", () => {
-    it("hides deleted by default, builds a search OR + explicit sort, returns deletedCount", async () => {
-      prisma.tenant.findMany.mockResolvedValue([]);
-      // count() is called twice: filtered total, then the global soft-deleted count.
-      prisma.tenant.count.mockResolvedValueOnce(5).mockResolvedValueOnce(3);
+    it("scans the search + plan scope, sorts with an id tiebreak, hides deleted by default, returns deletedCount", async () => {
+      // SA-1535: one slim scan (search + plan only), classified in JS; status/deleted/bucket are applied over it.
+      prisma.tenant.findMany.mockResolvedValue([
+        { id: "t-live", slug: "acme-live", status: "ACTIVE", deletedAt: null },
+        { id: "t-gone", slug: "acme-gone", status: "ACTIVE", deletedAt: new Date() },
+      ] as any);
+      // count() is now only the global soft-deleted count.
+      prisma.tenant.count.mockResolvedValue(3);
 
       const result = await service.listTenants(1, 20, {
         search: "acme",
@@ -4597,9 +4604,9 @@ describe("PlatformAdminService — audit provenance", () => {
         sortDir: "asc",
       });
 
-      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
-      expect(args.where.deletedAt).toBeNull();
-      expect(args.where.status).toBe("ACTIVE");
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls[0][0];
+      expect(args.where.deletedAt).toBeUndefined();
+      expect(args.where.status).toBeUndefined();
       // SA-1: the plan filter is the REAL billing plan (subscription.planKey), not the legacy enum.
       expect(args.where.plan).toBeUndefined();
       expect(JSON.stringify(args.where)).toContain('"planKey":{"in":["STARTER"]}');
@@ -4608,8 +4615,9 @@ describe("PlatformAdminService — audit provenance", () => {
           expect.objectContaining({ slug: { contains: "acme", mode: "insensitive" } }),
         ]),
       );
-      expect(args.orderBy).toEqual({ slug: "asc" });
-      expect(result.meta.total).toBe(5);
+      expect(args.orderBy).toEqual([{ slug: "asc" }, { id: "asc" }]);
+      expect(result.meta.total).toBe(1);
+      expect(result.data.map((r: any) => r.id)).toEqual(["t-live"]);
       expect(result.meta.deletedCount).toBe(3);
     });
 
@@ -4617,7 +4625,7 @@ describe("PlatformAdminService — audit provenance", () => {
       prisma.tenant.findMany.mockResolvedValue([]);
       prisma.tenant.count.mockResolvedValue(0);
       await service.listTenants(1, 20, { plan: "GROWTH", search: "acme" });
-      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls[0][0];
       expect(args.where.plan).toBeUndefined();
       expect(args.where.AND).toEqual(
         expect.arrayContaining([
@@ -4634,7 +4642,7 @@ describe("PlatformAdminService — audit provenance", () => {
       prisma.tenant.findMany.mockResolvedValue([]);
       prisma.tenant.count.mockResolvedValue(0);
       await service.listTenants(1, 20, { plan: "SCALE" });
-      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls[0][0];
       // PROFESSIONAL displays as SCALE through planKeyFromEnum when subscription.planKey is null.
       expect(JSON.stringify(args.where)).toContain('"plan":{"in":');
       expect(JSON.stringify(args.where)).toContain("PROFESSIONAL");
@@ -4644,7 +4652,7 @@ describe("PlatformAdminService — audit provenance", () => {
       prisma.tenant.findMany.mockResolvedValue([]);
       prisma.tenant.count.mockResolvedValue(0);
       await service.listTenants(1, 20, { plan: "SCALE" });
-      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
+      const args = (prisma.tenant.findMany as jest.Mock).mock.calls[0][0];
       const first = args.where.AND[0].OR[0];
       // a subscription still pinned to a legacy key (BUSINESS / PROFESSIONAL) displays as SCALE
       expect([...first.subscription.planKey.in].sort()).toEqual(
@@ -4655,9 +4663,20 @@ describe("PlatformAdminService — audit provenance", () => {
     it("includes deleted (no deletedAt filter) when requested", async () => {
       prisma.tenant.findMany.mockResolvedValue([]);
       prisma.tenant.count.mockResolvedValue(0);
-      await service.listTenants(1, 20, { includeDeleted: true });
-      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
-      expect(args.where.deletedAt).toBeUndefined();
+      prisma.tenant.findMany.mockResolvedValue([
+        {
+          id: "t-gone",
+          slug: "acme-gone",
+          class: "PRODUCTION",
+          status: "ACTIVE",
+          deletedAt: new Date(),
+        },
+      ] as any);
+      const shown = await service.listTenants(1, 20, { includeDeleted: true });
+      const hidden = await service.listTenants(1, 20, {});
+      expect(shown.data).toHaveLength(1);
+      // a deleted real-customer business is under Closed, never lost, but All hides it without the toggle
+      expect(hidden.data).toHaveLength(0);
     });
 
     it("SA-140/B556: a drifted tenant (real Tenant.plan, no resolved subscription.planKey) keeps `plan` as the raw legacy enum but resolves `planKey` through the fallback — never silently shown as fully explained by the legacy field alone", async () => {
@@ -4686,11 +4705,30 @@ describe("PlatformAdminService — audit provenance", () => {
     });
 
     it("SA-140/L-169: the subscription select gains planKey (a caller's select must actually fetch what the shared predicate reads)", async () => {
-      prisma.tenant.findMany.mockResolvedValue([]);
+      prisma.tenant.findMany.mockResolvedValue([{ id: TENANT_ID, slug: "acme" }] as any);
       prisma.tenant.count.mockResolvedValue(0);
       await service.listTenants(1, 20, {});
-      const args = (prisma.tenant.findMany as jest.Mock).mock.calls.at(-1)![0];
-      expect(args.include.subscription.select.planKey).toBe(true);
+      // call 0 is the scan, call 1 the page fetch by id: both must carry what the shared predicate reads
+      const scanArgs = (prisma.tenant.findMany as jest.Mock).mock.calls[0][0];
+      const pageArgs = (prisma.tenant.findMany as jest.Mock).mock.calls[1][0];
+      expect(scanArgs.select.subscription.select.planKey).toBe(true);
+      expect(pageArgs.include.subscription.select.planKey).toBe(true);
+      // the wire select is UNCHANGED (SA-1535 A5): exactly today's four keys; the classifier reads only the scan
+      expect(Object.keys(pageArgs.include.subscription.select).sort()).toEqual(
+        ["cancelAtPeriodEnd", "currentPlan", "periodEnd", "planKey"].sort(),
+      );
+      for (const k of [
+        "couponFull",
+        "pastDueSince",
+        "needsReconcile",
+        "stripeSubId",
+        "stripeCustomerId",
+        "catchupState",
+        "basePriceSnapshot",
+        "discount",
+      ]) {
+        expect(scanArgs.select.subscription.select[k]).toBe(true);
+      }
     });
   });
 

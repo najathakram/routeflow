@@ -96,6 +96,7 @@ import type {
   BusinessProfilePreviewResponse,
 } from "@routeflow/types";
 import { PlatformScoped } from "../tenant/platform-scoped.decorator";
+import { assertListLimit, parseBucketParam } from "./tenant-bucket-list";
 
 /** Attach a config key's applied mode to its explain-trace row (B1132); no mode, no change. */
 function withConfigMode(feature: EffectiveFeature, mode?: FeatureModeState): EffectiveFeature {
@@ -155,6 +156,13 @@ export class PlatformAdminController {
   })
   @ApiQuery({ name: "sortDir", required: false, enum: ["asc", "desc"] })
   @ApiQuery({ name: "includeDeleted", required: false, type: Boolean })
+  @ApiQuery({
+    name: "bucket",
+    required: false,
+    description:
+      "Comma list: paying, trial, not_billed, paused, closed, test_demo, internal, unknown",
+  })
+  @ApiQuery({ name: "attention", required: false, type: Boolean })
   listTenants(
     @Query("page") page = "1",
     @Query("limit") limit = "20",
@@ -164,7 +172,10 @@ export class PlatformAdminController {
     @Query("sortKey") sortKey?: string,
     @Query("sortDir") sortDir?: string,
     @Query("includeDeleted") includeDeleted?: string,
+    @Query("bucket") bucket?: string,
+    @Query("attention") attention?: string,
   ) {
+    assertListLimit(Number(limit));
     return this.svc.listTenants(Number(page), Number(limit), {
       search: search || null,
       status: status || null,
@@ -172,6 +183,8 @@ export class PlatformAdminController {
       sortKey: sortKey || null,
       sortDir: sortDir === "asc" ? "asc" : sortDir === "desc" ? "desc" : null,
       includeDeleted: includeDeleted === "true" || includeDeleted === "1",
+      buckets: parseBucketParam(bucket),
+      attention: attention === "true" || attention === "1",
     });
   }
 

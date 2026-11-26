@@ -78,7 +78,7 @@ import {
   unbilledSelfServeSkus,
   withAddonLocks,
 } from "../billing/manual-activation-addons";
-import type { ManualActivationAddons } from "@routeflow/types";
+import type { ManualActivationAddons, TenantBucket } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import {
   buildPlanPriceImpact,
@@ -124,6 +124,8 @@ import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
 import { UpdateTenantPriceDto } from "./dto/update-tenant-price.dto";
 import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
 import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
+import { classifyRows, listTenantsByBucket, tenantBucketWire } from "./tenant-bucket-list";
+import type { TenantBucketResult } from "../billing/tenant-bucket";
 import { AuditService } from "../audit/audit.service";
 import {
   AdminAuditAction,
@@ -261,14 +263,12 @@ export class PlatformAdminService {
       sortKey?: string | null;
       sortDir?: "asc" | "desc" | null;
       includeDeleted?: boolean;
+      buckets?: TenantBucket[] | null;
+      attention?: boolean;
     } = {},
   ) {
-    const skip = (page - 1) * limit;
-
+    // Search and plan only; status, deleted and bucket are applied over the classified scan (tenant-bucket-list.ts).
     const where: Record<string, unknown> = {};
-    // Cancelled/soft-deleted tenants are hidden unless explicitly requested.
-    if (!filters.includeDeleted) where.deletedAt = null;
-    if (filters.status) where.status = filters.status;
     if (filters.plan) {
       // SA-1: filter by the REAL billing plan (subscription.planKey) — the one every list row
       // displays — not the legacy Tenant.plan enum, which drifts (B556). A tenant with no
@@ -328,36 +328,35 @@ export class PlatformAdminService {
         orderBy = { createdAt: dir };
     }
 
-    const [tenants, total, deletedCount] = await Promise.all([
-      this.prisma.tenant.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy,
-        include: {
-          config: {
-            select: { businessName: true, primaryColor: true, logoKey: true },
-          },
-          subscription: {
-            // planKey added (SA-140/B556) — _formatTenant()'s planKey field needs it; this
-            // select previously omitted it, so every list row silently fell back to the legacy
-            // Tenant.plan enum (L-169).
-            select: { currentPlan: true, periodEnd: true, cancelAtPeriodEnd: true, planKey: true },
-          },
-          _count: {
-            select: { users: true, customers: true, orders: true },
-          },
+    // SA-1535: one slim scan classifies every business (tab counts), then the open tab's page is fetched by id.
+    const { tenants, meta, verdicts } = await listTenantsByBucket(this.prisma, this.mrrService, {
+      scopeWhere: where,
+      orderBy,
+      page,
+      limit,
+      status: filters.status ?? null,
+      includeDeleted: filters.includeDeleted === true,
+      buckets: filters.buckets ?? null,
+      attention: filters.attention === true,
+      include: {
+        config: {
+          select: { businessName: true, primaryColor: true, logoKey: true },
         },
-      }),
-      this.prisma.tenant.count({ where }),
-      // Total soft-deleted tenants, independent of the current filter, so the
-      // "Show deleted (N)" affordance has a real count even when they're hidden.
-      this.prisma.tenant.count({ where: { deletedAt: { not: null } } }),
-    ]);
+        subscription: {
+          // planKey added (SA-140/B556) — _formatTenant()'s planKey field needs it; this
+          // select previously omitted it, so every list row silently fell back to the legacy
+          // Tenant.plan enum (L-169). UNCHANGED by SA-1535: the classifier reads the slim scan, never this wire select.
+          select: { currentPlan: true, periodEnd: true, cancelAtPeriodEnd: true, planKey: true },
+        },
+        _count: {
+          select: { users: true, customers: true, orders: true },
+        },
+      },
+    });
 
     return {
-      data: tenants.map((t) => this._formatTenant(t)),
-      meta: { total, page, limit, pages: Math.ceil(total / limit), deletedCount },
+      data: tenants.map((t) => this._formatTenant(t, verdicts.get(t.id))),
+      meta,
     };
   }
 
@@ -395,7 +394,10 @@ export class PlatformAdminService {
     ]);
     if (!tenant) throw new NotFoundException(`Tenant ${id} not found`);
     return {
-      ...this._formatTenant(tenant),
+      ...this._formatTenant(
+        tenant,
+        (await classifyRows(this.mrrService, [tenant as never], new Date())).get(tenant.id),
+      ),
       orders30d,
       estMrrUsd,
     };
@@ -3087,7 +3089,7 @@ export class PlatformAdminService {
     return normalizePlanKey(t.subscription?.planKey) ?? planKeyFromEnum(t.plan);
   }
 
-  private _formatTenant(t: any) {
+  private _formatTenant(t: any, verdict?: TenantBucketResult) {
     return {
       id: t.id,
       slug: t.slug,
@@ -3113,6 +3115,9 @@ export class PlatformAdminService {
       zip: t.config?.zip ?? null,
       country: t.config?.country ?? null,
       phone: t.config?.phone ?? null,
+      // SA-1535: class, bucket, attention and trialDaysLeft are the server's verdict; the web only prints them.
+      // (over the scan cap the page is not classified: class only, and meta.truncated says so)
+      ...(verdict ? tenantBucketWire(t, verdict) : { class: t.class }),
       subscription: t.subscription ?? null,
       counts: t._count ?? null,
     };

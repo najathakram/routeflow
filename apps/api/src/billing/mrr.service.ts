@@ -333,6 +333,33 @@ export class MrrService {
   }
 
   /**
+   * SA-1539: the price class of each given paying-set row, in ONE add-on read for all of them. The business tabs call this
+   * with the rows where isPayingRow is true; each row is priced by priceSubscription() (the formula computeOverview() and
+   * priceTenant() use) and classed by payingPriceClass(). No pricing arithmetic lives anywhere else.
+   */
+  async payingPriceClasses(
+    rows: Array<{ tenantId: string; basePriceSnapshot: unknown; discount?: unknown }>,
+  ): Promise<Map<string, PayingPriceClass>> {
+    const out = new Map<string, PayingPriceClass>();
+    if (rows.length === 0) return out;
+    const addons = await this.prisma.tenantAddon.findMany({
+      where: billableAddonWhere({ active: true, tenantId: { in: rows.map((r) => r.tenantId) } }),
+      select: { tenantId: true, priceSnapshot: true, quantity: true },
+    });
+    const byTenant = new Map<string, { priceSnapshot: unknown; quantity: number }[]>();
+    for (const a of addons) {
+      const list = byTenant.get(a.tenantId) ?? [];
+      list.push(a);
+      byTenant.set(a.tenantId, list);
+    }
+    for (const r of rows) {
+      const price = this.priceSubscription(r, byTenant.get(r.tenantId) ?? []);
+      out.set(r.tenantId, payingPriceClass(price, r.basePriceSnapshot));
+    }
+    return out;
+  }
+
+  /**
    * Pure per-row pricing: base snapshot − discount + Σ(addon price × qty), rounded. No
    * tenant/status/class gate — `computeOverview()` and `priceTenant()` both apply that
    * themselves, over rows already scoped to paying PRODUCTION tenants.
