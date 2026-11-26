@@ -29,6 +29,11 @@ export function commitCustomDays(
   return { terms: label ?? currentTerms, error };
 }
 
+/** True when the custom box holds text that is not a whole 1-365 (create must not send the old or a partial term). */
+export function customDaysBlocksCreate(text: string | undefined): boolean {
+  return text !== undefined && customTermsFromInput(text).error !== null;
+}
+
 export const TERM_OPTIONS: string[] = [...PAYMENT_TERM_PRESETS];
 export const TERM_CHIPS = TERM_OPTIONS.map((label) => ({ label }));
 export const DEFAULT_TERMS = "Net 30";

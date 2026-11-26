@@ -83,7 +83,7 @@ export function PaymentTermsSelect({
       return;
     }
     setError(null);
-    if (label !== value) report(label);
+    if (label !== reported.current) report(label);
   };
 
   const selectValue = showCustom ? CUSTOM : value;

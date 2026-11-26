@@ -8,6 +8,7 @@ import {
   ISO_DATE,
   TERM_CHIPS,
   commitCustomDays,
+  customDaysBlocksCreate,
   customTermsFromInput,
   daysForTerms,
   TERM_OPTIONS,
@@ -110,5 +111,17 @@ describe("W-1487: commitCustomDays (the custom box commits only a valid number)"
 
   it("an emptied box (deleting the last digit) keeps the terms and shows no error", () => {
     expect(commitCustomDays("", "Net 30")).toEqual({ terms: "Net 30", error: null });
+  });
+});
+
+describe("W-1487: customDaysBlocksCreate (a bad custom box blocks create)", () => {
+  it("a valid number, an empty box and an untouched box do not block", () => {
+    expect(customDaysBlocksCreate("21")).toBe(false);
+    expect(customDaysBlocksCreate("")).toBe(false);
+    expect(customDaysBlocksCreate(undefined)).toBe(false);
+  });
+
+  it("0, 366, 7.5 and words block create, so Net 36 is never sent for a typed 366", () => {
+    for (const bad of ["0", "366", "7.5", "abc"]) expect(customDaysBlocksCreate(bad)).toBe(true);
   });
 });

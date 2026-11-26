@@ -82,6 +82,16 @@ describe("PaymentTermsSelect (B-7)", () => {
     },
   );
 
+  it("Enter then blur (value not refetched yet) reports ONE Net 21", async () => {
+    const onChange = jest.fn();
+    render(<PaymentTermsSelect value="Net 30" onChange={onChange} />);
+    await userEvent.selectOptions(screen.getByRole("combobox"), "Custom (Net N)…");
+    await userEvent.type(screen.getByLabelText("Number of days"), "21{Enter}");
+    await userEvent.tab();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("Net 21");
+  });
+
   it("a parent value arriving while the user types does not overwrite the box", async () => {
     const { rerender } = render(<PaymentTermsSelect value="Net 21" onChange={jest.fn()} />);
     const box = screen.getByLabelText("Number of days");

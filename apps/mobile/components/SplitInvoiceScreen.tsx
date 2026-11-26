@@ -13,7 +13,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar, NavBackButton, NavAction } from "@routeflow/ui/mobile/ios";
 import { useCreatePartialInvoiceFromOrder } from "../lib/api/invoices";
-import { TERM_OPTIONS, commitCustomDays, daysForTerms, todayPlusDays } from "../lib/invoice-terms";
+import {
+  TERM_OPTIONS,
+  commitCustomDays,
+  customDaysBlocksCreate,
+  customTermsFromInput,
+  daysForTerms,
+  todayPlusDays,
+} from "../lib/invoice-terms";
 import { showToast } from "../lib/toast";
 // RN Alert.alert is a no-op for multi-button alerts on Expo Web; alertInfo
 // routes through the cross-platform confirm modal instead.
@@ -268,6 +275,11 @@ export function SplitInvoiceScreen({
         "Nothing to create",
         "Allocate at least one item to a draft before creating invoices.",
       );
+      return;
+    }
+    // A custom-days box showing an error blocks create: no request with the old or a partial term.
+    if (submitable.some((d) => customDaysBlocksCreate(customText[d.id]))) {
+      alertInfo("Check the terms", "Enter a whole number of days from 1 to 365, or pick a term.");
       return;
     }
     // Validate each draft has a usable due date.
@@ -562,9 +574,18 @@ export function SplitInvoiceScreen({
                   <TextInput
                     value={customText[draft.id] ?? daysText(draft.terms)}
                     onChangeText={(v) => {
+                      // Typing only edits the text and its error; the draft's terms change on end-editing.
                       setCustomText((prev) => ({ ...prev, [draft.id]: v }));
-                      const { terms, error } = commitCustomDays(v, draft.terms);
-                      setCustomError((prev) => ({ ...prev, [draft.id]: error }));
+                      setCustomError((prev) => ({
+                        ...prev,
+                        [draft.id]: customTermsFromInput(v).error,
+                      }));
+                    }}
+                    onEndEditing={() => {
+                      const { terms, error } = commitCustomDays(
+                        customText[draft.id] ?? daysText(draft.terms),
+                        draft.terms,
+                      );
                       if (!error && terms !== draft.terms) setTerms(draft.id, terms);
                     }}
                     placeholder="Custom: number of days (1-365)"
