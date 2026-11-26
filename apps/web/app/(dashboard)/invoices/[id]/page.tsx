@@ -78,6 +78,7 @@ import { useCustomerAdvancePayments } from "@/lib/api/customers";
 import { fmt, fmtCalendarDate, fmtDate, isInternalEmail } from "@/lib/formatting";
 import { seesStaffControls } from "@/lib/default-unit-line";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
+import { PaymentTermsSelect } from "@/components/PaymentTermsSelect";
 import {
   basePriceText,
   editPaymentCap,
@@ -1121,17 +1122,6 @@ function WriteOffModal({
 }
 
 // ─── Edit terms modal (WP3 PATCH /invoices/:id/terms) ─────────────────────────
-// Same TERMS_OPTIONS values as invoices/new/page.tsx and the DRAFT edit page —
-// kept local since none of the three share a lib module for it.
-const EDIT_TERMS_OPTIONS = [
-  { value: "", label: "Select terms…" },
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 45", label: "Net 45" },
-  { value: "Net 60", label: "Net 60" },
-];
-
 interface EditTermsFields {
   dueDate?: string;
   paymentTermsLabel?: string;
@@ -1216,10 +1206,10 @@ function EditTermsModal({
           </div>
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">Terms</label>
-            <select
+            <PaymentTermsSelect
               value={paymentTermsLabel}
-              onChange={(e) => {
-                const label = e.target.value;
+              emptyLabel="Select terms…"
+              onChange={(label) => {
                 setPaymentTermsLabel(label);
                 // The client-reported bug: changing the term used to leave the old due
                 // date in place, persisting "Net 60" over Net-30 arithmetic. A known term
@@ -1231,13 +1221,7 @@ function EditTermsModal({
                 }
               }}
               className={inputCls}
-            >
-              {EDIT_TERMS_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         </div>
         {/* Only promise the recalculation when there IS an issue date to anchor

@@ -34,6 +34,8 @@ import { invoiceFooterTotals, wireDiscountBase } from "@/lib/discount-tax-base";
 import { displayProductName } from "@/lib/product-display";
 import { sellableFlat } from "@/lib/product-search-groups";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
+import { PaymentTermsSelect } from "@/components/PaymentTermsSelect";
 import {
   isSpecialTier,
   computeInvoiceLineTotal,
@@ -49,44 +51,6 @@ import {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
-
-// Same values as invoices/new/page.tsx's TERMS_OPTIONS — kept local rather than
-// shared since that page doesn't export them.
-const TERMS_OPTIONS = [
-  { value: "", label: "Select terms…" },
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 45", label: "Net 45" },
-  { value: "Net 60", label: "Net 60" },
-];
-
-function getDaysForTerms(terms: string): number | null {
-  switch (terms) {
-    case "Due on Receipt":
-      return 0;
-    case "Net 15":
-      return 15;
-    case "Net 30":
-      return 30;
-    case "Net 45":
-      return 45;
-    case "Net 60":
-      return 60;
-    default:
-      return null;
-  }
-}
-
-/** Add calendar days to a YYYY-MM-DD date, in UTC end to end — mirrors
- *  invoices/new/page.tsx's addDaysIso (local-getter math loses a day across a
- *  DST boundary). */
-function addDaysIso(iso: string, days: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  if (Number.isNaN(d.getTime())) return iso;
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
 
 /** Shape needed to resolve this customer's tier price for a product — mirrors
  *  invoices/new's `getTierPrice` callers. */
@@ -883,17 +847,12 @@ export default function EditInvoicePage() {
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">
                   Payment terms
                 </label>
-                <select
+                <PaymentTermsSelect
                   value={paymentTermsLabel}
-                  onChange={(e) => handleTermsChange(e.target.value)}
+                  emptyLabel="Select terms…"
+                  onChange={handleTermsChange}
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-                >
-                  {TERMS_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-navy/80">Due date</label>

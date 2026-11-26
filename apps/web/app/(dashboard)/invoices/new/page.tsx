@@ -83,6 +83,7 @@ import { useTenantToday } from "@/lib/tenant-timezone";
 import { dateIfNotToday } from "@/lib/counter-order-date";
 import { CounterDateChip } from "../../orders/_components/CounterDateChip";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
+import { PaymentTermsSelect } from "@/components/PaymentTermsSelect";
 import {
   computeInvoiceLineTotal,
   computeInvoiceTotals,
@@ -150,17 +151,6 @@ import {
   draftNoticeCopy,
   draftSummary,
 } from "./InvoiceDraftBanner";
-
-// ─── Terms options ─────────────────────────────────────────────────────────────
-
-const TERMS_OPTIONS = [
-  { value: "", label: "Select terms…" },
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 45", label: "Net 45" },
-  { value: "Net 60", label: "Net 60" },
-];
 
 // ─── Customer search dropdown ─────────────────────────────────────────────────
 
@@ -2365,17 +2355,12 @@ export default function NewInvoicePage() {
                   </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-navy/80">Terms</label>
-                    <select
+                    <PaymentTermsSelect
                       value={terms}
-                      onChange={(e) => handleTermsChange(e.target.value)}
+                      emptyLabel="Select terms…"
+                      onChange={handleTermsChange}
                       className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-                    >
-                      {TERMS_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-navy/80">

@@ -240,6 +240,7 @@ import {
 import { loadResyncInputs } from "./resync-plan";
 import { loadReopenableInvoice } from "./invoice-reopen-guard";
 import { issueDateStamp, addCalendarDays, startOfCalendarDay } from "../common/calendar-date";
+import { termDays } from "./payment-terms"; // W-1487: one table (Net 7/90/custom Net N)
 import { calendarFieldStamp, dueDateStamps, dueStamp, numberYear } from "./invoice-due-dates";
 import { counterPay, type CounterPayOpts, type TillUser } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -299,14 +300,6 @@ import {
   isPostDeliveryOrderStatus,
   isTerminalOrderStatus,
 } from "../common/terminal-order-statuses";
-
-export const TERM_DAYS: Record<string, number> = {
-  "Due on Receipt": 0,
-  "Net 15": 15,
-  "Net 30": 30,
-  "Net 45": 45,
-  "Net 60": 60,
-};
 
 /** #2293: round a nullable money field; `null` (clear) and `undefined` (leave as is) pass through. */
 const roundMoneyOrNull = (v: number | null | undefined) => (v == null ? v : roundMoney(v));
@@ -392,16 +385,16 @@ export class InvoicesService {
         customer?.defaultDepositPercent != null ? Number(customer.defaultDepositPercent) : null;
       if (customer?.defaultPaymentTerms) {
         terms = customer.defaultPaymentTerms;
-        dueDays = TERM_DAYS[terms] ?? 30;
+        dueDays = termDays(terms) ?? 30;
       } else {
         const stored = await this.systemConfig.get("invoice.defaultTerms");
         terms = stored || "Net 30";
-        dueDays = TERM_DAYS[terms] ?? 30;
+        dueDays = termDays(terms) ?? 30;
       }
     } else {
       const stored = await this.systemConfig.get("invoice.defaultTerms");
       terms = stored || "Net 30";
-      dueDays = TERM_DAYS[terms] ?? 30;
+      dueDays = termDays(terms) ?? 30;
     }
     // Customer wins when SET: >0 = their percent, 0 = explicit opt-out.
     // null/undefined = inherit the tenant default (if any).
@@ -2479,7 +2472,7 @@ export class InvoicesService {
     let dueDays = 30;
     if ((customerForTax as any)?.defaultPaymentTerms) {
       defaultTerms = (customerForTax as any).defaultPaymentTerms;
-      dueDays = TERM_DAYS[defaultTerms] ?? 30;
+      dueDays = termDays(defaultTerms) ?? 30;
     } else if (tenantId) {
       const cfg = await this.prisma.systemConfig.findFirst({
         where: { tenantId, key: "invoice.defaultTerms" },
@@ -2487,7 +2480,7 @@ export class InvoicesService {
       });
       if (cfg?.value) {
         defaultTerms = cfg.value;
-        dueDays = TERM_DAYS[defaultTerms] ?? 30;
+        dueDays = termDays(defaultTerms) ?? 30;
       }
     }
 
@@ -4106,10 +4099,8 @@ export class InvoicesService {
     // could never become OVERDUE and never aged. A label that cannot drive a date is dropped WITH the date,
     // so `paymentTermsLabel` and `dueDate` always agree (finance.prisma invariant).
     const sourceTerms = String((inv as any).paymentTermsLabel ?? "").trim();
-    const termDays = Object.prototype.hasOwnProperty.call(TERM_DAYS, sourceTerms)
-      ? TERM_DAYS[sourceTerms]
-      : null;
-    const dueDate = termDays != null ? addCalendarDays(issueDate, termDays) : null;
+    const sourceDays = termDays(sourceTerms);
+    const dueDate = sourceDays != null ? addCalendarDays(issueDate, sourceDays) : null;
 
     try {
       // B100/F16b: the number is reserved in reserveNext's OWN short transaction,

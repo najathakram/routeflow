@@ -16,15 +16,6 @@ import {
   type NumberingSetting,
 } from "@/lib/api/numbering";
 
-/** The invoice payment terms the api accepts (`VALID_TERMS`); due days are TERM_DAYS 0/15/30/45/60. */
-export const INVOICE_TERMS_OPTIONS = [
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 45", label: "Net 45" },
-  { value: "Net 60", label: "Net 60" },
-];
-
 /** Fixed sentence for a moved sequence (no server text is echoed: B986). */
 export const STALE_SEQUENCE_COPY =
   "The invoice sequence changed since your preview. Review the new next number and confirm again.";

@@ -13,7 +13,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar, NavBackButton, NavAction } from "@routeflow/ui/mobile/ios";
 import { useCreatePartialInvoiceFromOrder } from "../lib/api/invoices";
-import { TERM_DAYS, TERM_OPTIONS, todayPlusDays } from "../lib/invoice-terms";
+import {
+  TERM_OPTIONS,
+  customTermsFromInput,
+  daysForTerms,
+  todayPlusDays,
+} from "../lib/invoice-terms";
 import { showToast } from "../lib/toast";
 // RN Alert.alert is a no-op for multi-button alerts on Expo Web; alertInfo
 // routes through the cross-platform confirm modal instead.
@@ -91,10 +96,13 @@ function makeDraft(defaultTerms: string): DraftInvoice {
     id: `draft-${Date.now()}-${draftSeq}`,
     qtyById: {},
     terms: defaultTerms,
-    dueDate: todayPlusDays(TERM_DAYS[defaultTerms] ?? 30),
+    dueDate: todayPlusDays(daysForTerms(defaultTerms)),
     send: false,
   };
 }
+
+/** The days of a "Net N" label ("Net 21" -> "21"), for the custom-days box; empty for any other text. */
+const daysText = (terms: string): string => (/^Net \d+$/.test(terms) ? terms.slice(4) : "");
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -224,7 +232,7 @@ export function SplitInvoiceScreen({
   };
 
   const setTerms = (draftId: string, terms: string) => {
-    updateDraft(draftId, { terms, dueDate: todayPlusDays(TERM_DAYS[terms] ?? 30) });
+    updateDraft(draftId, { terms, dueDate: todayPlusDays(daysForTerms(terms)) });
   };
 
   const removeDraft = (draftId: string) => {
@@ -549,6 +557,17 @@ export function SplitInvoiceScreen({
                       );
                     })}
                   </View>
+                  <TextInput
+                    value={daysText(draft.terms)}
+                    onChangeText={(v) => {
+                      const { label } = customTermsFromInput(v);
+                      if (label) setTerms(draft.id, label);
+                    }}
+                    placeholder="Custom: number of days (1-365)"
+                    keyboardType="number-pad"
+                    style={styles.dueInput}
+                    editable={!created}
+                  />
                   <Text style={styles.draftFooterLabel}>Due date</Text>
                   <TextInput
                     value={draft.dueDate}

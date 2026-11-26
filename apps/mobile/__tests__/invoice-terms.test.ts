@@ -7,17 +7,26 @@ import {
   DEFAULT_TERMS,
   ISO_DATE,
   TERM_CHIPS,
-  TERM_DAYS,
+  customTermsFromInput,
+  daysForTerms,
   TERM_OPTIONS,
   dueDateFor,
   todayPlusDays,
 } from "../lib/invoice-terms";
 
 describe("term constants", () => {
-  it("options and chips derive from TERM_DAYS in order", () => {
-    expect(TERM_OPTIONS).toEqual(["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"]);
+  it("options and chips derive from the shared presets in order", () => {
+    expect(TERM_OPTIONS).toEqual([
+      "Due on Receipt",
+      "Net 7",
+      "Net 15",
+      "Net 30",
+      "Net 45",
+      "Net 60",
+      "Net 90",
+    ]);
     expect(TERM_CHIPS).toEqual(TERM_OPTIONS.map((label) => ({ label })));
-    expect(TERM_DAYS[DEFAULT_TERMS]).toBe(30);
+    expect(daysForTerms(DEFAULT_TERMS)).toBe(30);
   });
 });
 
@@ -46,5 +55,40 @@ describe("dueDateFor", () => {
       expect(dueDateFor("2026-06-15", term)).toMatch(ISO_DATE);
       expect(dueDateFor("", term)).toMatch(ISO_DATE);
     }
+  });
+});
+
+describe("W-1487: Net 7, Net 90 and a custom Net N (B-3, B-4)", () => {
+  it("B-3: 2026-03-01 + Net 7 is 2026-03-08 and + Net 30 is 2026-03-31", () => {
+    expect(dueDateFor("2026-03-01", "Net 7")).toBe("2026-03-08");
+    expect(dueDateFor("2026-03-01", "Net 30")).toBe("2026-03-31");
+  });
+
+  it("B-4: 2026-11-26 + Net 90 is 2027-02-24", () => {
+    expect(dueDateFor("2026-11-26", "Net 90")).toBe("2027-02-24");
+  });
+
+  it("a custom Net 21 runs 21 days; the options offer the shared presets", () => {
+    expect(dueDateFor("2026-03-01", "Net 21")).toBe("2026-03-22");
+    expect(TERM_OPTIONS).toEqual([
+      "Due on Receipt",
+      "Net 7",
+      "Net 15",
+      "Net 30",
+      "Net 45",
+      "Net 60",
+      "Net 90",
+    ]);
+  });
+});
+
+describe("W-1487: the custom days box (B-7, mobile)", () => {
+  it("a typed 21 is Net 21; 0, 366, 7.5 and words are refused inline", () => {
+    expect(customTermsFromInput("21")).toEqual({ label: "Net 21", error: null });
+    for (const bad of ["0", "366", "7.5", "-3", "abc"]) {
+      expect(customTermsFromInput(bad).label).toBeNull();
+      expect(customTermsFromInput(bad).error).toMatch(/1 to 365/);
+    }
+    expect(customTermsFromInput("")).toEqual({ label: null, error: null });
   });
 });
