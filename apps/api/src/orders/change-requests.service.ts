@@ -7,7 +7,8 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import * as unitAware from "./unit-aware-guard";
-import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { buyerLinePieces, normalizeBoxesPieces } from "@routeflow/pricing";
+import { assertBuyerLinesWithinCap } from "./buyer-line-cap";
 import { PrismaService } from "../prisma/prisma.service";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import { OrdersService } from "./orders.service";
@@ -149,7 +150,9 @@ export class ChangeRequestsService {
     const order = await this.prisma.forTenant().order.findUnique({
       where: { id: orderId },
       include: {
-        lineItems: { select: { id: true, productId: true, status: true, qty: true } },
+        lineItems: {
+          select: { id: true, productId: true, status: true, qty: true, boxes: true, pieces: true },
+        },
         routeRun: { select: { status: true } },
       },
     });
@@ -264,6 +267,9 @@ export class ChangeRequestsService {
       default:
         throw new BadRequestException("Unknown change request type");
     }
+    // B1386 (SA-1285 section 1): a CUSTOMER's filed quantity is capped on its piece total, rise-only. Staff keep the
+    // DTO's own limit.
+    if (user.role === UserRole.CUSTOMER) await this.assertCustomerLineCap(dto, order.lineItems);
 
     const created = await this.prisma.forTenant().changeRequest.create({
       data: {
@@ -296,6 +302,41 @@ export class ChangeRequestsService {
       .catch(() => {});
 
     return created;
+  }
+
+  /**
+   * B1386: an ADD_ITEM counts packs unless it files a split (then `qty` is pieces); a CHANGE_QTY's new qty is in
+   * its line's own unit (pieces on a box-split line) and is judged against what that line holds now. The pack is
+   * the live one (the shared live-pack lookup).
+   */
+  private async assertCustomerLineCap(
+    dto: CreateChangeRequestDto,
+    lineItems: ReadonlyArray<{
+      id: string;
+      productId: string | null;
+      qty: unknown;
+      boxes?: unknown;
+      pieces?: unknown;
+    }>,
+  ): Promise<void> {
+    const li =
+      dto.type === ChangeRequestType.CHANGE_QTY
+        ? lineItems.find((l) => l.id === dto.orderItemId)
+        : undefined;
+    const productId = dto.type === ChangeRequestType.ADD_ITEM ? dto.productId : li?.productId;
+    if (!productId || (dto.type !== ChangeRequestType.ADD_ITEM && !li)) return;
+    const packs = await loadLiveUnitsPerBoxByProduct(this.prisma.forTenant() as any, [productId]);
+    const upb = packs.get(productId) ?? 0;
+    const inPieces = li
+      ? li.boxes != null || li.pieces != null
+      : dto.boxes != null || dto.pieces != null;
+    assertBuyerLinesWithinCap([
+      {
+        productId,
+        pieces: buyerLinePieces(Number(dto.qty ?? 0), inPieces, upb),
+        storedPieces: li ? buyerLinePieces(Number(li.qty ?? 0), inPieces, upb) : 0,
+      },
+    ]);
   }
 
   /**
