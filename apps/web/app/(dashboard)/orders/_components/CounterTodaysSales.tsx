@@ -582,7 +582,6 @@ export function CounterTodaysSales() {
         }}
         closeClassName="min-h-11 min-w-11 flex items-center justify-center"
         title={reprint ? "Reprint receipt" : view === "week" ? "Last 7 days" : "Today's sales"}
-        scroll
         className={cn(
           "max-w-2xl print:static print:max-h-none print:max-w-none print:translate-x-0 print:translate-y-0 print:overflow-visible print:p-0 print:shadow-none",
           // the modal's title row is not part of the receipt

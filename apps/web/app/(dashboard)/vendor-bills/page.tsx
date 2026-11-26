@@ -648,6 +648,7 @@ function CreateBillModal({
   return (
     <>
       <Modal
+        scroll={false} // B1444: CLIP
         open={isOpen}
         onClose={onClose}
         onEscapeKeyDown={(e) => {

@@ -33,7 +33,7 @@ DECLARE
     'Invoice', 'InvoiceItem', 'InvoicePayment', 'PaymentCounter',
     'CreditNote', 'Estimate', 'EstimateItem', 'RecurringInvoice',
     'RecurringInvoiceItem', 'AdvancePayment', 'Return', 'ReturnItem',
-    'Supplier', 'PurchaseOrder', 'PurchaseOrderItem', 'VendorBill',
+    'Supplier', 'PurchaseOrder', 'PurchaseOrderItem', 'PurchaseOrderReceipt', 'PurchaseOrderReceiptLine', 'PurchaseOrderCharge', 'PurchaseOrderChargeAllocation', 'VendorBill',
     'VendorBillItem', 'BillPayment', 'Expense', 'ExpenseCategory',
     'ExpenseLineItem', 'MileageRate', 'StockMovement', 'StockLot',
     'Message', 'RefreshToken', 'DeviceToken', 'UserPreference', 'ProductMapping'
@@ -122,7 +122,7 @@ DECLARE
     'Invoice', 'InvoiceItem', 'InvoicePayment', 'PaymentCounter',
     'CreditNote', 'Estimate', 'EstimateItem', 'RecurringInvoice',
     'RecurringInvoiceItem', 'AdvancePayment', 'Return', 'ReturnItem',
-    'Supplier', 'PurchaseOrder', 'PurchaseOrderItem', 'VendorBill',
+    'Supplier', 'PurchaseOrder', 'PurchaseOrderItem', 'PurchaseOrderReceipt', 'PurchaseOrderReceiptLine', 'PurchaseOrderCharge', 'PurchaseOrderChargeAllocation', 'VendorBill',
     'VendorBillItem', 'BillPayment', 'Expense', 'ExpenseCategory',
     'ExpenseLineItem', 'MileageRate', 'StockMovement', 'StockLot',
     'Message', 'RefreshToken', 'DeviceToken', 'UserPreference', 'ProductMapping'

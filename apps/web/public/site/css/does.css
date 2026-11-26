@@ -1,10 +1,11 @@
 /* What it does and doesn't do. Sits on product.css; only the one picture at the top is new. */
 .dd-flow{margin:0;display:flex;align-items:center;justify-content:center;gap:clamp(6px,1vw,14px)}
-.dd-box{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:clamp(16px,1.8vw,22px);border-radius:var(--r);background:#fff;box-shadow:0 0 0 1px var(--line)}
+.dd-box{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:clamp(16px,1.8vw,22px);border-radius:var(--r);background:var(--rf-white);box-shadow:var(--rf-ring)}
 .dd-box .pd-ic{margin-bottom:8px}
-.dd-box b{font-size:clamp(17px,1.5vw,20px);font-weight:600;letter-spacing:-.012em;color:var(--ink);text-wrap:balance}
-.dd-box span{font-size:16px;line-height:1.35;color:var(--ink-2);text-wrap:pretty}
-.dd-arrow{flex:none;width:24px;height:24px;color:var(--ink-3);stroke-width:1.8}
+.dd-box b{font-size:clamp(17px,1.5vw,20px);font-weight:600;letter-spacing:-.012em;color:var(--rf-text);text-wrap:balance}
+.dd-box span{font-size:16px;line-height:1.35;color:var(--rf-text-2);text-wrap:pretty}
+.pd-top .dd-flow{align-self:center}
+.dd-arrow{flex:none;width:24px;height:24px;color:var(--rf-text-2);stroke-width:1.8}
 
 @media (max-width:899.98px){
   .dd-flow{max-width:560px}

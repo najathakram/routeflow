@@ -12,9 +12,12 @@
 //
 // Lines of the form `path:<prefix>` (repo-relative, forward slashes, case-insensitive) list private path
 // prefixes: under --hook a push is refused when any outgoing commit adds or modifies a file under one (binary
-// files included; deletes are fine). Output names the commit and the rule number, never the path. Lifted by
-// RF_REBRAND_PUSH=launch. A `commit:` or `path:` line that does not parse refuses to load, and the file must
+// files included; deletes are fine). Output names the commit and the rule number, never the path. Only a push that carries a rebrand ref lifts them (RF_REBRAND_PUSH=launch alone never does).
+// A `commit:` or `path:` line that does not parse refuses to load, and the file must
 // hold at least one regex (the content scan is never off).
+//
+// Hook and --range also take --remote-url <url> (the hook passes git's $2): see masterViewTrusted for when a merge
+// of origin/master content is excused. Without it every merge is judged against its first parent only.
 //
 // Modes (exactly one):
 //   --range <a..b> [--ref <name>]...   diff added lines (incl. new + renamed files, --text), file
@@ -98,12 +101,80 @@ export function parseHeaderPath(buf) {
   return { name: name.replace(/^b\//, ""), quoted };
 }
 
+/** Paths a commit changes relative to ONE parent (renames as delete + add), or null on a git failure. */
+function changedPaths(cwd, parent, sha, git) {
+  const r = git(cwd, ["diff-tree", "-r", "--no-renames", "--name-only", "-z", parent, sha]);
+  return r.ok ? new Set(r.out.split("\0").filter(Boolean)) : null;
+}
+
+/** Added lines of a `git diff` (bytes) as [{ file, quoted, lines: Buffer[] }], one entry per file section. */
+function parseAddedLines(diffBuf) {
+  const files = [];
+  let cur = null;
+  let inHeader = false;
+  for (const raw of splitLines(diffBuf)) {
+    if (raw.toString("latin1", 0, 11) === "diff --git ") {
+      cur = { file: "", quoted: false, lines: [] };
+      files.push(cur);
+      inHeader = true;
+    } else if (inHeader) {
+      if (raw.toString("latin1", 0, 4) === "+++ ") {
+        const { name, quoted } = parseHeaderPath(raw.subarray(4));
+        cur.file = name;
+        cur.quoted = quoted;
+      } else if (raw[0] === 0x40 && raw[1] === 0x40) inHeader = false;
+    } else if (cur && raw[0] === 0x2b) {
+      cur.lines.push(raw.subarray(1));
+    }
+  }
+  return files;
+}
+
+/**
+ * True when a merge's other parent may be used to excuse content: the local view of origin/master is vouched
+ * for (opts.trusted) AND origin/master fully contains the parent. A failed git call is "no" (fail closed).
+ */
+function publicParent(cwd, parent, git, opts) {
+  if (!opts.trusted || !opts.trusted()) return false;
+  const r = git(cwd, ["rev-list", "-n1", parent, "--not", ORIGIN_MASTER]);
+  return r.ok && r.out.trim() === "";
+}
+
+/**
+ * Vouches for the local refs/remotes/origin/master: the push goes to origin (the URL matches origin's) and
+ * the local ref equals, or is an ancestor of, the master the remote reports right now. Anything else, an
+ * unreachable remote or a timeout included, is false. Never throws.
+ */
+export function masterViewTrusted(cwd, url, git = gitOut) {
+  if (!url) return false;
+  const fetchUrl = git(cwd, ["remote", "get-url", "origin"]);
+  const pushUrl = git(cwd, ["remote", "get-url", "--push", "origin"]);
+  if (![fetchUrl, pushUrl].some((m) => m.ok && m.out.trim() === url)) return false;
+  const local = git(cwd, ["rev-parse", "--verify", "-q", `${ORIGIN_MASTER}^{commit}`]);
+  if (!local.ok) return false;
+  const r = spawnSync("git", ["ls-remote", url, "refs/heads/master"], {
+    cwd,
+    encoding: "utf8",
+    timeout: 30000,
+  });
+  if (r.status !== 0 || r.error) return false;
+  const remote = /^([0-9a-f]{40,64})\s+refs\/heads\/master$/m.exec(r.stdout ?? "")?.[1];
+  if (!remote) return false;
+  const loc = local.out.trim();
+  if (loc === remote) return true;
+  return git(cwd, ["merge-base", "--is-ancestor", loc, remote]).ok;
+}
+
 /**
  * Scan an array of rev-list arguments. Pushes identifier-only hit lines into `hits`.
  * Returns false when ANY git call fails (the caller must then fail closed, never pass).
- * Merge commits are scanned against their FIRST parent (so an evil merge cannot hide content).
+ * Merge commits are scanned against their FIRST parent (so an evil merge cannot hide content). The one
+ * exemption: when `opts.trusted()` vouches for the local view of origin/master (see masterViewTrusted), a
+ * name or line that equals what ANOTHER parent holds is not charged, but only for a parent that origin/master
+ * fully contains (public, and outside the range so never scanned on its own). Any other parent, a failed
+ * check, a missing origin/master or no vouching means the plain first-parent scan for that merge.
  */
-export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
+export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut, opts = {}) {
   const list = git(cwd, ["rev-list", "--reverse", ...revArgs]);
   if (!list.ok) return false;
   for (const sha of list.out.split("\n").filter(Boolean)) {
@@ -113,7 +184,34 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
     if (matchesBuf(regexes, bytesOf(msgR))) hits.push(`commit ${short}: message or identity`);
     const parR = git(cwd, ["log", "-1", "--format=%P", sha]);
     if (!parR.ok) return false;
-    const parent = parR.out.trim().split(/\s+/)[0];
+    const parents = parR.out.trim().split(/\s+/).filter(Boolean);
+    const parent = parents[0];
+    // Other parents' view of a merge: a path or line is the merge's own only when NEW against all of the
+    // origin/master-contained ones (others stay out: their content is charged to the merge).
+    const others = [];
+    for (const op of parents.slice(1)) {
+      if (!publicParent(cwd, op, git, opts)) continue;
+      const paths = changedPaths(cwd, op, sha, git);
+      const dR = git(cwd, [
+        "diff",
+        "--text",
+        "-M",
+        "-U0",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        op,
+        sha,
+      ]);
+      if (!paths || !dR.ok) return false;
+      const byFile = new Map();
+      for (const f of parseAddedLines(bytesOf(dR))) {
+        const set = byFile.get(f.file) ?? new Set();
+        for (const l of f.lines) if (matchesBuf(regexes, l)) set.add(l.toString("latin1"));
+        byFile.set(f.file, set);
+      }
+      others.push({ paths, byFile });
+    }
     const nsR = parent
       ? git(cwd, ["diff-tree", "-r", "-M", "--name-status", "-z", parent, sha])
       : git(cwd, ["diff-tree", "-r", "--root", "--no-commit-id", "--name-status", "-z", sha]);
@@ -125,7 +223,7 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
       if (!st) break;
       const paths = /^[RC]/.test(st) ? [ns[i++], ns[i++]] : [ns[i++]];
       for (const p of paths) {
-        if (p && matchesBuf(regexes, p) && !seen.has(p)) {
+        if (p && others.every((o) => o.paths.has(p)) && matchesBuf(regexes, p) && !seen.has(p)) {
           seen.add(p);
           hits.push(`commit ${short}: file name (withheld)`);
         }
@@ -154,33 +252,20 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
           sha,
         ]);
     if (!diffR.ok) return false;
-    let file = "";
-    let fileQuoted = false;
-    let count = 0;
-    let inHeader = false;
-    const flush = () => {
+    for (const f of parseAddedLines(bytesOf(diffR))) {
+      const seenIn = others.map((o) => o.byFile.get(f.file));
+      let count = 0;
+      for (const l of f.lines) {
+        if (!matchesBuf(regexes, l)) continue;
+        const key = l.toString("latin1");
+        if (seenIn.every((set) => set?.has(key))) count++;
+      }
       if (count) {
         // A quoted name (unusual bytes) is never printed, whatever it decodes to.
-        const shown = fileQuoted || matches(regexes, file) ? "(path withheld)" : file;
+        const shown = f.quoted || matches(regexes, f.file) ? "(path withheld)" : f.file;
         hits.push(`commit ${short}: ${count} added line(s) in ${shown}`);
       }
-      count = 0;
-    };
-    for (const raw of splitLines(bytesOf(diffR))) {
-      if (raw.toString("latin1", 0, 11) === "diff --git ") {
-        flush();
-        inHeader = true;
-        file = "";
-        fileQuoted = false;
-      } else if (inHeader) {
-        if (raw.toString("latin1", 0, 4) === "+++ ") {
-          ({ name: file, quoted: fileQuoted } = parseHeaderPath(raw.subarray(4)));
-        } else if (raw[0] === 0x40 && raw[1] === 0x40) inHeader = false;
-      } else if (raw[0] === 0x2b && matchesBuf(regexes, raw.subarray(1))) {
-        count++;
-      }
     }
-    flush();
   }
   return true;
 }
@@ -189,13 +274,22 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut) {
  * Refuse any commit in the range that ADDS or MODIFIES a file under a `path:` prefix (binary files too).
  * Deletes are allowed. Output names the commit and the rule number, never the path. False on a git failure.
  */
-function scanPaths(cwd, prefixes, revArgs, hits) {
+function scanPaths(cwd, prefixes, revArgs, hits, opts = {}) {
   const list = gitOut(cwd, ["rev-list", "--reverse", ...revArgs]);
   if (!list.ok) return false;
   for (const sha of list.out.split("\n").filter(Boolean)) {
     const parR = gitOut(cwd, ["log", "-1", "--format=%P", sha]);
     if (!parR.ok) return false;
-    const parent = parR.out.trim().split(/\s+/)[0];
+    const parents = parR.out.trim().split(/\s+/).filter(Boolean);
+    const parent = parents[0];
+    // A merge answers only for paths it changes relative to every origin/master-contained parent (see scanRevs).
+    const others = [];
+    for (const op of parents.slice(1)) {
+      if (!publicParent(cwd, op, gitOut, opts)) continue;
+      const paths = changedPaths(cwd, op, sha, gitOut);
+      if (!paths) return false;
+      others.push(paths);
+    }
     const nsR = parent
       ? gitOut(cwd, ["diff-tree", "-r", "--no-renames", "--name-status", "-z", parent, sha])
       : gitOut(cwd, ["diff-tree", "-r", "--root", "--no-renames", "--name-status", "-z", sha]);
@@ -206,7 +300,7 @@ function scanPaths(cwd, prefixes, revArgs, hits) {
       const st = ns[i++];
       if (!st) break;
       const f = ns[i++];
-      if (st === "D" || !f) continue;
+      if (st === "D" || !f || !others.every((o) => o.has(f))) continue;
       const low = f.toLowerCase();
       prefixes.forEach((pre, idx) => low.startsWith(pre) && ruleHits.add(idx + 1));
     }
@@ -309,6 +403,9 @@ function parseArgs(argv) {
     else if (a === "--stdin") o.stdin = true;
     else if (a === "--tree") o.tree = true;
     else if (a === "--hook") o.hook = true;
+    else if (a === "--remote-name")
+      i++; // accepted for the hook's $1; the URL is what is compared
+    else if (a === "--remote-url") o.remoteUrl = argv[++i];
     else return { error: "unknown argument" };
   }
   const modes = [o.range, o.textFile, o.stdin, o.tree, o.hook].filter(Boolean).length;
@@ -415,12 +512,17 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
     }
   }
   const hits = [];
+  // Merge exemptions (see scanRevs) need the remote's word on master; asked lazily, once, only for a merge.
+  let trustedMemo;
+  const scanOpts = {
+    trusted: () => (trustedMemo ??= masterViewTrusted(cwd, o.remoteUrl)),
+  };
 
   if (o.range) {
     o.refs.forEach(
       (r, i) => matchesBuf(regexes, r) && hits.push(`ref #${i + 1}: name matches (withheld)`),
     );
-    if (!scanRevs(cwd, regexes, withBase(cwd, [o.range], notices), hits)) {
+    if (!scanRevs(cwd, regexes, withBase(cwd, [o.range], notices), hits, gitOut, scanOpts)) {
       return { code: 2, lines: ["leak-check: cannot resolve the --range argument."] };
     }
   } else if (o.textFile || o.stdin) {
@@ -474,13 +576,15 @@ export function run(argv, { cwd = process.cwd(), env = process.env, input = "" }
       }
       if (!tip) continue;
       const revs = rangeForRef(cwd, tip, p.rsha, notices);
-      if (!scanRevs(cwd, regexes, revs, hits)) {
+      if (!scanRevs(cwd, regexes, revs, hits, gitOut, scanOpts)) {
         return {
           code: 2,
           lines: [`leak-check: cannot resolve outgoing range for ${p.lsha.slice(0, 10)}`],
         };
       }
-      if (paths.length && env.RF_REBRAND_PUSH !== "launch" && !scanPaths(cwd, paths, revs, hits)) {
+      // Path rules are lifted only by the rebrand-ref branch above (launch + a rebrand ref in this push removes
+      // that ref from `pushed`); a launch switch alone never lifts them for the other refs.
+      if (paths.length && !scanPaths(cwd, paths, revs, hits, scanOpts)) {
         return {
           code: 2,
           lines: [`leak-check: cannot list files of the outgoing range for ${p.lsha.slice(0, 10)}`],

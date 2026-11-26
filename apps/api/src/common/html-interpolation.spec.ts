@@ -55,7 +55,8 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
       "escaped by every caller (the `headerHtml` property is a sink there)",
     "renderBrandedEmail :: params.bodyHtml":
       "escaped by every caller (the `bodyHtml` property is a sink there)",
-    "lookParts :: href BRAND_SITE_URL": "a constant URL",
+    "lookParts :: href escapeHtml(BRAND_SITE_URL)":
+      "the brand's own site: https, no trailing slash, validated when brand.json loads",
     "renderEmailLayout :: params.bodyHtml":
       "escaped by every caller (the `bodyHtml` property is a sink there)",
     "wrapUnbrandedHtml :: inner":
