@@ -1028,6 +1028,7 @@ export default function RouteRunDetailPage() {
       </Modal>
 
       <Modal
+        scroll={false} // B1444: CLIP
         open={showPlanningModal}
         onClose={() => setShowPlanningModal(false)}
         title="Route planning"

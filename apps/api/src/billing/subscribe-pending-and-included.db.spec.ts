@@ -14,8 +14,9 @@
  *
  * Real PrismaClient + BillingEventService + ProrationService + SubscriptionMutationService; a stand-in catalog
  * (the plan graph under test) borrowing a real PlanVersion id for the FKs; a stateful fake Stripe. Throwaway
- * `qa-*` tenants (assertTestTenant). The tenant is ACTIVE on GROWTH MONTHLY and picks SCALE ANNUAL: a cycle
- * change is the one ACTIVE pick the B58 guard lets through subscribe() (a same-cycle pick goes to upgrade()).
+ * `qa-*` tenants (assertTestTenant). The tenant is ACTIVE on GROWTH MONTHLY with no periodEnd and picks SCALE MONTHLY:
+ * a row with no live period is the one ACTIVE pick the B58 guard lets through subscribe() (it heals the missing period;
+ * a same-cycle pick with a period goes to upgrade()). B1406: subscribe() never enters a year, so ANNUAL is not used here.
  */
 import { randomUUID } from "crypto";
 import { Pool } from "pg";
@@ -156,7 +157,7 @@ describeDb(
           discount: 0,
           cycle: "MONTHLY",
           periodStart: new Date(Date.now() - 15 * 86_400_000),
-          periodEnd: new Date(Date.now() + 15 * 86_400_000),
+          periodEnd: null, // B58: no live period, so subscribe() heals it (SA-1304 BP-1 test ruling, path b)
         },
       });
       await prisma.tenantAddon.create({
@@ -196,7 +197,7 @@ describeDb(
 
     const PICK = {
       planKey: "SCALE",
-      cycle: "ANNUAL" as any,
+      cycle: "MONTHLY" as any,
       addons: [{ sku: "CUSTOMER_PACK_100", quantity: 1 }],
     };
 
@@ -243,7 +244,7 @@ describeDb(
       const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: id } });
       expect([sub.planKey, sub.cycle, Number(sub.basePriceSnapshot)]).toEqual([
         "SCALE",
-        "ANNUAL",
+        "MONTHLY",
         499,
       ]);
       expect(stripe.updateSubscription).not.toHaveBeenCalled();

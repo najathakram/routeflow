@@ -460,10 +460,11 @@ export interface UpdateFamilyVariantsRequest {
 
 /**
  * The "Delete product?" confirm's body, shared by web and mobile (audit 2026-10-14: mobile said "removed
- * permanently", but a delete deactivates the product and keeps its history).
+ * permanently", but a delete deactivates the product and keeps its history). UX audit 2026-11-24 F54: it says in plain
+ * words that the product can come back and where to find it; a refused delete explains itself when it happens.
  */
 export function deleteProductConfirmText(name: string): string {
-  return `${name} will be deactivated and hidden from the catalog. Its SKU and barcode are freed, so another product can use them. Order and invoice history is kept. A product on an undelivered order can't be deleted.`;
+  return `${name} will be hidden from the catalog. It is not gone for good: find it under Inactive in Products to turn it back on. Past orders and invoices keep it. Its SKU and barcode become free for another product.`;
 }
 
 export interface ProductPriceGridCellDto {

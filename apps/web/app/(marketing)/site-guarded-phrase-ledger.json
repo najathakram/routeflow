@@ -121,7 +121,7 @@
     {
       "phrase": "edi",
       "page": "does-and-doesnt.html",
-      "sentence": "RouteFlow doesn’t connect by EDI.",
+      "sentence": "{{brand:name}} doesn’t connect by EDI.",
       "why": "Says plainly the product does not do this (claims register D)."
     },
     {
@@ -193,7 +193,7 @@
     {
       "phrase": "accounting-tools",
       "page": "home.html",
-      "sentence": "RouteFlow doesn’t connect to QuickBooks, Xero, or Zoho.",
+      "sentence": "{{brand:name}} doesn’t connect to QuickBooks, Xero, or Zoho.",
       "why": "Says plainly the product does not do this (claims register D)."
     },
     {
@@ -211,7 +211,7 @@
     {
       "phrase": "accounting-tools",
       "page": "pricing.html",
-      "sentence": "RouteFlow doesn’t connect to QuickBooks, Xero, or Zoho.",
+      "sentence": "{{brand:name}} doesn’t connect to QuickBooks, Xero, or Zoho.",
       "why": "Says plainly the product does not do this (claims register D)."
     },
     {

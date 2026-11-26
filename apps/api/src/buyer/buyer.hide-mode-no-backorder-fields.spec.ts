@@ -82,6 +82,7 @@ async function boot() {
         useValue: {
           forTenant: () => ({
             invoice: { update: jest.fn() },
+            product: { findMany: jest.fn().mockResolvedValue([]) }, // B1386: the create cap reads each pack
             orderTemplate: { findFirst: jest.fn().mockResolvedValue({ customerId: "c-mine" }) },
           }),
         },

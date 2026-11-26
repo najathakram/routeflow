@@ -327,7 +327,6 @@ function Chooser({
       open
       onClose={onClose}
       title={chooserTitle(mode, n)}
-      scroll
       footer={
         chosen ? (
           <>

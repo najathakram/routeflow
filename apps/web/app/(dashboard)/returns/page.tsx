@@ -301,7 +301,6 @@ function CreateReturnModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      scroll
       className="sm:max-w-2xl"
       title="Create Return"
       description="Create a return request for a delivered order."

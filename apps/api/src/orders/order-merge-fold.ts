@@ -22,6 +22,7 @@ import { UserRole, ItemStatus } from "@prisma/client";
 import * as unitAware from "./unit-aware-guard";
 import { linePositionAllocator, loserLineRanks } from "./line-position";
 import { isBuyerPricedLine } from "./buyer-merge-pricing";
+import { foldInvolvesBuyer, splitLosersByCap } from "./merge-fold-cap";
 import {
   buildMergeLineWrites,
   orderMergeAppends,
@@ -102,17 +103,14 @@ export async function mergeAllPendingForCustomerImpl(
         // units_v1: fold nothing and return NO order (a survivor would be someone else's order).
         if (pendingOrders.some((o) => o.lineItems.some(unitAware.isUnitAwareLine))) return null;
 
-        const [winner, ...losers] = pendingOrders;
-        // Unlisted (catalog-free) loser lines can't be keyed by product — each is
-        // appended to the winner as its own new line (never boxed, unaffected by B776).
-        const loserRanks = loserLineRanks(losers); // W-1187: the append sequence, one rank per loser line
-        const unlistedNewItems = collectUnlistedLoserItems(losers, loserRanks);
-
+        const [winner, ...candidates] = pendingOrders;
         // unitsPerBox for every product involved so boxed lines prorate by the box.
-        const contributingLines = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)];
         const involvedProductIds = [
           ...new Set(
-            contributingLines.map((li) => li.productId).filter((id): id is string => !!id),
+            pendingOrders
+              .flatMap((o) => o.lineItems)
+              .map((li) => li.productId)
+              .filter((id): id is string => !!id),
           ),
         ];
         const upbByProduct = new Map<string, number>();
@@ -129,6 +127,32 @@ export async function mergeAllPendingForCustomerImpl(
             catByProduct.set(p.id, p.category ?? null);
           }
         }
+
+        // B1386 (REG-B1386 S1-S6): this runs AFTER the new order committed, so it cannot refuse. When the fold involves a
+        // buyer, a loser whose fold would push a merged line past the buyer line cap (rise-only) is kept apart: it stays its
+        // own pending order, is not folded at all, and is logged (ids only). Staff-only folds are unchanged.
+        let losers = candidates;
+        if (foldInvolvesBuyer(pendingOrders, options.buyerInitiated === true)) {
+          const { fold, apart } = splitLosersByCap(
+            winner,
+            candidates,
+            (id) => upbByProduct.get(id) ?? 0,
+          );
+          for (const kept of apart) {
+            self.logger.warn(
+              `Kept order ${kept.order.id} apart from ${winner.id}: folding it would pass the buyer line cap on product(s) [${[
+                ...new Set(kept.over.map((l) => l.productId).filter(Boolean)),
+              ].join(", ")}]`,
+            );
+          }
+          losers = fold as typeof candidates;
+          if (losers.length === 0) return null; // nothing folds: every order stays as it is
+        }
+        // Unlisted (catalog-free) loser lines can't be keyed by product — each is
+        // appended to the winner as its own new line (never boxed, unaffected by B776).
+        const loserRanks = loserLineRanks(losers); // W-1187: the append sequence, one rank per loser line
+        const unlistedNewItems = collectUnlistedLoserItems(losers, loserRanks);
+        const contributingLines = [...winner.lineItems, ...losers.flatMap((l) => l.lineItems)];
 
         const taxRate = await self.getTaxRate();
         // BUY_N_GET_M: a merged line earns its own free units for the COMBINED

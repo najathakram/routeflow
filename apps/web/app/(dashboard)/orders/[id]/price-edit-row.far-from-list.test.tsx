@@ -10,6 +10,7 @@ const row = (unitPrice: number, basePrice = 6.99) =>
     <PriceEditRow
       unitWord="case"
       basePrice={basePrice}
+      listReference={basePrice}
       unitPrice={unitPrice}
       originalUnitPrice={basePrice}
       onPriceChange={jest.fn()}

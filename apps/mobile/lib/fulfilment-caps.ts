@@ -42,11 +42,15 @@ export function staffFormFulfilment(features: FeaturesLike): {
   };
 }
 
-/** W-1306: the one sentence saying why this order shows no delivery steps, or null (web `DeliveryStepsAbsentNote`). */
+/**
+ * W-1306: the one sentence saying why this order shows no delivery steps, or null (web `DeliveryStepsAbsentNote`).
+ * Shown only on a CONFIRMED order (#4510: the gate lives here, not in the screen).
+ */
 export function staffDeliveryAbsentNote(
   features: FeaturesLike,
-  order: { fulfillPath?: string | null; counterSale?: boolean | null },
+  order: { fulfillPath?: string | null; counterSale?: boolean | null; status?: string | null },
 ): string | null {
+  if (order.status !== "CONFIRMED") return null;
   const reason = deliveryStepsAbsentReason({
     fulfillPath: order.fulfillPath,
     counterSale: order.counterSale,

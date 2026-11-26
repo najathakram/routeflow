@@ -47,7 +47,7 @@ describe("phone menu and footer reach the three depth pages", () => {
   });
 
   it("the header Pricing pill steps aside while the phone menu is open", () => {
-    expect(read("css/home-up.css")).toContain(
+    expect(read("css/site.css")).toContain(
       ".js body.menu-open .site-header.hero-btn-in .nav-price{display:none}",
     );
   });

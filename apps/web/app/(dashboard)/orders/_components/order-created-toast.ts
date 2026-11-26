@@ -132,3 +132,15 @@ export function showOrderCreatedToast(
   lastOrderCreatedToastId = api.toast(data);
   return lastOrderCreatedToastId;
 }
+
+/**
+ * Takes the order-created toast down when the person leaves the orders list (UX audit 2026-11-24 F39). It stays
+ * until dismissed on purpose (F28: a glance away never loses "View order"), but that promise is about the list:
+ * carried onto Customers or Invoices it sat over other work for the rest of the day, and on the new order's own page
+ * it offered "View order" for the order already on screen.
+ */
+export function dismissOrderCreatedToast(api: { dismiss: (id: string) => void }): void {
+  if (!lastOrderCreatedToastId) return;
+  api.dismiss(lastOrderCreatedToastId);
+  lastOrderCreatedToastId = null;
+}

@@ -44,6 +44,9 @@ export function derivedUnitPatch(
     basePrice: packPrice,
     overrideReason: undefined,
     reasonBaselinePrice: packPrice,
+    // B1423 (R-214): the line now sells the PACK at the derived price; the previous unit's list (a Case) is not its
+    // list, and the page has no pack list for it, so the far-from-list note has no reference (as for a loose piece).
+    listReference: null,
     priceEdited: false,
   };
 }

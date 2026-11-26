@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { Check, Loader2, Sparkles } from "lucide-react";
 import { Card, Button, Badge, useToast, cn } from "@routeflow/ui/web";
 import { fmtDate } from "@/lib/formatting";
@@ -46,7 +48,8 @@ export default function ChoosePlanPage() {
   const downgrade = useDowngrade();
   const resume = useResumeSubscription();
 
-  const [cycle, setCycle] = React.useState<Cycle>("MONTHLY");
+  const qc = useQueryClient();
+  const [wantedCycle, setCycle] = React.useState<Cycle>("MONTHLY");
   const [selected, setSelected] = React.useState<string | null>(null);
   const [preview, setPreview] = React.useState<QuoteResult | null>(null);
   const applyPreview = React.useCallback((q: QuoteResult) => {
@@ -56,9 +59,35 @@ export default function ChoosePlanPage() {
   // A failed quote must leave NO preview behind: a stale one still carries the previous
   // plan and action while the cycle toggle has already moved, so the commit body could be
   // a {planKey, cycle} pair the server never quoted. No preview = no commit control.
-  const clearPreview = React.useCallback(() => setPreview(null), []);
+  // A yearly refusal means the server cannot take a year: drop back to Monthly and refetch the plans, so the
+  // offer closes if the server has closed it.
+  const fallBackIfYearRefused = React.useCallback(
+    (err?: unknown) => {
+      const code = (err as { response?: { data?: { code?: string } } } | undefined)?.response?.data
+        ?.code;
+      if (
+        code === API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED ||
+        code === API_ERROR_CODES.ADDON_ANNUAL_NOT_SUPPORTED
+      ) {
+        setCycle("MONTHLY");
+        void qc.invalidateQueries({ queryKey: ["billing", "plans"] });
+      }
+    },
+    [qc],
+  );
+  const clearPreview = React.useCallback(
+    (err?: unknown) => {
+      setPreview(null);
+      fallBackIfYearRefused(err);
+    },
+    [fallBackIfYearRefused],
+  );
 
   const catalog = plans.data;
+  // A yearly offer shows only when the server says it can take a yearly checkout. Today's API has no such
+  // field, so it stays hidden (C1, SA-1304); the live cycle is Monthly whenever the offer is closed.
+  const annualOffered = catalog?.annualCheckout === true;
+  const cycle: Cycle = annualOffered ? wantedCycle : "MONTHLY";
   const recommended = rec.data?.recommendedPlanKey;
 
   const pick = (planKey: string, isCustom: boolean) => {
@@ -146,6 +175,7 @@ export default function ChoosePlanPage() {
       // change plan") — a fixed "try again" reads as a transient glitch and the tenant retries
       // forever against a refusal that will never change (L-071).
       onError: (err?: unknown) => {
+        fallBackIfYearRefused(err);
         const serverMessage = (err as { response?: { data?: { message?: string } } })?.response
           ?.data?.message;
         toast({
@@ -184,26 +214,28 @@ export default function ChoosePlanPage() {
       <div className="text-center">
         <h1 className="text-2xl font-bold text-slate-900">Choose your plan</h1>
         <p className="mt-1 text-sm text-slate-500">Start small. Add customers as you grow.</p>
-        <div className="mt-4 inline-flex rounded-full bg-slate-100 p-1 text-sm">
-          {(["MONTHLY", "ANNUAL"] as Cycle[]).map((c) => (
-            <button
-              key={c}
-              onClick={() => setCycle(c)}
-              // Locked while a commit is in flight: the request already carries a cycle,
-              // and letting the toggle move under it only misreports what was bought.
-              disabled={isCommitting}
-              className={cn(
-                "rounded-full px-4 py-1.5 font-medium transition-colors",
-                cycle === c ? "bg-white text-slate-900 shadow-sm" : "text-slate-500",
-                isCommitting && "cursor-not-allowed opacity-50",
-              )}
-            >
-              {/* No "2 months free" label: yearly Stripe checkout is refused
+        {annualOffered && (
+          <div className="mt-4 inline-flex rounded-full bg-slate-100 p-1 text-sm">
+            {(["MONTHLY", "ANNUAL"] as Cycle[]).map((c) => (
+              <button
+                key={c}
+                onClick={() => setCycle(c)}
+                // Locked while a commit is in flight: the request already carries a cycle,
+                // and letting the toggle move under it only misreports what was bought.
+                disabled={isCommitting}
+                className={cn(
+                  "rounded-full px-4 py-1.5 font-medium transition-colors",
+                  cycle === c ? "bg-white text-slate-900 shadow-sm" : "text-slate-500",
+                  isCommitting && "cursor-not-allowed opacity-50",
+                )}
+              >
+                {/* No "2 months free" label: yearly Stripe checkout is refused
                   (CHECKOUT_ANNUAL_NOT_SUPPORTED), so the offer is not honored (B1392). */}
-              {c === "MONTHLY" ? "Monthly" : "Annual"}
-            </button>
-          ))}
-        </div>
+                {c === "MONTHLY" ? "Monthly" : "Annual"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {plans.isLoading && (
