@@ -1,3 +1,4 @@
+import { BadRequestException } from "@nestjs/common";
 import { SubscriptionService } from "./subscription.service";
 import { pinWallClock } from "../testing/pin-clock";
 
@@ -14,11 +15,14 @@ function build(opts: {
   planKey?: string;
   stripeSubId?: string | null;
   priceOverrideMonthly?: number | null;
+  addonPrice?: number;
+  addonQty?: number;
+  pricing?: { resolveTenantPricing: jest.Mock };
 }) {
   const catalog = {
     getVersionForTenant: jest.fn().mockResolvedValue({
       definitions: [{ planKey: "STARTER", monthlyPrice: 99, annualPrice: 990, isCustom: false }],
-      addonSkus: [{ sku: "FORECASTING", name: "Forecasting", monthlyPrice: 25 }],
+      addonSkus: [{ sku: "FORECASTING", name: "Forecasting", monthlyPrice: opts.addonPrice ?? 25 }],
     }),
   } as any;
   const prisma = {
@@ -32,11 +36,15 @@ function build(opts: {
       }),
     },
     tenantAddon: {
-      findMany: jest
-        .fn()
-        .mockResolvedValue([
-          { sku: "FORECASTING", addonKey: "FORECASTING", quantity: 2, isComp: false, active: true },
-        ]),
+      findMany: jest.fn().mockResolvedValue([
+        {
+          sku: "FORECASTING",
+          addonKey: "FORECASTING",
+          quantity: opts.addonQty ?? 2,
+          isComp: false,
+          active: true,
+        },
+      ]),
     },
     auditLog: { findFirst: jest.fn().mockResolvedValue(null) },
   } as any;
@@ -50,7 +58,17 @@ function build(opts: {
       trialEndsAt: null,
     }),
   } as any;
-  return new SubscriptionService(prisma, catalog, entitlements, {} as any);
+  return new SubscriptionService(
+    prisma,
+    catalog,
+    entitlements,
+    {} as any,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    opts.pricing as any,
+  );
 }
 
 describe("SubscriptionService.getSubscription: selfPay (R4)", () => {
@@ -73,6 +91,34 @@ describe("SubscriptionService.getSubscription: selfPay (R4)", () => {
   it("a custom fee is the price the confirm prints (the quoted fee, never the catalog figure)", async () => {
     const view = await build({ priceOverrideMonthly: 79 }).getSubscription("t1");
     expect(view.selfPay?.monthly).toBe(79);
+  });
+
+  it("M2: every money value on the wire is rounded once (an add-on line of 0.1 x 3 is 0.3, not 0.30000000000000004)", async () => {
+    const view = await build({ addonPrice: 0.1, addonQty: 3 }).getSubscription("t1");
+    expect(view.selfPay?.addons).toEqual([{ name: "Forecasting", monthly: 0.3 }]);
+  });
+
+  it("L3: the price printed is the one checkout bills (resolveTenantPricing), not a re-derivation", async () => {
+    const pricing = {
+      resolveTenantPricing: jest.fn().mockResolvedValue({ monthly: 88.005, planKey: "STARTER" }),
+    };
+    const view = await build({ pricing }).getSubscription("t1");
+    expect(pricing.resolveTenantPricing).toHaveBeenCalledWith("t1");
+    expect(view.selfPay?.monthly).toBe(88.01);
+  });
+
+  it("L3: a business the resolver cannot price (a business refusal) is not eligible: no_price", async () => {
+    const pricing = {
+      resolveTenantPricing: jest.fn().mockRejectedValue(new BadRequestException("no price")),
+    };
+    const view = await build({ pricing }).getSubscription("t1");
+    expect(view.selfPay).toMatchObject({ eligible: false, reason: "no_price", monthly: null });
+  });
+
+  it("L3: a business that cannot pay anyway (ACTIVE) never calls the resolver", async () => {
+    const pricing = { resolveTenantPricing: jest.fn() };
+    await build({ pricing, status: "ACTIVE", readOnlyReason: null }).getSubscription("t1");
+    expect(pricing.resolveTenantPricing).not.toHaveBeenCalled();
   });
 
   it("R1: a TRIAL business with days left gets selfPay.eligible false", async () => {
