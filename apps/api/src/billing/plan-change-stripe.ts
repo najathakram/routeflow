@@ -354,7 +354,7 @@ export async function pushPlanChange(
   // Not a test business, before the flag is armed and before the Stripe write. `revertPlanChange` below restores a prior price and is reachable only
   // after this wall passed, so it carries none.
   // Required by type; if anything still reaches here without it the wall fails closed (the coded 409).
-  if (!deps.prisma) assertLivePaymentsAllowed(null);
+  if (!deps.prisma) assertLivePaymentsAllowed(null, "none"); // "none": refused under any key, never a TypeError at the read below
   await assertTenantLivePaymentsAllowed(deps.prisma, a.tenantId);
   // N4: the flag and the attempt's audit row (key + nonce) are COMMITTED before Stripe is touched. Unwritable =>
   // nothing was sent, so the caller's row and Stripe still agree.
