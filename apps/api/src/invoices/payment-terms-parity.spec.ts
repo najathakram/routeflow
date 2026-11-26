@@ -79,6 +79,11 @@ describe("IsPaymentTerm: the customer and tenant default-terms DTOs take a prese
     (v) => expect(errorsFor(UpdateCustomerDto, "defaultPaymentTerms", v)).toHaveLength(0),
   );
 
+  it.each([" Net 30 ", "Net 30 ", " Due on Receipt", "Net 30\n"])(
+    "the customer DTO refuses surrounding whitespace %p (it would be stored with it)",
+    (v) => expect(errorsFor(UpdateCustomerDto, "defaultPaymentTerms", v)).toHaveLength(1),
+  );
+
   it.each(["Net 0", "Net 366", "Net 7.5", "net 30 days", "Net -3"])(
     "the customer DTO refuses %p",
     (v) => expect(errorsFor(UpdateCustomerDto, "defaultPaymentTerms", v)).toHaveLength(1),

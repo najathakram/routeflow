@@ -2,7 +2,7 @@ import { IsOptional, IsString, IsBoolean, IsNumber, Min, Max } from "class-valid
 import { IsPaymentTerm } from "../../invoices/payment-terms";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
 
-// Supplier default-terms allow-list (supplier terms are another row). Invoice terms (the tenant default here and the
+// Supplier default-terms allow-list, the old five labels (supplier terms are another row). Invoice terms (the tenant default here and the
 // customer's) take a preset or a custom "Net N" through IsPaymentTerm (invoices/payment-terms.ts).
 export const VALID_TERMS = ["Due on Receipt", "Net 15", "Net 30", "Net 45", "Net 60"];
 

@@ -36,10 +36,10 @@ export interface Customer {
   openBalance?: number;
   unusedCredits?: number;
   /**
-   * Per-customer "this customer is always Net 60" override — one of the same
-   * VALID_TERMS values as Settings → Invoicing's tenant default ("Due on
-   * Receipt"/"Net 15"/"Net 30"/"Net 45"/"Net 60"), or "" to fall back to the
-   * tenant default. Wins over the tenant default in `resolveDefaultTerms()`.
+   * Per-customer "this customer is always Net 60" override — a preset
+   * or custom term as Settings → Invoicing's tenant default ("Due on Receipt", a
+   * preset "Net N", or a custom "Net N" of 1-365 days; see `@routeflow/types/payment-terms`),
+   * or "" to fall back to the tenant default. Wins over the tenant default in `resolveDefaultTerms()`.
    */
   defaultPaymentTerms?: string;
   /**

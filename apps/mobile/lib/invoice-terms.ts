@@ -20,6 +20,15 @@ export function customTermsFromInput(text: string): { label: string | null; erro
     : { label: null, error: "Enter a whole number of days from 1 to 365." };
 }
 
+/** The custom box on commit: a valid number gives its label, anything else keeps the current terms and shows the error. */
+export function commitCustomDays(
+  text: string,
+  currentTerms: string,
+): { terms: string; error: string | null } {
+  const { label, error } = customTermsFromInput(text);
+  return { terms: label ?? currentTerms, error };
+}
+
 export const TERM_OPTIONS: string[] = [...PAYMENT_TERM_PRESETS];
 export const TERM_CHIPS = TERM_OPTIONS.map((label) => ({ label }));
 export const DEFAULT_TERMS = "Net 30";

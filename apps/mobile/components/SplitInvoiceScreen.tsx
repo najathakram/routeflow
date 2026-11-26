@@ -13,12 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar, NavBackButton, NavAction } from "@routeflow/ui/mobile/ios";
 import { useCreatePartialInvoiceFromOrder } from "../lib/api/invoices";
-import {
-  TERM_OPTIONS,
-  customTermsFromInput,
-  daysForTerms,
-  todayPlusDays,
-} from "../lib/invoice-terms";
+import { TERM_OPTIONS, commitCustomDays, daysForTerms, todayPlusDays } from "../lib/invoice-terms";
 import { showToast } from "../lib/toast";
 // RN Alert.alert is a no-op for multi-button alerts on Expo Web; alertInfo
 // routes through the cross-platform confirm modal instead.
@@ -144,6 +139,9 @@ export function SplitInvoiceScreen({
   // attempt that partially fails is recoverable (we skip already-saved ones).
   const [createdDraftIds, setCreatedDraftIds] = useState<Set<string>>(new Set());
   const [bulkPending, setBulkPending] = useState(false);
+  // The custom-days box keeps its own typed text and error per draft (W-1487); a preset pill clears them.
+  const [customText, setCustomText] = useState<Record<string, string | undefined>>({});
+  const [customError, setCustomError] = useState<Record<string, string | null | undefined>>({});
   const createPartial = useCreatePartialInvoiceFromOrder();
 
   // One-shot flag: pre-fill the first draft with all billable items at full
@@ -547,7 +545,11 @@ export function SplitInvoiceScreen({
                         <Pressable
                           key={t}
                           style={[styles.termPill, active && styles.termPillActive]}
-                          onPress={() => setTerms(draft.id, t)}
+                          onPress={() => {
+                            setCustomText((prev) => ({ ...prev, [draft.id]: undefined }));
+                            setCustomError((prev) => ({ ...prev, [draft.id]: null }));
+                            setTerms(draft.id, t);
+                          }}
                           disabled={created}
                         >
                           <Text style={[styles.termPillText, active && styles.termPillTextActive]}>
@@ -558,16 +560,21 @@ export function SplitInvoiceScreen({
                     })}
                   </View>
                   <TextInput
-                    value={daysText(draft.terms)}
+                    value={customText[draft.id] ?? daysText(draft.terms)}
                     onChangeText={(v) => {
-                      const { label } = customTermsFromInput(v);
-                      if (label) setTerms(draft.id, label);
+                      setCustomText((prev) => ({ ...prev, [draft.id]: v }));
+                      const { terms, error } = commitCustomDays(v, draft.terms);
+                      setCustomError((prev) => ({ ...prev, [draft.id]: error }));
+                      if (!error && terms !== draft.terms) setTerms(draft.id, terms);
                     }}
                     placeholder="Custom: number of days (1-365)"
                     keyboardType="number-pad"
                     style={styles.dueInput}
                     editable={!created}
                   />
+                  {customError[draft.id] ? (
+                    <Text style={styles.draftFooterLabel}>{customError[draft.id]}</Text>
+                  ) : null}
                   <Text style={styles.draftFooterLabel}>Due date</Text>
                   <TextInput
                     value={draft.dueDate}

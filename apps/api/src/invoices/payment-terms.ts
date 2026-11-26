@@ -56,6 +56,7 @@ export function IsPaymentTerm(
       validator: {
         validate: (value: unknown) =>
           typeof value === "string" &&
+          value === value.trim() && // termDays trims; the stored label must not carry spaces
           (termDays(value) !== null || (!!options.allowEmpty && value === "")),
       },
     });

@@ -43,24 +43,52 @@ describe("PaymentTermsSelect (B-7)", () => {
     expect(onChange).toHaveBeenLastCalledWith("Net 7");
   });
 
-  it("a typed 21 days reports Net 21", async () => {
+  const pickCustom = async () =>
+    userEvent.selectOptions(screen.getByLabelText("Payment terms"), "Custom (Net N)…");
+
+  it("21 typed key by key then Enter reports exactly one Net 21", async () => {
     const onChange = jest.fn();
     render(<Harness onChange={onChange} />);
-    await userEvent.selectOptions(screen.getByLabelText("Payment terms"), "Custom (Net N)…");
+    await pickCustom();
     await userEvent.type(screen.getByLabelText("Number of days"), "21");
-    expect(onChange).toHaveBeenLastCalledWith("Net 21");
+    expect(onChange).not.toHaveBeenCalled(); // nothing while typing
+    await userEvent.type(screen.getByLabelText("Number of days"), "{Enter}");
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("Net 21");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it.each(["0", "366"])("%s days is refused inline and never reported", async (typed) => {
+  it("45 typed key by key then blur reports exactly one Net 45 (never Net 4)", async () => {
     const onChange = jest.fn();
     render(<Harness onChange={onChange} />);
-    await userEvent.selectOptions(screen.getByLabelText("Payment terms"), "Custom (Net N)…");
-    // pasted whole: typing 366 key by key legitimately passes through Net 3 and Net 36
-    await userEvent.click(screen.getByLabelText("Number of days"));
-    await userEvent.paste(typed);
-    expect(screen.getByRole("alert")).toHaveTextContent("1 to 365");
+    await pickCustom();
+    await userEvent.type(screen.getByLabelText("Number of days"), "45");
     expect(onChange).not.toHaveBeenCalled();
+    await userEvent.tab();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("Net 45");
+  });
+
+  it.each(["0", "366"])(
+    "%s typed key by key is refused inline and never reported",
+    async (typed) => {
+      const onChange = jest.fn();
+      render(<Harness onChange={onChange} />);
+      await pickCustom();
+      await userEvent.type(screen.getByLabelText("Number of days"), typed);
+      await userEvent.tab();
+      expect(screen.getByRole("alert")).toHaveTextContent("1 to 365");
+      expect(onChange).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a parent value arriving while the user types does not overwrite the box", async () => {
+    const { rerender } = render(<PaymentTermsSelect value="Net 21" onChange={jest.fn()} />);
+    const box = screen.getByLabelText("Number of days");
+    await userEvent.clear(box);
+    await userEvent.type(box, "4");
+    rerender(<PaymentTermsSelect value="Net 21" onChange={jest.fn()} />);
+    expect(box).toHaveValue(4);
   });
 
   it("a stored custom label shows as Custom with its days filled in", () => {

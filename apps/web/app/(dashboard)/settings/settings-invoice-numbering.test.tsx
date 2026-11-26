@@ -96,6 +96,19 @@ describe("Settings > Invoicing: control inventory (B1188)", () => {
     );
     expect(mockPatch.mock.calls.filter((c) => c[0] === "/settings")).toHaveLength(0);
   });
+
+  it("W-1487: a custom 45 typed key by key saves once, as Net 45 (never Net 4)", async () => {
+    renderWithProviders(<SettingsPage />);
+    const terms = (await screen.findByLabelText("Payment terms")) as HTMLSelectElement;
+    await waitFor(() => expect(terms.value).toBe("Net 30"));
+    await userEvent.selectOptions(terms, "Custom (Net N)…");
+    await userEvent.type(await screen.findByLabelText("Number of days"), "45");
+    await userEvent.tab();
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith("/settings/invoice", { defaultTerms: "Net 45" }),
+    );
+    expect(mockPatch.mock.calls.filter((c) => c[0] === "/settings/invoice")).toHaveLength(1);
+  });
 });
 
 describe("Settings > Invoicing: one payment-terms control (UX guide B9)", () => {

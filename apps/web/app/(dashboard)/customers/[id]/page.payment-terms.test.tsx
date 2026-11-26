@@ -89,21 +89,30 @@ describe("W-1487 B-7: the customer's default payment terms", () => {
     );
   });
 
-  it("a typed 21 days saves Net 21; 0 and 366 are refused inline and save nothing", async () => {
+  it("366 typed key by key sends no PATCH and shows the inline error", async () => {
     const select = await open();
     await userEvent.selectOptions(select, "Custom (Net N)…");
     const days = await screen.findByLabelText("Number of days");
-    await userEvent.click(days);
-    await userEvent.paste("0");
+    await userEvent.type(days, "366");
+    await userEvent.tab();
     expect(await screen.findByRole("alert")).toHaveTextContent("1 to 365");
-    await userEvent.clear(days);
-    await userEvent.paste("366");
-    expect(screen.getByRole("alert")).toHaveTextContent("1 to 365");
     expect(patch).not.toHaveBeenCalled();
-    await userEvent.clear(days);
-    await userEvent.paste("21");
-    await waitFor(() =>
-      expect(patch).toHaveBeenCalledWith("/customers/c1", { defaultPaymentTerms: "Net 21" }),
-    );
+  });
+
+  it("45 typed key by key then blur sends exactly one PATCH, Net 45", async () => {
+    const select = await open();
+    await userEvent.selectOptions(select, "Custom (Net N)…");
+    await userEvent.type(await screen.findByLabelText("Number of days"), "45");
+    await userEvent.tab();
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith("/customers/c1", { defaultPaymentTerms: "Net 45" });
+  });
+
+  it("21 then Enter sends exactly one PATCH, Net 21", async () => {
+    const select = await open();
+    await userEvent.selectOptions(select, "Custom (Net N)…");
+    await userEvent.type(await screen.findByLabelText("Number of days"), "21{Enter}");
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith("/customers/c1", { defaultPaymentTerms: "Net 21" });
   });
 });

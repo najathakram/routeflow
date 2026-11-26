@@ -59,10 +59,32 @@ export function PaymentTermsSelect({
     onChange(label);
   };
 
-  // A stored custom label that changes from outside (a loaded record) refreshes the box.
+  // A stored custom label that changes from outside (a loaded record) refreshes the box, but never while the user is
+  // typing in it (a refetch must not overwrite half a number).
+  const typing = React.useRef(false);
   React.useEffect(() => {
-    if (storedCustom) setDays(String(termDays(value)));
+    if (storedCustom && !typing.current) setDays(String(termDays(value)));
   }, [storedCustom, value]);
+
+  // The typed days are committed on blur or Enter only, and only when whole and 1-365: a half-typed "4" of "45" must
+  // never reach an autosaving parent. Anything else shows the inline error and reports nothing.
+  const commit = () => {
+    typing.current = false;
+    const typed = days.trim();
+    if (typed === "") {
+      setError(null);
+      return;
+    }
+    const label = /^\d+$/.test(typed) ? netLabel(Number(typed)) : null;
+    if (label === null) {
+      setError(
+        `Enter a whole number of days from ${PAYMENT_TERM_MIN_DAYS} to ${PAYMENT_TERM_MAX_DAYS}.`,
+      );
+      return;
+    }
+    setError(null);
+    if (label !== value) report(label);
+  };
 
   const selectValue = showCustom ? CUSTOM : value;
 
@@ -108,22 +130,20 @@ export function PaymentTermsSelect({
             value={days}
             placeholder="Days"
             className={className ?? SELECT_CLASS}
+            onFocus={() => {
+              typing.current = true;
+            }}
             onChange={(e) => {
-              const typed = e.target.value;
-              setDays(typed);
-              if (typed.trim() === "") {
-                setError(null);
-                return;
-              }
-              const label = /^\d+$/.test(typed.trim()) ? netLabel(Number(typed)) : null;
-              if (label === null) {
-                setError(
-                  `Enter a whole number of days from ${PAYMENT_TERM_MIN_DAYS} to ${PAYMENT_TERM_MAX_DAYS}.`,
-                );
-                return;
-              }
+              typing.current = true;
+              setDays(e.target.value);
               setError(null);
-              report(label);
+            }}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                commit();
+              }
             }}
           />
           {error && (

@@ -7,6 +7,7 @@ import {
   DEFAULT_TERMS,
   ISO_DATE,
   TERM_CHIPS,
+  commitCustomDays,
   customTermsFromInput,
   daysForTerms,
   TERM_OPTIONS,
@@ -90,5 +91,24 @@ describe("W-1487: the custom days box (B-7, mobile)", () => {
       expect(customTermsFromInput(bad).error).toMatch(/1 to 365/);
     }
     expect(customTermsFromInput("")).toEqual({ label: null, error: null });
+  });
+});
+
+describe("W-1487: commitCustomDays (the custom box commits only a valid number)", () => {
+  it("a valid number commits its label and clears the error", () => {
+    expect(commitCustomDays("21", "Net 30")).toEqual({ terms: "Net 21", error: null });
+  });
+
+  it("0, 366, 7.5 and words keep the old terms and show the error", () => {
+    for (const bad of ["0", "366", "7.5", "abc"]) {
+      expect(commitCustomDays(bad, "Net 30")).toEqual({
+        terms: "Net 30",
+        error: "Enter a whole number of days from 1 to 365.",
+      });
+    }
+  });
+
+  it("an emptied box (deleting the last digit) keeps the terms and shows no error", () => {
+    expect(commitCustomDays("", "Net 30")).toEqual({ terms: "Net 30", error: null });
   });
 });
