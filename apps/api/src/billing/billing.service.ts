@@ -105,6 +105,7 @@ import { NO_LIVE_SUBSCRIPTION, stopBillingIncludedAddonsTx } from "./addon-inclu
 import { assertCheckoutSurface, type CheckoutSurface } from "./checkout-session-params";
 import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
+import { assertLivePaymentsAllowed, assertTenantLivePaymentsAllowed } from "./live-payments-wall";
 import {
   API_BILLING_CANCEL_PATH,
   API_BILLING_PORTAL_RETURN_PATH,
@@ -488,6 +489,8 @@ export class BillingService {
     if (tenant.subscription?.stripeCustomerId) {
       return tenant.subscription.stripeCustomerId;
     }
+
+    assertLivePaymentsAllowed(tenant.class); // W-1464: no Stripe customer is created for a non-PRODUCTION business
 
     // Two concurrent checkouts for a tenant with no customer yet would each create one, and the second
     // upsert would orphan the first in Stripe. Serialize the create-and-store per tenant on the shared
@@ -1074,6 +1077,7 @@ export class BillingService {
     tenantId: string,
     request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ portalUrl: string }> {
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId); // W-1464: no portal session for a non-PRODUCTION business
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
     });

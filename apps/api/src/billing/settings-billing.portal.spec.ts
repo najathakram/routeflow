@@ -1,4 +1,4 @@
-import { BadRequestException, HttpException } from "@nestjs/common";
+import { BadRequestException, ConflictException, HttpException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
@@ -94,6 +94,22 @@ describe("SettingsBillingController.createPortal (B4: admin-only portal)", () =>
     expect(err).toBeInstanceOf(HttpException);
     expect(err.getStatus()).toBe(400);
     expect(err.getResponse().code).toBe("BILLING_PORTAL_UNAVAILABLE");
+  });
+
+  // W-1464 PR-B: the live-payments wall's own coded 409 reaches the caller; it is not a Stripe outage
+  it("a business that is not PRODUCTION gets the wall's coded 409, not the retryable 503", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(
+        new ConflictException({
+          code: "LIVE_PAYMENTS_OFF",
+          message: "Payments are switched off.",
+        }),
+      ),
+      pay: jest.fn().mockResolvedValue(null),
+    });
+    const err: any = await controller.createPortal({ tenantId: "t1" } as any).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse().code).toBe("LIVE_PAYMENTS_OFF");
   });
 
   it("both fail on a Stripe outage: a coded 503 (retryable), never a bare 500", async () => {

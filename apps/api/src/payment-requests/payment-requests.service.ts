@@ -1,5 +1,6 @@
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { sellerDisplayName } from "../common/seller-display-name";
+import { assertTenantLivePaymentsAllowed } from "../billing/live-payments-wall";
 import { BuyerPaymentRequestStatus, InvoiceStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -301,6 +302,8 @@ export class PaymentRequestsService {
       params.fromInvoiceId,
     );
 
+    // W-1464: before the request row and the Stripe session; a non-PRODUCTION business takes no card payment
+    await assertTenantLivePaymentsAllowed(this.prisma, params.tenantId);
     const account = await this.connect.chargeableAccount(params.tenantId);
     if (!account) {
       throw new BadRequestException("This seller does not accept card payments yet.");

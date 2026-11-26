@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Controller,
   Delete,
   Get,
@@ -83,6 +84,8 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
     "This workspace is currently in read-only mode. You can view records, but changes and new transactions are temporarily unavailable.",
   workspace_suspended: "This workspace is currently suspended. Please contact support.",
   workspace_cancelled: "This workspace has been cancelled. Please contact support.",
+  // W-1464: the live-payments wall (a business that is not PRODUCTION cannot link a Stripe account)
+  live_payments_off: "This is a test business. Payments are switched off.",
 };
 const OAUTH_GENERIC_ERROR = "Could not connect Stripe — try again from Settings.";
 
@@ -122,7 +125,11 @@ export class StripeConnectCallbackController {
       );
     } catch (err) {
       const code2 =
-        err instanceof BadRequestException ? String((err.getResponse() as any)?.message ?? "") : "";
+        err instanceof BadRequestException
+          ? String((err.getResponse() as any)?.message ?? "")
+          : err instanceof ConflictException
+            ? "live_payments_off"
+            : "";
       res.redirect(
         back({ stripe: "error", reason: OAUTH_ERROR_MESSAGES[code2] ?? OAUTH_GENERIC_ERROR }),
       );

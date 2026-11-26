@@ -240,3 +240,78 @@ describe("SA-1154 O11 - an embedded CheckoutStart is built only by checkoutStart
     ).toEqual({ "billing/x.ts": 1 });
   });
 });
+
+/**
+ * W-1464 PR-B (SA-1538 R5, T7): every file that makes a Stripe call that opens a session, a portal, a customer or a
+ * Connect grant sits behind the live-payments wall (`billing/live-payments-wall.ts`). Walks the tree like F1 above:
+ * a NEW creator anywhere fails here until it is listed with the file that holds its wall call. Zero creators found is
+ * a failure, not a pass. Detection is textual (whitespace tolerant); an aliased client is not detected.
+ */
+const STRIPE_CREATE =
+  /\b(?:checkout\s*\.\s*sessions|billingPortal\s*\.\s*sessions|customers)\s*\.\s*create\s*\(|\boauth\s*\.\s*token\s*\(/g;
+const WALL_CALL = /\bassert(?:Tenant)?LivePaymentsAllowed\s*\(/g;
+
+/** creator file -> the file holding the wall call(s) in front of it, and the least number of wall calls there. */
+const BEHIND_WALL: Record<string, { wall: string; atLeast: number; creates: number }> = {
+  "billing/open-checkout-session.ts": {
+    wall: "billing/open-checkout-session.ts",
+    atLeast: 1,
+    creates: 1,
+  },
+  "billing/catchup-checkout.service.ts": {
+    wall: "billing/catchup-checkout.service.ts",
+    atLeast: 1,
+    creates: 1,
+  },
+  // the customer create and the portal create: BillingService is the only caller of each
+  "billing/stripe.service.ts": { wall: "billing/billing.service.ts", atLeast: 2, creates: 2 },
+  "payment-requests/provider/stripe-payment-provider.ts": {
+    wall: "payment-requests/payment-requests.service.ts",
+    atLeast: 1,
+    creates: 1,
+  },
+  // the code exchange (callback) and the link start both sit in StripeConnectService
+  "stripe-connect/provider/stripe-connect-oauth.provider.ts": {
+    wall: "stripe-connect/stripe-connect.service.ts",
+    atLeast: 2,
+    creates: 1,
+  },
+};
+
+const countOf = (re: RegExp, text: string) => (text.match(re) ?? []).length;
+const WALL_SCAN = collect(SRC_ROOT)
+  .filter((f) => !rel(f).startsWith("testing/"))
+  .map((f) => {
+    // comments and doc blocks name the calls without making them
+    const text = fs
+      .readFileSync(f, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    return { file: rel(f), creates: countOf(STRIPE_CREATE, text), walls: countOf(WALL_CALL, text) };
+  });
+
+describe("W-1464 PR-B - every Stripe session creator sits behind the live-payments wall", () => {
+  it("the creators found are exactly the named ones, with the named counts (zero found is a failure)", () => {
+    const found = Object.fromEntries(
+      WALL_SCAN.filter((s) => s.creates > 0).map((s) => [s.file, s.creates]),
+    );
+    expect(Object.keys(found).length).toBeGreaterThan(0);
+    expect(found).toEqual(
+      Object.fromEntries(Object.entries(BEHIND_WALL).map(([f, v]) => [f, v.creates])),
+    );
+  });
+
+  it.each(Object.entries(BEHIND_WALL))(
+    "%s: its wall file holds enough wall calls",
+    (_creator, { wall, atLeast }) => {
+      expect(WALL_SCAN.find((s) => s.file === wall)?.walls ?? 0).toBeGreaterThanOrEqual(atLeast);
+    },
+  );
+
+  it("self-control: the scanner counts an injected creator and a wall call", () => {
+    expect(countOf(STRIPE_CREATE, "x.billingPortal\n .sessions\n .create({})")).toBe(1);
+    expect(countOf(STRIPE_CREATE, "c.oauth.token({}); c.customers.create(p)")).toBe(2);
+    expect(countOf(STRIPE_CREATE, "c.checkout.sessions.expire(id)")).toBe(0);
+    expect(countOf(WALL_CALL, "await assertTenantLivePaymentsAllowed(p, t);")).toBe(1);
+  });
+});

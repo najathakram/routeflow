@@ -116,6 +116,8 @@ function make(
     stripeState?: ReturnType<typeof fakeStripe>;
     tenantId?: string;
     addon?: { amount: number };
+    /** The business's class; PRODUCTION unless a case says otherwise (W-1464 PR-B). */
+    tenantClass?: string | null;
   } = {},
 ) {
   const tenantId = opts.tenantId ?? "t1";
@@ -130,6 +132,7 @@ function make(
       findUnique: jest.fn(async () => ({
         id: tenantId,
         slug: "acme",
+        class: opts.tenantClass === undefined ? "PRODUCTION" : opts.tenantClass,
         status: "ACTIVE",
         readOnlyReason: null,
         subscription: opts.noCustomer ? null : { stripeCustomerId: "cus_1" },
@@ -335,6 +338,24 @@ describe("W-1338 PR-1 — the one open-session slot", () => {
     expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
     spies.forEach((s) => s.mockRestore());
   });
+
+  // W-1464 PR-B (SA-1538 R5): a business that is not PRODUCTION never reaches Stripe from the slot.
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "W-1464: class %p gets the coded 409 and no customer, no list, no expire, no session",
+    async (tenantClass) => {
+      const h = make({ tenantClass, noCustomer: true });
+      for (const surface of [admin, self]) {
+        await expect(h.billing.createCheckoutSession("t1", surface)).rejects.toMatchObject({
+          status: 409,
+          response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
+        });
+      }
+      expect(h.stripe.createCustomer).not.toHaveBeenCalled();
+      expect(h.list).not.toHaveBeenCalled();
+      expect(h.expire).not.toHaveBeenCalled();
+      expect(h.create).not.toHaveBeenCalled();
+    },
+  );
 
   it("L24: managed payments stays OFF on a new session", async () => {
     const h = make();
