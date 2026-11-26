@@ -1238,7 +1238,6 @@ export default function OrdersPage() {
           open={filtersOpen}
           onClose={closeFilters}
           title="Filters"
-          scroll
           className="max-w-[calc(100vw-2rem)] p-4"
           // Radix has no trigger to hand focus back to here, and Safari does not focus a button on tap: return it ourselves.
           onCloseAutoFocus={(e) => {
