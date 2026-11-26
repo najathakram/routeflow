@@ -35,6 +35,7 @@ describe("derivedUnitPatch (order-edit page, units P0b / SA-728)", () => {
       basePrice: 10,
       overrideReason: undefined,
       reasonBaselinePrice: 10,
+      listReference: null,
       priceEdited: false,
     });
   });

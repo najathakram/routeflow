@@ -101,6 +101,10 @@ export function buildNewLine(
     ...(unitScan ? { boxSplit: true } : {}),
     unitPrice: startPrice,
     basePrice: base,
+    // B1423: the catalog list price in the unit this line sells by. A loose piece off a boxed product is priced per
+    // piece while the catalog price is per box, so it has none.
+    listReference: unitScan ? null : Number(p.pricePerUnit ?? 0) || null,
+    originalListReference: unitScan ? null : Number(p.pricePerUnit ?? 0) || null,
     originalUnitPrice: startPrice,
     originalBasePrice: base,
     // Carry the case size so a later substitution re-denominates this

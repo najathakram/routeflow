@@ -531,6 +531,20 @@ export const ORDER_REVIEW_FLAG_KIND_VALUES = [
 export type OrderReviewFlagKindValue = (typeof ORDER_REVIEW_FLAG_KIND_VALUES)[number];
 
 /**
+ * SA-1215 set 4 (P-85): whether a PO charge is an estimate or the actual (an ACTUAL points at its vendor bill). Mirrors the
+ * Prisma `PurchaseOrderChargeKind` (pinned by `enum-parity.spec.ts`).
+ */
+export const PURCHASE_ORDER_CHARGE_KIND_VALUES = ["ESTIMATE", "ACTUAL"] as const;
+export type PurchaseOrderChargeKindValue = (typeof PURCHASE_ORDER_CHARGE_KIND_VALUES)[number];
+
+/**
+ * SA-1215 set 4 (P-85): how a PO charge is spread over the PO's lines. Mirrors the Prisma `PurchaseOrderChargeBasis`
+ * (pinned by `enum-parity.spec.ts`).
+ */
+export const PURCHASE_ORDER_CHARGE_BASIS_VALUES = ["VALUE", "QUANTITY"] as const;
+export type PurchaseOrderChargeBasisValue = (typeof PURCHASE_ORDER_CHARGE_BASIS_VALUES)[number];
+
+/**
  * SA-1101: the order is done — not routable, not open, not cancellable, not releasable. ONE list, read by
  * the API, web and mobile by name; `terminal-order-status-lists.spec.ts` fails any new array that names
  * both DELIVERED and CANCELLED without REFUSED or this constant.
@@ -779,3 +793,7 @@ export const CUSTOMER_LINK_STATUS_VALUES = [
   "DISCONNECTED",
 ] as const;
 export type CustomerLinkStatusValue = (typeof CUSTOMER_LINK_STATUS_VALUES)[number];
+
+/** SA-1304: TenantSubscription.cycle (Prisma BillingCycle). The one source of every client-side cycle type. */
+export const BILLING_CYCLE_VALUES = ["MONTHLY", "ANNUAL"] as const;
+export type BillingCycle = (typeof BILLING_CYCLE_VALUES)[number];

@@ -5,6 +5,7 @@ import ChangePasswordPage from "./page";
 
 /** The forced change after a reset: it says exactly what is missing, never a bare "Failed". */
 jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
 }));
 jest.mock("@/lib/auth-context", () => ({

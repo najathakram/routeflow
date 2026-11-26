@@ -241,6 +241,7 @@ function CreateCreditNoteModal({
 
   return (
     <Modal
+      scroll={false} // B1444: CLIP
       open={isOpen}
       onClose={onClose}
       title="New credit note"
