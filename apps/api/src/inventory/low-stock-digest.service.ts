@@ -143,6 +143,7 @@ export class LowStockDigestService {
         // template-build error must not stop the remaining recipients or the day-mark below.
         try {
           const result = await this.email.sendLowStockDigest({
+            tenantId,
             to: r.email,
             businessName,
             items,

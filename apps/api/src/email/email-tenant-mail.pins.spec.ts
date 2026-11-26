@@ -36,6 +36,8 @@ function service(
   };
   const prisma = {
     getTenantId: () => tenantId,
+    // W-1464: the mail wall reads the business class; these specs are not about a test business.
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
     tenantConfig: {
       findFirst: jest.fn().mockResolvedValue({
         businessName,
@@ -80,6 +82,7 @@ describe("the buyer-portal invite: tenant look, platform transport (#824)", () =
     const look = await svc.tenantLook();
     expect(look).toMatchObject({ kind: "tenant", name: "Acme Foods" });
     await svc.send({
+      tenantId: null,
       to: "buyer@acme.example",
       ...portalInviteEmail("Acme Foods", INVITE_URL, look),
       senderClass: "platform",
@@ -103,6 +106,7 @@ describe("the buyer-portal invite: tenant look, platform transport (#824)", () =
   it("a tenant with a reply address and an admin login still gets no Reply-To on the invite", async () => {
     const { svc, sendMail } = service("t1", "Acme Foods", true);
     await svc.send({
+      tenantId: null,
       to: "buyer@acme.example",
       ...portalInviteEmail("Acme Foods", INVITE_URL, await svc.tenantLook()),
       senderClass: "platform",
@@ -113,7 +117,7 @@ describe("the buyer-portal invite: tenant look, platform transport (#824)", () =
 
   it("probe: the same tenant's ordinary tenant mail DOES get its Reply-To (the fixture is live)", async () => {
     const { svc, sendMail } = service("t1", "Acme Foods", true);
-    await svc.send({ to: "buyer@acme.example", subject: "Hi", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "buyer@acme.example", subject: "Hi", html: "<p>x</p>" });
     expect(sendMail.mock.calls[0][0].replyTo).toBe("orders@acme.example");
   });
 
@@ -144,7 +148,7 @@ describe("the platform sender drops `layout` and attachments: it says so", () =>
 
   it("logs an ERROR when a platform send is given a layout spec", async () => {
     const { svc } = service();
-    await svc.send({ ...platform, layout: { heading: "H", footerNote: "why" } });
+    await svc.send({ tenantId: null, ...platform, layout: { heading: "H", footerNote: "why" } });
     expect(Logger.prototype.error).toHaveBeenCalledWith(
       expect.stringContaining("platform path drops"),
     );
@@ -153,6 +157,7 @@ describe("the platform sender drops `layout` and attachments: it says so", () =>
   it("logs an ERROR when a platform send is given attachments", async () => {
     const { svc } = service();
     await svc.send({
+      tenantId: null,
       ...platform,
       attachments: [{ filename: "a.pdf", content: Buffer.from("x") }],
     });
@@ -163,7 +168,7 @@ describe("the platform sender drops `layout` and attachments: it says so", () =>
 
   it("a plain platform send logs nothing about it", async () => {
     const { svc } = service();
-    await svc.send({ ...platform, html: "<!--rf-email-layout-->" });
+    await svc.send({ tenantId: null, ...platform, html: "<!--rf-email-layout-->" });
     const calls = (Logger.prototype.error as jest.Mock).mock.calls.map((c) => String(c[0]));
     expect(calls.filter((m) => m.includes("platform path drops"))).toEqual([]);
   });
@@ -177,7 +182,12 @@ describe("the low-stock digest wears the tenant's look", () => {
     const send = jest
       .spyOn(svc, "send")
       .mockResolvedValue({ delivered: true, transport: "resend" } as any);
-    await svc.sendLowStockDigest({ to: "a@acme.example", businessName: "Acme Foods", items });
+    await svc.sendLowStockDigest({
+      tenantId: "t-acme",
+      to: "a@acme.example",
+      businessName: "Acme Foods",
+      items,
+    });
     const sent = send.mock.calls[0][0];
     expect(isLayoutHtml(sent.html)).toBe(true);
     expect(visible(sent.html)).toContain("Acme Foods");
@@ -195,7 +205,12 @@ describe("the low-stock digest wears the tenant's look", () => {
       const send = jest
         .spyOn(svc, "send")
         .mockResolvedValue({ delivered: true, transport: "resend" } as any);
-      await svc.sendLowStockDigest({ to: "a@acme.example", businessName: name, items });
+      await svc.sendLowStockDigest({
+        tenantId: "t-acme",
+        to: "a@acme.example",
+        businessName: name,
+        items,
+      });
       const sent = send.mock.calls[0][0];
       expect(isLayoutHtml(sent.html)).toBe(true);
       expect(sent.html).not.toContain(`alt="${BRAND.name}"`);
@@ -211,6 +226,7 @@ describe("no Reply-To is added to a composed tenant mail", () => {
   it("composeLayout and the guard add no replyTo; the transport gets none", async () => {
     const { svc, sendMail } = service();
     await svc.send({
+      tenantId: null,
       to: "buyer@acme.example",
       subject: "Hi",
       html: "<p>body</p>",

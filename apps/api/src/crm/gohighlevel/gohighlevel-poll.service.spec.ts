@@ -283,14 +283,18 @@ describe("GoHighLevelPollService", () => {
     await svc.pollTenant("tenant-1");
     await svc.pollTenant("tenant-1");
 
-    expect(emailService.send).toHaveBeenCalledTimes(1);
-    // W-1163: RouteFlow telling the business about its integration: RouteFlow look, platform sender.
-    expect(emailService.send.mock.calls[0][0].senderClass).toBe("platform");
-    const sentTo = emailService.send.mock.calls[0][0]?.to;
-    const recipients = Array.isArray(sentTo) ? sentTo : [sentTo];
-    expect(recipients).toEqual(
-      expect.arrayContaining(["operator1@acme.test", "operator2@acme.test"]),
-    );
+    // One send per recipient (the mail service takes one address), across both polls: exactly once each.
+    expect(emailService.send).toHaveBeenCalledTimes(2);
+    for (const call of emailService.send.mock.calls) {
+      // W-1163: RouteFlow telling the business about its integration: RouteFlow look, platform sender.
+      expect(call[0].senderClass).toBe("platform");
+      expect(typeof call[0].to).toBe("string");
+      expect(call[0].tenantId).toBe("tenant-1");
+    }
+    expect(emailService.send.mock.calls.map((c: any[]) => c[0].to).sort()).toEqual([
+      "operator1@acme.test",
+      "operator2@acme.test",
+    ]);
   });
 
   // T20 / R13 — a transient 429 leaves status untouched, records "rate limit" in lastError
