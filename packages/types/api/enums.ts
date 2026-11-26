@@ -835,3 +835,7 @@ export const LEGACY_ITEM_MATCH_METHOD_VALUES = [
   "NONE",
 ] as const;
 export type LegacyItemMatchMethodValue = (typeof LEGACY_ITEM_MATCH_METHOD_VALUES)[number];
+
+/** SA-1304: TenantSubscription.cycle (Prisma BillingCycle). The one source of every client-side cycle type. */
+export const BILLING_CYCLE_VALUES = ["MONTHLY", "ANNUAL"] as const;
+export type BillingCycle = (typeof BILLING_CYCLE_VALUES)[number];

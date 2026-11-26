@@ -80,7 +80,7 @@
 //                                               Known limit: on macOS/Linux a rename never fails for a held
 //                                               cwd, so only the `lsof` cwd list and the 24h rule guard there.
 //
-// Preflight threshold guidance (document, not enforced by this tool):
+// Preflight threshold guidance (enforced for installs by heavy-slot (install class) and install-guard):
 //   > 10 GB  normal — proceed with anything
 //   6-10 GB  reclaim (this tool, report-only or --apply) BEFORE an npm ci
 //   < 6 GB   refuse installs — reclaim first
@@ -469,17 +469,19 @@ function isWindows() {
   return process.platform === "win32";
 }
 
-function getFreeSpaceGb() {
+/** A stalled disk read must not stall a caller's heartbeat (R-216 LOW-4): the read gives up after this long. */
+const FREE_SPACE_TIMEOUT_MS = 20_000;
+
+export function getFreeSpaceGb() {
   if (isWindows()) {
-    const out = trySh("powershell", [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      "(Get-PSDrive -Name C).Free",
-    ]);
+    const out = trySh(
+      "powershell",
+      ["-NoProfile", "-NonInteractive", "-Command", "(Get-PSDrive -Name C).Free"],
+      { timeout: FREE_SPACE_TIMEOUT_MS },
+    );
     if (out) return Number(out) / 1024 ** 3;
   }
-  const out = sh("df", ["-k", "."]);
+  const out = sh("df", ["-k", "."], { timeout: FREE_SPACE_TIMEOUT_MS });
   const line = out.split("\n").slice(1).find(Boolean) ?? "";
   const kb = Number(line.trim().split(/\s+/)[3]);
   return kb / (1024 * 1024);
