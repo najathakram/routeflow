@@ -44,6 +44,7 @@ import {
   type UpsertStockCountLineInput,
 } from "@/lib/api/stock-count";
 
+import { useReadOnlyGate } from "@/lib/read-only-gate";
 import { StockCountBulkBar } from "./StockCountBulkBar";
 import { StockCountRow } from "./StockCountRow";
 import { StockCountReviewModal } from "./StockCountReviewModal";
@@ -72,6 +73,7 @@ interface SessionMeta {
 
 export function StockCountTab() {
   const { toast } = useToast();
+  const gate = useReadOnlyGate();
   const { user } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -603,7 +605,22 @@ export function StockCountTab() {
               "To count a quantity, type it in Qty per scan or in the row's Counted box.",
             variant: "error",
             // A short PLU or UPC-E is a real code too, so the old path stays one tap away.
-            action: { label: "Add as new product", onClick: () => setUnknownCode(code) },
+            action: {
+              label: "Add as new product",
+              onClick: () => {
+                if (gate.readOnly) return; // creating a product is a write
+                setUnknownCode(code);
+              },
+            },
+          });
+          return;
+        }
+        if (gate.readOnly) {
+          // A read-only workspace cannot create the product: say so instead of opening the form.
+          toast({
+            title: `No product for ${code}`,
+            description: gate.line ?? undefined,
+            variant: "error",
           });
           return;
         }
