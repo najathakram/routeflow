@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Input, Button, PasswordInput } from "@routeflow/ui/web";
+import { BRAND } from "@routeflow/types/brand";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { GoogleIcon, startGoogleSignIn } from "@/lib/google-oauth";
 import { usePortalPresence } from "@/lib/hooks/usePortalPresence";
@@ -107,7 +108,7 @@ function BuyerLoginInner() {
       lead="Sign in to order from your sellers."
       footer={
         <p className="text-xs text-navy/70">
-          Selling on RouteFlow?{" "}
+          Selling on {BRAND.name}?{" "}
           <a href="/login" className="text-brand-600 hover:underline">
             Sign in to the seller dashboard
           </a>

@@ -1,4 +1,5 @@
 import type { MailboxStateChange } from "./mailbox-send.service";
+import { BRAND } from "../../common/brand";
 
 /**
  * F-10a — what a tenant admin is told when their connected mailbox stops sending on its own.
@@ -9,7 +10,7 @@ import type { MailboxStateChange } from "./mailbox-send.service";
  * provider and a duration: nothing here can carry a token.
  *
  * "Where their email is going" mirrors the Settings → Email card's own wording ("your SMTP setup
- * (or RouteFlow's)") and is only claimed when a fallback sender really exists
+ * (or the platform's)") and is only claimed when a fallback sender really exists
  * (`EmailService.isEmailConfigured()` — the tenant's SMTP or a platform transport).
  */
 
@@ -36,17 +37,17 @@ export function mailboxRevokedCopy(p: {
   provider: Provider;
   hasFallback: boolean;
 }): MailboxRevokedCopy {
-  const whatHappened = `RouteFlow can no longer send from ${p.accountEmail}: access was removed.`;
+  const whatHappened = `${BRAND.name} can no longer send from ${p.accountEmail}: access was removed.`;
   const why =
     "This usually happens when the mailbox password is changed, or when someone removes " +
-    `RouteFlow's access in the ${VENDOR[p.provider]} account.`;
+    `${BRAND.name}'s access in the ${VENDOR[p.provider]} account.`;
   const meanwhile = p.hasFallback
     ? `Your emails are still going out, just not from ${p.accountEmail}. Until you reconnect, ` +
-      "they are sent from your SMTP setup, or from RouteFlow's address if you don't have one."
-    : "Until you reconnect, RouteFlow can't send your emails: there is no other sender set up.";
+      `they are sent from your SMTP setup, or from ${BRAND.name}'s address if you don't have one.`
+    : `Until you reconnect, ${BRAND.name} can't send your emails: there is no other sender set up.`;
   const fix = `To send from ${p.accountEmail} again, go to Settings → Email and click Reconnect.`;
   return {
-    subject: `RouteFlow can no longer send from ${p.accountEmail}`,
+    subject: `${BRAND.name} can no longer send from ${p.accountEmail}`,
     heading: "Reconnect your email",
     paragraphs: [whatHappened, why, meanwhile, fix],
     cta: "Open email settings",
@@ -55,7 +56,7 @@ export function mailboxRevokedCopy(p: {
       body:
         `${whatHappened} ` +
         (p.hasFallback
-          ? "Your emails are still going out, from your SMTP setup or RouteFlow's address. "
+          ? `Your emails are still going out, from your SMTP setup or ${BRAND.name}'s address. `
           : "Your emails can't be sent until you reconnect. ") +
         "To fix it, go to Settings → Email → Reconnect.",
     },
@@ -75,11 +76,11 @@ export function mailboxThrottledCopy(p: {
     inApp: {
       title: `${vendor} is limiting your emails`,
       body:
-        `${vendor} is limiting how many emails RouteFlow can send from ${p.accountEmail}. ` +
+        `${vendor} is limiting how many emails ${BRAND.name} can send from ${p.accountEmail}. ` +
         (p.hasFallback
-          ? `For ${span}, your emails go out from your SMTP setup or RouteFlow's address instead. ` +
-            `RouteFlow switches back to ${p.accountEmail} on its own, so there's nothing to do.`
-          : `Your emails can't be sent for ${span}. RouteFlow tries ${p.accountEmail} again on ` +
+          ? `For ${span}, your emails go out from your SMTP setup or ${BRAND.name}'s address instead. ` +
+            `${BRAND.name} switches back to ${p.accountEmail} on its own, so there's nothing to do.`
+          : `Your emails can't be sent for ${span}. ${BRAND.name} tries ${p.accountEmail} again on ` +
             "its own, so there's nothing to do."),
     },
   };

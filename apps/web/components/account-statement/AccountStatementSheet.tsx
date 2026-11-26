@@ -362,7 +362,6 @@ export function StatementSheetFrame({
         open={open}
         onClose={onClose}
         title={STATEMENT_COPY.title}
-        scroll
         anchor="top"
         className={SHEET_CLASS}
         closeClassName="max-sm:flex max-sm:min-h-11 max-sm:min-w-11 max-sm:items-center max-sm:justify-center"

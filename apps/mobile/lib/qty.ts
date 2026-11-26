@@ -57,3 +57,6 @@ export function commitQtyDraft(
   if (!Number.isFinite(n) || n < min) return null;
   return max != null ? Math.min(max, n) : n;
 }
+
+/** The buyer box's one line for an entry it will not take ("-5", "12.5"): the web cart's own words (B1395 F6). */
+export const ENTER_ONE_OR_MORE = "Enter 1 or more.";

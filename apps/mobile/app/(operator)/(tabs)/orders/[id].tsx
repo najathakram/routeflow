@@ -1118,9 +1118,7 @@ export default function OrderDetailScreen() {
           ) : null}
 
           {/* W-1306: why there is no Out for delivery step on this order (the one helper). */}
-          {order.status === "CONFIRMED" && deliveryAbsentNote ? (
-            <Text style={styles.shipHint}>{deliveryAbsentNote}</Text>
-          ) : null}
+          {deliveryAbsentNote ? <Text style={styles.shipHint}>{deliveryAbsentNote}</Text> : null}
 
           {/* Status transitions */}
           {actions.length > 0 ? (

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Car, ShoppingBag } from "lucide-react";
+import { BRAND } from "@routeflow/types/brand";
 import { AuthShell } from "@/components/auth";
 import { apiClient } from "@/lib/api-client";
 import { endStaffSession, getStoredUser } from "@/lib/auth";
@@ -70,7 +71,7 @@ export default function ChooseRolePage() {
     <AuthShell
       audience="distributor"
       kicker="Signed in"
-      title="How do you want to use RouteFlow?"
+      title={`How do you want to use ${BRAND.name}?`}
       lead="You'll be asked again the next time you sign in."
     >
       {me ? (

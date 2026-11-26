@@ -564,7 +564,6 @@ export function ProductCreateModal({
       open={isOpen}
       onClose={onClose}
       title="New product"
-      scroll
       className="max-w-lg"
       // Pinned to the top, fade-in only: rows that change height must not recentre the form.
       anchor="top"

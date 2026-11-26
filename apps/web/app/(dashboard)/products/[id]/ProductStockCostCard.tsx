@@ -4,6 +4,22 @@ import Link from "next/link";
 import { unitsLabel } from "@/lib/stock-label";
 
 /**
+ * The On hand figure. UX audit 2026-11-24 F56: a count below zero read "-4 bag" here while the page header said
+ * "0 in stock · 4 oversold". Same words as the header's `stockCountLabel`: zero on hand, and how many went past it
+ * (grouped like the count beside it).
+ */
+export function onHandLabel(
+  currentStock: number,
+  unitsPerBox?: number | null,
+  unit?: string | null,
+): string {
+  const n = Number(currentStock);
+  if (Number.isFinite(n) && n < 0)
+    return `${unitsLabel(0, unitsPerBox, unit)} · ${(-n).toLocaleString("en-US")} oversold`;
+  return unitsLabel(currentStock, unitsPerBox, unit);
+}
+
+/**
  * The product detail's "Stock & Cost" card. Not rendered for a FAMILY container (non-stocked, non-sellable):
  * the page owns that rule. Extracted from page.tsx, which is at its size-ratchet cap.
  */
@@ -68,7 +84,7 @@ export function ProductStockCostCard({
                 )}
               </span>
               <span className="shrink-0 whitespace-nowrap text-right font-mono font-medium tabular-nums text-navy">
-                {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
+                {onHandLabel(currentStock, product.unitsPerBox, product.unit)}
               </span>
             </div>
             <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">

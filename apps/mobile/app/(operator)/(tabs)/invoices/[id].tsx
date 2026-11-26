@@ -56,6 +56,7 @@ import { reminderErrorCopy } from "../../../../lib/invoice-reminder-error-copy";
 import { invoiceSendStateLine } from "../../../../lib/invoice-send-state";
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
+import { linkedOrderTarget } from "../../../../lib/linked-order-route";
 import { showToast } from "../../../../lib/toast";
 import { paymentRefusalCopy } from "../../../../lib/payment-refusal-copy";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
@@ -229,6 +230,8 @@ export default function InvoiceDetailScreen() {
   });
   // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
   // to know about it or it offers a guaranteed 400.
+  // B1443: every order-linked invoice opens its order in one tap, not only a pending mirror.
+  const orderLink = linkedOrderTarget(invoice);
   const pendingMirror = isPendingOrderMirror({
     pendingMirror: invoice.pendingMirror,
     orderId: invoice.orderId,
@@ -680,6 +683,15 @@ export default function InvoiceDetailScreen() {
               <Text style={styles.headerMeta}>{overpaidText(invoice.overpaidBy)}</Text>
             ) : null}
             <Text style={styles.customer}>{invoice.customer?.businessName ?? "Customer"}</Text>
+            {orderLink ? (
+              <Pressable
+                accessibilityRole="link"
+                onPress={() => router.push(orderLink.route as any)}
+                hitSlop={8}
+              >
+                <Text style={[styles.headerMeta, { color: ios.brand }]}>{orderLink.label} ›</Text>
+              </Pressable>
+            ) : null}
             {invoice.subject?.trim() ? (
               <Text style={styles.headerMeta} numberOfLines={2}>
                 {invoice.subject}
@@ -833,11 +845,11 @@ export default function InvoiceDetailScreen() {
             ) : null}
             {/* A pending mirror is driven by its order, so send/edit both live
                 there. Offer the way through instead of two missing tiles. */}
-            {pendingMirror && invoice.orderId ? (
+            {orderLink ? (
               <ActionTile
                 icon="cube-outline"
-                label="Open order"
-                onPress={() => router.push(`/(operator)/orders/${invoice.orderId}` as any)}
+                label={pendingMirror ? "Open order" : orderLink.label}
+                onPress={() => router.push(orderLink.route as any)}
               />
             ) : null}
             <ActionTile

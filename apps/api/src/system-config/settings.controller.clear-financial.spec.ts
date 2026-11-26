@@ -39,6 +39,8 @@ const MODELS = [
   // before their credit notes or the whole transaction aborts on a FK violation.
   "orderCreditNote",
   "creditNote",
+  // SA-1268: PurchaseOrderCharge.vendorBillId is ON DELETE RESTRICT, so charges are cleared before bills.
+  "purchaseOrderCharge",
   "billPayment",
   "vendorBillItem",
   "vendorBill",
@@ -74,6 +76,7 @@ const CHILD_FK: Partial<
   billPayment: { parent: "vendorBill", fk: "vendorBillId", relation: "vendorBill" },
   vendorBillItem: { parent: "vendorBill", fk: "vendorBillId", relation: "vendorBill" },
   purchaseOrderItem: { parent: "purchaseOrder", fk: "poId", relation: "po" },
+  purchaseOrderCharge: { parent: "purchaseOrder", fk: "poId", relation: "po" },
 };
 
 type FakeRow = { id: string; tenantId: string | null; [fk: string]: string | null };

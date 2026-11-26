@@ -13,13 +13,27 @@ import {
   STATIC_SITE_PAGE_NAMES,
   visitCountTags,
   withVisitCount,
+  withFirstTouch,
+  FIRST_TOUCH_SRC,
   type StaticSitePage,
 } from "./static-site-page";
 import { UMAMI_SCRIPT_SRC, umamiAllowedPath } from "./umami-tag";
+import { readServedSitePage } from "./read-site-page";
+import { renderSitePage, brandTokensTag } from "./static-site-page";
+import {
+  SITE_BRAND as BRAND,
+  loadSiteBrand as loadBrand,
+  loadPalette,
+  validatePalette,
+} from "@routeflow/types/brand";
 
+// The brand's own host, from the seam: a name or host swap needs no edit here.
+const HOST = new URL(BRAND.origin).hostname;
+const APEX = HOST.replace(/^www\./, "");
 const SITE_ROOT = path.resolve(__dirname, "../public/site");
 const FAKE_ID = "00000000-0000-4000-8000-000000000000";
-const file = (page: string) => fs.readFileSync(path.join(SITE_ROOT, `${page}.html`), "utf8");
+// The page as the route serves it before the visit-count tags: file, brand tokens filled.
+const file = (page: string) => readServedSitePage(page as StaticSitePage, { websiteId: undefined });
 const PAGES = Object.entries(STATIC_SITE_PAGES) as Array<[StaticSitePage, string]>;
 
 const ID_VAR = "NEXT_PUBLIC_UMAMI_WEBSITE_ID";
@@ -71,7 +85,7 @@ describe.each(PAGES)("%s (%s) served with a site ID", (page, route) => {
     expect(tags[0]).toContain(`src="${UMAMI_SCRIPT_SRC}"`);
     expect(tags[0]).toContain("defer");
     expect(tags[0]).toContain(`data-website-id="${FAKE_ID}"`);
-    expect(tags[0]).toContain('data-domains="www.routeflow.info"');
+    expect(tags[0]).toContain(`data-domains="${HOST}"`);
     expect(tags[0]).toContain('data-auto-track="false"');
     expect(tags[0]).toContain('data-exclude-search="true"');
   });
@@ -135,7 +149,7 @@ describe("public/site/analytics.js", () => {
     const listeners: Array<() => void> = [];
     const tracker = {
       website: FAKE_ID,
-      hostname: "www.routeflow.info",
+      hostname: HOST,
       screen: "390x844",
       referrer: opts.referrer ?? "",
       title: "must not be sent",
@@ -147,12 +161,12 @@ describe("public/site/analytics.js", () => {
         : (build: (t: typeof tracker) => Sent) => void sent.push(build(tracker));
     const attrs: Record<string, string> = {
       "data-path": opts.dataPath ?? "/pricing",
-      "data-own-domain": "routeflow.info",
+      "data-own-domain": APEX,
     };
     const window: { umami?: unknown } = opts.late ? {} : { umami: { track } };
     const context = {
       window,
-      location: { origin: "https://www.routeflow.info" },
+      location: { origin: BRAND.origin },
       URL,
       document: {
         currentScript: { getAttribute: (k: string) => attrs[k] ?? null },
@@ -170,7 +184,7 @@ describe("public/site/analytics.js", () => {
     expect(sent).toEqual([
       {
         website: FAKE_ID,
-        hostname: "www.routeflow.info",
+        hostname: HOST,
         screen: "390x844",
         url: "/pricing",
         referrer: "https://www.google.com",
@@ -187,9 +201,9 @@ describe("public/site/analytics.js", () => {
 
   it.each([
     ["", ""],
-    ["https://www.routeflow.info/login?email=a@b.c", ""],
-    ["https://acme.routeflow.info/dashboard", ""],
-    ["https://routeflow.info.evil.example/x", "https://routeflow.info.evil.example"],
+    [`${BRAND.origin}/login?email=a@b.c`, ""],
+    [`https://acme.${APEX}/dashboard`, ""],
+    [`https://${APEX}.evil.example/x`, `https://${APEX}.evil.example`],
     ["android-app://com.example", ""],
     ["not a url at all", ""],
   ])("A2: referrer %j is sent as %j", (referrer, expected) => {
@@ -215,5 +229,155 @@ describe("public/site/analytics.js", () => {
     listeners[0]();
     listeners[0]();
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe("renderSitePage", () => {
+  const brand = loadBrand();
+
+  it("B1: fills plain and dotted tokens, as many times as they appear", () => {
+    const html = '<a>{{brand:name}}</a><img src="{{brand:logo.onLight}}"><b>{{brand:name}}</b>';
+    expect(renderSitePage(html, brand)).toBe(
+      `<a>${brand.name}</a><img src="${brand.logo.onLight}"><b>${brand.name}</b>`,
+    );
+  });
+
+  it("B2: throws on a key the brand does not have, naming it", () => {
+    expect(() => renderSitePage("{{brand:nope}}", brand)).toThrow('unknown brand key "nope"');
+    expect(() => renderSitePage("{{brand:logo}}", brand)).toThrow('unknown brand key "logo"');
+  });
+
+  it("B3: throws on a leftover or malformed token", () => {
+    expect(() => renderSitePage("x {{brand:name", brand)).toThrow(/leftover brand token/);
+    expect(() => renderSitePage("{{brand:{{brand:name}}}}", brand)).toThrow(/leftover|unknown/);
+  });
+
+  it("B3b: a token with the wrong case is a leftover, not served", () => {
+    expect(() => renderSitePage("{{Brand:name}}", brand)).toThrow(/leftover brand token/);
+    expect(() => renderSitePage("{{BRAND:name}}", brand)).toThrow(/leftover brand token/);
+  });
+
+  it("B3c: whitespace inside the braces is a leftover too", () => {
+    expect(() => renderSitePage("{{ brand:name}}", brand)).toThrow(/leftover brand token/);
+    expect(() => renderSitePage("{{brand :name}}", brand)).toThrow(/leftover brand token/);
+  });
+
+  it("B4: a page with no token is returned untouched, and a value is escaped, not injected", () => {
+    expect(renderSitePage("<p>no tokens</p>", brand)).toBe("<p>no tokens</p>");
+    const evil = { ...brand, name: 'A"<b>&' };
+    expect(renderSitePage("{{brand:name}}", evil)).toBe("A&quot;&lt;b&gt;&amp;");
+  });
+
+  it("B5: every served page has no token left, with the real brand", () => {
+    for (const page of STATIC_SITE_PAGE_NAMES) {
+      expect(readServedSitePage(page, { websiteId: undefined })).not.toContain("{{brand:");
+    }
+  });
+});
+
+describe("the brand-tokens style", () => {
+  const palette = validatePalette({ color: { ink: "#010203", "copper-light": "#a0b0c0" } });
+  const FIXTURE_STYLE =
+    '<style id="brand-tokens">:root{--brand-ink:#010203;--brand-copper-light:#a0b0c0;}</style>';
+
+  it("brandTokensTag is one style element with the palette as --brand-<key> custom properties", () => {
+    expect(brandTokensTag(palette)).toBe(FIXTURE_STYLE);
+  });
+
+  it("renderSitePage puts it once at the end of <head>, and nowhere when there is no <head>", () => {
+    const html = "<html><head><title>x</title></head><body>{{brand:name}}</body></html>";
+    const out = renderSitePage(html, loadBrand(), palette);
+    expect(out).toBe(
+      `<html><head><title>x</title>${FIXTURE_STYLE}</head><body>${BRAND.name}</body></html>`,
+    );
+    expect(renderSitePage("<p>no head</p>", loadBrand(), palette)).toBe("<p>no head</p>");
+  });
+
+  it("does not add a second one to a page that already has it", () => {
+    const once = renderSitePage("<head></head>", loadBrand(), palette);
+    expect(renderSitePage(once, loadBrand(), palette)).toBe(once);
+  });
+
+  it("still throws on a leftover token in a page with a head", () => {
+    expect(() => renderSitePage("<head></head>{{brand:nope}}", loadBrand(), palette)).toThrow(
+      'unknown brand key "nope"',
+    );
+  });
+
+  it("every served page carries the real palette once, and the page is otherwise unchanged", () => {
+    for (const page of STATIC_SITE_PAGE_NAMES) {
+      const html = file(page);
+      expect(html.match(/<style id="brand-tokens">/g)).toHaveLength(1);
+      expect(html).toContain(brandTokensTag(loadPalette()));
+    }
+  });
+});
+
+describe("renderSitePage without a palette", () => {
+  it("null leaves the page with the brand filled and no style added", () => {
+    const html = "<head></head>{{brand:name}}";
+    expect(renderSitePage(html, loadBrand(), null)).toBe(`<head></head>${BRAND.name}`);
+  });
+});
+
+describe("renderSitePage escaping", () => {
+  it("escapes & < > \" and ' in a value", () => {
+    const evil = { ...loadBrand(), name: `a&b<c>"d"'e'` } as ReturnType<typeof loadBrand>;
+    expect(renderSitePage("{{brand:name}}", evil, null)).toBe(
+      "a&amp;b&lt;c&gt;&quot;d&quot;&#39;e&#39;",
+    );
+  });
+});
+
+describe("first-touch tag on every served page", () => {
+  const TAG = `<script defer src="${FIRST_TOUCH_SRC}"></script>`;
+  const count = (html: string) => html.split(TAG).length - 1;
+
+  it("every served page has exactly one tag, with no site ID", () => {
+    for (const page of STATIC_SITE_PAGE_NAMES) {
+      expect(count(readServedSitePage(page, { websiteId: undefined }))).toBe(1);
+    }
+  });
+
+  it("every served page still has exactly one tag with a site ID", () => {
+    for (const page of STATIC_SITE_PAGE_NAMES) {
+      expect(count(readServedSitePage(page, { websiteId: FAKE_ID }))).toBe(1);
+    }
+  });
+
+  it("the tag sits just before </head>, and a second call adds nothing", () => {
+    const once = withFirstTouch("<html><head><title>a</title></head><body></body></html>");
+    expect(once).toContain(`${TAG}</head>`);
+    expect(withFirstTouch(once)).toBe(once);
+  });
+
+  it("a preload link or a comment naming the path does not stop the script tag", () => {
+    const page = `<html><head><link rel="preload" href="${FIRST_TOUCH_SRC}" as="script"><!-- ${FIRST_TOUCH_SRC} --></head><body></body></html>`;
+    const out = withFirstTouch(page);
+    expect(count(out)).toBe(1);
+    expect(withFirstTouch(out)).toBe(out);
+  });
+
+  it("a page with no </head> throws", () => {
+    expect(() => withFirstTouch("<body>x</body>")).toThrow(/<\/head>/);
+  });
+});
+
+describe("the first-touch key lives in one file", () => {
+  it("rf_first_touch appears in exactly one file under public/site: js/first-touch.js", () => {
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (
+          /\.(js|html|css|json|svg)$/.test(e.name) &&
+          fs.readFileSync(p, "utf8").includes("rf_first_touch")
+        )
+          hits.push(path.relative(SITE_ROOT, p).split(path.sep).join("/"));
+      }
+    };
+    walk(SITE_ROOT);
+    expect(hits).toEqual(["js/first-touch.js"]);
   });
 });
