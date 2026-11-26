@@ -63,8 +63,7 @@
 /* ---------- header and footer links land clear of the fixed header ---------- */
 #stores,#founder,#faq{scroll-margin-top:var(--rf-header-h)}
 
-/* ---------- under the wheel: what each part does (the moving wheel names only three; the still version already lists all fifteen) ---------- */
-.sy-parts{display:none}
+/* ---------- under the story: what each part does (visually hidden while the story plays, a plain list without script and in print) ---------- */
 .sy-ph{margin:0 0 4px;font-size:clamp(24px,3vw,32px);line-height:1.15;font-weight:650;letter-spacing:-.02em;color:var(--rf-text)}
 .sy-eye{margin:24px 0 0;font-size:15px;font-weight:500;color:var(--rf-text-2)}
 .sy-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 32px;margin:8px 0 0;padding:0;list-style:none}

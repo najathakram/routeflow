@@ -74,11 +74,11 @@ describe("no figure counts through a wrong value while scroll holds it", () => {
 });
 
 describe("wheel pieces are explained and legible on a phone", () => {
-  it("home lists what every wheel piece does: plain without the moving wheel, read aloud beside the ring when it is mounted", () => {
+  it("home lists what every part does: a plain list without script and in print, left out while the story plays", () => {
     const html = read("home.html");
     const list = html.slice(html.indexOf('class="stx-parts sy-parts"'));
     const items = list.slice(0, list.indexOf("</div>")).match(/<li><b>/g) ?? [];
     expect(items).toHaveLength(15);
-    expect(read("css/home-scenes.css")).toContain(".js-motion .stx-parts{position:absolute");
+    expect(read("css/home-scenes.css")).toContain(".js-motion .stx-parts{display:none}");
   });
 });

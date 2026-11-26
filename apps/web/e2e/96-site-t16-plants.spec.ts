@@ -21,7 +21,7 @@
  *   W11 600 ms fade, fail to pass; a twin that fails      green, settleFrames > 3; the twin is red
  *   W12 a faked 400 px snap (drift detector only)         drift > 0; the final position or obscured
  *   B1  no plant, header light                            green, no band red
- *   SNAP-real  no plant, the wheel control reached by Tab scrollY, drift and the DOM label recorded
+ *   SNAP-real  no plant, the story Skip link reached by Tab scrollY, drift and the DOM label recorded
  *   W13 (the length pin on T16_SIZE_ONLY) is a Jest case in site-colour-walk.static.test.ts
  */
 import { test, expect, type Page } from "@playwright/test";
@@ -458,17 +458,17 @@ if (process.env.T16_PLANTS === "1") {
       .toEqual([]);
   });
 
-  test("T16 SNAP-real the wheel control reached by Tab records its scroll and label", async () => {
+  test("T16 SNAP-real the story's Skip link reached by Tab records its scroll and label", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
     const w = await walkPageSize("/", DESKTOP, { hardMs: WALK_HARD_MS });
-    const row = w.rows.find((x) => x.sel.startsWith("button.rfw-b"));
-    expect(row, "SNAP-real: a wheel control was reached by Tab").toBeDefined();
+    const row = w.rows.find((x) => x.sel.startsWith("a.stx-skip"));
+    expect(row, "SNAP-real: the story Skip link was reached by Tab").toBeDefined();
     if (!row) return;
     // SA-1203 A12 SNAP-real: the browser's own Tab scroll and the site's own snap, both read after settle.
     test.info().annotations.push({
       type: "snap-real",
       description: `scrollY ${row.scrollY0} -> ${row.scrollY1}, drift ${row.scrollY1 - row.scrollY0}, label "${row.info.name}", state ${row.state}`,
     });
-    expect(row.state, "SNAP-real: red only if the control is obscured").not.toBe("obscured");
+    expect(row.state, "SNAP-real: red only if the link is obscured").not.toBe("obscured");
   });
 }

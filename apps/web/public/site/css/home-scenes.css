@@ -84,13 +84,13 @@ html:not(.js-motion) .sc-ill{display:none}
 .js-motion .stx-cap{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;opacity:0;visibility:hidden}
 .js-motion .stx-cap[data-first]{opacity:1;visibility:visible}
 .js-motion .stx-art{display:block;min-height:0;padding:0 8px 56px}
-.js-motion .stx-parts{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.js-motion .stx-parts{display:none}
 .js-motion .stx-skip{display:block;position:absolute;right:24px;bottom:18px;font-size:15px;font-weight:600;color:var(--rf-ink);text-decoration:underline;text-underline-offset:3px}
 .js-motion .stx-prog{display:block;position:absolute;left:0;right:0;top:0;height:4px;background:var(--rf-line)}
 .js-motion .stx-prog b{display:block;height:100%;background:var(--rf-steel);transform-origin:0 50%;transform:scaleX(0)}
 .js-motion .stx-steps{display:flex;position:absolute;left:24px;bottom:14px;gap:8px;margin:0;padding:0;list-style:none}
 .js-motion .stx-steps li{display:flex;align-items:center;gap:8px;padding:6px;border-radius:999px;font-weight:600;font-size:0;color:var(--rf-steel);background:var(--rf-bone)}
-.js-motion .stx-steps i{font-style:normal;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:700 12px/1 var(--rf-font);background:var(--rf-line);color:var(--rf-steel)}
+.js-motion .stx-steps i{font-style:normal;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:700 12px/1 var(--rf-font);background:var(--rf-line);color:var(--rf-ink)}
 .js-motion .stx-steps li.done i{background:var(--rf-line);color:var(--rf-ink)}
 .js-motion .stx-steps li.on{background:var(--rf-white);box-shadow:var(--rf-ring);color:var(--rf-ink);font-size:15px;padding:6px 16px 6px 6px}
 .js-motion .stx-steps li.on i{background:var(--rf-line);color:var(--rf-ink)}
@@ -99,3 +99,5 @@ html:not(.js-motion) .sc-ill{display:none}
   .js-motion .stx-art{padding:40px 0 70px}
   .js-motion .stx-steps{left:max(24px,calc((100vw - 1200px) / 2));bottom:28px}
 }
+/* print: the words show as the no-script page does; the scroll story's inline hides must not reach paper */
+@media print{.stx-caps,.stx-caps *,.stx-parts,.stx-parts *{opacity:1!important;visibility:visible!important;transform:none!important}}

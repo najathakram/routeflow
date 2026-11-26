@@ -100,8 +100,8 @@ for (const { w, h } of SCREENS) {
         seen.filter((r) => r.shown),
         "home bands",
       ).length,
-    ).toBeGreaterThanOrEqual(13);
-    expect(seen).toHaveLength(14);
+    ).toBeGreaterThanOrEqual(11);
+    expect(seen).toHaveLength(11);
     expect(problems).toEqual([]);
   });
 }
