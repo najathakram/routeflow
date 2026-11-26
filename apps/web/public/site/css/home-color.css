@@ -51,13 +51,13 @@
 /* The dot before a use-case example's name is the accent. */
 
 /* Small grey text on the bands is the steel job colour. */
-.home .sy-list span,.home .sy-eye,.home .hx-note,.home .rfw-keys li span,.home .rfw-keyh,.home .rfw--static .rfw-eye,.home .sl-prod{color:var(--rf-text-2)}
+.home .sy-list span,.home .sy-eye,.home .sl-prod{color:var(--rf-text-2)}
 
 /* ---------- the dark bands stay flat ---------- */
 .home #founder{position:relative}
 .home .end{position:relative;overflow:hidden}
 .home .end>*{position:relative}
-.home .pb-pin,.home .sy{position:relative}
+.home .sy{position:relative}
 
 /* ---------- FAQ: a friendly delivery van, so the page is not only words ---------- */
 .home .fq .fq-art{display:block;width:min(260px,64%);margin:0 auto 18px}

@@ -83,56 +83,12 @@ describe("K14a: the wheel's sub line is one string in home.html and rf-wheel-up.
     expect(src).toContain("${HERO[0].s} ${HERO[1].s}");
   });
 
-  it("the page and the script say the same sentence, the name aside, once each", () => {
-    expect(compareSubLines(pageSubLine(home, BRAND.name), scriptSubLine(src))).toBe("");
-  });
-
-  it("the raw home.html sub line holds the name token exactly once, never a typed name", () => {
-    const raw = rawPageSubLine(servedWithSentinel());
-    expect(raw.split(NAME_TOKEN).length - 1).toBe(1);
-    expect(raw.replace(NAME_TOKEN, "")).not.toContain(BRAND.name);
-  });
-
-  describe("the comparison goes red when it should", () => {
-    it("the raw check goes red when the name is typed into the line, or the token is doubled", () => {
-      const raw = rawPageSubLine(servedWithSentinel());
-      const typed = raw.replace(NAME_TOKEN, BRAND.name);
-      expect(typed.split(NAME_TOKEN).length - 1).toBe(0);
-      const doubled = raw.replace(NAME_TOKEN, NAME_TOKEN + " " + NAME_TOKEN);
-      expect(doubled.split(NAME_TOKEN).length - 1).toBe(2);
-      expect(() => rawPageSubLine("<p>nothing</p>")).toThrow(/no wheel scene/);
-    });
-
-    const page = pageSubLine(home, BRAND.name);
-    const script = scriptSubLine(src);
-    const flip = (s: string, at: number) =>
-      s.slice(0, at) + (s[at] === "x" ? "y" : "x") + s.slice(at + 1);
-
-    it("one character changed on the page side", () => {
-      expect(compareSubLines(flip(page, 3), script)).toMatch(/differ/);
-    });
-
-    it("one character changed on the script side", () => {
-      expect(compareSubLines(page, flip(script, 3))).toMatch(/differ/);
-    });
-
-    it("a sub line with no name marker, or two", () => {
-      expect(compareSubLines(page.split(MARK).join("x"), script)).toMatch(/holds 0 name markers/);
-      expect(compareSubLines(page, `${script} ${MARK}`)).toMatch(/holds 2 name markers/);
-    });
-
-    it("a script that types the name instead of reading it holds no marker", () => {
-      const typed = src.replace(
-        `" + ${NAME_VAR} + ", start`,
-        `" + ${JSON.stringify(BRAND.name)} + ", start`,
-      );
-      expect(typed).not.toBe(src);
-      expect(compareSubLines(page, scriptSubLine(typed))).toMatch(/holds 0 name markers/);
-    });
-
-    it("a page or a script with no sub line throws instead of passing", () => {
-      expect(() => pageSubLine("<p>nothing</p>", BRAND.name)).toThrow(/no wheel scene/);
-      expect(() => scriptSubLine("const X = 1;")).toThrow(/no HERO list/);
-    });
+  // The home page has no wheel still and no sub line any more: its one wheel is the story's ring, drawn by
+  // home-scenes.js. What the page says about the name moved to the story's opening line, which reads the token.
+  it("the page has no wheel still, and the story's opening line names the product from the token, once", () => {
+    expect(home).not.toContain('data-scene="wheel"');
+    const raw = servedWithSentinel();
+    expect(raw.split(SENTINEL + " is an app for wholesalers.").length - 1).toBe(1);
+    expect(raw).not.toContain(BRAND.name + " is an app for wholesalers.");
   });
 });

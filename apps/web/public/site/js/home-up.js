@@ -231,139 +231,6 @@
     g.from(el, a);
   }
 
-  /* ---------- 1. Hero: on load, not scroll. The wheel settles itself. ---------- */
-  function initHero(s) {
-    return section(s, function (c, s) {
-      g.from($$(".hx-kick, .hx-l, .hx-lede, .hx-cta, .hx-note", s), { y: 24, opacity: 0, stagger: { each: 0.08 }, duration: 1.2, ease: "expo.out" });
-    });
-  }
-
-  /* ---------- 2. Problem ---------- */
-  function initProblem(s) {
-    return section(s, function (c, s) {
-      var pin = $(".pb-pin", s), lines = $$(".pb-l", s), objs = $$(".pb-obj", s), big = $(".pb-big", s);
-      if (c.desk) {
-        /* Pinned: each line lights its object, in order. Then the one line that matters. */
-        var tl = g.timeline({ defaults: { duration: 1, ease: "power2.out" }, scrollTrigger: { trigger: pin, start: "top top", end: "+=170%", pin: true, scrub: SCRUB, onToggle: wc(objs.concat([big])) } });
-        lines.forEach(function (l, i) {
-          tl.fromTo(l, { opacity: 0.16 }, { opacity: 1 }, i * 1.1)
-            .fromTo(objs[i], { opacity: 0.1, y: 28, scale: 0.94 }, { opacity: 1, y: 0, scale: 1 }, i * 1.1);
-        });
-        tl.to($(".pb-lines", s), { opacity: 0, duration: 0.45, ease: "power1.in" }, 3.3)
-          .to($(".pb-art", s), { opacity: 0.08, duration: 0.8, ease: "power1.inOut" }, 3.5)
-          .fromTo(big, { opacity: 0, scale: 1.22 }, { opacity: 1, scale: 1, duration: 1.2, ease: "power3.out" }, 3.75)
-          .to({}, { duration: 0.5 });
-      } else {
-        revealOnce(lines.concat(objs), 0, 24, 0.09);
-        settle(big, 0, 1.06);
-      }
-    });
-  }
-
-  /* ---------- 3. The answer: one order, start to finish ---------- */
-  function initJourney(s) {
-    return section(s, function (c, s, keep) {
-      settle($(".jr-head h2", s), 0, c.desk ? 1.12 : 1.05, c.desk ? "top 92%" : EDGE);
-      if (c.desk) return journeyDesk(s, keep);
-      if (c.pin) return answerCard(s, keep);
-      revealOnce($$(".ans-i, .jr-p", s));
-    });
-  }
-  function journeyDesk(s, keep) {
-    var pin = $(".jr-pin", s), track = $(".jr-track", s), panels = $$(".jr-p", s), bar = $(".jr-bar", s);
-    var figs = panels.map(function (p) { return $(".jr-fig", p); });
-    var ordTot = $(".jr-p:nth-child(1) .a-sum b", s), invTots = $$(".jr-p:nth-child(2) .a-tots p > :last-child", s);
-    var paid = $$(".jr-pd .a-tots p > :last-child", s), paidPill = $(".jr-pd .a-pill", s), payRow = $(".jr-pd .a-pay", s), chk = $(".jr-pd .chk, .jr-paid .chk", s);
-    var rowsOf = function (i) { return $$(".a-r:not(.a-rh)", panels[i]); };
-    /* Payments received and the balance always add up to the invoice, on every frame. */
-    var payCount = function () {
-      var o = { v: 0 };
-      keep(paid[1]); keep(paid[2]);
-      var write = function () { var c = Math.round(o.v * 100); paid[1].textContent = money(c / 100); paid[2].textContent = money((11100 - c) / 100); };
-      write();
-      return g.to(o, { v: 111, duration: 0.5, ease: "power2.inOut", onUpdate: write });
-    };
-    /* What happens inside each step, built once; the step decides when it plays. */
-    var step = [
-      function (tl) {
-        tl.fromTo(figs[0], { opacity: 0, y: 40 }, { opacity: 1, y: 0 }, 0)
-          .fromTo(rowsOf(0), { opacity: 0, y: 10 }, { opacity: 1, y: 0, stagger: { each: 0.14 }, duration: 0.3 }, 0.25)
-          .add(stepSum(keep, [ordTot], [0, 45, 81, 111], 0.42, true), 0.2);
-      },
-      function (tl) {
-        tl.fromTo(figs[1], { opacity: 0, y: 40 }, { opacity: 1, y: 0 }, 0)
-          .fromTo(rowsOf(1), { opacity: 0, y: 10 }, { opacity: 1, y: 0, stagger: { each: 0.14 }, duration: 0.3 }, 0.25)
-          .add(stepSum(keep, invTots, [0, 45, 81, 111], 0.42), 0.2);
-      },
-      function (tl) {
-        tl.fromTo(chk, { opacity: 0, x: -50, rotation: -9 }, { opacity: 1, x: 0, rotation: -4 }, 0)
-          .add(payCount(), 0.45)
-          .fromTo(payRow, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3 }, 0.8)
-          .fromTo(paidPill, { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3 }, 0.95);
-      }
-    ];
-    var view = $(".jr-view", s);
-    /* Each figure fits the height the pin leaves it. Runs on refresh, never during scroll. */
-    var fitFigs = function () { var h = view.clientHeight - 8; figs.forEach(function (f) { g.set(f, { scale: Math.min(1, h / f.offsetHeight) }); }); };
-    fitFigs();
-    ST.addEventListener("refreshInit", fitFigs);
-    var dist = function () { return Math.max(0, track.scrollWidth - W.innerWidth); };
-    /* The track moves with the scroll, ease none; everything inside rides on it (containerAnimation). */
-    var move = g.to(track, { x: function () { return -dist(); }, ease: "none",
-      scrollTrigger: { trigger: pin, start: "top top", end: function () { return "+=" + dist(); }, pin: true, scrub: SCRUB, invalidateOnRefresh: true, onToggle: wc([track, bar]) } });
-    g.fromTo(bar, { x: 0 }, { x: function () { return bar.offsetWidth * (panels.length - 1); }, ease: "none",
-      scrollTrigger: { trigger: pin, start: "top top", end: function () { return "+=" + dist(); }, scrub: SCRUB, invalidateOnRefresh: true } });
-    /* No tween that waits on a toggleActions trigger hides its target before the trigger fires (immediateRender false in each timeline's
-     defaults); only the scrubbed scenes, whose progress is the scroll, set their start state. Step 1 plays once as the section arrives; steps 2-3 as each one slides in. */
-    step[0](g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: s, start: "top 60%", onEnter: go, toggleActions: "none none none none" } }));
-    for (var i = 1; i < panels.length; i++) step[i](g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: panels[i], containerAnimation: move, start: "left 78%", end: "left 22%", scrub: SCRUB } }));
-    /* One step in focus: the panels either side stay dim. Opacity only, riding on the track. */
-    panels.forEach(function (p, i) {
-      var fade = g.timeline({ defaults: { ease: "none", duration: 1 }, scrollTrigger: { trigger: p, containerAnimation: move, start: "left right", end: "right left", scrub: SCRUB } });
-      if (i) fade.fromTo(p, { opacity: 0.14 }, { opacity: 1 }, 0.2);
-      if (i < panels.length - 1) fade.fromTo(p, { opacity: 1 }, { opacity: 0.14, immediateRender: false }, 2.4);
-      fade.to({}, { duration: 0.2 }, 3.4);
-    });
-    return function () { ST.removeEventListener("refreshInit", fitFigs); };
-  }
-  /* Phones, upright: one card that changes in place. The scroll only picks the state (three bands of the pin); the change
-     itself plays on the clock from wherever it is, so it can stop, reverse or skip a state without ever showing half of one. */
-  function answerCard(s, keep) {
-    var ans = $(".ans", s), items = $$(".ans-i", ans), steps = $$(".ans-steps li", ans), fill = $(".ans-fill", ans);
-    var part = function (i) { var it = items[i]; return { bar: $(".ans-bar", it), head: $(".ans-h", it), foot: $(".ans-f", it), cap: $(".ans-cap", it) }; };
-    var A = part(0), B = part(1), C = part(2), rows = $$(".ans-r", items[0]), sweep = $(".ans-sweep", items[0]), chk = $(".chk", items[2]), bal = $(".ans-f b", items[2]);
-    keep(bal);
-    var o = { v: 111 }, writeBal = function () { bal.textContent = money(o.v); };
-    writeBal();
-    g.set(fill, { scaleX: 0.17, transformOrigin: "0% 50%" });
-    var tl = g.timeline({ paused: true, defaults: { ease: "power2.inOut", duration: 0.35 } });
-    tl.addLabel("s0", 0)
-      .to([A.bar, A.foot, A.cap], { autoAlpha: 0, duration: 0.22, ease: "power1.in" }, 0)
-      .to(A.head, { autoAlpha: 0, y: -8, duration: 0.22, ease: "power1.in" }, 0)
-      .fromTo([B.bar, B.foot, B.cap], { autoAlpha: 0 }, { autoAlpha: 1, ease: "power1.out" }, 0.2)
-      .fromTo(B.head, { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, ease: "power1.out" }, 0.2)
-      .fromTo(sweep, { xPercent: -100, autoAlpha: 1 }, { xPercent: 100, duration: 0.7, ease: "power1.inOut" }, 0.05)
-      .to(fill, { scaleX: 0.5, duration: 0.6 }, 0.1)
-      .addLabel("s1", 0.9)
-      .to(rows, { autoAlpha: 0, y: -6, stagger: { each: 0.04 }, duration: 0.2, ease: "power1.in" }, 0.95)
-      .fromTo(chk, { autoAlpha: 0, x: -60, y: 24, rotation: -14 }, { autoAlpha: 1, x: 0, y: 0, rotation: -3, duration: 0.55, ease: "power3.out" }, 1)
-      .to(B.foot, { autoAlpha: 0, duration: 0.01 }, 1)
-      .fromTo(C.foot, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.01 }, 1)
-      .to([B.bar, B.cap], { autoAlpha: 0, duration: 0.22 }, 1.05)
-      .to(B.head, { autoAlpha: 0, y: -8, duration: 0.22 }, 1.05)
-      .fromTo([C.bar, C.cap], { autoAlpha: 0 }, { autoAlpha: 1 }, 1.25)
-      .fromTo(C.head, { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0 }, 1.25)
-      .to(o, { v: 0, duration: 0.6, onUpdate: writeBal }, 1.35)
-      .to(fill, { scaleX: 1, duration: 0.6 }, 1)
-      .addLabel("s2", 2);
-    var L = ["s0", "s1", "s2"], cur = 0;
-    var setStep = function (i) { steps.forEach(function (li, k) { li.classList.toggle("on", k === i); }); };
-    var goTo = function (i) { if (i === cur) return; cur = i; setStep(i); tl.tweenTo(L[i], { duration: 0.8, ease: "power1.inOut", overwrite: true }); };
-    var idx = function (p) { return p < 1 / 3 ? 0 : p < 2 / 3 ? 1 : 2; };
-    /* start and end match the CSS sticky range: the section's top at the header (its height read live), its bottom at the screen's bottom. */
-    ST.create({ trigger: s, start: function () { var h = $(".site-header"); return "top " + (h ? h.getBoundingClientRect().height : 0) + "px"; }, end: "bottom bottom", onUpdate: function (x) { goTo(idx(x.progress)); }, onRefresh: function (x) { goTo(idx(x.progress)); } });
-  }
-
   /* ---------- 4. Fits how you sell ---------- */
   function initSell(s) {
     return section(s, function (c, s, keep) {
@@ -485,7 +352,7 @@
   /* ---------- run, in page order ---------- */
   var cleanups = [];
   var run = function (pair) { var el = $(pair[0]); if (el) cleanups.push(pair[1](el)); };
-  [["#top", initHero], ["#problem", initProblem], ["#journey", initJourney], ["#sell", initSell], ["#use-cases", initUseCases], ["#founder", initFounder], ["#pricing", initPricing], ["#faq", initFaq], ["#start", initEnd]].forEach(run);
+  [["#sell", initSell], ["#use-cases", initUseCases], ["#founder", initFounder], ["#pricing", initPricing], ["#faq", initFaq], ["#start", initEnd]].forEach(run);
   var queued = 0;
   refreshSoon = function () { if (queued) return; queued = W.requestAnimationFrame(function () { queued = 0; if (W.RFWheel && W.RFWheel.refresh) W.RFWheel.refresh(); else ST.refresh(); }); };
   refreshSoon();

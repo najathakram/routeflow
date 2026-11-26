@@ -151,22 +151,17 @@ describe("the pages", () => {
 describe("the home page: reversed symbol and official name", () => {
   const home = () => readServedSitePage("home", { websiteId: undefined });
 
-  it("the hub template and the static still both draw symbolOnDark, never symbol", () => {
+  it("the story hub draws the light-surface symbol and the dark closing band draws symbolOnDark", () => {
     const html = home();
     expect(FIXTURE.symbolOnDark).not.toBe(FIXTURE.symbol);
-    const tpl = html.match(/<template id="brand-symbol"><img src="([^"]*)" alt=""><\/template>/);
-    expect(tpl?.[1]).toBe(FIXTURE.symbolOnDark);
     const still = html.match(/<image href="([^"]*)"/g) ?? [];
     expect(still).toHaveLength(1);
-    expect(still[0]).toBe(`<image href="${FIXTURE.symbolOnDark}"`);
-    // the light-surface symbol is drawn on no dark surface (the hub disc, and the dark closing band
-    // below), and no typed mark is left
-    const hub = html.slice(
-      html.indexOf('<template id="brand-symbol">'),
-      html.indexOf('<h2 class="rfw-title">'),
-    );
-    expect(hub).toContain(FIXTURE.symbolOnDark);
-    expect(hub).not.toContain(FIXTURE.symbol);
+    // the story's hub is a white disc (as in the sketch): it draws the light-surface symbol
+    expect(still[0]).toBe(`<image href="${FIXTURE.symbol}"`);
+    const at = html.indexOf('<g class="hub">');
+    const hub = html.slice(at, html.indexOf("</g>", at));
+    expect(hub).toContain(FIXTURE.symbol);
+    expect(hub).not.toContain(FIXTURE.symbolOnDark);
     // the closing band is dark too: its mark is the dark-surface symbol
     expect(html).toContain(`<img class="end-mark" src="${FIXTURE.symbolOnDark}"`);
     expect(html).not.toContain(`<img class="end-mark" src="${FIXTURE.symbol}"`);

@@ -194,7 +194,6 @@ describe("P14: the plan-table header cells share a baseline", () => {
 const RUN_TIME_ONLY: string[] = [".band-ink", ".site-header.on-dark"];
 /** Surfaces painted with the ink token, directly or as --rf-text or --rf-btn (A10). None has a focusable element inside it; some (.btn-primary, .cta) are controls themselves. The walk reads rings on every row against the live backdrop, so it needs no list of bands. */
 const INK_SURFACES: string[] = [
-  ".ans-fill",
   ".btn-primary",
   ".cta",
   ".gs-n",

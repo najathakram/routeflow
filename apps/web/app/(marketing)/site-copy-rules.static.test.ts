@@ -149,7 +149,6 @@ describe("T37 home: no sentence ends with the name (dotted fixture name)", () =>
     // the three lines that used to end with the name, as decided (Set 1)
     expect(text).toContain("What is FIXTURE.TEST for?");
     expect(text).toContain("What FIXTURE.TEST helps you do.");
-    expect(text).toContain("You do every step in FIXTURE.TEST, start to finish.");
     expect(text).not.toContain("What is FIXTURE.TEST?");
     expect(text).not.toContain("Every step is in FIXTURE.TEST.");
     expect(text).not.toContain("What you can do with FIXTURE.TEST.");
@@ -306,7 +305,7 @@ const ILLUSTRATIONS: Record<string, number> = {
   "data-in-and-out": 0,
   "does-and-doesnt": 0,
   "getting-started": 1,
-  home: 7,
+  home: 1,
   landing: 0,
   pricing: 0,
   product: 5,

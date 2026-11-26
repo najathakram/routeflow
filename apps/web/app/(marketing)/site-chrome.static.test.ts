@@ -291,10 +291,10 @@ describe("no typed header offset in the site css (SA-1199 A1, A2)", () => {
   it("the offsets the rule names read var(--rf-header-h)", () => {
     const css = (f: string) => fs.readFileSync(path.join(CSS_DIR, f), "utf8");
     expect(css("site.css")).toMatch(/\.mobile-menu\{[^}]*inset:var\(--rf-header-h\) 0 0/);
-    expect(css("home.css")).toMatch(
-      /\.jr-pin\{position:sticky;top:var\(--rf-header-h\);height:calc\(100vh - var\(--rf-header-h\)\);height:calc\(100svh - var\(--rf-header-h\)\)/,
+    // the story pin (the page's opening) holds the header offset, with a 64px fallback before the header is measured
+    expect(css("home-scenes.css")).toMatch(
+      /\.js-motion \.stx-pin\{position:sticky;top:var\(--rf-header-h,64px\);height:calc\(100vh - var\(--rf-header-h,64px\)\);height:calc\(100svh - var\(--rf-header-h,64px\)\)/,
     );
-    expect(css("home-up.css")).toMatch(/\.hx-up\{--hx-bar:var\(--rf-header-h\)/);
   });
 });
 

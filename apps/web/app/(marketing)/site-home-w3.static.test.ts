@@ -79,59 +79,48 @@ describe("K1: the focus tile is one token, icon only", () => {
   });
 });
 
-describe("the page's still is the script's still", () => {
+describe("the story's ring carries the script's fifteen parts, in the script's order", () => {
+  // The page no longer holds a wheel still: its one wheel is drawn by home-scenes.js from the same fifteen parts.
   const page = readServedSitePage("home");
-  const pageSvg = svgOf(page);
-  /** The brand name is the only thing the page fills in; the rest of the label must match piece for piece. */
-  const normal = (svg: string) =>
-    svg
-      .replace(/ aria-label="The [^"]*? wheel:/, ' aria-label="The wheel:')
-      .replace(/<image [^>]*\/>/, "");
-
-  it("a page label that drops a piece name is caught (fixture)", () => {
-    expect(pageSvg).toContain("payments, ");
-    const dropped = pageSvg.replace("payments, ", "");
-    expect(normal(dropped)).not.toBe(normal(svgOf(scriptStill())));
-  });
-
-  it("same pieces, same classes, same paths, same icons (name and hub image aside)", () => {
-    expect(normal(pageSvg)).toBe(normal(svgOf(scriptStill())));
-  });
-
-  it("the hub's mark has the script's box", () => {
-    const box = /<image href="\$\{sym\}" ([^>]*?) preserveAspectRatio/.exec(
-      read("graphics/rf-wheel-up.js"),
+  const scriptNames = (): string[] => {
+    const html = scriptStill();
+    const label = /aria-label="The wheel: ([^"]*)"/.exec(html)?.[1] ?? "";
+    return label
+      .replace(/, all one system\.$/, "")
+      .replace(", around ", ", ")
+      .split(", ")
+      .map((n) => n.toLowerCase().replace(/^and /, ""));
+  };
+  const ringNames = (): string[] => {
+    const src = read("js/home-scenes.js");
+    const lists = [...src.matchAll(/var (?:OUTER|INNER) = (\[\[[^;]*\]\]);/g)].map(
+      (m) => JSON.parse((m[1] as string).replace(/\\u2019/g, "\u2019")) as string[][],
     );
-    if (!box) throw new Error("the script's hub image was not found");
-    const img = /<image [^>]*\/>/.exec(pageSvg);
-    if (!img) throw new Error("the page still has no hub image");
-    for (const part of (box[1] as string).split(" ")) expect(img[0]).toContain(part);
+    return lists.flat().map((p) => (p[1] as string).toLowerCase());
+  };
+
+  it("the ring lists the same fifteen names as the script's wheel", () => {
+    const ring = ringNames();
+    expect(ring).toHaveLength(15);
+    const script = scriptNames();
+    expect(script.length).toBe(15);
+    expect(ring.map((n) => n.replace(/\u2019/g, "'"))).toEqual(
+      script.map((n) => n.replace(/\u2019/g, "'")),
+    );
   });
 
-  it("the hub is painted by its class, with no colour typed on the page", () => {
-    expect(pageSvg).toContain('<circle class="rfw-hub" r="116"/>');
-    expect(pageSvg).not.toMatch(/#[0-9a-f]{3,8}\b/i);
-  });
-});
-
-describe("SA-1180 (2): a status colour marks a status", () => {
-  const css = read("css/home.css");
-  /** The selectors of the status marks (Paid, Pending, Overdue): a pill each. */
-  const STATUS_MARKS = [".a-pill--ok"];
-  const STATUS = /var\(--rf-(?:paid|pending|overdue)(?:-bg)?\)/;
-
-  it("no paid, pending or overdue token outside the status marks", () => {
-    const users = rulesOf(css).filter((r) => STATUS.test(r.body));
-    if (users.length === 0) throw new Error("no rule of home.css uses a status token");
-    const stray = users.flatMap((r) => r.selectors).filter((s) => !STATUS_MARKS.includes(s));
-    expect(stray).toEqual([]);
+  it("the page lists what each of the fifteen parts does, once, beside the ring", () => {
+    const at = page.indexOf('class="stx-parts sy-parts"');
+    expect(at).toBeGreaterThan(-1);
+    const list = page.slice(at, page.indexOf("</div>", at));
+    expect(list.match(/<li><b>/g) ?? []).toHaveLength(15);
   });
 
-  it("every status mark still shows its status", () => {
-    const users = rulesOf(css)
-      .filter((r) => STATUS.test(r.body))
-      .flatMap((r) => r.selectors);
-    for (const mark of STATUS_MARKS) expect(users).toContain(mark);
+  it("the hub's mark is one image, drawn from the brand symbol token, with no colour typed on it", () => {
+    const at = page.indexOf('<g class="hub">');
+    const hub = page.slice(at, page.indexOf("</g>", at));
+    expect(hub.match(/<image /g) ?? []).toHaveLength(1);
+    expect(hub).not.toMatch(/#[0-9a-f]{3,8}\b/i);
   });
 });
 
@@ -165,15 +154,6 @@ describe("SA-1185: soft is a surface, pills say their status", () => {
     expect(largeText(22, 400)).toBe(false);
     expect(largeText(16, 700)).toBe(false);
     expect(largeText(24, 400)).toBe(true);
-  });
-
-  it("every status pill on the page says one of the three status words", () => {
-    const html = readServedSitePage("home");
-    const pills = [...html.matchAll(/class="a-pill a-pill--(ok|warn|bad)"[^>]*>([^<]*)</g)];
-    if (pills.length === 0) throw new Error("no status pill on the page");
-    const word = { ok: "Paid", warn: "Pending", bad: "Overdue" } as Record<string, string>;
-    const wrong = pills.filter((m) => (m[2] ?? "").trim() !== word[m[1] as string]);
-    expect(wrong.map((m) => `${m[1]}: ${m[2]}`)).toEqual([]);
   });
 });
 

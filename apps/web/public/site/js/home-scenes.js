@@ -139,57 +139,145 @@
     chipIn(tl, q(".end"), 2.2); walk(tl, O, 420, 2.6, 1.5);
   });
 
-  /* The story (sketch story section, objects only): the mess falls into one app, then one order goes by as an order sheet,
-     a box and bottles, a truck, an invoice and a check. Scrubbed by the scroll over the tall section; same moves and eases
-     as the sketch. The wheel is the page's own hero wheel, so it is not drawn again here. */
+  /* The story, as the sketch has it: one wheel, drawn here, is both the opening picture and the story. Texts, price notes, a
+     bill and a ledger fall into it; it opens, brings Orders to the front and turns for Delivery, Invoices and Payments while
+     one order goes by as an order sheet, a box and bottles, a truck, an invoice and a check; then it closes and ripples.
+     Scrubbed by the scroll over the tall section, with the sketch's moves and eases. */
   (function story() {
     var sec = d.getElementById("story");
     if (!sec || !d.documentElement.classList.contains("js-motion")) return;
+    var NS = "http://www.w3.org/2000/svg", RAD = Math.PI / 180;
     var q = function (s) { return sec.querySelector(s); }, qa = function (s) { return g.utils.toArray(sec.querySelectorAll(s)); };
+    var ICON = {"purchases": "<path d=\"M8 17l16-9 16 9v15l-16 9-16-9z\"/><path d=\"M8 17l16 9 16-9M24 26v15\"/>", "bills": "<path d=\"M12 6h24v36l-4-3.5-4 3.5-4-3.5-4 3.5-4-3.5-4 3.5z\"/><path d=\"M18 15h12M18 22h12M18 29h7\"/>", "inventory": "<rect x=\"7\" y=\"26\" width=\"16\" height=\"14\" rx=\"2.5\"/><rect x=\"25\" y=\"26\" width=\"16\" height=\"14\" rx=\"2.5\"/><rect x=\"16\" y=\"9\" width=\"16\" height=\"14\" rx=\"2.5\"/>", "orders": "<rect x=\"11\" y=\"7\" width=\"26\" height=\"35\" rx=\"4\"/><path d=\"M18 17h12M18 24h12M18 31h7\"/>", "routes": "<circle cx=\"12\" cy=\"37\" r=\"4\"/><circle cx=\"36\" cy=\"11\" r=\"4\"/><path d=\"M16 37h15a7 7 0 0 0 0-14H17a6 6 0 0 1 0-12h15\"/>", "delivery": "<path d=\"M9 35H4V12h25v23H17M29 19h8l7 8v8h-5M31 35h-2\"/><circle cx=\"13\" cy=\"36\" r=\"4\"/><circle cx=\"35\" cy=\"36\" r=\"4\"/>", "invoices": "<path d=\"M13 6h15l9 9v27H13z\"/><path d=\"M28 6v9h9M19 24h12M19 31h12\"/>", "payments": "<circle cx=\"24\" cy=\"24\" r=\"17\"/><path d=\"M16 24.5l6 6 11-12\"/>", "customers": "<path d=\"M8 20l3-11h26l3 11M8 20a5.3 5.3 0 0 0 10.7 0 5.3 5.3 0 0 0 10.6 0 5.3 5.3 0 0 0 10.7 0M11 25v15h26V25M21 40v-9h6v9\"/>", "reports": "<path d=\"M7 41h34\"/><rect x=\"11\" y=\"25\" width=\"7\" height=\"11\" rx=\"1.5\"/><rect x=\"21\" y=\"16\" width=\"7\" height=\"20\" rx=\"1.5\"/><rect x=\"31\" y=\"8\" width=\"7\" height=\"28\" rx=\"1.5\"/>", "boxpiece": "<path d=\"M6 16l13-7 13 7v13l-13 7-13-7zM6 16l13 7 13-7M19 23v13\"/><rect x=\"33\" y=\"30\" width=\"10\" height=\"10\" rx=\"2\"/>", "price": "<path d=\"M8 8h15l17 17-15 15L8 23z\"/><circle cx=\"16\" cy=\"16\" r=\"2.5\"/>", "store": "<rect x=\"14\" y=\"5\" width=\"20\" height=\"38\" rx=\"4.5\"/><path d=\"M21 37h6\"/>", "counter": "<path d=\"M6 13V9h6M36 9h6v4M42 35v4h-6M12 39H6v-4M13 16v16M19 16v16M25 16v16M30 16v16M35 16v16\"/>", "returns": "<path d=\"M18 11L8 21l10 10\"/><path d=\"M8 21h23a9 9 0 0 1 0 18h-8\"/>"};
+    var OUTER = [["purchases", "Purchases"], ["bills", "Supplier bills"], ["inventory", "Inventory"], ["orders", "Orders"], ["routes", "Routes"], ["delivery", "Delivery"], ["invoices", "Invoices"], ["payments", "Payments"], ["customers", "Customers"], ["reports", "Reports"]];
+    var INNER = [["boxpiece", "Box or piece"], ["price", "Each buyer’s price"], ["store", "Store ordering"], ["counter", "Counter sales"], ["returns", "Returns"]];
+    function el(tag, attrs, parent, html) { var e = d.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (html != null) e.innerHTML = html; if (parent) parent.appendChild(e); return e; }
+    function arc(r0, r1, a0, a1) {
+      var p = function (r, a) { return (r * Math.cos(a * RAD)).toFixed(2) + " " + (r * Math.sin(a * RAD)).toFixed(2); };
+      return "M" + p(r0, a0) + "L" + p(r1, a0) + "A" + r1 + " " + r1 + " 0 0 1 " + p(r1, a1) + "L" + p(r0, a1) + "A" + r0 + " " + r0 + " 0 0 0 " + p(r0, a0) + "Z";
+    }
+    var pcs = {}, tops = [], walls = [], icr = { o: [], i: [] }, ics = [];
+    var ringO = q(".ringO"), ringI = q(".ringI"), wallO = q(".wallO"), wallI = q(".wallI"), tilt = q(".tilt"), tiltW = q(".tiltW");
+    function ring(list, topG, wallG, r0, r1, angOf, span, key, inner) {
+      list.forEach(function (dd, k) {
+        var a = angOf(k), dp = arc(r0, r1, a - span / 2 + 1.1, a + span / 2 - 1.1), rm = (r0 + r1) / 2, cls = inner ? " i" : "";
+        var w = el("g", {}, wallG); el("path", { d: dp, "class": "rg-wall" + cls }, w);
+        var t = el("g", { "data-part": dd[1] }, topG); el("path", { d: dp, "class": "rg-top" }, t);
+        var c = el("path", { d: dp, "class": "rg-col" + cls, opacity: "0" }, t);
+        var pos = el("g", { transform: "translate(" + (rm * Math.cos(a * RAD)).toFixed(2) + " " + (rm * Math.sin(a * RAD)).toFixed(2) + ")" }, t);
+        var rot = el("g", {}, pos), sc = el("g", {}, rot);
+        var at = "translate(-12 -12) scale(.5)";
+        var ic = el("g", { transform: at, "class": "rg-ic" }, sc, ICON[dd[0]]);
+        var icl = el("g", { transform: at, "class": "rg-ic lit", opacity: "0" }, sc, ICON[dd[0]]);
+        g.set([rot, sc], { svgOrigin: "0 0" });
+        pcs[dd[0]] = { top: t, wall: w, col: c, ic: ic, icl: icl, a: a, rm: rm };
+        tops.push(t); walls.push(w); icr[key].push(rot); ics.push(sc);
+      });
+    }
+    ring(OUTER, ringO, wallO, 98, 150, function (k) { return 90 + (k - 5) * 36; }, 36, "o", false);
+    ring(INNER, ringI, wallI, 44, 92, function (j) { return -90 + j * 72; }, 72, "i", true);
+
     var caps = qa(".stx-cap"), steps = qa(".stx-steps li"), progB = q(".stx-prog b"), pillT = q(".pillT"), bts = qa(".bt"), tws = qa(".oTruck .tw");
-    var FRONT = 250, HUB = { x: 200, y: 120 };
+    var O = { svgOrigin: "0 0" };
+    var wide = W.innerWidth >= 1000 && W.innerHeight > 560;
+    var R0 = { x: 200, y: 222, s: wide ? 1.04 : 0.9 }, OP = { x: 200, y: 152 }, FRONT_O = OP.y + 0.5 * (124 + 26), FRONT_I = OP.y + 0.5 * (68 + 12);
+    function place(sel, x, y, extra) { g.set(sel, Object.assign({ svgOrigin: "0 0", x: x, y: y }, extra || {})); }
     g.set(caps.slice(1), { autoAlpha: 0, y: 16 });
-    g.set(".stx-svg .obj", { svgOrigin: "0 0", x: 200, y: FRONT - 22, autoAlpha: 0 });
-    g.set(q(".oshadow"), { svgOrigin: "0 0", x: 200, y: FRONT, autoAlpha: 0 });
-    g.set(q(".pill"), { svgOrigin: "0 0", x: 200, y: FRONT + 32, autoAlpha: 0 });
-    bts.forEach(function (b) { g.set(b, { svgOrigin: "0 0", x: -32, y: -6, scale: 0.5, autoAlpha: 0 }); });
-    g.set(tws[0], { svgOrigin: "0 0", x: -28, y: -8 }); g.set(tws[1], { svgOrigin: "0 0", x: 26, y: -8 });
-    g.set(q(".mBub"), { svgOrigin: "0 0", x: 470, y: 40, autoAlpha: 0, rotation: 8 }); g.set(q(".mNotes"), { svgOrigin: "0 0", x: 470, y: 330, autoAlpha: 0, rotation: 14 });
-    g.set(q(".mBill"), { svgOrigin: "0 0", x: -70, y: 340, autoAlpha: 0, rotation: -16 }); g.set(q(".mBook"), { svgOrigin: "0 0", x: -90, y: 60, autoAlpha: 0, rotation: -8 });
-    g.set(q(".hub"), { svgOrigin: "200 120" });
-    var tl = g.timeline({ defaults: { ease: IO, duration: 0.4 }, onUpdate: hud });
+    g.set([ringO, ringI, wallO, wallI], { svgOrigin: "0 0", rotation: 0 });
+    g.set(tops.concat(walls), O);
+    place(tilt, R0.x, R0.y, { scaleX: R0.s, scaleY: R0.s }); place(tiltW, R0.x, R0.y, { scaleX: R0.s, scaleY: R0.s, autoAlpha: 0 });
+    place(q(".ripple"), R0.x, R0.y, { scale: R0.s, autoAlpha: 0 });
+    place(q(".pill"), 200, FRONT_O + 24, { autoAlpha: 0 });
+    place(q(".oshadow"), 200, FRONT_O, { autoAlpha: 0 });
+    qa(".stx-svg .obj").forEach(function (o) { place(o, 200, FRONT_O - 22, { autoAlpha: 0 }); });
+    bts.forEach(function (b) { place(b, -32, -6, { scale: 0.5, autoAlpha: 0 }); });
+    place(tws[0], -28, -8); place(tws[1], 26, -8);
+    place(q(".mBub"), 470, 40, { autoAlpha: 0, rotation: 8 }); place(q(".mNotes"), 470, 360, { autoAlpha: 0, rotation: 14 });
+    place(q(".mBill"), -70, 380, { autoAlpha: 0, rotation: -16 }); place(q(".mBook"), -90, 60, { autoAlpha: 0, rotation: -8 });
+    function restXY(k) { var p = pcs[k]; return { x: R0.x + R0.s * p.rm * Math.cos(p.a * RAD), y: R0.y + R0.s * p.rm * Math.sin(p.a * RAD) }; }
+    var lastFront = -1;
+    function sync() {
+      var ro = g.getProperty(ringO, "rotation"), ri = g.getProperty(ringI, "rotation"), sx = g.getProperty(tilt, "scaleX"), sy = g.getProperty(tilt, "scaleY");
+      g.set(icr.o, { rotation: -ro }); g.set(icr.i, { rotation: -ri }); g.set(ics, { scaleY: sx / sy });
+      var f = ((Math.round(5 - ro / 36) % 10) + 10) % 10; if (f !== lastFront) { lastFront = f; pillT.textContent = OUTER[f][1]; }
+    }
+    sync();
+    var tl = g.timeline({ defaults: { ease: IO, duration: 0.4 }, onUpdate: function () { sync(); hud(); } });
     function cap(n, t) { tl.to(caps[n - 1], { autoAlpha: 0, y: -16, duration: 0.16, ease: IN }, t).to(caps[n], { autoAlpha: 1, y: 0, duration: 0.24, ease: OUT }, t + 0.14); }
+    function turnO(deg, t, dur) { tl.to([ringO, wallO], { rotation: deg, duration: dur, ease: IO }, t); }
+    function turnI(deg, t, dur) { tl.to([ringI, wallI], { rotation: deg, duration: dur, ease: IO }, t); }
     function objIn(sel, y, t) { tl.fromTo(sel, { y: y - 20, autoAlpha: 0 }, { y: y, autoAlpha: 1, duration: 0.22, ease: OUT, immediateRender: false }, t); }
     function objOut(sel, t, extra) { tl.to(sel, Object.assign({ y: "-=14", autoAlpha: 0, duration: 0.14, ease: IN }, extra || {}), t); }
-    function mess(sel, hx, hy, t) {
+    function lit(p, t, on) { tl.to(p.col, { opacity: on ? 1 : 0, duration: on ? 0.25 : 0.24, ease: on ? OUT : IO }, t).to(p.icl, { opacity: on ? 1 : 0, duration: on ? 0.25 : 0.24, ease: on ? OUT : IO }, t); }
+
+    // 1 - the mess falls in, each piece lands in its own segment
+    cap(1, 0.1);
+    function mess(sel, hx, hy, key, t) {
+      var p = restXY(key), pc = pcs[key];
       tl.to(sel, { x: hx, y: hy, rotation: "*=.3", autoAlpha: 1, duration: 0.22, ease: OUT }, t)
-        .to(sel, { x: HUB.x, y: HUB.y, scale: 0.2, rotation: 0, duration: 0.3, ease: IN }, t + 0.36)
-        .to(sel, { autoAlpha: 0, duration: 0.07, ease: "none" }, t + 0.59)
-        .to(q(".hub"), { scale: 1.12, duration: 0.08, ease: OUT }, t + 0.62).to(q(".hub"), { scale: 1, duration: 0.24, ease: IO }, t + 0.74);
+        .to(sel, { x: p.x, y: p.y, scale: 0.2, rotation: 0, duration: 0.3, ease: IN }, t + 0.36)
+        .to(sel, { autoAlpha: 0, duration: 0.07, ease: "none" }, t + 0.59);
+      lit(pc, t + 0.62, true); lit(pc, t + 0.74, false);
     }
-    mess(q(".mBub"), 296, 96, 0.18); mess(q(".mNotes"), 336, 240, 0.5); mess(q(".mBill"), 58, 244, 0.82); mess(q(".mBook"), 84, 98, 1.14);
-    cap(1, 1.7);
-    tl.to(q(".oshadow"), { autoAlpha: 1, duration: 0.2 }, 1.8).to(q(".pill"), { autoAlpha: 1, duration: 0.15 }, 1.8);
-    objIn(q(".oSheet"), FRONT, 1.78);
-    cap(2, 2.8); objOut(q(".oSheet"), 2.8);
-    tl.set([q(".oBox"), q(".oBottles")], { x: 214, y: FRONT - 22 }, 2.9);
-    objIn(q(".oBox"), FRONT, 3.0); tl.set(q(".oBottles"), { y: FRONT, autoAlpha: 1 }, 3.04).to(q(".oBox .flapL"), { y: -8, autoAlpha: 0, duration: 0.16, ease: OUT }, 3.2);
-    bts.forEach(function (b, k) { var col = k % 3, row = k < 3 ? 0 : 1; tl.to(b, { x: 14 + col * 13 + row * 5, y: row ? 2 : -9, scale: 1, autoAlpha: 1, duration: 0.26, ease: OUT }, 3.24 + k * 0.04); });
-    cap(3, 4.0);
-    tl.to(bts, { x: -32, y: -6, scale: 0.5, autoAlpha: 0, duration: 0.16, ease: IN, stagger: 0.01 }, 4.0); objOut(q(".oBox"), 4.1);
-    tl.to(q(".oshadow"), { scaleX: 1.7, duration: 0.3 }, 4.14);
-    objIn(q(".oTruck"), FRONT + 8, 4.24); tl.to(tws, { rotation: -720, duration: 0.7, ease: IO }, 4.3);
-    cap(4, 5.2);
-    tl.to(q(".oTruck"), { x: 290, autoAlpha: 0, duration: 0.26, ease: IN }, 5.22).to(tws, { rotation: -1000, duration: 0.26, ease: IN }, 5.22);
-    tl.to(q(".oshadow"), { scaleX: 1, duration: 0.2 }, 5.4); objIn(q(".oInv"), FRONT, 5.6);
-    cap(5, 6.4); objOut(q(".oInv"), 6.4);
-    tl.fromTo(q(".oCheck"), { x: 214, y: FRONT - 150, rotation: 16, autoAlpha: 0 }, { y: FRONT - 30, rotation: -8, autoAlpha: 1, duration: 0.3, ease: IN, immediateRender: false }, 6.8);
-    tl.to({}, { duration: 0.6 }, 7.4);
-    var marks = [1.8, 2.9, 4.1, 5.3, 6.5], names = ["Orders", "Box or piece", "Delivery", "Invoices", "Payments"], last = -1;
+    mess(q(".mBub"), 296, 96, "orders", 0.18); mess(q(".mNotes"), 336, 340, "price", 0.5); mess(q(".mBill"), 58, 344, "invoices", 0.82); mess(q(".mBook"), 84, 98, "payments", 1.14);
+
+    // 2 - open, name, bring Orders to the front
+    cap(2, 2.05);
+    tl.to(tilt, { x: OP.x, y: OP.y, scaleX: 1, scaleY: 0.5, duration: 0.55 }, 2.1)
+      .to(tiltW, { x: OP.x, y: OP.y + 9, scaleX: 1, scaleY: 0.5, duration: 0.55 }, 2.1).to(tiltW, { autoAlpha: 1, duration: 0.2, ease: "none" }, 2.3)
+      .to(q(".hub"), { y: -16, duration: 0.4, ease: OUT }, 2.35).to(q(".hubW"), { autoAlpha: 0, duration: 0.2 }, 2.3);
+    OUTER.forEach(function (dd, k) { var p = pcs[dd[0]]; tl.to([p.top, p.wall], { x: 26 * Math.cos(p.a * RAD), y: 26 * Math.sin(p.a * RAD), duration: 0.45, ease: OUT }, 2.3 + k * 0.02); lit(p, 2.34 + k * 0.03, true); });
+    INNER.forEach(function (dd, k) { var p = pcs[dd[0]]; tl.to([p.top, p.wall], { x: 12 * Math.cos(p.a * RAD), y: 12 * Math.sin(p.a * RAD), duration: 0.45, ease: OUT }, 2.42 + k * 0.03); lit(p, 2.46 + k * 0.04, true); });
+    turnO(72, 2.75, 0.5);
+    tl.to(q(".pill"), { autoAlpha: 1, duration: 0.15 }, 2.85).to(q(".pill"), { autoAlpha: 0, duration: 0.12 }, 3.28);
+
+    // 3 - Orders
+    cap(3, 3.3);
+    tl.to(q(".oshadow"), { autoAlpha: 1, duration: 0.2 }, 3.4); objIn(q(".oSheet"), FRONT_O, 3.38);
+
+    // 4 - Box or piece (inner ring)
+    cap(4, 4.4); objOut(q(".oSheet"), 4.4);
+    turnI(180, 4.42, 0.5);
+    tl.to(q(".oshadow"), { y: FRONT_I, scaleX: 1.5, duration: 0.3 }, 4.5).set([q(".oBox"), q(".oBottles")], { x: 214, y: FRONT_I - 22 }, 4.5);
+    objIn(q(".oBox"), FRONT_I, 4.86); tl.set(q(".oBottles"), { y: FRONT_I, autoAlpha: 1 }, 4.9).to(q(".oBox .flapL"), { y: -8, autoAlpha: 0, duration: 0.16, ease: OUT }, 5.02);
+    bts.forEach(function (b, k) { var col = k % 3, row = k < 3 ? 0 : 1; tl.to(b, { x: 14 + col * 13 + row * 5, y: row ? 2 : -9, scale: 1, autoAlpha: 1, duration: 0.26, ease: OUT }, 5.06 + k * 0.04); });
+
+    // 5 - Delivery (the ring turns two pieces under the truck)
+    cap(5, 5.6);
+    tl.to(bts, { x: -32, y: -6, scale: 0.5, autoAlpha: 0, duration: 0.16, ease: IN, stagger: 0.01 }, 5.6); objOut(q(".oBox"), 5.7);
+    tl.to(q(".oshadow"), { y: FRONT_O, scaleX: 1.7, duration: 0.3 }, 5.74);
+    objIn(q(".oTruck"), FRONT_O + 8, 5.84);
+    turnO(0, 5.9, 0.7); tl.to(tws, { rotation: -720, duration: 0.7, ease: IO }, 5.9)
+      .to(q(".pill"), { autoAlpha: 1, duration: 0.1 }, 6.12).to(q(".pill"), { autoAlpha: 0, duration: 0.1 }, 6.4);
+
+    // 6 - Invoices
+    cap(6, 6.8);
+    tl.to(q(".oTruck"), { x: 290, autoAlpha: 0, duration: 0.26, ease: IN }, 6.82).to(tws, { rotation: -1000, duration: 0.26, ease: IN }, 6.82);
+    turnO(-36, 6.9, 0.45); tl.to(q(".oshadow"), { scaleX: 1, duration: 0.2 }, 7.0); objIn(q(".oInv"), FRONT_O, 7.3);
+
+    // 7 - Payments
+    cap(7, 8.0);
+    turnO(-72, 8.06, 0.45);
+    tl.fromTo(q(".oCheck"), { x: 214, y: FRONT_O - 150, rotation: 16, autoAlpha: 0 }, { y: FRONT_O - 30, rotation: -8, autoAlpha: 1, duration: 0.3, ease: IN, immediateRender: false }, 8.44);
+
+    // 8 - the ring finishes the circle
+    cap(8, 9.25); objOut([q(".oInv"), q(".oCheck")], 9.24); tl.to(q(".oshadow"), { autoAlpha: 0, duration: 0.15 }, 9.24);
+    turnO(-360, 9.32, 1.7);
+    tl.to(q(".pill"), { autoAlpha: 1, duration: 0.12 }, 9.48).to(q(".pill"), { autoAlpha: 0, duration: 0.12 }, 10.72);
+
+    // 9 - one system: the wheel closes and ripples
+    OUTER.concat(INNER).forEach(function (dd, k) { var p = pcs[dd[0]]; tl.to([p.top, p.wall], { x: 0, y: 0, duration: 0.5, ease: IO }, 10.7 + k * 0.012); lit(p, 10.95 + k * 0.012, false); });
+    tl.to(q(".hub"), { y: 0, duration: 0.4, ease: IO }, 10.8)
+      .to(tiltW, { autoAlpha: 0, duration: 0.2, ease: "none" }, 10.95)
+      .to([tilt, tiltW], { x: R0.x, y: R0.y, scaleX: R0.s, scaleY: R0.s, duration: 0.55 }, 10.95)
+      .fromTo(q(".ripple"), { autoAlpha: 0.9, scale: R0.s }, { autoAlpha: 0, scale: R0.s * 1.32, duration: 0.5, ease: OUT, immediateRender: false }, 11.5)
+      .to({}, { duration: 0.5 }, 11.7);
+
+    var marks = [0.2, 2.15, 3.4, 4.5, 5.7, 6.9, 8.1, 9.35], last = -1;
     function hud() {
       var t = tl.time(), n = 0; marks.forEach(function (x) { if (t >= x) n++; });
       g.set(progB, { scaleX: tl.progress() });
-      if (n !== last) { last = n; if (n) pillT.textContent = names[n - 1]; steps.forEach(function (li, k) { li.className = n === k + 1 ? "on" : (n > k + 1 ? "done" : ""); }); }
+      if (n !== last) { last = n; steps.forEach(function (li, k) { var s = k + 3; li.className = n === s ? "on" : (n > s ? "done" : ""); }); q(".stx-steps").style.opacity = (n >= 2 && n <= 8) ? 1 : 0; }
     }
     hud();
     ST.create({ trigger: sec, start: function () { return "top " + (d.querySelector(".site-header, header") ? d.querySelector(".site-header, header").offsetHeight : 64); }, end: "bottom bottom", scrub: 0.5, animation: tl, invalidateOnRefresh: true });
