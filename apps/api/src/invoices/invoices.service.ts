@@ -3632,12 +3632,6 @@ export class InvoicesService {
       variant,
       kind: opts?.kind,
     });
-    // W-1443: the sender's private copy (after the customer's delivery; never throws, never changes the result).
-    const { prisma, emailService, logger } = this;
-    const copy = await sendInvoiceStaffCopy(
-      { prisma, emailService, logger },
-      { emailPayload, actorId, customerTo: recipientEmail },
-    );
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
     const { updated, auto } = await this.markSent(id, inv.orderId, true);
@@ -3673,6 +3667,13 @@ export class InvoicesService {
     // surface it as a warning, not a failure (the invoice really was emailed). The From
     // address silently changed too (tenant mailbox → platform address) — disclose it,
     // not bury it.
+    // W-1443 (R-239 M1/M5): LAST, after the SENT flip, the audit and the emit; only the route's explicit copyActorId (never
+    // the audit actor) can earn a copy, and it never throws.
+    const { prisma, emailService, logger } = this;
+    const copy = await sendInvoiceStaffCopy(
+      { prisma, emailService, logger },
+      { emailPayload, actorId: opts?.copyActorId ?? null, customerTo: recipientEmail },
+    );
     return {
       success: true,
       sentTo: recipientEmail,

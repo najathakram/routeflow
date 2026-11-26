@@ -76,6 +76,7 @@ import { overpaidText, revisedBadgeText } from "../../../../lib/invoice-revision
 import {
   nextPdfSharePhase,
   smtpFallbackNotice,
+  withCopyNote,
   type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
@@ -298,7 +299,7 @@ export default function InvoiceDetailScreen() {
           // nowrap/2.2s and a no-op on iOS, and a dead tenant mailbox has to be
           // read. Plain successes keep the toast.
           if (notice) alertInfo(label, notice);
-          else showToast(label);
+          else showToast(withCopyNote(label, res));
           refetch();
         },
         onError: (e: any) => {

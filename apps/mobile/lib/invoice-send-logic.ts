@@ -105,6 +105,16 @@ export function smtpFallbackNotice({
   } — your own email couldn't send: ${warning}.`;
 }
 
+/**
+ * W-1443 (SA-1516): the line a send toast adds when the sender's private copy was delivered, verbatim web's
+ * (apps/web lib/invoice-email-copy.ts). Only when the api reports `copiedTo`: never claims a copy that was not delivered.
+ */
+export function withCopyNote(text: string, res: unknown): string {
+  const copiedTo = (res as { copiedTo?: string } | null | undefined)?.copiedTo;
+  if (!copiedTo) return text;
+  return `${text.endsWith(".") ? text : `${text}.`} A copy went to you.`;
+}
+
 /** UI state for a "prepare → share" control (the WhatsApp row in file-share
  *  mode, or the plain Share-PDF affordance) — see `share-pdf.ts`'s
  *  `ACTIVATION_BUDGET_MS` contract. `"preparing"` = the PDF fetch is racing

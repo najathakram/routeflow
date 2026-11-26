@@ -36,8 +36,8 @@ export function InvoiceCopyCard() {
         <div className="min-w-0">
           <div className="text-sm font-medium text-navy">Send me a copy of invoices I email</div>
           <div className="text-xs text-navy/70">
-            When you email an invoice to a customer, we also send a copy to you
-            {user?.email ? ` at ${user.email}` : ""}. The customer does not see it.
+            When you email an invoice to a customer, we also send a copy to you at the email address
+            on your account. The customer does not see it.
           </div>
         </div>
         <MiniSwitch

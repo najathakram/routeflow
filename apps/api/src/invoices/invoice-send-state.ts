@@ -391,6 +391,11 @@ export interface SendEmailOpts {
   orderId?: string;
   /** The order's OTHER invoices, attached beside this one. */
   withInvoiceIds?: string[];
+  /**
+   * W-1443 (R-239 M1/M4): the person who pressed Send, for the private copy. Set ONLY by the send-email route (null in a
+   * support session). Absent = no copy: automatic sends, the pickup completion email and every other caller.
+   */
+  copyActorId?: string | null;
 }
 
 type PrismaLike = { forTenant(): any; getTenantId(): string | null | undefined };

@@ -15,7 +15,7 @@ jest.mock("@/lib/api-client", () => ({
 let role = "OPERATOR";
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
-  useAuth: () => ({ user: { role, email: "ops@acme.test" } }),
+  useAuth: () => ({ user: { role } }),
 }));
 const toast = jest.fn();
 jest.mock("@routeflow/ui/web", () => ({
@@ -38,7 +38,9 @@ describe("InvoiceCopyCard (W-1443)", () => {
     const sw = await screen.findByRole("switch", { name: SWITCH });
     expect(sw).toHaveAttribute("aria-checked", "false");
     expect(screen.getByText("Copies of emails you send")).toBeInTheDocument();
-    expect(screen.getByText(/we also send a copy to you at ops@acme.test/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/we also send a copy to you at the email address on your account/),
+    ).toBeInTheDocument();
   });
 
   it('T19: the switch is on only for the exact value "true"', async () => {

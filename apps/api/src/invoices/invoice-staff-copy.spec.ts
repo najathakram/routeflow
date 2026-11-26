@@ -38,7 +38,7 @@ describe("resolveInvoiceCopyRecipient (R2)", () => {
     expect(await resolveInvoiceCopyRecipient(prisma, "u1", "buyer@acme.test")).toBeNull();
   });
 
-  it.each(["false", "TRUE", "yes", ""])("T3: preference %p -> null", async (v) => {
+  it.each(["false", "TRUE", "1", "yes", ""])("T3: preference %p -> null", async (v) => {
     const { prisma } = makePrisma({ user: operator, pref: v });
     expect(await resolveInvoiceCopyRecipient(prisma, "u1", "buyer@acme.test")).toBeNull();
   });

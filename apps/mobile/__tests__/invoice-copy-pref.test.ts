@@ -7,6 +7,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { PREF } from "@routeflow/types";
 import { invoiceCopyFromPrefs, invoiceCopyPatch } from "../lib/invoice-copy-pref";
+import { withCopyNote } from "../lib/invoice-send-logic";
 
 describe("invoice copy preference (W-1443)", () => {
   it("reads an absent preference as OFF (opt-in), not on", () => {
@@ -37,5 +38,19 @@ describe("invoice copy preference (W-1443)", () => {
     expect(src).toMatch(/setInvoiceCopyEnabled/);
     expect(src).toContain("Send me a copy of invoices I email");
     expect(src).toMatch(/The customer\s+does not see it\./);
+  });
+});
+
+describe("send toast copy note (W-1443)", () => {
+  it("adds the line only when the api reports copiedTo", () => {
+    expect(withCopyNote("Invoice emailed", { success: true })).toBe("Invoice emailed");
+    expect(withCopyNote("Invoice emailed", { copiedTo: "ops@acme.test" })).toBe(
+      "Invoice emailed. A copy went to you.",
+    );
+  });
+  it('reads "TRUE", "1" and a missing value as off', () => {
+    expect(invoiceCopyFromPrefs({ [PREF.invoiceEmailCopy]: "TRUE" })).toBe(false);
+    expect(invoiceCopyFromPrefs({ [PREF.invoiceEmailCopy]: "1" })).toBe(false);
+    expect(invoiceCopyFromPrefs({})).toBe(false);
   });
 });

@@ -39,6 +39,7 @@ import {
   preferredPhone,
   smsUrl,
   smtpFallbackNotice,
+  withCopyNote,
   type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { showToast } from "../../../../lib/toast";
@@ -637,7 +638,7 @@ export default function OrderDetailScreen() {
           // for it (nowrap, 2.2s, and a no-op on iOS), so disclose it in the
           // single-button info dialog instead. Plain successes stay a toast.
           if (notice) alertInfo("Invoice emailed", notice);
-          else showToast("Invoice emailed");
+          else showToast(withCopyNote("Invoice emailed", res));
           closeSendSheet();
         },
         onError: (e) => toastError(e),
