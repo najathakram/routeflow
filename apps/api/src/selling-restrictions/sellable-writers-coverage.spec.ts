@@ -393,6 +393,7 @@ const FREE_WRITER_FILES = [
   "orders/order-merge-fold.ts", // SA-1162: the customer merge pair, moved out of the class
   "invoices/draft-order-restrictions.ts",
   "invoices/invoice-restriction-lines.ts",
+  "invoices/invoice-draft-return.ts", // SA-1508: revert + reopen moved out of InvoicesService; no line write (pinned in its writer-pin spec), so not in the twin, which wants an inventory row per file
 ];
 
 type WriterNode = ts.MethodDeclaration | ts.FunctionDeclaration;

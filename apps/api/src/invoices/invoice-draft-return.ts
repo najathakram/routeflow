@@ -62,6 +62,11 @@ export async function revertInvoiceToDraftFlow(deps: InvoiceDraftReturnDeps, id:
   });
 }
 
+/**
+ * Known gap (W-1458, SA-1532 LOW-2): reopen takes no row lock and its update has no status predicate; its
+ * PAID check is a pre-read outside the transaction (invoice-reopen-guard.ts). Moved unchanged from
+ * InvoicesService. Hardening it is its own item and needs its own ROW_LOCK_SITES row.
+ */
 export async function reopenInvoiceFlow(deps: InvoiceDraftReturnDeps, id: string) {
   await loadReopenableInvoice(deps.prisma.forTenant(), id); // PAID only; W-861: never a paid walk-in sale
 
