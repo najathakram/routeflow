@@ -77,7 +77,6 @@ export function RestrictionWarningDialog({
   const common = {
     open: !!view,
     onClose: onCancel,
-    scroll: true,
     // The X hit area is 44px below md (the owner's touch-target rule); the icon stays 16px.
     closeClassName:
       "max-md:flex max-md:min-h-11 max-md:min-w-11 max-md:items-center max-md:justify-center",

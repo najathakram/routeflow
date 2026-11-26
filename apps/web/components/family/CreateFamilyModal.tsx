@@ -173,7 +173,6 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
       title="New family"
       description="A family groups variants (flavors, sizes). It is a container: you sell and stock its variants."
       className="max-w-5xl"
-      scroll
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={create.isPending}>

@@ -541,6 +541,7 @@ export function CreateEstimateModal({
 
   return (
     <Modal
+      scroll={false} // B1444: CLIP
       open={isOpen}
       onClose={onClose}
       title={estimate ? `Edit ${estimate.estimateNumber}` : "New estimate"}
