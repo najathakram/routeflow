@@ -509,12 +509,13 @@ function DayCloseFormBody({
             {DAY_OFFLINE_COPY}
           </p>
         )}
-        {editing ? null : (
-          <p className="text-xs text-navy/70" data-testid="day-close-email-note">
-            {Z_REPORT_WILL_EMAIL_COPY}
-          </p>
-        )}
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {editing ? null : (
+            // B1467: said beside the button it describes, not up in the form
+            <p className="mr-auto text-xs text-navy/70" data-testid="day-close-email-note">
+              {Z_REPORT_WILL_EMAIL_COPY}
+            </p>
+          )}
           <Button
             type="button"
             variant="secondary"

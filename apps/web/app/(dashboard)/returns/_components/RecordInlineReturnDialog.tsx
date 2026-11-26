@@ -19,6 +19,7 @@ import { RefundSlipAction } from "./RefundSlipAction";
 import { readAutoPrint } from "@/lib/counter-sale";
 import { isReadOnlyRefusal } from "@/lib/read-only-refusal";
 import * as React from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
 import { useOrders } from "@/lib/api/orders";
@@ -172,6 +173,9 @@ export function RecordInlineReturnDialog({
   } | null>(null);
   const [result, setResult] = React.useState<InlineReturnRecord | null>(null);
   const [openSeq, setOpenSeq] = React.useState(0);
+  // B1465: the fixed footer's two slots (refund error above, action row below), set once the footer mounts
+  const [errorHost, setErrorHost] = React.useState<HTMLElement | null>(null);
+  const [actionsHost, setActionsHost] = React.useState<HTMLElement | null>(null);
   const [sectionState, setSectionState] = React.useState<InlineReturnSectionState>({
     lines: [],
     quote: null,
@@ -461,6 +465,15 @@ export function RecordInlineReturnDialog({
     <Modal
       open={open}
       onClose={handleClose}
+      // B1465: the confirm button and the refund error live in a footer outside the scroll body, so both stay in view at 1024x768
+      footer={
+        phase === "capture" ? (
+          <div className="flex w-full flex-col gap-2">
+            <div ref={setErrorHost} className="empty:hidden" />
+            <div ref={setActionsHost} />
+          </div>
+        ) : undefined
+      }
       onCloseAutoFocus={onCloseAutoFocus}
       title="Record a return"
       description={customerName ? `For ${customerName}` : undefined}
@@ -490,6 +503,7 @@ export function RecordInlineReturnDialog({
       )}
       <InlineReturnSection
         hidden={phase !== "capture"}
+        actionsHost={phase === "capture" ? actionsHost : undefined}
         customerId={customerId}
         entryOrderId={orderId}
         sourceOrderId={sourceOrderId}
@@ -538,6 +552,7 @@ export function RecordInlineReturnDialog({
               // SA-749r2 #9: after "more cash than was taken" the tender is the way out, so it stays editable
               tenderEditable={refundError === "exceedsCash"}
               error={refundError}
+              errorHost={errorHost}
             />
           ) : null
         }
@@ -748,6 +763,7 @@ function RefundChoice({
   locked,
   tenderEditable = false,
   error,
+  errorHost,
 }: {
   amount: string;
   /** What this choice does with the money (store credit: where it lands; refund: that it goes back). */
@@ -764,6 +780,8 @@ function RefundChoice({
   /** SA-749r2 #9: keep the "Refund by" tender editable although the choice is locked (the way out of a cash cap refusal). */
   tenderEditable?: boolean;
   error: RefundErrorKind | null;
+  /** B1465: the dialog's fixed footer, where the error is drawn (null = not mounted yet; undefined = in place). */
+  errorHost?: HTMLElement | null;
 }) {
   const refund = resolution === "REFUND";
   const errorText = error ? (walkIn ? WALK_IN_REFUND_LINE : REFUND_COPY)[error] : "";
@@ -786,6 +804,8 @@ function RefundChoice({
       )}
     </p>
   ) : null;
+  const errorSlot =
+    errorHost === undefined ? errorLine : errorHost ? createPortal(errorLine, errorHost) : null;
   const tenderSelect = (
     <Select
       label="Refund by"
@@ -801,7 +821,7 @@ function RefundChoice({
     return (
       <div className="mt-4 space-y-2">
         {tenderSelect}
-        {errorLine}
+        {errorSlot}
       </div>
     );
   }
@@ -841,7 +861,7 @@ function RefundChoice({
             <p className="text-sm text-navy">{handBackLine(tender, amount)}</p>
           </>
         )}
-        {errorLine}
+        {errorSlot}
       </fieldset>
     </div>
   );
