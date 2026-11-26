@@ -32,11 +32,46 @@ const NOT_ENTRY_POINTS: Record<string, Record<string, string>> = {
 };
 const NOT_ENTRY_POINT_COUNT = 6;
 
-function entryPoints(ctor: { prototype: object; name: string }): string[] {
-  const helpers = NOT_ENTRY_POINTS[ctor.name] ?? {};
-  return Object.getOwnPropertyNames(ctor.prototype).filter(
-    (n) =>
-      n !== "constructor" && typeof (ctor.prototype as any)[n] === "function" && !(n in helpers),
+/** Own property names of a class (not Object.prototype) that hold functions, walking the chain. */
+function prototypeChainFunctions(ctor: { prototype: object }): string[] {
+  const names = new Set<string>();
+  for (
+    let proto: any = ctor.prototype;
+    proto && proto !== Object.prototype;
+    proto = Object.getPrototypeOf(proto)
+  ) {
+    for (const n of Object.getOwnPropertyNames(proto)) {
+      if (n === "constructor") continue;
+      const d = Object.getOwnPropertyDescriptor(proto, n);
+      if (d && typeof d.value === "function") names.add(n);
+    }
+  }
+  return [...names];
+}
+
+/**
+ * Every callable surface an instance exposes: methods on the prototype chain (inherited ones
+ * included) AND function-valued own properties of a built instance (arrow-function class fields
+ * never sit on the prototype). Names in `helpers` are classified non-entry-points.
+ */
+function entryPoints(
+  ctor: { prototype: object; name: string },
+  instance: object,
+  helpers: Record<string, string> = NOT_ENTRY_POINTS[ctor.name] ?? {},
+): string[] {
+  const fields = Object.getOwnPropertyNames(instance).filter(
+    (n) => typeof (instance as any)[n] === "function",
+  );
+  return [...new Set([...prototypeChainFunctions(ctor), ...fields])].filter((n) => !(n in helpers));
+}
+
+/**
+ * Static members cannot be driven through an instance, so any static function that is not
+ * classified in `helpers` is reported and the pin goes red on it.
+ */
+function staticMembers(ctor: object, helpers: Record<string, string>): string[] {
+  return Object.getOwnPropertyNames(ctor).filter(
+    (n) => typeof (ctor as any)[n] === "function" && !(n in helpers),
   );
 }
 
@@ -91,15 +126,19 @@ describe("B1420 R5 pin: every entry point refuses a tenantless caller", () => {
     },
   ];
 
-  it.each(cases)("$label enumerates a non-empty entry-point surface", ({ ctor }) => {
-    expect(entryPoints(ctor).length).toBeGreaterThanOrEqual(4);
+  it.each(cases)("$label enumerates a non-empty entry-point surface", ({ ctor, build }) => {
+    expect(entryPoints(ctor, build(createMockPrisma(), {})).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it.each(cases)("$label has no unclassified static member", ({ ctor }) => {
+    expect(staticMembers(ctor, NOT_ENTRY_POINTS[ctor.name] ?? {})).toEqual([]);
   });
 
   it("NOT_ENTRY_POINTS is count-pinned, carries reasons, and names only real prototype members", () => {
     const total = Object.values(NOT_ENTRY_POINTS).reduce((n, m) => n + Object.keys(m).length, 0);
     expect(total).toBe(NOT_ENTRY_POINT_COUNT);
     for (const { ctor } of cases) {
-      const onPrototype = new Set(Object.getOwnPropertyNames(ctor.prototype));
+      const onPrototype = new Set(prototypeChainFunctions(ctor));
       for (const [name, reason] of Object.entries(NOT_ENTRY_POINTS[ctor.name] ?? {})) {
         expect(onPrototype.has(name)).toBe(true);
         expect(reason.length).toBeGreaterThan(10);
@@ -108,7 +147,7 @@ describe("B1420 R5 pin: every entry point refuses a tenantless caller", () => {
   });
 
   for (const { label, ctor, build } of cases) {
-    for (const name of entryPoints(ctor)) {
+    for (const name of entryPoints(ctor, build(createMockPrisma(), {}))) {
       if (name in NO_TENANT_METHODS) continue;
       it(`${label}.${name} -> 403 TENANT_CONTEXT_REQUIRED, 0 query calls`, async () => {
         const prisma: any = createMockPrisma();
@@ -133,5 +172,39 @@ describe("B1420 R5 pin: every entry point refuses a tenantless caller", () => {
     expect(Object.keys(NO_TENANT_METHODS)).toEqual([]);
     for (const reason of Object.values(NO_TENANT_METHODS))
       expect(reason.length).toBeGreaterThan(10);
+  });
+});
+
+describe("B1420 R5 pin: the member walk sees every form of entry point", () => {
+  class Probe {
+    checked() {
+      return 1;
+    }
+    // an arrow-function class field: not on the prototype, so a prototype-only walk misses it
+    unchecked = async () => 1;
+    static staticDoor() {
+      return 1;
+    }
+  }
+  class ProbeChild extends Probe {
+    childMethod() {
+      return 1;
+    }
+  }
+  const reason = "a reason that is long enough";
+
+  it("lists a class-field method with no check, so the pin would go red on it", () => {
+    expect(entryPoints(Probe, new Probe(), {})).toContain("unchecked");
+  });
+
+  it("lists inherited methods", () => {
+    const names = entryPoints(ProbeChild, new ProbeChild(), {});
+    expect(names).toEqual(expect.arrayContaining(["checked", "childMethod", "unchecked"]));
+  });
+
+  it("lists static members separately, and honours the allow-list", () => {
+    expect(staticMembers(Probe, {})).toEqual(["staticDoor"]);
+    expect(staticMembers(Probe, { staticDoor: reason })).toEqual([]);
+    expect(entryPoints(Probe, new Probe(), { unchecked: reason })).toEqual(["checked"]);
   });
 });
