@@ -232,6 +232,19 @@ const parts = (r: { toStock: number; toOpenOrders: number; toCogs: number }) => 
 ];
 
 describe("SA-1540 P1 splitLandedShare", () => {
+  // R-322 LOW-1: on a stage-1 tie the odd cent goes to the not-yet-costed side (input order of the largest remainder:
+  // [notYetCosted, alreadyCosted]), so it lands in stock, not COGS. Pinned so a swapped weight order is caught.
+  it("a stage-1 tie: $1.01 over 5 not-yet-costed / 5 already-costed gives 0.51 to stock and 0.50 to COGS", () => {
+    const r = split({
+      allocated: 1.01,
+      notYetCostedPieces: 5,
+      alreadyCostedPieces: 5,
+      productInStock: 5,
+      productOpenOrderPieces: 0,
+    });
+    expect(r).toEqual({ toStock: 0.51, toOpenOrders: 0, toCogs: 0.5, mode: "CAPITALISED" });
+  });
+
   it("R3: 10 received, 6 already invoiced, 4 in stock, $120 -> toStock 48.00, toCogs 72.00", () => {
     const r = split();
     expect(r).toEqual({ toStock: 48, toOpenOrders: 0, toCogs: 72, mode: "CAPITALISED" });

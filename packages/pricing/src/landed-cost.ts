@@ -1,3 +1,4 @@
+import type { PurchaseOrderChargeBasisValue } from "@routeflow/types";
 import { allocateCentsLargestRemainder } from "./largest-remainder";
 import { MoneyInvariantError } from "./money-invariants";
 import { isWholeCents } from "./pricing";
@@ -8,9 +9,12 @@ import { isWholeCents } from "./pricing";
  * `allocateCentsLargestRemainder`, so every split sums EXACTLY to its input.
  */
 
-/** How a purchase-order charge is spread over its received lines. WEIGHT and VOLUME are LATER. */
-export const PO_CHARGE_BASES = ["VALUE", "QUANTITY", "MANUAL"] as const;
-export type PoChargeBasis = (typeof PO_CHARGE_BASES)[number];
+/**
+ * How a purchase-order charge is spread over its received lines: the Prisma `PurchaseOrderChargeBasis` through its one
+ * shared mirror (`@routeflow/types`, pinned by enum-parity.spec.ts; L-072, never a local copy), plus "MANUAL" until
+ * SA-1540 P2 adds it to the enum and its mirror. WEIGHT and VOLUME are LATER.
+ */
+export type PoChargeBasis = PurchaseOrderChargeBasisValue | "MANUAL";
 
 export interface PoChargeLine {
   /** Pieces received on this line (integer >= 0). */
