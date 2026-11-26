@@ -36,6 +36,6 @@ describe("invoice copy preference (W-1443)", () => {
     expect(src).toMatch(/getInvoiceCopyEnabled/);
     expect(src).toMatch(/setInvoiceCopyEnabled/);
     expect(src).toContain("Send me a copy of invoices I email");
-    expect(src).toMatch(/The customers+does not see it./);
+    expect(src).toMatch(/The customer\s+does not see it\./);
   });
 });
