@@ -7,14 +7,14 @@
  * Staff press "Send" on the invoice page, so the DRAFT sentence says "Send".
  */
 import { API_ERROR_CODES } from "./api/error-codes";
+import type { InvoiceStatus } from "./api/enums";
 
 /** INVOICE_NOT_PAYABLE: one sentence per body `reason` (DRAFT, VOID, WRITTEN_OFF). */
-// Each reason is its own constant on purpose: a single literal group of the three InvoiceStatus values would read as a
-// hand-typed enum mirror (no-hand-typed-enum-mirrors.spec.ts). These are the wire reasons of INVOICE_NOT_PAYABLE, not a status list.
-const REASON_DRAFT = "DRAFT";
-const REASON_VOID = "VOID";
-const REASON_WRITTEN_OFF = "WRITTEN_OFF";
-export const INVOICE_NOT_PAYABLE_COPY: Record<string, string> = {
+// Each reason is its own constant, `satisfies InvoiceStatus` so a value that is not an InvoiceStatus fails to compile (L-072).
+const REASON_DRAFT = "DRAFT" satisfies InvoiceStatus;
+const REASON_VOID = "VOID" satisfies InvoiceStatus;
+const REASON_WRITTEN_OFF = "WRITTEN_OFF" satisfies InvoiceStatus;
+export const INVOICE_NOT_PAYABLE_COPY: Partial<Record<InvoiceStatus, string>> = {
   [REASON_DRAFT]:
     "This invoice is still a draft. Send it to the customer first, then record the payment.",
   [REASON_VOID]: "This invoice is void, so it can't take a payment.",
@@ -40,7 +40,7 @@ export function paymentRefusalCopy(err: unknown): string | null {
   if (code === API_ERROR_CODES.INVOICE_NOT_PAYABLE) {
     return typeof reason === "string" &&
       Object.prototype.hasOwnProperty.call(INVOICE_NOT_PAYABLE_COPY, reason)
-      ? INVOICE_NOT_PAYABLE_COPY[reason]
+      ? (INVOICE_NOT_PAYABLE_COPY[reason as InvoiceStatus] ?? INVOICE_NOT_PAYABLE_DEFAULT_COPY)
       : INVOICE_NOT_PAYABLE_DEFAULT_COPY;
   }
   if (code === API_ERROR_CODES.DRAFT_PAYMENT_HAS_EXCESS) return DRAFT_PAYMENT_HAS_EXCESS_COPY;

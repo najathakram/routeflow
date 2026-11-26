@@ -1,7 +1,12 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { handleMutationError } from "./mutation-error-toast";
-import { API_ERROR_CODES, INVOICE_TAX_STATE_STALE_COPY } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  INVOICE_STATUS_VALUES,
+  INVOICE_TAX_STATE_STALE_COPY,
+} from "@routeflow/types";
+import { INVOICE_NOT_PAYABLE_COPY } from "@routeflow/types/payment-refusal-copy";
 import { PROMOTIONS_OFF_COPY, codedToastCopy, genericToastCopy } from "./generic-toast-copy";
 
 /**
@@ -1059,6 +1064,13 @@ describe("genericToastCopy: SA-1299 P4 payment refusals (B1396, B1385)", () => {
     expect(genericToastCopy(err(400, { code: API_ERROR_CODES.INVOICE_NOT_PAYABLE, reason }))).toBe(
       sentence,
     );
+  });
+
+  // L-072: the refusal words are keyed by the shared InvoiceStatus, never a hand-typed status list.
+  it("every INVOICE_NOT_PAYABLE sentence is keyed by a real InvoiceStatus", () => {
+    const keys = Object.keys(INVOICE_NOT_PAYABLE_COPY);
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) expect(INVOICE_STATUS_VALUES).toContain(key);
   });
 
   it("INVOICE_NOT_PAYABLE with no or an unknown reason never claims a status", () => {

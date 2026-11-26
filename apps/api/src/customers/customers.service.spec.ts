@@ -1622,9 +1622,10 @@ describe("CustomersService", () => {
         dueDate: null,
         payments: [],
       });
-      await expect(applyAdv("inv-draft")).rejects.toThrow(
-        "Cannot apply advance payment to invoice with status DRAFT",
-      );
+      // The coded refusal (B1396), so mobile shows the ruled sentence, not the raw server text.
+      await expect(applyAdv("inv-draft")).rejects.toMatchObject({
+        response: { code: "INVOICE_NOT_PAYABLE", reason: "DRAFT" },
+      });
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
