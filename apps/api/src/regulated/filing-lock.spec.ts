@@ -351,3 +351,32 @@ describe("an undo of a document in a locked period is allowed and books a counte
     expect(row.periodBucket).not.toBe("2026-09"); // the current period, never the locked one
   });
 });
+
+describe("assertOrderEditNotLocked: a request with no business", () => {
+  const noBusiness = { tenantId: undefined as unknown as string, role: "ADMIN" };
+
+  it("a money-bearing edit with no business id is a 403, before any read", async () => {
+    const d = db([filing()]);
+    await expect(
+      assertOrderEditNotLocked(d, "ord-1", { replaceAll: true, items: [] }, noBusiness),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(d.regulatedFiling.findMany).not.toHaveBeenCalled();
+  });
+
+  it("an edit that is not money-bearing still proceeds with no business id", async () => {
+    await expect(
+      assertOrderEditNotLocked(
+        db([filing()]),
+        "ord-1",
+        { items: [{ id: "l1", notes: "n" }] },
+        noBusiness,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("an internal caller handing the filing guard an empty business id gets the logged internal fault (500)", async () => {
+    await expect(
+      assertSalesNotLockedForEdit(db([filing()]), { tenantId: "", invoiceId: "i1" }),
+    ).rejects.toMatchObject({ status: 500 });
+  });
+});
