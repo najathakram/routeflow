@@ -216,6 +216,7 @@ describe("loadInvoiceEditInputs and invoiceStaffDetailFields", () => {
     creditNote: { count: jest.fn().mockResolvedValue(0) },
     returnItem: { count: jest.fn().mockResolvedValue(0) },
     order: { findUnique: jest.fn() },
+    customer: { findFirst: jest.fn().mockResolvedValue({ isTaxExempt: false }) },
     ...over,
   });
   const inv = (over: Record<string, any> = {}) => ({
@@ -225,7 +226,15 @@ describe("loadInvoiceEditInputs and invoiceStaffDetailFields", () => {
     status: InvoiceStatus.SENT,
     sentAt: new Date("2026-01-01"),
     deliveryBatchId: null,
-    items: [{ id: "l1" }, { id: "l2" }],
+    subtotal: 200,
+    taxAmount: 0,
+    discount: 0,
+    shippingFee: 0,
+    total: 200,
+    items: [
+      { id: "l1", subtotal: 100, taxRate: 0 },
+      { id: "l2", subtotal: 100, taxRate: 0 },
+    ],
     ...over,
   });
 
@@ -330,6 +339,20 @@ describe("loadInvoiceEditInputs and invoiceStaffDetailFields", () => {
     expect(out.editAction).toBe("EDIT");
     expect(out.editBlocked).toBeNull();
     expect(db.invoicePayment.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("restampRate (A3-M1): null when the lines reproduce the stored tax, null on a DRAFT, the verified rate on a stale legacy invoice", async () => {
+    const admin = { role: UserRole.TENANT_ADMIN };
+    expect((await fieldsFor(admin, "t1").run()).restampRate).toBeNull();
+    const stale = { subtotal: 200, taxAmount: 16.5, total: 216.5 };
+    expect((await fieldsFor(admin, "t1", dbOf(), stale).run()).restampRate).toBe(0.0825);
+    const draft = await fieldsFor(admin, "t1", dbOf(), {
+      ...stale,
+      status: InvoiceStatus.DRAFT,
+    }).run();
+    expect(draft.restampRate).toBeNull();
+    const op = await fieldsFor({ role: UserRole.OPERATOR }, "t1", dbOf(), stale).run();
+    expect(op.restampRate).toBeNull();
   });
 
   it("an operator reads nothing and is NOT_ADMIN; a DRAFT reads nothing and is EDIT", async () => {

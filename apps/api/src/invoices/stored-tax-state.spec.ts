@@ -342,7 +342,9 @@ describe("no sumInvoiceTotals* over stored rows outside the guard's callers", ()
     expect(text("price-adjustment-ledger.ts")).toMatch(
       /priceAdjustmentTaxState\(\s*\{\s*\.\.\.inv,/,
     );
-    expect(text("invoices.service.ts")).toMatch(/guardItemsEditTaxState\(\{/);
+    // SA-1508: the service calls ONE wrapper (guardEditTax): the DRAFT guard, and for an issued edit the stamp.
+    expect(text("invoices.service.ts")).toMatch(/guardEditTax\(tx, locked, edit,/);
+    expect(text("locked-invoice-edit.ts")).toMatch(/guardItemsEditTaxState\(\{/);
     expect(text("locked-invoice-edit.ts")).toMatch(/assertTaxStateRecomputable\(\{/);
   });
 
@@ -350,8 +352,8 @@ describe("no sumInvoiceTotals* over stored rows outside the guard's callers", ()
     const svc = text("invoices.service.ts");
     const calls = [...svc.matchAll(/\bsumInvoiceTotalsStrict\(/g)].map((m) => m.index!);
     expect(calls).toHaveLength(3);
-    // the middle one is update()'s edited-lines sum: it must come after guardItemsEditTaxState({
-    const guardAt = svc.indexOf("guardItemsEditTaxState({");
+    // the middle one is update()'s edited-lines sum: it must come after guardEditTax(
+    const guardAt = svc.indexOf("guardEditTax(tx,");
     expect(guardAt).toBeGreaterThan(0);
     expect(calls[0]).toBeLessThan(guardAt);
     expect(calls[1]).toBeGreaterThan(guardAt);

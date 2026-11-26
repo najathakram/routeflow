@@ -109,4 +109,32 @@ export interface InvoiceEditBlocked {
 export interface InvoiceEditFields {
   editAction: InvoiceEditAction | null;
   editBlocked: InvoiceEditBlocked | null;
+  /**
+   * The verified flat rate an issued invoice's rate-0 goods lines are saved at (the screen shows and sends it); null on a
+   * DRAFT, an order-linked invoice, or when the stored tax already reproduces. One source for both screens.
+   */
+  restampRate: number | null;
+}
+
+/** Why a money edit asks for consent: the tax was worked out the old way, or the stored total is not what the lines add up to. */
+export const INVOICE_EDIT_CONSENT_CAUSES = ["OLDER_TAX", "TOTAL_NOT_FROM_LINES"] as const;
+export type InvoiceEditConsentCause = (typeof INVOICE_EDIT_CONSENT_CAUSES)[number];
+
+/**
+ * The figures of a 409 INVOICE_EDIT_REFUSED whose reason is TOTAL_NOT_FROM_LINES (merged into the body). `difference` is
+ * stored minus new, rounded by the server: positive = "Add a line for the difference", negative = "Add an invoice discount".
+ */
+export interface InvoiceEditConsentBody {
+  storedTotal: number;
+  newTotal: number;
+  difference: number;
+  storedTax: number;
+  newTax: number;
+  cause: InvoiceEditConsentCause;
+}
+
+/** PATCH /invoices/:id `acceptLineTotal`: the two figures the dialog showed, echoed back to confirm. */
+export interface AcceptLineTotal {
+  storedTotal: number;
+  newTotal: number;
 }

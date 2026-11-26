@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
-import type { InvoiceEditBlocked } from "@routeflow/types";
+import type { AcceptLineTotal, InvoiceEditBlocked, InvoiceEditConsentBody } from "@routeflow/types";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { isAdminInTenant } from "../common/admin-in-tenant";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -14,14 +14,21 @@ import {
   loadInvoiceEditInputs,
   type InvoiceEditChange,
 } from "./invoice-edit-policy";
-import { headerKeysChanged, invoiceHeaderData } from "./invoice-edit-plan";
+import { headerKeysChanged, invoiceHeaderData, type EditedLine } from "./invoice-edit-plan";
+import { issuedConsent } from "./issued-edit-consent";
 import { sumConfirmed } from "./payment-predicates";
 import {
   assertTaxStateRecomputable,
   countOrderInvoices,
+  guardItemsEditTaxState,
+  issuedRecomputeOf,
   orderSiblingCountOf,
+  restampEditLines,
   stalePathOf,
   staleTaxStateError,
+  taxStateOf,
+  tenantPreferredRate,
+  type IssuedRecompute,
 } from "./stored-tax-state";
 
 /**
@@ -47,6 +54,8 @@ export interface LockedInvoiceForEdit {
   payments: Array<{ amount: unknown; status: unknown }>;
   /** SA-814e: non-VOID invoices sharing the invoice's order, counted under the same lock (null = no order). */
   orderInvoiceCount?: number | null;
+  /** SA-1508: the issued invoice's three-state judge, read under the lock (null for a DRAFT or an order-linked invoice). */
+  recompute?: IssuedRecompute | null;
 }
 
 /**
@@ -98,12 +107,15 @@ export async function loadLockedInvoiceForEdit(
     select: { amount: true, status: true },
   });
   const orderInvoiceCount = invoice.orderId ? await countOrderInvoices(tx, invoice.orderId) : null;
+  const isTaxExempt = !!customer?.isTaxExempt;
+  const recompute = await issuedRecomputeOf(tx, invoice, storedRows, isTaxExempt);
   return {
     invoice,
     storedRows,
-    isTaxExempt: !!customer?.isTaxExempt,
+    isTaxExempt,
     payments: payments ?? [],
     orderInvoiceCount,
+    recompute,
   };
 }
 
@@ -255,18 +267,25 @@ export interface IssuedEditCtx {
   dto: Parameters<typeof invoiceHeaderData>[0] & {
     discount?: number | null;
     shippingFee?: number | null;
+    acceptLineTotal?: AcceptLineTotal | null;
   };
   issueDate?: Date;
   due: { dueDate: Date | null; depositDueDate: Date | null };
+  /** Set by the gate when the admin's echoed figures were accepted (the audit row says so). */
+  consented?: boolean;
 }
 
 /** The 409 of a refused issued edit: `code` INVOICE_EDIT_REFUSED, `reason` for the client's own copy, plain `message`. */
-export function invoiceEditRefusal(b: InvoiceEditBlocked): ConflictException {
+export function invoiceEditRefusal(
+  b: InvoiceEditBlocked,
+  consent?: InvoiceEditConsentBody | null,
+): ConflictException {
   return new ConflictException({
     code: API_ERROR_CODES.INVOICE_EDIT_REFUSED,
     reason: b.reason,
     message: INVOICE_EDIT_REFUSAL_MESSAGES[b.reason],
     ...(b.orderId ? { orderId: b.orderId, orderNumber: b.orderNumber ?? null } : {}),
+    ...(consent ?? {}),
   });
 }
 
@@ -325,7 +344,7 @@ export async function assertEditableUnderLock(
   tx: any,
   locked: LockedInvoiceForEdit,
   edit: IssuedEditCtx,
-  change: InvoiceEditChange,
+  change: InvoiceEditChange & { newTax?: number; lines?: ReadonlyArray<EditedLine> | null },
 ): Promise<void> {
   if (edit.mode === "DRAFT") return;
   const { invoice: inv } = locked;
@@ -344,16 +363,38 @@ export async function assertEditableUnderLock(
           { payments: locked.payments },
         )
       : {};
+  // A2-N1 rule 6: a money edit of an invoice whose stored figures its lines do not explain needs the admin's consent.
+  const consent =
+    admin && change.money && !inv.orderId && change.newTotal !== undefined
+      ? issuedConsent({
+          recompute: locked.recompute,
+          invoice: inv,
+          storedRows: locked.storedRows,
+          written: { total: change.newTotal, tax: change.newTax, lines: change.lines },
+          accept: edit.dto.acceptLineTotal,
+        })
+      : { body: null, consented: false };
   const keys = headerKeysChanged(invoiceHeaderData(edit.dto, edit.due, edit.issueDate), inv);
   const { blocked } = invoiceEditDecision(
-    { admin, status: String(inv.status), orderId: inv.orderId, ...loaded },
+    {
+      admin,
+      status: String(inv.status),
+      orderId: inv.orderId,
+      ...loaded,
+      totalNotFromLines: !!consent.body,
+    },
     {
       ...change,
       issueDateChanged: keys.includes("issueDate"),
       depositChanged: keys.includes("depositPercent") || keys.includes("depositDueDate"),
     },
   );
-  if (blocked) throw invoiceEditRefusal(blocked);
+  if (blocked)
+    throw invoiceEditRefusal(
+      blocked,
+      blocked.reason === "TOTAL_NOT_FROM_LINES" ? consent.body : null,
+    );
+  edit.consented = consent.consented;
   if (!change.money) return;
   await assertSalesNotLockedForEdit(tx, { tenantId: edit.tenantId as string, invoiceId: inv.id });
   await unitAware.assertInvoiceRewriteAllowed(tx, inv);
@@ -389,10 +430,24 @@ const differs = (a: unknown, b: unknown): boolean => roundMoney(Number(a) - Numb
 export function planHeaderOnlyTotals(
   locked: LockedInvoiceForEdit,
   dto: { discount?: number; shippingFee?: number },
+  mode: EditMode = "DRAFT",
 ): { discount: number; shippingFee: number; total: number; subtotal: number; taxAmount?: number } {
   const { invoice, storedRows, isTaxExempt, orderInvoiceCount } = locked;
   const discount = intakeMoney(dto.discount, invoice.discount);
   const shippingFee = intakeMoney(dto.shippingFee, invoice.shippingFee);
+  if (mode === "ISSUED" && locked.recompute && locked.recompute.state !== "REPRODUCES") {
+    // SA-1508 A2-N1 rule 6: the stored figures are not the lines'. No 409 INVOICE_TAX_STATE_STALE here: the gate asks
+    // for consent over these line-based figures (L11: this save cannot stamp), and a confirmed save writes all of them.
+    const { totals: t } = taxStateOf({
+      invoice,
+      storedLines: storedRows,
+      canRestamp: false,
+      isTaxExempt,
+      discount,
+      shipping: shippingFee,
+    });
+    return { discount, shippingFee, total: t.total, subtotal: t.subtotal, taxAmount: t.tax };
+  }
   // SA-814 R5-2: the tax half is the ONE recompute guard (stored-tax-state.ts); this path cannot stamp a rate.
   const t = assertTaxStateRecomputable({
     invoice,
@@ -414,6 +469,23 @@ export function planHeaderOnlyTotals(
       ? { taxAmount: t.tax }
       : {};
   return { discount, shippingFee, total: t.total, subtotal: t.subtotal, ...taxMoved };
+}
+
+/**
+ * The tax guard of the items save, one call for both modes. DRAFT: SA-814 R5-2's guard, byte for byte. ISSUED
+ * (SA-1508 A3-H1): no early return for "the user set a rate" and no refusal here; the verified rate is stamped on the
+ * kept rate-0 lines and the consent judge reads the lines this writes (`assertEditableUnderLock`).
+ */
+export async function guardEditTax(
+  tx: any,
+  locked: LockedInvoiceForEdit,
+  edit: { mode: EditMode },
+  args: Omit<Parameters<typeof guardItemsEditTaxState>[0], "locked">,
+): Promise<void> {
+  if (edit.mode === "ISSUED")
+    return restampEditLines(args.editLines, locked.storedRows, locked.recompute?.restampRate);
+  const preferredRate = await tenantPreferredRate(tx); // the tenant rate wins the inference when it reproduces the tax
+  guardItemsEditTaxState({ ...args, locked: { ...locked, preferredRate } });
 }
 
 /**

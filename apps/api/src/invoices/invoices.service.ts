@@ -178,11 +178,7 @@ import {
   preflightBulkPriceAdjustment,
   priceAdjustmentTaxState,
 } from "./price-adjustment-ledger";
-import {
-  countOrdersInvoices,
-  guardItemsEditTaxState,
-  tenantPreferredRate,
-} from "./stored-tax-state";
+import { countOrdersInvoices, tenantPreferredRate } from "./stored-tax-state";
 import { buildInvoiceEmailPayload } from "./invoice-email-payload";
 import {
   copyInvoicePositions,
@@ -269,6 +265,7 @@ import {
   assertModeUnderLock,
   assertSameOrderLink,
   editModeOf,
+  guardEditTax,
   intakeMoney,
   loadLockedInvoiceForEdit,
   noTokenWarner,
@@ -3105,7 +3102,7 @@ export class InvoicesService {
         // productId), keep untouched rows verbatim and in place, re-price only changed lines. Rules
         // and reasoning: invoice-edit-plan.ts.
         const { storedRows, isTaxExempt, invoice: cur } = locked;
-        const matches = matchEditLines(items, storedRows);
+        const matches = matchEditLines(items, storedRows, locked.recompute?.restampRate);
         if (carrierLocked) assertCarrierLinesUnchanged(items, matches, storedRows); // before any write
         assertEditAuthoredPrices(items, matches, override); // SA-1034 rule 4: before any write
         assertNsfLinesUntaxed(
@@ -3139,8 +3136,7 @@ export class InvoicesService {
         });
         const free = await writeIfFigureFree(tx, locked, editLines, edit); // SA-1508 A2-N1: a save that moves no money
         if (free) return { updated: free };
-        const preferredRate = await tenantPreferredRate(tx); // the tenant rate wins the inference when it reproduces the tax
-        guardItemsEditTaxState({ locked: { ...locked, preferredRate }, items, matches, editLines }); // SA-814 R5-2
+        await guardEditTax(tx, locked, edit, { items, matches, editLines }); // SA-814 R5-2; ISSUED: A3-H1 stamp
         const itemsData = editLines.map((l) => l.data);
         await stampEditedPositions(tx, storedRows, editLines, itemsData, inv.orderId); // W-1187: payload order, or the order's
         // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes
@@ -3171,7 +3167,12 @@ export class InvoicesService {
           storedInvoiceTotals(cur),
         ); // B1030 / SA-651: not worse than stored, before any write
         assertNotOverpaidByEdit(locked.payments, total, cur.total); // B1046
-        await assertEditableUnderLock(tx, locked, edit, { money: true, newTotal: total }); // SA-1508
+        await assertEditableUnderLock(tx, locked, edit, {
+          money: true,
+          newTotal: total,
+          newTax: taxTotal,
+          lines: editLines,
+        }); // SA-1508
         // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
         // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
         // so the invoice's prior SALE rows must be reversed and re-written from the new
@@ -3263,7 +3264,7 @@ export class InvoicesService {
             await preflightOrderSiblings(tx, inv.orderId, null); // SA-816: A's stored rows persist, so judge A too
             const free = await writeIfFigureFree(tx, locked, null, edit); // SA-1508: figures equal, nothing to re-price
             if (free) return free;
-            const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto);
+            const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto, mode);
             assertInvoiceTotalsSane(
               { discount: totals.discount, subtotal, total: totals.total },
               storedInvoiceTotals(locked.invoice),
@@ -3272,6 +3273,7 @@ export class InvoicesService {
             await assertEditableUnderLock(tx, locked, edit, {
               money: true,
               newTotal: totals.total,
+              newTax: totals.taxAmount,
             });
             return tx.invoice.update({
               where: { id },

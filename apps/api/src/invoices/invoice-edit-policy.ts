@@ -12,6 +12,7 @@ import { loadResyncInputs } from "./resync-plan";
 import { shouldSkipInPlaceResync } from "../orders/merge-idempotency";
 import { resolvePendingMirror } from "./pending-mirror";
 import { sendFieldsFor } from "./invoice-send-state";
+import { issuedRecomputeOf } from "./stored-tax-state";
 
 /**
  * SA-1508 (A1-6 / A2-6): who may edit an invoice, and what its Edit button does. ONE decision, read by the invoice
@@ -254,6 +255,11 @@ export async function invoiceStaffDetailFields(
     status: InvoiceStatus;
     sentAt: Date | null;
     deliveryBatchId: string | null;
+    taxAmount?: unknown; // the verified-rate read (restampRate) judges the stored figures
+    subtotal?: unknown;
+    discount?: unknown;
+    shippingFee?: unknown;
+    total?: unknown;
     order?: { orderNumber?: string | null; status?: unknown; fulfillPath?: unknown } | null;
   },
 ): Promise<Awaited<ReturnType<typeof sendFieldsFor>> & InvoiceEditFields> {
@@ -281,5 +287,25 @@ export async function invoiceStaffDetailFields(
     ),
     ...read,
   });
-  return { ...send, editAction: d.action, editBlocked: d.blocked };
+  // A3-M1: the rate the screen shows and sends on a stored-rate-0 goods line; the lock reads the same value.
+  const rate =
+    admin && inv.status !== InvoiceStatus.DRAFT && !inv.orderId
+      ? await issuedRecomputeOf(
+          prisma.forTenant(),
+          inv as any,
+          (inv.items ?? []) as any[],
+          !!(
+            await prisma.forTenant().customer.findFirst({
+              where: { id: inv.customerId },
+              select: { isTaxExempt: true },
+            })
+          )?.isTaxExempt,
+        )
+      : null;
+  return {
+    ...send,
+    editAction: d.action,
+    editBlocked: d.blocked,
+    restampRate: rate?.restampRate ?? null,
+  };
 }

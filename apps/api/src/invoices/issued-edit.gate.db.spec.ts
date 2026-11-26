@@ -200,12 +200,19 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
     unitsPerBox?: number | null;
     unitLabel?: string | null;
     promoFreeUnits?: number | null;
+    taxRate?: number;
   };
 
   /** A standalone invoice (or an order-linked one) in `status`, with its lines; acme-style dummy data only. */
   async function seed(
     label: string,
-    opts: { status?: string; lines?: LineSeed[]; withOrder?: boolean } = {},
+    opts: {
+      status?: string;
+      lines?: LineSeed[];
+      withOrder?: boolean;
+      /** Stored header figures that the lines do not explain (an imported file total, an older tax). */
+      header?: { taxAmount: number; total: number };
+    } = {},
   ) {
     const slug = freshTenantSlug(label);
     const tenant = await prisma.tenant.create({ data: { slug, name: `sa1508 ${slug}` } });
@@ -245,8 +252,8 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
         invoiceNumber: `INV-SA1508-${RUN_SUFFIX}-${label}`,
         status: (opts.status ?? "SENT") as any,
         subtotal: total,
-        taxAmount: 0,
-        total,
+        taxAmount: opts.header?.taxAmount ?? 0,
+        total: opts.header?.total ?? total,
       },
     });
     const rows = [];
@@ -468,6 +475,143 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
     const out: any = await save(s, { items: payload(), notes: "n" });
     expect(out.notes).toBe("n");
     await refusedUntouched(s, { items: payload({ unitPrice: 60 }) }, refused("UNIT_LINE"));
+  });
+
+  describe("consent (SA-1508 commit 6)", () => {
+    const row100 = (): LineSeed => ({ qty: 2, unitPrice: 50, subtotal: 100, taxRate: 0 });
+    const imported = () =>
+      seed("imported", { lines: [row100()], header: { taxAmount: 0, total: 108.25 } });
+    const legacy = (status = "SENT") =>
+      seed(`legacy-${status.toLowerCase()}`, {
+        status,
+        lines: [row100(), row100(), row100()],
+        header: { taxAmount: 24.75, total: 324.75 },
+      });
+    const stored = async (id: string) =>
+      prisma.invoice.findUnique({
+        where: { id },
+        include: { items: { orderBy: { position: "asc" } } },
+      });
+
+    it("DB-9: an imported invoice's notes-only screen save is figure-free: its file total stands", async () => {
+      const s = await imported();
+      await save(s, { items: screen(s), discount: 0, shippingFee: 0, notes: "gate code 42" });
+      const after = await stored(s.inv.id);
+      expect(after!.notes).toBe("gate code 42");
+      expect([Number(after!.total), Number(after!.subtotal), Number(after!.taxAmount)]).toEqual([
+        108.25, 100, 0,
+      ]);
+    });
+
+    it("DB-10: a money edit of it asks first (409 with the figures, nothing written); the echo lifts it; a stale echo asks again", async () => {
+      const s = await imported();
+      const items = screen(s, { qty: 3 });
+      const ask = {
+        ...refused("TOTAL_NOT_FROM_LINES"),
+        storedTotal: 108.25,
+        newTotal: 150,
+        difference: -41.75,
+        cause: "TOTAL_NOT_FROM_LINES",
+      };
+      await refusedUntouched(s, { items }, ask);
+      await refusedUntouched(
+        s,
+        { items, acceptLineTotal: { storedTotal: 108.25, newTotal: 120 } },
+        { ...ask, newTotal: 150 },
+      );
+      await save(s, { items, acceptLineTotal: { storedTotal: 108.25, newTotal: 150 } });
+      const after = await stored(s.inv.id);
+      expect([Number(after!.total), Number(after!.subtotal), Number(after!.taxAmount)]).toEqual([
+        150, 150, 0,
+      ]);
+    });
+
+    it("DB-10: a discount-only header save asks the same way, and the echo writes the line-based figures", async () => {
+      const s = await imported();
+      await refusedUntouched(
+        s,
+        { discount: 10 },
+        { ...refused("TOTAL_NOT_FROM_LINES"), newTotal: 90 },
+      );
+      await save(s, { discount: 10, acceptLineTotal: { storedTotal: 108.25, newTotal: 90 } });
+      const after = await stored(s.inv.id);
+      expect([Number(after!.total), Number(after!.discount)]).toEqual([90, 10]);
+    });
+
+    it("DB-10b: a line added for the difference needs no dialog (the total reproduces)", async () => {
+      const s = await imported();
+      const extra = {
+        productId: s.product.id,
+        description: "freight",
+        qty: 1,
+        unitPrice: 8.25,
+        discount: 0,
+        taxRate: 0,
+      };
+      await save(s, { items: [...screen(s), extra] });
+      expect(Number((await stored(s.inv.id))!.total)).toBe(108.25);
+    });
+
+    it("DB-11: a stale tax with no verified rate asks (OLDER_TAX); nothing is written", async () => {
+      const s = await seed("unverified", {
+        lines: [{ qty: 2, unitPrice: 50000, subtotal: 100000, taxRate: 0 }],
+        header: { taxAmount: 8875.55, total: 108875.55 },
+      });
+      await refusedUntouched(
+        s,
+        { items: screen(s, { qty: 3 }) },
+        { ...refused("TOTAL_NOT_FROM_LINES"), cause: "OLDER_TAX", storedTax: 8875.55 },
+      );
+    });
+
+    it("DB-11b: a stale legacy invoice with a verified rate: a money edit stamps the rate on the rate-0 lines and keeps the billed tax", async () => {
+      const s = await legacy();
+      const items = screen(s);
+      items[0] = { ...items[0], unitPrice: 55, taxRate: 0.0825 }; // A: 110.00 at the verified rate
+      items[1] = { ...items[1], unitPrice: 45 }; // B: 90.00 at 0
+      await save(s, { items, discount: 0, shippingFee: 0 });
+      const after = await stored(s.inv.id);
+      expect([Number(after!.taxAmount), Number(after!.total)]).toEqual([24.75, 324.75]);
+      expect(after!.items.map((l) => Number(l.taxRate))).toEqual([0.0825, 0.0825, 0.0825]);
+    });
+
+    it("DB-11b variant: the screen's own payload (every line at the verified rate) is figure-free: nothing is restamped", async () => {
+      const s = await legacy();
+      const out = await save(s, {
+        items: screen(s, { taxRate: 0.0825 }),
+        discount: 0,
+        shippingFee: 0,
+        notes: "n",
+      });
+      expect((out as any).notes).toBe("n");
+      const after = await stored(s.inv.id);
+      expect([Number(after!.taxAmount), Number(after!.total)]).toEqual([24.75, 324.75]);
+      expect(after!.items.map((l) => Number(l.taxRate))).toEqual([0, 0, 0]);
+    });
+
+    it("DB-17: a stale DRAFT edited from a screen that sends the verified rate on every line keeps the billed tax (master's rule, pinned)", async () => {
+      const s = await legacy("DRAFT");
+      await save(s, {
+        items: screen(s, { taxRate: 0.0825 }),
+        discount: 0,
+        shippingFee: 0,
+        notes: "n",
+      });
+      const after = await stored(s.inv.id);
+      expect([Number(after!.taxAmount), Number(after!.total)]).toEqual([24.75, 324.75]);
+      expect(after!.items.map((l) => Number(l.taxRate))).toEqual([0.0825, 0.0825, 0.0825]);
+    });
+
+    it("DB-17b: the web payload (rate 0 on every line) on the SENT invoice is figure-free: the billed total stands", async () => {
+      const s = await legacy();
+      await save(s, { items: screen(s), discount: 0, shippingFee: 0, notes: "n" });
+      const after = await stored(s.inv.id);
+      expect([Number(after!.taxAmount), Number(after!.total), after!.notes]).toEqual([
+        24.75,
+        324.75,
+        "n",
+      ]);
+    });
   });
 
   it("DB-16: free units above the cap come back at the cap untouched: no re-price, on SENT and on DRAFT", async () => {
