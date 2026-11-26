@@ -99,13 +99,13 @@ describe("assertLedgerRowsNotLocked", () => {
         { ...row, tenantId: "t1" },
         { ...row, tenantId: "t2" },
       ]),
-    ).rejects.toMatchObject({ status: 403 });
+    ).rejects.toMatchObject({ status: 500 });
     await expect(assertLedgerRowsNotLocked(db([filing()]), [row as any])).rejects.toMatchObject({
-      status: 403,
+      status: 500,
     });
     await expect(
       assertLedgerRowsNotLocked(db([filing()]), [{ ...row, tenantId: "" }]),
-    ).rejects.toMatchObject({ status: 403 });
+    ).rejects.toMatchObject({ status: 500 });
   });
   it("passes a row outside every locked period", async () => {
     await expect(

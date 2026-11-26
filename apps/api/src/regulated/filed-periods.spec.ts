@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { InternalServerErrorException } from "@nestjs/common";
 import { assertSalesNotLockedForEdit } from "./filing-lock";
 import * as fs from "fs";
 import * as path from "path";
@@ -10,6 +10,7 @@ import {
   findGeneratedTobaccoReport,
   findLockedFiling,
   lockedFilingsCovering,
+  lockFilingRowsCovering,
   updateFilingUnlessLocked,
   type FiledCache,
 } from "./filed-periods";
@@ -179,12 +180,35 @@ describe("the legacy tobacco cron probe", () => {
     });
     expect(findMany.mock.calls[0][0].where.tenantId).toBe("t-a");
     expect(findFirst.mock.calls[0][0].where.tenantId).toBe("t-b");
-    await expect(anyLockedFiling({ regulatedFiling: { findMany } }, "")).rejects.toThrow(
-      /tenantId/,
+    await expect(anyLockedFiling({ regulatedFiling: { findMany } }, "")).rejects.toBeInstanceOf(
+      InternalServerErrorException,
     );
     await expect(
       findGeneratedTobaccoReport({ tobaccoReport: { findFirst } }, "", { year: 2026, month: 1 }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).rejects.toBeInstanceOf(InternalServerErrorException);
+  });
+
+  it("every filing read refuses an empty tenant as an internal fault (never a 403), and reads nothing", async () => {
+    const regulatedFiling = {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+    };
+    const tobaccoReport = { findFirst: jest.fn().mockResolvedValue(null) };
+    const ref = [{ trackedCategoryId: "c1", periodBucket: "2026-08" }];
+    const product = { id: "p", isTobacco: true, trackedCategoryId: "c1" };
+    const calls = [
+      () => lockedFilingsCovering({ regulatedFiling }, ref, ""),
+      () => lockFilingRowsCovering({ regulatedFiling }, ref, ""),
+      () => findLockedFiling({ regulatedFiling }, "", { trackedCategoryId: "c1", periodKey: "k" }),
+      () => findFiledPeriod({ regulatedFiling }, "", ["c1"], "2026-08"),
+      () => filedThroughOf({ regulatedFiling, tobaccoReport }, "", product, new Map()),
+    ];
+    for (const call of calls) {
+      await expect(call()).rejects.toBeInstanceOf(InternalServerErrorException);
+    }
+    expect(regulatedFiling.findMany).not.toHaveBeenCalled();
+    expect(regulatedFiling.findFirst).not.toHaveBeenCalled();
+    expect(tobaccoReport.findFirst).not.toHaveBeenCalled();
   });
 
   it("the edit guard sends its tenant to the filings probe and to the ledger read", async () => {

@@ -27,15 +27,26 @@ function callBody(text: string, open: number): string {
   return text.slice(open);
 }
 
+/** Any conditional or optional way of applying the tenant: a spread, a ternary, a coalesce, an IS NULL escape. */
+const CONDITIONAL = /tenantId\s*\?|\.\.\.\s*\([^)]*tenantId|\?\?|IS\s+NULL/i;
+/** The unconditional form: `tenantId` as a plain property of the where (shorthand or `tenantId: value`). */
+const PLAIN_KEY = /[{,]\s*tenantId\s*(?:,|\}|:\s*[\w.]+\s*[,}])/;
+
 export function scan(raw: string) {
   const text = stripComments(raw);
   const finds = [...text.matchAll(/regulatedFiling\??\s*\.find\w*\s*\(/g)].map((m) => ({
     site: m[0],
-    scoped: /\btenantId\b/.test(callBody(text, m.index! + m[0].length - 1)),
+    scoped: ((body) => PLAIN_KEY.test(body) && !CONDITIONAL.test(body))(
+      callBody(text, m.index! + m[0].length - 1),
+    ),
   }));
   const rawReads = [...text.matchAll(/FROM\s+"RegulatedFiling"/g)].map((m) => {
     const end = text.indexOf("`", m.index!);
-    return { site: m[0], scoped: /"tenantId"/.test(text.slice(m.index!, end)) };
+    const clause = text.slice(m.index!, end);
+    return {
+      site: m[0],
+      scoped: /"tenantId"\s*=\s*\$\{\s*tenantId\s*\}/.test(clause) && !CONDITIONAL.test(clause),
+    };
   });
   const writers = [
     ...text.matchAll(/regulatedFiling\??\s*\.(update|updateMany|upsert|delete|deleteMany)\s*\(/g),
@@ -63,12 +74,26 @@ describe("filed-periods.ts: every filing read names its tenant", () => {
     expect(found.writers).toBeLessThanOrEqual(BY_ID_WRITER_EXCEPTIONS);
   });
 
+  it("probe: the base's conditional forms are rejected; only the unconditional form passes", () => {
+    const planted = scan(`
+      await db.regulatedFiling.findMany({ where: { ...(tenantId ? { tenantId } : {}), status: "LOCKED" } });
+      await db.regulatedFiling.findMany({ where: { tenantId: tenantId ?? undefined, status: "LOCKED" } });
+      await db.regulatedFiling.findMany({ where: { tenantId, status: "LOCKED" } });
+      await db.regulatedFiling.findFirst({ where: { tenantId: ctx.tenantId, status: "LOCKED" } });
+      Prisma.sql\`SELECT 1 FROM "RegulatedFiling" f WHERE (\${tenantId ?? null}::text IS NULL OR f."tenantId" = \${tenantId ?? null}::text)\`;
+      Prisma.sql\`SELECT 1 FROM "RegulatedFiling" f WHERE (\${tenantId}::text IS NULL OR f."tenantId" = \${tenantId}::text)\`;
+      Prisma.sql\`SELECT 1 FROM "RegulatedFiling" f WHERE f."tenantId" = \${tenantId}::text\`;
+    `);
+    expect(planted.finds.map((f) => f.scoped)).toEqual([false, false, true, true]);
+    expect(planted.rawReads.map((f) => f.scoped)).toEqual([false, false, true]);
+  });
+
   it("probe: an unscoped find, an unscoped raw read and a third writer are all caught", () => {
     const planted = scan(`
       await db.regulatedFiling.findFirst({ where: { periodKey: "x" } });
       await db.regulatedFiling.findMany({ where: { tenantId, periodKey: "x" } });
       Prisma.sql\`SELECT 1 FROM "RegulatedFiling" f WHERE f."id" = 1\`;
-      Prisma.sql\`SELECT 1 FROM "RegulatedFiling" f WHERE f."tenantId" = 1\`;
+      Prisma.sql\`SELECT 1 FROM "RegulatedFiling" f WHERE f."tenantId" = \${tenantId}\`;
       await db.regulatedFiling.update({ where: { id } });
     `);
     expect(planted.finds.map((f) => f.scoped)).toEqual([false, true]);

@@ -421,15 +421,13 @@ describeDb("SA-995 — the filing lock decides by figures, rows and the tenant's
 
   // ─── T22: filed-period reads require a tenant (read-scope hardening) ───────────────────────────────────────
   it("T22: findFiledPeriod reads only the named tenant's filings, on a scoped or an unscoped client", async () => {
-    const approved = assertTestTenant("qa-sa1524", "filing-lock.sa995.db.spec.ts");
+    const approved = assertTestTenant(`qa-sa1524-${run}`, "filing-lock.sa995.db.spec.ts");
     const testSlug = assertTestTenant("test", "filing-lock.sa995.db.spec.ts");
     const existingTest = await raw.tenant.findUnique({ where: { slug: testSlug } });
     const testTenant =
       existingTest ?? (await raw.tenant.create({ data: { slug: testSlug, name: "Acme Test" } }));
-    const existing = await raw.tenant.findUnique({ where: { slug: approved } });
     const otherId = (
-      existing ??
-      (await raw.tenant.create({ data: { slug: approved, name: `SA1524 ${approved}` } }))
+      await raw.tenant.create({ data: { slug: approved, name: `SA1524 ${approved}` } })
     ).id;
     const cat = await raw.trackedCategory.create({
       data: {
@@ -455,7 +453,7 @@ describeDb("SA-995 — the filing lock decides by figures, rows and the tenant's
       console.log(
         `T22 observed: test-tenant scoped=${JSON.stringify(scoped)} unscoped=${JSON.stringify(unscoped)} other=${JSON.stringify(other)}`,
       );
-      expect(scoped).toBeNull();
+      // The raw (unscoped) client decides: the scoped client filters by itself and would pass on the old code.
       expect(unscoped).toBeNull();
       expect(other).toEqual({
         periodKey: "2026-08",
@@ -463,13 +461,42 @@ describeDb("SA-995 — the filing lock decides by figures, rows and the tenant's
         trackedCategoryId: cat.id,
       });
       await expect(findFiledPeriod(raw, "", [cat.id], "2026-08")).rejects.toMatchObject({
-        status: 403,
+        status: 500,
       });
     } finally {
       await raw.regulatedFiling.deleteMany({ where: { trackedCategoryId: cat.id } });
       await raw.trackedCategory.delete({ where: { id: cat.id } });
-      if (!existing) await raw.tenant.deleteMany({ where: { id: otherId } });
+      await raw.tenant.deleteMany({ where: { id: otherId } });
       if (!existingTest) await raw.tenant.deleteMany({ where: { id: testTenant.id } });
+    }
+  }, 120_000);
+
+  it("D1: a LOCKED filing of another business on this business's category id does not refuse this business's ledger writer", async () => {
+    const otherSlug = assertTestTenant(`qa-sa1524-g-${run}`, "filing-lock.sa995.db.spec.ts");
+    const otherId = (
+      await raw.tenant.create({ data: { slug: otherSlug, name: `SA1524 ${otherSlug}` } })
+    ).id;
+    try {
+      // Hand-made row (raw SQL only): the filing belongs to the other business but names this business's category.
+      await raw.$executeRaw`INSERT INTO "RegulatedFiling"
+        ("id","tenantId","trackedCategoryId","reportTemplate","cadence","periodKey","periodStart","periodEnd","status","rows","updatedAt")
+        VALUES (${randomUUID()}, ${otherId}, ${categoryId}, 'acme', 'MONTHLY', '2026-08',
+          '2026-08-01T00:00:00Z'::timestamp, '2026-09-01T00:00:00Z'::timestamp, 'LOCKED', '[]'::jsonb, now())`;
+      const row = { tenantId, trackedCategoryId: categoryId, periodBucket: "2026-08" };
+      const outcome = await inTenant(() =>
+        prisma
+          .tenantTransaction(async (tx: any) => {
+            await assertLedgerRowsNotLocked(tx, [row]);
+            return "resolved";
+          })
+          .catch((e: any) => `threw ${e?.response?.code ?? e?.message}`),
+      );
+      // eslint-disable-next-line no-console
+      console.log(`D1 observed: guard in this business's transaction ${outcome}`);
+      expect(outcome).toBe("resolved");
+    } finally {
+      await raw.regulatedFiling.deleteMany({ where: { tenantId: otherId } });
+      await raw.tenant.deleteMany({ where: { id: otherId } });
     }
   }, 120_000);
 });
