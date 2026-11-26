@@ -299,6 +299,8 @@ function restoredPrice(it: EditItemState): Partial<EditItemState> {
     ...(it.originalUnitPrice != null ? { unitPrice: it.originalUnitPrice } : {}),
     ...(it.originalBasePrice != null ? { basePrice: it.originalBasePrice } : {}),
     listReference: it.originalListReference,
+    // B1423 (R-231): the restored price is the line's stored one, not a typed one
+    priceEdited: false,
     overrideReason: it.originalOverrideReason,
     // B465 fix round 5: undoing a substitution must drop the substitute's own
     // reason-required baseline too — the comparison falls back to

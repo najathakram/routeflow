@@ -4,6 +4,8 @@
  *    "90% below list ($120.00)" against the pack price.
  * 2. A substitution kept `priceEdited` from a price typed before it, so the substitute's own 4.50 read
  *    "55% below list ($10.00)" before anyone typed it.
+ * 3. (R-231 MEDIUM A) Undo of a substitution kept `priceEdited` from a price typed on the substitute, so the
+ *    restored contract 4.50 read "55% below list ($10.00)".
  */
 import * as React from "react";
 import type { ProductUnitLevel } from "@routeflow/types";
@@ -123,5 +125,56 @@ describe("REG-B1423 R-214 MEDIUM 2: a substitution is a system-set price again",
     expect(next.priceEdited).toBe(false);
     // master: "55% below list ($10.00)"
     expect(noteFor(next)).toBeNull();
+  });
+});
+
+describe("REG-B1423 R-231 MEDIUM A: Undo of a substitution is a system-set price again", () => {
+  /** The editor with its own state, as the order page holds it: every change re-renders the lines. */
+  function Stateful({ start }: { start: EditItemState }) {
+    const [items, setItems] = React.useState([start]);
+    return (
+      <EditableLineItems
+        items={items}
+        onChange={setItems}
+        onAdd={() => {}}
+        onDelete={() => {}}
+        canEditPrice
+        tierPriceFor={() => 4.5}
+        isSpecialTierFor={() => false}
+        tierForProductId={() => 1}
+        pricingReady
+      />
+    );
+  }
+
+  it("a saved contract line (4.50, list 10.00): Substitute, type 2.00, Undo -> 4.50 back with no note", () => {
+    Element.prototype.scrollIntoView = jest.fn();
+    renderWithProviders(
+      <Stateful
+        start={line({
+          priceType: "SPECIAL",
+          unitPrice: 4.5,
+          originalUnitPrice: 4.5,
+          basePrice: 10,
+          originalBasePrice: 10,
+          listReference: 10,
+          originalListReference: 10,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Substitute" }));
+    fireEvent.change(screen.getByPlaceholderText("Search products…"), {
+      target: { value: "soda" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Sample Soda/ }));
+    const price = screen.getByRole("textbox", { name: /^Price/ });
+    fireEvent.change(price, { target: { value: "2.00" } });
+    fireEvent.blur(price);
+    // the typed price on the substitute does speak (it was typed)
+    expect(screen.getByTestId("price-far-from-list")).toHaveTextContent("80% below list ($10.00)");
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("textbox", { name: /^Price/ })).toHaveValue("4.50");
+    // master of this branch: "55% below list ($10.00)" on the restored contract price nobody typed
+    expect(screen.queryByTestId("price-far-from-list")).toBeNull();
   });
 });
