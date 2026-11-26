@@ -1439,6 +1439,8 @@ export function EditableLineItems({
                   reasonBaselinePrice: tierPriceFor(p),
                   basePrice: Number(p.pricePerUnit ?? 0),
                   listReference: Number(p.pricePerUnit ?? 0) || null,
+                  // B1423 (R-214): the substitute's price is the system's, not a typed one
+                  priceEdited: false,
                   overrideReason: undefined,
                   qty: split.qty,
                   unitsPerBox: upb,
