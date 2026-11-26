@@ -11,6 +11,10 @@ describe("unitsLabel", () => {
   it("falls back to pcs when no unit is known", () => {
     expect(unitsLabel(7)).toBe("7 pcs");
   });
+  it("says the count once when there is no whole box (B1478)", () => {
+    expect(unitsLabel(21, 24)).toBe("21 pcs");
+    expect(unitsLabel(24, 24)).toBe("24 pcs (1 box)");
+  });
   it("never uses the box noun for a boxed piece count", () => {
     expect(unitsLabel(0, 24, "case")).toBe("0 pcs");
   });

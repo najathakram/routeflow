@@ -8,6 +8,10 @@ import { usePageTitle } from "@/lib/page-title-context";
 import { fmt, fmtDate } from "@/lib/formatting";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useStockCountSessions, type StockCountStatus } from "@/lib/api/stock-count";
+import { inventoryTabHref } from "../_components/inventory-tabs";
+
+/** Counting itself lives on the Inventory page's Stock count tab. */
+const START_COUNT_HREF = inventoryTabHref("count");
 
 const STATUS_META: Record<StockCountStatus, { variant: BadgeVariant; label: string }> = {
   OPEN: { variant: "info", label: "Open" },
@@ -55,6 +59,7 @@ export default function StockCountsHistoryPage() {
       <PageHeader
         title="Stock counts"
         subtitle="History of every stock-count session — who counted what, and what it changed."
+        action={<Button href={START_COUNT_HREF}>Start a count</Button>}
       />
 
       <div className="flex flex-wrap gap-2">
@@ -134,7 +139,13 @@ export default function StockCountsHistoryPage() {
               {sessions.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-10 text-center text-navy/70">
-                    No stock counts yet.
+                    <p>No stock counts yet.</p>
+                    <Link
+                      href={START_COUNT_HREF}
+                      className="mt-2 inline-block text-brand-600 hover:text-brand-700 hover:underline"
+                    >
+                      Start a count
+                    </Link>
                   </td>
                 </tr>
               )}

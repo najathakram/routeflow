@@ -24,6 +24,7 @@ import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
 import { DidYouMeanPicker } from "@/components/scan/DidYouMeanPicker";
 import { useAuth } from "@/lib/auth-context";
 import { fmtDate } from "@/lib/formatting";
+import { looksLikeScanCode } from "@/lib/natural-date";
 import { unitsLabel } from "@/lib/stock-label";
 import { useStockOverview } from "@/lib/api/inventory";
 import {
@@ -115,6 +116,10 @@ export function StockCountTab() {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [flashId, setFlashId] = React.useState<string | null>(null);
   const [qtyPerScan, setQtyPerScan] = React.useState(1);
+  /** The last commit's outcome, shown on the emptied screen until the next scan (B1481). */
+  const [savedCount, setSavedCount] = React.useState<{ applied: number; already: boolean } | null>(
+    null,
+  );
   const [defaultMode, setDefaultMode] = React.useState<StockCountMode>("ADD");
 
   const [scanInput, setScanInput] = React.useState("");
@@ -570,6 +575,7 @@ export function StockCountTab() {
     const code = rawCode.trim();
     if (!code) return;
     setScanInput("");
+    setSavedCount(null);
     setResolving(true);
     try {
       const sid = await ensureSession();
@@ -587,6 +593,17 @@ export function StockCountTab() {
         return;
       }
       if (result.notFound) {
+        // B1481: a short bare number is a quantity typed into the wrong box, not a product code (barcodes
+        // are 8+ digits, same rule as the counter's date box). Say so rather than offering to create it.
+        if (/^\d+$/.test(code) && !looksLikeScanCode(code)) {
+          toast({
+            title: `No product for ${code}`,
+            description:
+              "To count a quantity, type it in Qty per scan or in the row's Counted box.",
+            variant: "error",
+          });
+          return;
+        }
         setUnknownCode(code);
         return;
       }
@@ -746,6 +763,9 @@ export function StockCountTab() {
       setSessionId(null);
       resetLocalSession();
       setCommitNotes("");
+      // B1481: the next scan counts one again, not the last pack-size typed; and the empty screen says the count saved.
+      setQtyPerScan(1);
+      setSavedCount({ applied, already: !!result.alreadyCommitted });
       if (result.skippedProducts && result.skippedProducts.length > 0) {
         setSkippedAfterFinish(result.skippedProducts);
       }
@@ -954,8 +974,14 @@ export function StockCountTab() {
           </div>
 
           <div className="w-28">
-            <label className="mb-1 block text-xs font-medium text-navy">Qty per scan</label>
+            <label
+              htmlFor="count-qty-per-scan"
+              className="mb-1 block text-xs font-medium text-navy"
+            >
+              Qty per scan
+            </label>
             <input
+              id="count-qty-per-scan"
               type="number"
               min={0}
               step={0.001}
@@ -1048,6 +1074,13 @@ export function StockCountTab() {
       {rows.length === 0 ? (
         <Card className="flex flex-col items-center justify-center gap-2 py-12 text-center">
           <Camera className="h-8 w-8 text-navy/30" />
+          {savedCount && (
+            <p role="status" className="text-sm font-medium text-success">
+              {savedCount.already
+                ? "This count was already saved."
+                : `Count saved. ${savedCount.applied} ${savedCount.applied === 1 ? "change" : "changes"} applied to stock.`}
+            </p>
+          )}
           <p className="text-sm font-medium text-navy">No items scanned yet</p>
           <p className="max-w-md text-xs text-navy/70">
             Scan a barcode, type a SKU, or use a USB scanner. Unknown codes will prompt you to add a
