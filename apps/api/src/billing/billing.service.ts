@@ -53,6 +53,8 @@ import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { isPayingRow } from "./mrr.service";
+import { isNeverActivated } from "./self-serve-plan-gate";
+import { isLinkPending } from "./link-pending";
 import {
   applyCouponStateTx,
   resetCouponState,
@@ -2024,6 +2026,10 @@ export class BillingService {
         // X1: the stale/duplicate-checkout guard judges from these (and re-reads them under the lock).
         stripeSubId: true,
         externalPayment: true,
+        // SA-1547 R3: a conversion already stamped is never stamped (or emitted) twice; the tenant's status rides the
+        // SAME read (no extra query) for the conversion judgement below.
+        trialConvertedAt: true,
+        tenant: { select: { status: true, readOnlyReason: true } },
       },
     });
     const hasNegotiatedOverride =
@@ -2270,12 +2276,27 @@ export class BillingService {
         ? await this.mutations.inclusionCatalog?.(tenantId)
         : undefined;
 
+    // SA-1547 R3: a SETTLED checkout of a business that was never activated is its trial conversion - stamped (and
+    // announced) exactly as subscribe() does, so the billing export and the MRR ledger see it. Judged by the one
+    // predicate (isNeverActivated); an unsettled bank debit converts nothing yet, and a redelivery is stopped by the
+    // APPLIED marker before the write below.
+    const convertedAt = (await this.isTrialConversion(
+      tenantId,
+      settled,
+      alreadyLinked ? subscriptionId : null,
+      existingOverride,
+    ))
+      ? new Date()
+      : null;
+    const conversionPlanKey = planKeyForCheckout ?? resolvedPlanKey;
+
     const upsertArgs = {
       where: { tenantId },
       create: {
         tenantId,
         stripeCustomerId: session.customer as string,
         stripeSubId: subscriptionId,
+        ...(convertedAt ? { trialConvertedAt: convertedAt } : {}),
         // The plan KEY resolved from the session, never the skipped/stale one: when the plan
         // change is skipped `planKeyForCheckout` is null and this would otherwise fall back to a
         // raw `metadata.plan` cast to the enum — a plan-key value is a Prisma enum reject (500 loop).
@@ -2296,6 +2317,7 @@ export class BillingService {
         // BEFORE the trailing coupon sync (coupon-state forces couponFull=false on an externalPayment row). Nothing
         // else on this base clears externalPayment on a card checkout.
         ...(isCatchupSession(session) ? { externalPayment: false } : {}),
+        ...(convertedAt ? { trialConvertedAt: convertedAt } : {}),
         ...(planKeyForCheckout ? { planKey: planKeyForCheckout } : {}),
         ...(planKeyForCheckout && resolvedBasePrice != null && !hasNegotiatedOverride
           ? { basePriceSnapshot: resolvedBasePrice }
@@ -2368,6 +2390,7 @@ export class BillingService {
                   existingOverride?.planKey,
                 );
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
+                await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
                 // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
                 if (session.id && settled) {
@@ -2441,6 +2464,7 @@ export class BillingService {
               existingOverride?.planKey,
             );
             const row = await tx.tenantSubscription.upsert(upsertArgs);
+            await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
               await this.writeAppliedMarker(tx, tenantId, session.id, {
@@ -2539,6 +2563,46 @@ export class BillingService {
     await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
+  }
+
+  /**
+   * SA-1547 R3: is this completion a business's FIRST activation (a trial, a trial that locked, a link-pending business
+   * not yet ACTIVE)? Only a settled session converts, only once (`alreadyStamped`), and only by the one predicate.
+   */
+  private async isTrialConversion(
+    tenantId: string,
+    settled: boolean,
+    linkedSubId: string | null,
+    row: {
+      trialConvertedAt?: Date | null;
+      tenant?: { status: string; readOnlyReason: string | null } | null;
+    } | null,
+  ): Promise<boolean> {
+    if (!settled || row?.trialConvertedAt) return false;
+    // The status rides the subscription read the handler already made. A tenant with no row yet (the legacy create
+    // branch) reads it here; no other path pays for this.
+    const tenant =
+      row?.tenant ??
+      (row
+        ? null
+        : await this.prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { status: true, readOnlyReason: true },
+          }));
+    if (!tenant) return false;
+    const linkPending = await isLinkPending(this.prisma, tenantId, linkedSubId);
+    return isNeverActivated(tenant, linkPending);
+  }
+
+  /** SA-1547 R3: the TRIAL_CONVERTED event, in the SAME transaction as the stamp (a rollback takes both). */
+  private async emitTrialConvertedTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    convertedAt: Date | null,
+    planKey: string | null,
+  ): Promise<void> {
+    if (!convertedAt) return;
+    await this.events.emit(tenantId, BILLING_EVENTS.TRIAL_CONVERTED, { planKey }, { tx });
   }
 
   /**

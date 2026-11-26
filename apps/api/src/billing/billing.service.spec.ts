@@ -3741,13 +3741,16 @@ describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
     payment_status: "paid",
     ...over,
   });
-  const tenantRow = (status: string, readOnlyReason: string | null) => ({
-    id: "t1",
-    class: "PRODUCTION",
-    status,
-    readOnlyReason,
-    plan: "STARTER",
-    planVersionId: "v1",
+  /** The subscription row the handler reads (its tenant's status rides the same read). */
+  const subOf = (status: string, readOnlyReason: string | null) => ({
+    tenantId: "t1",
+    planKey: "BUSINESS",
+    basePriceSnapshot: 349,
+    discount: 0,
+    stripeSubId: null,
+    stripeCustomerId: "cus_1",
+    trialConvertedAt: null,
+    tenant: { status, readOnlyReason },
   });
   const converted = (events: any) =>
     events.emit.mock.calls.filter((c: any[]) => c[1] === BILLING_EVENTS.TRIAL_CONVERTED);
@@ -3758,9 +3761,11 @@ describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
   ])(
     "R3: a trial-expired READ_ONLY business that pays is stamped and TRIAL_CONVERTED is emitted once (%s)",
     async (_name, hook) => {
-      const { svc, prisma, events, planTransition } = make({ transitionCount: 1 });
+      const { svc, prisma, events, planTransition } = make({
+        transitionCount: 1,
+        sub: subOf("READ_ONLY", "trial_expired"),
+      });
       planTransition.isEnabled.mockResolvedValue(hook);
-      prisma.tenant.findUnique.mockResolvedValue(tenantRow("READ_ONLY", "trial_expired"));
 
       await (svc as any).onCheckoutCompleted(session());
 
@@ -3773,8 +3778,7 @@ describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
   );
 
   it("a TRIAL business that pays is stamped too", async () => {
-    const { svc, prisma, events } = make({ transitionCount: 1 });
-    prisma.tenant.findUnique.mockResolvedValue(tenantRow("TRIAL", null));
+    const { svc, prisma, events } = make({ transitionCount: 1, sub: subOf("TRIAL", null) });
     await (svc as any).onCheckoutCompleted(session());
     expect(
       prisma.tenantSubscription.upsert.mock.calls[0][0].update.trialConvertedAt,
@@ -3783,8 +3787,7 @@ describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
   });
 
   it("an ACTIVE business (a renewal-shaped completion) is never stamped and emits no TRIAL_CONVERTED", async () => {
-    const { svc, prisma, events } = make({ transitionCount: 1 });
-    prisma.tenant.findUnique.mockResolvedValue(tenantRow("ACTIVE", null));
+    const { svc, prisma, events } = make({ transitionCount: 1, sub: subOf("ACTIVE", null) });
     await (svc as any).onCheckoutCompleted(session());
     const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
     expect(call.update).not.toHaveProperty("trialConvertedAt");
@@ -3793,15 +3796,19 @@ describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
   });
 
   it("a suspended-and-reinstated business (paid before) is not a trial conversion", async () => {
-    const { svc, prisma, events } = make({ transitionCount: 1 });
-    prisma.tenant.findUnique.mockResolvedValue(tenantRow("SUSPENDED", "overdue_suspended"));
+    const { svc, events } = make({
+      transitionCount: 1,
+      sub: subOf("SUSPENDED", "overdue_suspended"),
+    });
     await (svc as any).onCheckoutCompleted(session());
     expect(converted(events)).toHaveLength(0);
   });
 
   it("an UNSETTLED session (a bank debit in flight) links but does not stamp: nothing converted yet", async () => {
-    const { svc, prisma, events } = make({ transitionCount: 1 });
-    prisma.tenant.findUnique.mockResolvedValue(tenantRow("READ_ONLY", "trial_expired"));
+    const { svc, prisma, events } = make({
+      transitionCount: 1,
+      sub: subOf("READ_ONLY", "trial_expired"),
+    });
     await (svc as any).onCheckoutCompleted(session({ payment_status: "unpaid" }));
     const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
     expect(call.update).not.toHaveProperty("trialConvertedAt");
@@ -3809,8 +3816,10 @@ describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
   });
 
   it("a redelivery of an already-applied session emits nothing (the APPLIED marker is the idempotency key)", async () => {
-    const { svc, prisma, tx, events } = make({ transitionCount: 1 });
-    prisma.tenant.findUnique.mockResolvedValue(tenantRow("READ_ONLY", "trial_expired"));
+    const { svc, prisma, tx, events } = make({
+      transitionCount: 1,
+      sub: subOf("READ_ONLY", "trial_expired"),
+    });
     const applied = (args: any) =>
       args?.where?.action === STRIPE_CHECKOUT_APPLIED_ACTION ? { id: "applied" } : null;
     prisma.auditLog.findFirst.mockImplementation(async (args: any) => applied(args));
