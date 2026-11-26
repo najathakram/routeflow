@@ -540,6 +540,19 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
       expect([Number(after!.total), Number(after!.discount)]).toEqual([90, 10]);
     });
 
+    it("DB-M1 (R-302): a consented discount-only save over a stored subtotal its lines do not make writes the LINE subtotal: 150 vs lines 100, discount 5 gives subtotal 100 and total 95", async () => {
+      const s = await seed("subtotal-drift", {
+        lines: [row100()],
+        header: { taxAmount: 0, total: 150 },
+      });
+      await prisma.invoice.update({ where: { id: s.inv.id }, data: { subtotal: 150 } });
+      await save(s, { discount: 5, acceptLineTotal: { storedTotal: 150, newTotal: 95 } });
+      const after = await stored(s.inv.id);
+      expect([Number(after!.subtotal), Number(after!.discount), Number(after!.total)]).toEqual([
+        100, 5, 95,
+      ]);
+    });
+
     it("DB-10b: a line added for the difference needs no dialog (the total reproduces)", async () => {
       const s = await imported();
       const extra = {
@@ -783,6 +796,10 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
       where: { id: s.rows[1].id },
       data: { invoiceUnitLabel: "KeepCase", invoiceUnitFactor: 6, baseLabel: "KeepBag" },
     });
+    await prisma.customer.update({
+      where: { id: s.customerId },
+      data: { invoiceUnitDefault: "PIECES" },
+    });
     const items = screen(s);
     items[0] = { ...items[0], productId: other.id, unitPrice: 55 };
     await save(s, { items, discount: 0, shippingFee: 0 });
@@ -791,6 +808,9 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
       include: { items: { orderBy: { position: "asc" } } },
     });
     expect(after!.items[0].productId).toBe(other.id);
+    // R-303: the new product's unit was frozen (the customer sells by the piece, so the catalog says Piece x 1)
+    expect(after!.items[0].invoiceUnitLabel).toBe("Piece");
+    expect(Number(after!.items[0].invoiceUnitFactor)).toBe(1);
     expect(after!.items[0].invoiceUnitLabel).not.toBe("OldCase");
     expect(after!.items[0].invoiceUnitFactor).not.toBe(12);
     expect(after!.items[0].baseLabel).not.toBe("OldBag");

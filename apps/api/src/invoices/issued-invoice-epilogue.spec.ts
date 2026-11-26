@@ -382,7 +382,11 @@ describe("afterIssuedEditInTx: the display freeze", () => {
     tx.invoiceItem.findMany = jest
       .fn()
       .mockImplementation(async (a: any) =>
-        (a.where.id.in as string[]).map((id) => ({ id, productId: "p2" })),
+        (a.where.id.in as string[]).map((id) =>
+          a.select?.invoiceUnitLabel
+            ? { id, invoiceUnitLabel: "Piece", invoiceUnitFactor: 1, baseLabel: "Bag" }
+            : { id, productId: "p2" },
+        ),
       );
     return tx;
   };
@@ -416,6 +420,41 @@ describe("afterIssuedEditInTx: the display freeze", () => {
     });
     // the untouched row r2 is never named
     expect(JSON.stringify(w)).not.toContain("r2");
+  });
+
+  it("R-302: the returned invoice carries the fresh unit columns of the re-frozen rows only", async () => {
+    const tx = displayTx();
+    const after: any = afterOf({ items: [row({ productId: "p2" }), stored2] });
+    const out = await afterIssuedEditInTx(
+      {},
+      tx,
+      lockedTwo(),
+      after,
+      { ...ctx(), display: display() },
+      {
+        money: true,
+      },
+    );
+    expect(out.items[0]).toMatchObject({
+      invoiceUnitLabel: "Piece",
+      invoiceUnitFactor: 1,
+      baseLabel: "Bag",
+    });
+    expect(out.items[1].invoiceUnitLabel).toBeUndefined();
+  });
+
+  it("R-302: a unit label that differs only by case is not a changed unit", async () => {
+    const tx = displayTx();
+    const lockedCase = { ...lockedOf(), storedRows: [row({ unitLabel: "Case" }), stored2] };
+    await afterIssuedEditInTx(
+      {},
+      tx,
+      lockedCase,
+      afterOf({ items: [row({ unitLabel: "case" }), stored2] }),
+      { ...ctx(), display: display() },
+      { money: true },
+    );
+    expect(tx.invoiceItem.updateMany).not.toHaveBeenCalled();
   });
 
   it("a changed sale unit on the same product clears and refreezes the row too", async () => {

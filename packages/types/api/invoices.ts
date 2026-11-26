@@ -137,4 +137,7 @@ export interface InvoiceEditConsentBody {
 export interface AcceptLineTotal {
   storedTotal: number;
   newTotal: number;
+  /** The tax half of the same dialog; optional (omitted: the echo confirms only a save whose tax does not move). */
+  storedTax?: number;
+  newTax?: number;
 }

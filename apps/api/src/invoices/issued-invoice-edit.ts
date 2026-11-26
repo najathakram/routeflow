@@ -8,7 +8,6 @@ import {
 import {
   assertEditableUnderLock,
   intakeMoney,
-  type IssuedDisplayInputs,
   type IssuedEditCtx,
   type LockedInvoiceForEdit,
 } from "./locked-invoice-edit";
@@ -18,6 +17,7 @@ import { tenantTimeZone } from "../common/tenant-time-zone";
 import { auditIssuedInvoiceEdit } from "./invoice-audit";
 import {
   clearIssueDisplayUnitsForRows,
+  displayColumnsOfRows,
   freezeIssueUnitsFromCatalogForRows,
   loadDisplayUnitCatalog,
   loadIssueBaseLabels,
@@ -153,7 +153,7 @@ async function freezeChangedRows(
       return (
         !!was &&
         ((was.productId ?? null) !== (r.productId ?? null) ||
-          (was.unitLabel ?? null) !== (r.unitLabel ?? null))
+          String(was.unitLabel ?? "").toLowerCase() !== String(r.unitLabel ?? "").toLowerCase())
       );
     })
     .map((r) => r.id as string);
@@ -165,6 +165,11 @@ async function freezeChangedRows(
   const both = [...changed, ...added];
   await freezeIssueUnitsFromCatalogForRows(tx, inv, edit.display?.catalog ?? null, both);
   await writeIssueBaseLabelsForRows(tx, id, inv.tenantId, edit.display?.labels ?? null, both);
+  // R-302: the response carries the fresh unit columns of the rows just re-frozen (the caller's `after` was read before).
+  for (const f of await displayColumnsOfRows(tx, id, both)) {
+    const target = rows.find((r) => r.id === f.id);
+    if (target) Object.assign(target, f);
+  }
 }
 
 export async function writeIfFigureFree(

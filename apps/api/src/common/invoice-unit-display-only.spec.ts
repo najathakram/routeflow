@@ -171,6 +171,23 @@ describe("G1: the invoice unit never reaches a money writer", () => {
     expect(src.match(/\bclearIssueDisplayUnits\(/g)).toHaveLength(2);
   });
 
+  it("R-303: issued-invoice-edit.ts names only the row-scoped helpers, each at exactly 1 call site", () => {
+    const src = read("apps/api/src/invoices/issued-invoice-edit.ts");
+    expect(
+      [...new Set([...src.matchAll(new RegExp(CALLER.source, "g"))].map((m) => m[0]))].sort(),
+    ).toEqual([
+      "clearIssueDisplayUnitsForRows",
+      "freezeIssueUnitsFromCatalogForRows",
+      "writeIssueBaseLabelsForRows",
+    ]);
+    for (const n of [
+      "clearIssueDisplayUnitsForRows",
+      "freezeIssueUnitsFromCatalogForRows",
+      "writeIssueBaseLabelsForRows",
+    ])
+      expect(src.match(new RegExp("\\b" + n + "\\(", "g"))).toHaveLength(1);
+  });
+
   it("the owning services name ONLY the allowed helpers, and write the snapshot from exactly 5 call sites", () => {
     const ALLOWED = new Set([
       "resolveLiveDisplayUnits",

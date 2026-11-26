@@ -3,6 +3,7 @@ import { InvoiceStatus, UserRole } from "@prisma/client";
 import {
   assertEditableUnderLock,
   guardEditTax,
+  headerOnlyWrite,
   planHeaderOnlyTotals,
   type IssuedEditCtx,
   type LockedInvoiceForEdit,
@@ -232,6 +233,50 @@ describe("guardEditTax", () => {
     await expect(guardEditTax({}, draft, { mode: "DRAFT" }, args as any)).rejects.toMatchObject({
       response: { code: "INVOICE_TAX_STATE_STALE" },
     });
+  });
+});
+
+describe("headerOnlyWrite (R-302 M1: what a header-only save writes)", () => {
+  const stored150 = base({
+    invoice: { subtotal: 150, taxAmount: 0, total: 150 },
+    rows: [row("r1")],
+    recompute: { state: "TOTAL_NOT_FROM_LINES", restampRate: null },
+  });
+  const write = (l: LockedInvoiceForEdit, dto: any, mode: "ISSUED" | "DRAFT") =>
+    headerOnlyWrite({ notes: "n" }, planHeaderOnlyTotals(l, dto, mode), l, mode);
+
+  it("a consented ISSUED save over an unreproducing invoice writes the line subtotal with the total and tax", () => {
+    // stored subtotal 150, lines 100, discount 5: the header must read subtotal 100, total 95
+    expect(write(stored150, { discount: 5 }, "ISSUED")).toEqual({
+      notes: "n",
+      discount: 5,
+      shippingFee: 0,
+      subtotal: 100,
+      taxAmount: 0,
+      total: 95,
+    });
+  });
+
+  it("a stale-tax legacy invoice writes its line subtotal too", () => {
+    expect(write(LEGACY, { shippingFee: 5 }, "ISSUED")).toMatchObject({
+      subtotal: 300,
+      total: 305,
+    });
+  });
+
+  it("an invoice that reproduces, and a DRAFT, write no subtotal (master's shape)", () => {
+    const ok = base({
+      invoice: { subtotal: 100, taxAmount: 0, total: 100 },
+      rows: [row("r1")],
+      recompute: { state: "REPRODUCES", restampRate: null },
+    });
+    expect(write(ok, { discount: 10 }, "ISSUED")).not.toHaveProperty("subtotal");
+    const draft = base({
+      invoice: { subtotal: 100, taxAmount: 0, total: 100 },
+      rows: [row("r1")],
+      recompute: undefined,
+    });
+    expect(write(draft, { discount: 10 }, "DRAFT")).not.toHaveProperty("subtotal");
   });
 });
 

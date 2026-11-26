@@ -103,13 +103,14 @@ const storedUnitCount = (row: StoredEditRow): unknown =>
  * qty, boxes, pieces, unitPrice, discount, taxRate, free units — the tuple SA-184 calls "untouched" — plus the unit
  * (VU-4a). A unit line's payload qty counts the UNIT (stored as `boxes`; its `qty` column is base pieces).
  *
- * SA-1508 A2-N1 rule 2 / A3-H2: the free units compare with what a screen can express (`editableFreeUnits(row)`), never
- * the raw stored value: a row above the cap (a partial allocation, a duplicate) that comes back at the cap is untouched
- * and keeps its stored free units. A different value is a money edit (it used to be dropped silently, B1451).
+ * SA-1508 A2-N1 rule 2 / A3-H2 / A4-L5 (DRAFT and ISSUED alike, the one free-units change on the DRAFT side): the free units
+ * compare with what a screen can express (`editableFreeUnits(row)`) OR the raw stored value: a row above the cap (a partial
+ * allocation, a duplicate) that comes back at the cap, or echoed back as stored, is untouched and keeps its stored free
+ * units. Any other value is a money edit (it used to be dropped silently, B1451).
  *
  * SA-1508 A4-HA 1 (ISSUED only; the caller passes `restampRate` for a locked non-DRAFT invoice and never for a DRAFT): a
  * stored-rate-0 goods line sent at the verified `restampRate` is untouched too, because the screen shows what the
- * save writes. On a DRAFT this function is master's, byte for byte.
+ * save writes. On a DRAFT the rate clause is master's, byte for byte; only the free-units clause above also reaches it.
  */
 const sameMoneyTuple = (
   item: EditPayloadLine,

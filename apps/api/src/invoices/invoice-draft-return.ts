@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import type { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import * as du from "./invoice-display-unit"; // SA-827 display units
@@ -44,13 +44,12 @@ export async function revertInvoiceToDraftFlow(deps: InvoiceDraftReturnDeps, id:
     // SA-1508 (R-197-D F2): (Order →) Invoice locked FIRST; the status and the live payments are
     // re-judged on the locked row, so a void or a payment committed since the pre-read wins.
     const locked = await lockInvoiceRow(tx, id, inv.orderId);
-    const lockedRefusal = locked
-      ? revertRefusal(
-          locked.status,
-          // scan-ok: draft-payment-not-void — existence check on the locked row, not a money sum.
-          locked.payments.filter((p: any) => p.status !== "VOID").length,
-        )
-      : "Invoice not found";
+    if (!locked) throw new NotFoundException("Invoice not found"); // R-302: gone since the pre-read
+    const lockedRefusal = revertRefusal(
+      locked.status,
+      // scan-ok: draft-payment-not-void — existence check on the locked row, not a money sum.
+      locked.payments.filter((p: any) => p.status !== "VOID").length,
+    );
     if (lockedRefusal) throw new BadRequestException(lockedRefusal);
     const reverted = await tx.invoice.update({
       where: { id, status: { in: REVERTABLE_STATUSES } },

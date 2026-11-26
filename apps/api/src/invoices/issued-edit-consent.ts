@@ -43,9 +43,17 @@ export function issuedConsent(a: {
   // prompt; with no kept row at all nothing was stamped, so a moved cent still asks.
   if (recompute.state === "TAX_STALE" && recompute.restampRate != null && written.lines) {
     const kept = written.lines.filter((l) => l.rowId && a.storedRows.some((r) => r.id === l.rowId));
+    // R-302: a kept row is silent only at the rate it was stored with, or (stored at 0) at the verified stamp itself;
+    // any other rate on a kept row is a tax change the admin must confirm.
+    const near = (x: number, y: number) => Math.abs(x - y) < 1e-9;
     const taxed = kept.every((l) => {
       const row = a.storedRows.find((r) => r.id === l.rowId);
-      return Number(l.data.taxRate ?? 0) !== 0 || isNsfLine(row ?? l.data);
+      if (isNsfLine(row ?? l.data)) return true;
+      const rate = Number(l.data.taxRate ?? 0);
+      const was = Number(row?.taxRate ?? 0);
+      return (
+        rate !== 0 && (near(rate, was) || (was === 0 && near(rate, recompute.restampRate ?? NaN)))
+      );
     });
     if (kept.length > 0 && taxed) return NONE;
   }
@@ -57,9 +65,16 @@ export function issuedConsent(a: {
     newTax,
     cause: recompute.state === "TAX_STALE" ? "OLDER_TAX" : "TOTAL_NOT_FROM_LINES",
   };
+  // R-302 P4: the tax is echoed too. A client that sends no tax figures can only confirm a save whose tax does not move.
+  const taxEchoed =
+    (accept?.newTax ?? accept?.storedTax) === undefined
+      ? cents(newTax) === cents(storedTax)
+      : Math.abs(Number(accept?.storedTax ?? storedTax) - storedTax) <= HALF_CENT &&
+        Math.abs(Number(accept?.newTax ?? newTax) - newTax) <= HALF_CENT;
   const echoed =
     !!accept &&
     Math.abs(Number(accept.storedTotal) - storedTotal) <= HALF_CENT &&
-    Math.abs(Number(accept.newTotal) - newTotal) <= HALF_CENT;
+    Math.abs(Number(accept.newTotal) - newTotal) <= HALF_CENT &&
+    taxEchoed;
   return echoed ? { body: null, consented: true } : { body, consented: false };
 }

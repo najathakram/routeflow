@@ -481,6 +481,23 @@ export function planHeaderOnlyTotals(
 }
 
 /**
+ * R-302 M1: the header-only save's write. The plan's subtotal is dropped (master's shape: the lines did not move) EXCEPT on an
+ * ISSUED invoice whose stored figures its lines do not explain: its consented save writes the line-derived subtotal with the
+ * line-derived total and tax, so the header never keeps a subtotal that disagrees with the total beside it.
+ */
+export function headerOnlyWrite(
+  headerData: Record<string, any>,
+  plan: ReturnType<typeof planHeaderOnlyTotals>,
+  locked: LockedInvoiceForEdit,
+  mode: EditMode,
+): Record<string, any> {
+  const { subtotal, ...totals } = plan;
+  const lineBased =
+    mode === "ISSUED" && !!locked.recompute && locked.recompute.state !== "REPRODUCES";
+  return { ...headerData, ...totals, ...(lineBased ? { subtotal } : {}) };
+}
+
+/**
  * The tax guard of the items save, one call for both modes. DRAFT: SA-814 R5-2's guard, byte for byte. ISSUED
  * (SA-1508 A3-H1): no early return for "the user set a rate" and no refusal here; the verified rate is stamped on the
  * kept rate-0 lines and the consent judge reads the lines this writes (`assertEditableUnderLock`).

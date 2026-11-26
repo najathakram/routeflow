@@ -124,6 +124,66 @@ describe("issuedConsent", () => {
     ).toBe(false);
   });
 
+  it("the echo checks the TAX too: a total-only echo is refused when the tax moves (R-302 P4)", () => {
+    const args = {
+      recompute: STALE_UNVERIFIED,
+      invoice: { total: 324.75, taxAmount: 24.75 },
+      storedRows: STORED,
+      written: { total: 308.25, tax: 8.25, lines: edited(0) },
+    };
+    const totals = { storedTotal: 324.75, newTotal: 308.25 };
+    expect(issuedConsent({ ...args, accept: totals }).consented).toBe(false);
+    expect(
+      issuedConsent({ ...args, accept: { ...totals, storedTax: 24.75, newTax: 8.25 } }),
+    ).toEqual({ body: null, consented: true });
+    expect(
+      issuedConsent({ ...args, accept: { ...totals, storedTax: 24.75, newTax: 9 } }).consented,
+    ).toBe(false);
+    expect(
+      issuedConsent({ ...args, accept: { ...totals, storedTax: 20, newTax: 8.25 } }).consented,
+    ).toBe(false);
+    // tax unchanged: the totals-only echo still lifts it (the dialog showed the same tax twice)
+    expect(
+      issuedConsent({
+        recompute: TOTAL_STATE,
+        invoice: IMPORTED,
+        storedRows: STORED,
+        written: { total: 200 },
+        accept: { storedTotal: 108.25, newTotal: 200 },
+      }).consented,
+    ).toBe(true);
+  });
+
+  it("the echo checks the TAX too: a total-only echo is refused when the tax moves (R-302 P4)", () => {
+    const args = {
+      recompute: STALE_UNVERIFIED,
+      invoice: { total: 324.75, taxAmount: 24.75 },
+      storedRows: STORED,
+      written: { total: 308.25, tax: 8.25, lines: edited(0) },
+    };
+    const totals = { storedTotal: 324.75, newTotal: 308.25 };
+    expect(issuedConsent({ ...args, accept: totals }).consented).toBe(false);
+    expect(
+      issuedConsent({ ...args, accept: { ...totals, storedTax: 24.75, newTax: 8.25 } }),
+    ).toEqual({ body: null, consented: true });
+    expect(
+      issuedConsent({ ...args, accept: { ...totals, storedTax: 24.75, newTax: 9 } }).consented,
+    ).toBe(false);
+    expect(
+      issuedConsent({ ...args, accept: { ...totals, storedTax: 20, newTax: 8.25 } }).consented,
+    ).toBe(false);
+    // tax unchanged: the totals-only echo still lifts it (the dialog showed the same tax twice)
+    expect(
+      issuedConsent({
+        recompute: TOTAL_STATE,
+        invoice: IMPORTED,
+        storedRows: STORED,
+        written: { total: 200 },
+        accept: { storedTotal: 108.25, newTotal: 200 },
+      }).consented,
+    ).toBe(true);
+  });
+
   it("an older tax is cause OLDER_TAX; with no verified rate any moved figure asks", () => {
     const v = issuedConsent({
       recompute: STALE_UNVERIFIED,
@@ -145,6 +205,72 @@ describe("issuedConsent", () => {
           written: { total: 433.0, tax: 33.0, lines: edited(0.0825) },
         }),
       ).toEqual({ body: null, consented: false });
+    });
+    it("a kept rate-0 line sent at a rate other than the verified one is a tax change: it asks (R-302)", () => {
+      const at = (rate: number) => [
+        { rowId: "r1", untouched: false, data: { taxRate: rate } as any },
+      ];
+      for (const rate of [0.05, 0.1]) {
+        expect(
+          issuedConsent({
+            recompute: STALE_VERIFIED,
+            invoice: stale,
+            storedRows: STORED,
+            written: { total: 400, tax: 30, lines: at(rate) },
+          }).body,
+        ).toMatchObject({ cause: "OLDER_TAX" });
+      }
+      // a stored non-zero rate changed to another asks; kept as stored it is silent
+      const withRate = [{ id: "r1", taxRate: 0.0825 }];
+      expect(
+        issuedConsent({
+          recompute: STALE_VERIFIED,
+          invoice: stale,
+          storedRows: withRate,
+          written: { total: 400, tax: 30, lines: at(0.05) },
+        }).body,
+      ).not.toBeNull();
+      expect(
+        issuedConsent({
+          recompute: STALE_VERIFIED,
+          invoice: stale,
+          storedRows: withRate,
+          written: { total: 400, tax: 30, lines: at(0.0825) },
+        }).body,
+      ).toBeNull();
+    });
+    it("a kept rate-0 line sent at a rate other than the verified one is a tax change: it asks (R-302)", () => {
+      const at = (rate: number) => [
+        { rowId: "r1", untouched: false, data: { taxRate: rate } as any },
+      ];
+      for (const rate of [0.05, 0.1]) {
+        expect(
+          issuedConsent({
+            recompute: STALE_VERIFIED,
+            invoice: stale,
+            storedRows: STORED,
+            written: { total: 400, tax: 30, lines: at(rate) },
+          }).body,
+        ).toMatchObject({ cause: "OLDER_TAX" });
+      }
+      // a stored non-zero rate changed to another asks; kept as stored it is silent
+      const withRate = [{ id: "r1", taxRate: 0.0825 }];
+      expect(
+        issuedConsent({
+          recompute: STALE_VERIFIED,
+          invoice: stale,
+          storedRows: withRate,
+          written: { total: 400, tax: 30, lines: at(0.05) },
+        }).body,
+      ).not.toBeNull();
+      expect(
+        issuedConsent({
+          recompute: STALE_VERIFIED,
+          invoice: stale,
+          storedRows: withRate,
+          written: { total: 400, tax: 30, lines: at(0.0825) },
+        }).body,
+      ).toBeNull();
     });
     it("a goods line still at rate 0 on the written lines (the stamp did not reach it) asks", () => {
       const v = issuedConsent({

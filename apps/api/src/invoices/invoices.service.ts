@@ -270,6 +270,7 @@ import {
   loadLockedInvoiceForEdit,
   noTokenWarner,
   updateHeaderOnly,
+  headerOnlyWrite,
   planHeaderOnlyTotals,
 } from "./locked-invoice-edit";
 import type { InvoiceEditHeaders } from "./locked-invoice-edit";
@@ -3266,7 +3267,8 @@ export class InvoicesService {
             await preflightOrderSiblings(tx, inv.orderId, null); // SA-816: A's stored rows persist, so judge A too
             const free = await writeIfFigureFree(tx, locked, null, edit); // SA-1508: figures equal, nothing to re-price
             if (free) return free;
-            const { subtotal, ...totals } = planHeaderOnlyTotals(locked, dto, mode);
+            const plan = planHeaderOnlyTotals(locked, dto, mode);
+            const { subtotal, ...totals } = plan;
             assertInvoiceTotalsSane(
               { discount: totals.discount, subtotal, total: totals.total },
               storedInvoiceTotals(locked.invoice),
@@ -3279,7 +3281,7 @@ export class InvoicesService {
             });
             const u = await tx.invoice.update({
               where: { id },
-              data: { ...headerData, ...totals },
+              data: headerOnlyWrite(headerData, plan, locked, mode), // R-302 M1
               include,
             });
             const deps = { commissionEngine: this.commissionEngine };

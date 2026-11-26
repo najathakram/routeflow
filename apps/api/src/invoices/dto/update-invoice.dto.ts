@@ -39,6 +39,9 @@ export class UpdateInvoiceItemDto extends CreateInvoiceItemDto {
 export class AcceptLineTotalDto {
   @IsNumber() storedTotal!: number;
   @IsNumber() newTotal!: number;
+  /** R-302 P4: the tax half of the dialog's two figures; omitted, the echo only confirms a save whose tax does not move. */
+  @IsOptional() @IsNumber() storedTax?: number;
+  @IsOptional() @IsNumber() newTax?: number;
 }
 
 /**

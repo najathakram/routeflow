@@ -824,3 +824,19 @@ async function clearRows(
     });
   });
 }
+
+/** R-302: the display snapshot columns of the named rows as they stand now (a response carries them after a row-scoped freeze). */
+export async function displayColumnsOfRows(
+  tx: any,
+  invoiceId: string,
+  rowIds: ReadonlyArray<string>,
+): Promise<
+  Array<{ id: string; invoiceUnitLabel: unknown; invoiceUnitFactor: unknown; baseLabel: unknown }>
+> {
+  if (!invoiceId || !rowIds.length) return [];
+  const rows = await tx.invoiceItem.findMany({
+    where: { invoiceId, id: { in: [...rowIds] } },
+    select: { id: true, invoiceUnitLabel: true, invoiceUnitFactor: true, baseLabel: true },
+  });
+  return rows ?? [];
+}
