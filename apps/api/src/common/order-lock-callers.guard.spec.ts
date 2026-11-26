@@ -379,6 +379,28 @@ describe("order-lock callers: every order<->invoice billing-state writer takes t
     const fn = fo.slice(fo.indexOf("export async function withOrderRecomputeLock"));
     expect(fn.indexOf("withAdvisoryLock(")).toBeLessThan(fn.indexOf("tenantTransaction("));
   });
+
+  it("SA-1532 (R-246 M2): the DRAFT-return file writes the Invoice only on its transaction client `tx`, lock first", () => {
+    const f = read("invoices/invoice-draft-return.ts");
+    const WRITE = "(?:update|updateMany|upsert|delete|deleteMany)\\(";
+    expect(f.match(new RegExp(`\\.invoice\\.${WRITE}`, "g"))).toHaveLength(2);
+    expect(f.match(new RegExp(`\\btx\\.invoice\\.${WRITE}`, "g"))).toHaveLength(2);
+    expect(f.match(/\.invoice\b(?!\.)/g)).toBeNull(); // the model is never aliased off the client
+    expect(f.match(/\btenantTransaction\(\s*async \(\w+/g)?.map((c) => c.split("(").pop())).toEqual(
+      ["tx", "tx"],
+    );
+    expect(f.match(/\blockInvoiceRow\(\s*\w+\s*,/g)).toEqual(["lockInvoiceRow(tx,"]);
+    const revert = f.slice(f.indexOf("export async function revertInvoiceToDraftFlow("));
+    expect(revert.indexOf("lockInvoiceRow(tx,")).toBeGreaterThan(-1);
+    expect(revert.indexOf("lockInvoiceRow(tx,")).toBeLessThan(revert.indexOf("tx.invoice.update("));
+    expect(f.match(/\bmarkRevertedToDraft\(\s*\w+\s*,/g) ?? []).toEqual([]); // commit 8: two "markRevertedToDraft(tx,"
+    // R-246 LOW-5: no line writes here, so the file stays outside FREE_WRITER_FILES; a line write fails this first
+    expect(
+      f.match(
+        /\.(?:invoiceItem|orderItem)\.(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\(/g,
+      ),
+    ).toBeNull();
+  });
 });
 
 /**
@@ -507,7 +529,7 @@ describe("SA-893: every transaction takes Return -> Order -> Invoice -> CreditNo
     "invoices/invoices.service.ts#deleteInvoice": "Order > Invoice",
     "invoices/invoices.service.ts#markSent": "Order > Invoice > CreditNote",
     "invoices/invoices.service.ts#rebuildIssuedDepositMirrorOnDelivery": "Order > Invoice",
-    "invoices/invoices.service.ts#revertInvoiceToDraft": "Order > Invoice", // SA-1508: lockInvoiceRow first
+    "invoices/invoice-draft-return.ts#revertInvoiceToDraftFlow": "Order > Invoice", // SA-1508: lockInvoiceRow first
     "invoices/invoices.service.ts#unvoidInvoice": "Order > Invoice",
     "invoices/invoices.service.ts#voidInvoice": "Order > Invoice",
     "invoices/invoices.service.ts#voidInvoiceInTx": "Invoice > CreditNote",

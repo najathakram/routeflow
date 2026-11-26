@@ -16,7 +16,8 @@ const FORBIDDEN =
 
 /**
  * SA-827 (I6): the CALLER names. The display helpers (live resolve, issue-time resolve/write/clear, the item decorator) may be
- * called only from the two services that own the DRAFT -> issued transition, plus the display files. A new caller is a new
+ * called only from the two services that own the DRAFT -> issued transition, and from invoice-draft-return.ts (revert and
+ * reopen, moved out of InvoicesService for the size ratchet; it only clears the snapshot), plus the display files. A new caller is a new
  * place that decides when a snapshot is written, so it must be added here on purpose.
  */
 const CALLER =
@@ -24,6 +25,8 @@ const CALLER =
 const CALLER_FILES = [
   "apps/api/src/invoices/invoices.service.ts",
   "apps/api/src/bookkeeping/bookkeeping.service.ts",
+  // SA-1508 commit 3: revert and reopen call clearIssueDisplayUnits (a DRAFT renders live), moved with their bodies.
+  "apps/api/src/invoices/invoice-draft-return.ts",
 ];
 
 /** Directories whose non-spec source writes or computes money. */
@@ -151,11 +154,19 @@ describe("G1: the invoice unit never reaches a money writer", () => {
     expect(CALLER.test(stripComments("// writeIssueDisplayUnits"))).toBe(false);
   });
 
-  it("only the two owning services (and the display files) name a display helper", () => {
+  it("only the owning services, the DRAFT-return file (and the display files) name a display helper", () => {
     const offenders = rel
       .filter((f) => !isDisplay(f) && !CALLER_FILES.includes(f))
       .filter((f) => CALLER.test(read(f)));
     expect(offenders).toEqual([]);
+  });
+
+  it("SA-1532: invoice-draft-return.ts names only clearIssueDisplayUnits, at exactly 2 call sites", () => {
+    const src = read("apps/api/src/invoices/invoice-draft-return.ts");
+    expect([
+      ...new Set([...src.matchAll(new RegExp(CALLER.source, "g"))].map((m) => m[0])),
+    ]).toEqual(["clearIssueDisplayUnits"]);
+    expect(src.match(/\bclearIssueDisplayUnits\(/g)).toHaveLength(2);
   });
 
   it("the owning services name ONLY the allowed helpers, and write the snapshot from exactly 4 call sites", () => {
