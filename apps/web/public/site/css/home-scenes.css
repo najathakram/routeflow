@@ -94,6 +94,7 @@ html:not(.js-motion) .sc-ill{display:none}
 .js-motion .stx-steps li.done i{background:var(--rf-line);color:var(--rf-ink)}
 .js-motion .stx-steps li.on{background:var(--rf-white);box-shadow:var(--rf-ring);color:var(--rf-ink);font-size:15px;padding:6px 16px 6px 6px}
 .js-motion .stx-steps li.on i{background:var(--rf-line);color:var(--rf-ink)}
+@media (max-width:899.98px){.js-motion .stx-cap .does{display:none}}
 @media (min-width:900px){
   .js-motion .stx-grid{grid-template-rows:none;grid-template-columns:minmax(0,46fr) minmax(0,54fr)}
   .js-motion .stx-art{padding:40px 0 70px}
