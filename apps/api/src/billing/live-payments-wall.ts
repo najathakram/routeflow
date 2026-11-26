@@ -13,9 +13,32 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  */
 export const LIVE_PAYMENTS_CLASS = "PRODUCTION";
 
-/** Throws the coded 409 unless `cls` is exactly PRODUCTION. */
-export function assertLivePaymentsAllowed(cls: string | null | undefined): void {
-  if (cls === LIVE_PAYMENTS_CLASS) return;
+/** SA-1547 S5: which Stripe account the configured secret key talks to. Anything unrecognised is `none` (fail closed). */
+export type StripeKeyMode = "live" | "test" | "none";
+
+/** The key mode of a Stripe secret key, from its prefix only (the key itself is never logged or returned). */
+export function stripeKeyModeOf(secretKey: string | null | undefined): StripeKeyMode {
+  if (!secretKey) return "none";
+  if (secretKey.startsWith("sk_live_") || secretKey.startsWith("rk_live_")) return "live";
+  if (secretKey.startsWith("sk_test_") || secretKey.startsWith("rk_test_")) return "test";
+  return "none";
+}
+
+/** The configured key's mode: the same source as `config.stripe.secretKey` (`STRIPE_SECRET_KEY`), read when asked. */
+function configuredKeyMode(): StripeKeyMode {
+  return stripeKeyModeOf(process.env.STRIPE_SECRET_KEY);
+}
+
+/**
+ * Throws the coded 409 unless `cls` is exactly PRODUCTION, or the Stripe key is a TEST key (SA-1547 S5: a test key
+ * moves no real money, so every class may exercise checkout, portal and Connect on a test stack). With a live key
+ * (prod) the rule is unchanged. `keyMode` defaults to the configured key's mode.
+ */
+export function assertLivePaymentsAllowed(
+  cls: string | null | undefined,
+  keyMode: StripeKeyMode = configuredKeyMode(),
+): void {
+  if (cls === LIVE_PAYMENTS_CLASS || keyMode === "test") return;
   throw new ConflictException({
     code: API_ERROR_CODES.LIVE_PAYMENTS_OFF,
     message: "This is a test business. Payments are switched off.",
@@ -36,9 +59,10 @@ export interface TenantClassReader {
 export async function assertTenantLivePaymentsAllowed(
   prisma: TenantClassReader,
   tenantId: string,
+  keyMode: StripeKeyMode = configuredKeyMode(),
 ): Promise<void> {
   const row = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { class: true } });
-  assertLivePaymentsAllowed(row?.class);
+  assertLivePaymentsAllowed(row?.class, keyMode);
 }
 
 /** The audit row a webhook leaves when the wall holds a change instead of applying it. */

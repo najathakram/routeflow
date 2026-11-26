@@ -155,3 +155,20 @@ describe("assertLivePaymentsAllowed with the key mode (SA-1547 S5 red cases a-d)
     }
   });
 });
+
+describe("the refusal sentence is byte-equal to the shared web/mobile copy (SA-1547 M1)", () => {
+  it("packages/types/live-payments-off-copy.ts carries the same sentence", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as typeof import("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("path") as typeof import("path");
+    const shared = fs.readFileSync(
+      path.resolve(__dirname, "../../../../packages/types/live-payments-off-copy.ts"),
+      "utf8",
+    );
+    expect(shared).toContain(`"This is a test business. Payments are switched off."`);
+    expect(() => assertLivePaymentsAllowed("TEST", "live")).toThrow(
+      "This is a test business. Payments are switched off.",
+    );
+  });
+});
