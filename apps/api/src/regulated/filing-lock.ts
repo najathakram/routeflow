@@ -1,4 +1,9 @@
-import { ConflictException, InternalServerErrorException, Logger } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  InternalServerErrorException,
+  Logger,
+} from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   anyLockedFiling,
@@ -270,6 +275,8 @@ export async function assertOrderEditNotLocked(
   ctx: { tenantId: string; role?: string },
 ): Promise<void> {
   if (!isMoneyBearingEdit(dto, ctx.role)) return;
+  // A request path with no business (an unimpersonated platform admin) is a client error, not an internal fault.
+  if (!ctx.tenantId) throw new ForbiddenException("This edit needs a business session");
   // A diff payload that names only existing lines (no replace-all, no new line) can only move THOSE lines.
   const items = dto.items ?? [];
   const named =
