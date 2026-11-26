@@ -38,7 +38,6 @@ export function BlockedLinesDialog({
       onClose={onClose}
       // A long blocked list must not push its OK button off-screen. The body is a plain list (no
       // inline dropdowns), so the opt-in scroll cap cannot clip anything here.
-      scroll
       onOpenAutoFocus={() => {
         const active = document.activeElement as HTMLElement | null;
         returnFocusTo.current = active && active !== document.body ? active : lastFocused.current;
