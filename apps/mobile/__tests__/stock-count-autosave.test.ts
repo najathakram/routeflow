@@ -303,3 +303,23 @@ describe("stock-count-autosave", () => {
     });
   });
 });
+
+describe("stock-count-autosave: a scan after a pending edit (R-276 M1)", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("keeps the edit AND the scan: the absolute edit goes first, then the +delta", async () => {
+    const upsertLine = jest.fn().mockResolvedValue(undefined);
+    const engine = createStockCountAutosave({ upsertLine, removeLine: jest.fn() });
+
+    engine.queueEdit("p1", { countedQty: 10 }, "ADD"); // operator typed 10, row is Add
+    engine.queueScan("p1", 2, "ADD"); // then scanned twice before the debounce fired
+    await engine.flush();
+
+    expect(upsertLine.mock.calls.map((c) => c[0])).toEqual([
+      { productId: "p1", mode: "ADD", countedQty: 10 },
+      { productId: "p1", countedQty: 2, increment: true, mode: "ADD" },
+    ]);
+  });
+});

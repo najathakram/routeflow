@@ -51,7 +51,7 @@ export interface StockCountLineWritePayload {
 
 type PendingEntry =
   | { kind: "increment"; delta: number; mode: StockCountMode }
-  | { kind: "edit"; patch: StockCountEditPatch; mode: StockCountMode }
+  | { kind: "edit"; patch: StockCountEditPatch; mode: StockCountMode; scanDelta?: number }
   | { kind: "remove" };
 
 export interface StockCountAutosaveDeps {
@@ -158,6 +158,15 @@ export function createStockCountAutosave(deps: StockCountAutosaveDeps): StockCou
         });
       } else {
         await deps.upsertLine({ productId, mode: entry.mode, ...entry.patch });
+        // Scans made after the edit and before this flush ride after it, so neither is lost.
+        if (entry.scanDelta) {
+          await deps.upsertLine({
+            productId,
+            countedQty: entry.scanDelta,
+            increment: true,
+            mode: entry.mode,
+          });
+        }
       }
     } catch (err) {
       if (!deps.isPermanent?.(err)) mergeBack(productId, entry);
@@ -181,8 +190,13 @@ export function createStockCountAutosave(deps: StockCountAutosaveDeps): StockCou
     queueScan(productId, delta, mode) {
       if (disposed || delta === 0) return;
       const current = pending.get(productId);
-      const nextDelta = current?.kind === "increment" ? current.delta + delta : delta;
-      pending.set(productId, { kind: "increment", delta: nextDelta, mode });
+      if (current?.kind === "edit") {
+        // A pending absolute edit must survive: keep it and carry the scan after it.
+        pending.set(productId, { ...current, mode, scanDelta: (current.scanDelta ?? 0) + delta });
+      } else {
+        const nextDelta = current?.kind === "increment" ? current.delta + delta : delta;
+        pending.set(productId, { kind: "increment", delta: nextDelta, mode });
+      }
       notify();
       arm();
     },

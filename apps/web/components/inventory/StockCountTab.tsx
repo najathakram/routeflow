@@ -548,7 +548,8 @@ export function StockCountTab() {
 
     lastActionRef.current = { productId: product.id, delta: increment, wasNew };
     setCanUndo(true);
-    queueIncrement(product.id, increment, defaultMode);
+    // The row's own mode, not the screen default: the server overwrites a line's mode on every write.
+    queueIncrement(product.id, increment, existingRow?.mode ?? defaultMode);
   };
 
   const pickSuggestion = async (p: {

@@ -26,13 +26,7 @@ jest.mock("@/lib/api/stock-count", () => {
     }),
     useUpsertStockCountLine: () => ({
       mutate: jest.fn(),
-      mutateAsync: jest.fn().mockImplementation(async (v: { productId: string }) => ({
-        id: `line-${v.productId}`,
-        expectedQty: "-5",
-        countedById: "u-1",
-        updatedAt: "2026-11-26T00:00:00Z",
-        product: { averageCost: "1" },
-      })),
+      mutateAsync: (v: { productId: string }) => mockUpsert(v),
     }),
     useRemoveStockCountLine: () => ({ mutate: jest.fn() }),
     useCommitStockCountSession: () => ({ mutate: jest.fn(), isPending: false }),
@@ -42,6 +36,7 @@ jest.mock("@/lib/api/stock-count", () => {
   };
 });
 const mockResolve = jest.fn();
+const mockUpsert = jest.fn();
 jest.mock("@/lib/barcode-resolve", () => ({
   resolveProductByCode: (code: string) => mockResolve(code),
   archivedMessage: () => "archived",
@@ -85,6 +80,54 @@ function review(rows: StockCountLocalRow[]) {
 }
 
 describe("count default mode (B1474)", () => {
+  beforeEach(() => {
+    mockUpsert.mockReset();
+    mockUpsert.mockImplementation(async (v: { productId: string }) => ({
+      id: `line-${v.productId}`,
+      expectedQty: "-5",
+      countedById: "u-1",
+      updatedAt: "2026-11-26T00:00:00Z",
+      product: { averageCost: "1" },
+    }));
+  });
+
+  it("a re-scan of a row switched to Add keeps sending Add, not the screen default (R-276 H1)", async () => {
+    mockResolve.mockResolvedValue({
+      notFound: false,
+      archived: false,
+      source: "barcode",
+      product: {
+        id: "p-1",
+        name: "UX-pos Candy Bar",
+        sku: "UX-CANDY",
+        unit: "each",
+        currentStock: -5,
+      },
+    });
+    renderWithProviders(<StockCountTab />);
+    const box = () => screen.getByPlaceholderText(/scan with usb or webcam/i);
+    const scan = async () => {
+      await act(async () => {
+        fireEvent.change(box(), { target: { value: "UX-CANDY" } });
+        fireEvent.keyDown(box(), { key: "Enter" });
+      });
+    };
+    await scan();
+    await waitFor(() => expect(screen.queryByText("No items scanned yet")).toBeNull());
+    // the row's own mode select (the second "Replace count": the first is the screen default)
+    const rowMode = screen.getAllByDisplayValue("Replace count")[1];
+    fireEvent.change(rowMode, { target: { value: "ADD" } });
+    await scan();
+    await waitFor(() => expect(mockUpsert).toHaveBeenCalled(), { timeout: 8000 });
+    await waitFor(
+      () => {
+        const last = mockUpsert.mock.calls[mockUpsert.mock.calls.length - 1][0];
+        expect(last.mode).toBe("ADD");
+      },
+      { timeout: 8000 },
+    );
+  });
+
   it("scan 40 on a product at -5, then Review: AFTER reads 40, not 35", async () => {
     mockResolve.mockResolvedValue({
       notFound: false,
