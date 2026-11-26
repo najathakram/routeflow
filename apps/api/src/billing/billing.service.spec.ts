@@ -3872,6 +3872,18 @@ describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
     });
   });
 
+  // R-340 F2: a business whose conversion is already stamped (by subscribe(), or an earlier completion) is never
+  // stamped or announced again, even if its status still reads as a trial.
+  it("F2: a second completion for an already-stamped business writes no stamp and emits no TRIAL_CONVERTED", async () => {
+    const { svc, tx, events } = make({
+      transitionCount: 1,
+      sub: { ...subOf("READ_ONLY", "trial_expired"), trialConvertedAt: new Date("2026-11-01") },
+    });
+    await (svc as any).onCheckoutCompleted(session());
+    expect(stampWrites(tx)).toHaveLength(0);
+    expect(converted(events)).toHaveLength(0);
+  });
+
   // R-339 L4: a concurrent subscribe() may have stamped first; the conditional write then matches no row.
   it("L4: when the conditional stamp matches no row (already stamped), no TRIAL_CONVERTED is emitted", async () => {
     const { svc, tx, events } = make({ transitionCount: 1, sub: subOf("TRIAL", null) });
