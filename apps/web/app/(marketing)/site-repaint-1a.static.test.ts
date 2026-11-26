@@ -1187,7 +1187,7 @@ const CENSUS_NOW: SourceCensus = {
   svgStyles: 0,
   dataUrls: 7,
   escapes: 0,
-  inlineSvg: 222,
+  inlineSvg: 223,
   noscript: 0,
   inlineScripts: 11,
 };

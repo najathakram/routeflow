@@ -54,3 +54,36 @@ html:not(.js-motion) .sc-ill{display:none}
 .pp-eye{fill:var(--rf-ink)}.pp-mouth{fill:none;stroke:var(--rf-ink);stroke-width:1.6;stroke-linecap:round}
 .pp-scr{fill:var(--sc-mid)}.pp-scr-on{fill:var(--rf-box-top)}.pp-phone{fill:var(--rf-ink)}
 .pp-opaque{opacity:.82}
+
+/* The story: one order drawn as objects, scrubbed with the scroll (the owner's motion sketch, without its second wheel: the hero wheel stays). */
+.stx{position:relative}
+.stx-grid{display:grid;gap:clamp(20px,4vw,64px);align-items:center;padding:clamp(60px,9vw,120px) 0}
+.stx-caps{display:grid;gap:clamp(36px,5vw,64px)}
+.stx-cap h2{margin-top:10px;font-size:clamp(28px,4.2vw,64px);line-height:1.04;letter-spacing:-.035em;text-wrap:balance}
+.stx-cap .sub{margin-top:14px}
+.stx-art{margin:0;display:none}
+.stx-svg{display:block;width:100%;height:100%;overflow:visible}
+.stx-svg text{font-family:var(--rf-font)}
+.stx-steps,.stx-prog{display:none}
+.sc-t-steel{fill:var(--rf-steel)}.sc-t-bad{fill:var(--rf-overdue)}.sc-s-bad{stroke:var(--rf-overdue)}
+.sc-note-a{fill:var(--rf-paid-bg)}.sc-note-b{fill:var(--rf-pending-bg)}.sc-lab{opacity:.85}
+.js-motion .stx{height:600vh;height:600svh}
+.js-motion .stx-pin{position:sticky;top:var(--rf-header-h,64px);height:calc(100vh - var(--rf-header-h,64px));height:calc(100svh - var(--rf-header-h,64px));overflow:hidden}
+.js-motion .stx-grid{height:100%;padding:0;grid-template-rows:minmax(0,46fr) minmax(0,54fr)}
+.js-motion .stx-caps{position:relative;display:block}
+.js-motion .stx-cap{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;opacity:0;visibility:hidden}
+.js-motion .stx-cap[data-first]{opacity:1;visibility:visible}
+.js-motion .stx-art{display:block;min-height:0;padding:0 8px 56px}
+.js-motion .stx-prog{display:block;position:absolute;left:0;right:0;top:0;height:4px;background:var(--rf-line)}
+.js-motion .stx-prog b{display:block;height:100%;background:var(--rf-steel);transform-origin:0 50%;transform:scaleX(0)}
+.js-motion .stx-steps{display:flex;position:absolute;left:24px;bottom:14px;gap:8px;margin:0;padding:0;list-style:none}
+.js-motion .stx-steps li{display:flex;align-items:center;gap:8px;padding:6px;border-radius:999px;font-weight:600;font-size:0;color:var(--rf-steel);background:var(--rf-bone)}
+.js-motion .stx-steps i{font-style:normal;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:700 12px/1 var(--rf-font);background:var(--rf-line);color:var(--rf-steel)}
+.js-motion .stx-steps li.done i{background:var(--rf-line);color:var(--rf-ink)}
+.js-motion .stx-steps li.on{background:var(--rf-white);box-shadow:var(--rf-ring);color:var(--rf-ink);font-size:15px;padding:6px 16px 6px 6px}
+.js-motion .stx-steps li.on i{background:var(--rf-line);color:var(--rf-ink)}
+@media (min-width:900px){
+  .js-motion .stx-grid{grid-template-rows:none;grid-template-columns:minmax(0,46fr) minmax(0,54fr)}
+  .js-motion .stx-art{padding:40px 0 70px}
+  .js-motion .stx-steps{left:max(24px,calc((100vw - 1200px) / 2));bottom:28px}
+}

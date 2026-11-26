@@ -138,4 +138,60 @@
       .to(O.mFlat, { autoAlpha: 0, duration: 0.12 }, 1.9).to(O.mSmile, { autoAlpha: 1, duration: 0.12 }, 1.9).to(O.head, { rotation: 6, duration: 0.2, ease: OUT }, 1.9).to(O.head, { rotation: 0, duration: 0.2 }, 2.2);
     chipIn(tl, q(".end"), 2.2); walk(tl, O, 420, 2.6, 1.5);
   });
+
+  /* The story (sketch story section, objects only): the mess falls into one app, then one order goes by as an order sheet,
+     a box and bottles, a truck, an invoice and a check. Scrubbed by the scroll over the tall section; same moves and eases
+     as the sketch. The wheel is the page's own hero wheel, so it is not drawn again here. */
+  (function story() {
+    var sec = d.getElementById("story");
+    if (!sec || !d.documentElement.classList.contains("js-motion")) return;
+    var q = function (s) { return sec.querySelector(s); }, qa = function (s) { return g.utils.toArray(sec.querySelectorAll(s)); };
+    var caps = qa(".stx-cap"), steps = qa(".stx-steps li"), progB = q(".stx-prog b"), pillT = q(".pillT"), bts = qa(".bt"), tws = qa(".oTruck .tw");
+    var FRONT = 250, HUB = { x: 200, y: 120 };
+    g.set(caps.slice(1), { autoAlpha: 0, y: 16 });
+    g.set(".stx-svg .obj", { svgOrigin: "0 0", x: 200, y: FRONT - 22, autoAlpha: 0 });
+    g.set(q(".oshadow"), { svgOrigin: "0 0", x: 200, y: FRONT, autoAlpha: 0 });
+    g.set(q(".pill"), { svgOrigin: "0 0", x: 200, y: FRONT + 32, autoAlpha: 0 });
+    bts.forEach(function (b) { g.set(b, { svgOrigin: "0 0", x: -32, y: -6, scale: 0.5, autoAlpha: 0 }); });
+    g.set(tws[0], { svgOrigin: "0 0", x: -28, y: -8 }); g.set(tws[1], { svgOrigin: "0 0", x: 26, y: -8 });
+    g.set(q(".mBub"), { svgOrigin: "0 0", x: 470, y: 40, autoAlpha: 0, rotation: 8 }); g.set(q(".mNotes"), { svgOrigin: "0 0", x: 470, y: 330, autoAlpha: 0, rotation: 14 });
+    g.set(q(".mBill"), { svgOrigin: "0 0", x: -70, y: 340, autoAlpha: 0, rotation: -16 }); g.set(q(".mBook"), { svgOrigin: "0 0", x: -90, y: 60, autoAlpha: 0, rotation: -8 });
+    g.set(q(".hub"), { svgOrigin: "200 120" });
+    var tl = g.timeline({ defaults: { ease: IO, duration: 0.4 }, onUpdate: hud });
+    function cap(n, t) { tl.to(caps[n - 1], { autoAlpha: 0, y: -16, duration: 0.16, ease: IN }, t).to(caps[n], { autoAlpha: 1, y: 0, duration: 0.24, ease: OUT }, t + 0.14); }
+    function objIn(sel, y, t) { tl.fromTo(sel, { y: y - 20, autoAlpha: 0 }, { y: y, autoAlpha: 1, duration: 0.22, ease: OUT, immediateRender: false }, t); }
+    function objOut(sel, t, extra) { tl.to(sel, Object.assign({ y: "-=14", autoAlpha: 0, duration: 0.14, ease: IN }, extra || {}), t); }
+    function mess(sel, hx, hy, t) {
+      tl.to(sel, { x: hx, y: hy, rotation: "*=.3", autoAlpha: 1, duration: 0.22, ease: OUT }, t)
+        .to(sel, { x: HUB.x, y: HUB.y, scale: 0.2, rotation: 0, duration: 0.3, ease: IN }, t + 0.36)
+        .to(sel, { autoAlpha: 0, duration: 0.07, ease: "none" }, t + 0.59)
+        .to(q(".hub"), { scale: 1.12, duration: 0.08, ease: OUT }, t + 0.62).to(q(".hub"), { scale: 1, duration: 0.24, ease: IO }, t + 0.74);
+    }
+    mess(q(".mBub"), 296, 96, 0.18); mess(q(".mNotes"), 336, 240, 0.5); mess(q(".mBill"), 58, 244, 0.82); mess(q(".mBook"), 84, 98, 1.14);
+    cap(1, 1.7);
+    tl.to(q(".oshadow"), { autoAlpha: 1, duration: 0.2 }, 1.8).to(q(".pill"), { autoAlpha: 1, duration: 0.15 }, 1.8);
+    objIn(q(".oSheet"), FRONT, 1.78);
+    cap(2, 2.8); objOut(q(".oSheet"), 2.8);
+    tl.set([q(".oBox"), q(".oBottles")], { x: 214, y: FRONT - 22 }, 2.9);
+    objIn(q(".oBox"), FRONT, 3.0); tl.set(q(".oBottles"), { y: FRONT, autoAlpha: 1 }, 3.04).to(q(".oBox .flapL"), { y: -8, autoAlpha: 0, duration: 0.16, ease: OUT }, 3.2);
+    bts.forEach(function (b, k) { var col = k % 3, row = k < 3 ? 0 : 1; tl.to(b, { x: 14 + col * 13 + row * 5, y: row ? 2 : -9, scale: 1, autoAlpha: 1, duration: 0.26, ease: OUT }, 3.24 + k * 0.04); });
+    cap(3, 4.0);
+    tl.to(bts, { x: -32, y: -6, scale: 0.5, autoAlpha: 0, duration: 0.16, ease: IN, stagger: 0.01 }, 4.0); objOut(q(".oBox"), 4.1);
+    tl.to(q(".oshadow"), { scaleX: 1.7, duration: 0.3 }, 4.14);
+    objIn(q(".oTruck"), FRONT + 8, 4.24); tl.to(tws, { rotation: -720, duration: 0.7, ease: IO }, 4.3);
+    cap(4, 5.2);
+    tl.to(q(".oTruck"), { x: 290, autoAlpha: 0, duration: 0.26, ease: IN }, 5.22).to(tws, { rotation: -1000, duration: 0.26, ease: IN }, 5.22);
+    tl.to(q(".oshadow"), { scaleX: 1, duration: 0.2 }, 5.4); objIn(q(".oInv"), FRONT, 5.6);
+    cap(5, 6.4); objOut(q(".oInv"), 6.4);
+    tl.fromTo(q(".oCheck"), { x: 214, y: FRONT - 150, rotation: 16, autoAlpha: 0 }, { y: FRONT - 30, rotation: -8, autoAlpha: 1, duration: 0.3, ease: IN, immediateRender: false }, 6.8);
+    tl.to({}, { duration: 0.6 }, 7.4);
+    var marks = [1.8, 2.9, 4.1, 5.3, 6.5], names = ["Orders", "Box or piece", "Delivery", "Invoices", "Payments"], last = -1;
+    function hud() {
+      var t = tl.time(), n = 0; marks.forEach(function (x) { if (t >= x) n++; });
+      g.set(progB, { scaleX: tl.progress() });
+      if (n !== last) { last = n; if (n) pillT.textContent = names[n - 1]; steps.forEach(function (li, k) { li.className = n === k + 1 ? "on" : (n > k + 1 ? "done" : ""); }); }
+    }
+    hud();
+    ST.create({ trigger: sec, start: function () { return "top " + (d.querySelector(".site-header, header") ? d.querySelector(".site-header, header").offsetHeight : 64); }, end: "bottom bottom", scrub: 0.5, animation: tl, invalidateOnRefresh: true });
+  })();
 })();
