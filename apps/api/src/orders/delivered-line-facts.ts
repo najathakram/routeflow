@@ -109,6 +109,7 @@ export async function loadDeliveredLineFacts(
     onRun: stopStatus != null && stopStatus !== "COMPLETED",
     stopCompleted: stopStatus === "COMPLETED",
     routeRunLinked: head?.routeRunId != null,
+    orderRouteRows: rows.filter(isEvidenceRow).some((m) => evidenceOrigin(m) === "route"),
     routeLineIds,
     officeLineIds,
     liveReturn: (await i.db.return.count({ where: liveReturnWhere([i.order.id]) })) > 0,

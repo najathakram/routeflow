@@ -77,6 +77,13 @@ export const EMPTIES_INVOICE_MESSAGE =
 export const FILED_MONTH_MESSAGE =
   "{month} is already filed. Mark the order delivered again, then record a return.";
 
+/**
+ * SA-1544 P-5: a buyer's edit of a reopened order that still holds delivered goods. PLACEHOLDER until SA-C's words land
+ * (A9 9.10 co-sign). It must not say "out for delivery": the order is CONFIRMED again.
+ */
+export const BUYER_EDIT_CLOSED_DELIVERED_MESSAGE =
+  "Part of this order was already delivered, so it can't be changed here. Send a change request instead.";
+
 /** A2 M5 / lock class: the edit's lock class changed between the pre-transaction read and the Order lock. */
 export const ORDER_CHANGED_DURING_EDIT_MESSAGE =
   "This order changed while you were editing it. Reload it and try again.";

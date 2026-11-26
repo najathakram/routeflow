@@ -1,8 +1,10 @@
 import { ConflictException } from "@nestjs/common";
-import { OrderStatus, UserRole } from "@prisma/client";
+import { InvoiceStatus, OrderStatus, UserRole } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import type { CorrectionBasis } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { AfterCommit } from "../common/after-commit";
+import type { InvoicesService } from "../invoices/invoices.service";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 import { basisFromRows, evidenceOrigin, isEvidenceRow } from "../invoices/delivered-basis-by-line";
 import { assertOrderEditNotLocked } from "../regulated/filing-lock";
@@ -18,18 +20,19 @@ import {
   assertDeliveredLinesUntouched,
   assertDeliveredToShape,
   entryTouchesLine,
-  isLiveDeliveredLine,
+  holdsLiveDeliveredLine,
   reduceDeliveredLineEntries,
   type DeliveredLockEntry,
   type DeliveredLockLine,
 } from "./delivered-line-lock";
 import { lockReturnCustomersOf } from "../returns/return-customer-lock";
 import { lockInlineReturnCustomer } from "./order-inline-return";
-import { resyncsInPlace, type CarrierEditGuard } from "./order-carrier-guard";
+import { routedByHeldLines, routingUnderLock, type CarrierEditGuard } from "./order-carrier-guard";
 import {
   EMPTIES_INVOICE_MESSAGE,
   FILED_MONTH_MESSAGE,
   ORDER_CHANGED_DURING_EDIT_MESSAGE,
+  UNPROJECTED_CUTTING_MESSAGE,
   fill,
   lockedCopy,
 } from "./delivered-line-copy";
@@ -52,10 +55,20 @@ import { OFFICE_MARKED_NOTE } from "./office-evidence-completion";
  * deliver) and carries a fully delivered line's figure with its quantity.
  */
 const EPS = 0.0005;
+
+/**
+ * SA-1544 (as) / A9 9.3 item 5: the edit transaction's budget. The correction lock class (an admin on a CONFIRMED or
+ * PARTIALLY_DELIVERED order that holds a live delivered line: a superset of every edit that can restate in the tx) gets
+ * 20 s, every other edit 15 s. Both stay under `LONG_BUDGET_MS` (30 s, common/tx-retry.ts) so an expiry (P2028) is retried;
+ * exhaustion is the existing 503 LOCK_UNAVAILABLE "Nothing was saved", never a 409.
+ */
+export const EDIT_TX_BUDGET_MS = { correction: 20_000, other: 15_000 } as const;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 export interface DeliveredLineEditInput {
-  deps: DeliveredModeInput["deps"];
+  deps: DeliveredModeInput["deps"] & {
+    invoicesService?: Pick<InvoicesService, "resyncOrderInvoicesForEdit">;
+  };
   /** The pre-tx order read (with `lineItems`). */
   order: DeliveredModeInput["order"] & {
     lineItems?: DeliveredModeInput["held"];
@@ -100,6 +113,20 @@ export interface DeliveredLineEdit {
     modes: DeliveredModes,
     held: ReadonlyArray<CorrectionHeldLine>,
   ): Promise<Map<string, number> | undefined>;
+  /**
+   * SA-1536 (ab), §8.4 item 3: an edit whose correction map is not empty restates every live invoice of the order IN the
+   * edit transaction (`resyncOrderInvoicesForEdit(orderId, tx, after, actor)`), under the billing lock the edit already
+   * holds (no second lock, no new lock order). A null answer while a live invoice exists is the typed 409
+   * ORDER_INVOICES_NEED_REVIEW; EVERY throw propagates untouched (SA-1544 (aq)), so a lock or timeout error
+   * (40P01, 40001, P2034, P2028) reaches `retryStockTx`. Sets `restatedInTx()` when it restated.
+   */
+  restateInvoices(tx: any, corrected: Map<string, number> | undefined): Promise<void>;
+  /** SA-1544 (ar): this attempt restated the invoices inside the edit tx, so the post-commit tail neither resyncs nor follows prices. */
+  restatedInTx(): boolean;
+  /** SA-1544 (as): the edit tx options, `EDIT_TX_BUDGET_MS` by lock class. */
+  txOptions(): { timeout: number };
+  /** Send the invoice-updated emits `restateInvoices` queued; call once, after the edit transaction has committed. */
+  flushAfterCommit(): void;
 }
 
 export type CorrectionHeldLine = DeliveredLockLine & {
@@ -131,6 +158,8 @@ export function deliveredLineEdit(i: DeliveredLineEditInput): DeliveredLineEdit 
       message: ORDER_CHANGED_DURING_EDIT_MESSAGE,
     });
   let hasCorrectEntry = false;
+  let restated = false;
+  const after = new AfterCommit();
   const assertWith = (held: DeliveredModeInput["held"], status: string, modes: DeliveredModes) =>
     assertDeliveredLinesUntouched({ status }, held, i.dto, i.user, i.isDiffPayload, modes);
   return {
@@ -140,6 +169,38 @@ export function deliveredLineEdit(i: DeliveredLineEditInput): DeliveredLineEdit 
       const modes = await modesOn(i.prisma.forTenant(), held, i.order.status);
       assertWith(held, i.order.status, modes);
       return modes;
+    },
+    restatedInTx: () => restated,
+    txOptions: () => ({
+      timeout: inLockClass ? EDIT_TX_BUDGET_MS.correction : EDIT_TX_BUDGET_MS.other,
+    }),
+    async restateInvoices(tx, corrected) {
+      after.reset();
+      restated = false; // one answer per attempt: a retried callback starts clean
+      if (!corrected || corrected.size === 0) return;
+      const live: Array<{ invoiceNumber: string | null }> = await tx.invoice.findMany({
+        where: { orderId: i.order.id, status: { not: InvoiceStatus.VOID } },
+        select: { invoiceNumber: true },
+        orderBy: { id: "asc" },
+        take: 1,
+      });
+      if (live.length === 0) return; // nothing bills these pieces: nothing to restate
+      const needReview = () =>
+        new ConflictException({
+          code: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW,
+          message: fill(UNPROJECTED_CUTTING_MESSAGE, { invoiceNumber: live[0].invoiceNumber }),
+        });
+      const rebuilt = await i.deps.invoicesService!.resyncOrderInvoicesForEdit(
+        i.order.id,
+        tx,
+        after,
+        i.user?.sub ?? null,
+      ); // no catch: a lock or timeout error is the retry loop's, never "needs review"
+      if (rebuilt === null) throw needReview(); // an unclean partition: the invoice cannot be restated
+      restated = true;
+    },
+    flushAfterCommit() {
+      after.flush();
     },
     async lockFirst(tx, inlineRet, customerId) {
       if (inLockClass) {
@@ -155,13 +216,8 @@ export function deliveredLineEdit(i: DeliveredLineEditInput): DeliveredLineEdit 
         select: { status: true },
       });
       lockedStatus = locked?.status ?? i.order.status;
-      // The routing input read before the transaction must still hold under the lock (A2): same shape as carrierRevertUnderLock.
-      // Only for a caller who could correct: everyone else is judged by the old guards on the locked read.
-      if (
-        isAdminForCorrection(i.user?.role, !!tenantId) &&
-        holdsLiveDeliveredLine(held) !== preHolds
-      )
-        throw changedDuringEdit();
+      // SA-1544 (ap): the routing input read before the transaction must still hold under the lock, for EVERY role.
+      routingUnderLock(preHolds, held);
       const modes = await modesOn(tx, held, lockedStatus);
       if (!returnsLockTaken && [...modes.values()].some((d) => d.mode === "CORRECT"))
         throw changedDuringEdit(); // CORRECT under the lock, but the returns lock was not the first statement: nothing is written
@@ -173,8 +229,7 @@ export function deliveredLineEdit(i: DeliveredLineEditInput): DeliveredLineEdit 
     reduce: (modes, held, items) =>
       reduceDeliveredLineEntries({ status: lockedStatus }, held, items, modes),
     judgeFlags: (held, status, carrier) => ({
-      // routed in place BY the held lines alone: neither the status nor the carrier already routed it (so no old edit moves)
-      routedByHeldLines: holdsLiveDeliveredLine(held) && !resyncsInPlace(status, carrier, false),
+      routedByHeldLines: routedByHeldLines(status, carrier, held),
       hasCorrectEntry,
     }),
     applyCorrections: (tx, modes, held) => applyLineCorrections(tx, i, modes, held),
@@ -470,8 +525,3 @@ export function confirmedEditReverts(
     !postDeliveryEdit
   );
 }
-
-/** True when any HELD line is a live delivered line: the third input of `resyncsInPlace`. */
-export const holdsLiveDeliveredLine = (
-  lines: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }> | undefined,
-): boolean => (lines ?? []).some(isLiveDeliveredLine);

@@ -30,7 +30,11 @@ export const LINES_REORDERED_ACTION = "order.lines.reordered";
 export interface ReorderDeps {
   prisma: PrismaService;
   /** The buyer-facing sentence of a closed edit window (`buyerEditClosedMessage`), for the 403. */
-  closedMessage(order: { status: string; tenantId?: string | null }): Promise<string>;
+  closedMessage(order: {
+    status: string;
+    tenantId?: string | null;
+    lineItems?: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }>;
+  }): Promise<string>;
 }
 
 /** The refusal for a stale token or a line set that is not the order's lines: the client refetches and retries. */
@@ -99,16 +103,14 @@ export async function reorderOrderLines(
     if (order.status === "CANCELLED") {
       throw new BadRequestException("Lines can't be rearranged on a cancelled order");
     }
-    if (isBuyer && !computeEditWindow(order, UserRole.CUSTOMER).editable) {
-      throw new ForbiddenException(await deps.closedMessage(order));
-    }
-    if (new Date(dto.expectedUpdatedAt).getTime() !== order.updatedAt.getTime()) throw changed();
-
     const lines = await tx.orderItem.findMany({
       where: { orderId },
       select: {
         id: true,
         position: true,
+        // P-5: the buyer window reads whether the order still holds delivered goods
+        status: true,
+        deliveredQty: true,
         // the facts Sort A to Z reads: the description the invoice copy would store, the pack and the product
         name: true,
         productId: true,
@@ -118,6 +120,11 @@ export async function reorderOrderLines(
       },
       orderBy: ORDER_LINE_ORDER_BY,
     });
+    if (isBuyer && !computeEditWindow(order, UserRole.CUSTOMER, lines).editable) {
+      throw new ForbiddenException(await deps.closedMessage({ ...order, lineItems: lines }));
+    }
+    if (new Date(dto.expectedUpdatedAt).getTime() !== order.updatedAt.getTime()) throw changed();
+
     // Sort A to Z (ruling 7): the permutation is computed here, once, from the lines as locked; never a stored view mode.
     // It sorts cancelled rows too (the id list is always every line), on the description an invoice copy would print.
     const lineIds =

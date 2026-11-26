@@ -35,7 +35,7 @@ describe("restateLineEvidence ROUTE basis (A3 M-d belt)", () => {
   it("answers a typed 409 with the ROUTE sentence, never an Error", async () => {
     const err = await restateLineEvidence(
       {},
-      { orderId: "o1", tenantId: "t1" },
+      { orderId: "o1", tenantId: "t1", evidence: [] },
       { id: "l1" },
       8,
       "ROUTE",

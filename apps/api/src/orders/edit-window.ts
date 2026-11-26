@@ -1,5 +1,6 @@
 import { OrderStatus, UserRole } from "@prisma/client";
 import type { BuyerOrderEditWindow } from "@routeflow/types";
+import { holdsLiveDeliveredLine } from "./delivered-line-lock";
 
 /**
  * B63 (REG-B63): the statuses past which a BUYER may no longer self-edit an
@@ -15,6 +16,23 @@ export const BUYER_EDIT_CLOSED_STATUSES: OrderStatus[] = [
   OrderStatus.DELIVERED,
   OrderStatus.REFUSED,
 ];
+
+/**
+ * SA-1544 P-5 (REG-B63 extended): the ONE predicate of a closed BUYER window, read by the write gate
+ * (`updateOrderItems`) AND by `computeEditWindow`. Closed when the order is past dispatch (the status list above) OR
+ * when it HOLDS a live delivered line: a reopened order that still carries delivered goods is not a pre-dispatch order, and
+ * a buyer's edit of it would restate an invoice already issued. `lines` is REQUIRED, so the compiler makes every caller
+ * say what it knows.
+ */
+export function buyerEditClosed(
+  order: { status: string },
+  lines: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }> | undefined,
+): boolean {
+  return (
+    BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus) ||
+    holdsLiveDeliveredLine(lines)
+  );
+}
 
 /**
  * P5-08 / R1: derive the non-persisted edit-window descriptor from an order.
@@ -34,18 +52,19 @@ export function computeEditWindow(
     routeRunId?: string | null;
     routeRun?: { status: string } | null;
   },
-  role?: UserRole,
+  role: UserRole | undefined,
+  lines: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }> | undefined,
 ): BuyerOrderEditWindow {
-  if (
-    role === UserRole.CUSTOMER &&
-    BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus)
-  ) {
-    // W-1189: a refused order is closed by its status, not by dispatch (no "send a change request" explanation)
-    const refused = order.status === OrderStatus.REFUSED;
+  if (role === UserRole.CUSTOMER && buyerEditClosed(order, lines)) {
+    // W-1189: a refused order is closed by its status, not by dispatch (no "send a change request" explanation); P-5: a
+    // reopened order holding delivered goods is closed by its status too (it is not out for delivery)
+    const byStatus =
+      order.status === OrderStatus.REFUSED ||
+      !BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus);
     return {
       editable: false,
       editableUntil: null,
-      closedReason: refused ? "STATUS" : "DISPATCHED",
+      closedReason: byStatus ? "STATUS" : "DISPATCHED",
     };
   }
   const editable = order.status !== "CANCELLED";

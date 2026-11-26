@@ -18,6 +18,7 @@ const facts = (over: Partial<DeliveredLineFacts> = {}): DeliveredLineFacts => ({
   onRun: false,
   stopCompleted: false,
   routeRunLinked: false,
+  orderRouteRows: false,
   routeLineIds: new Set(),
   officeLineIds: new Set(["L1"]),
   liveReturn: false,
@@ -127,6 +128,12 @@ describe("deliveredLineEditMode", () => {
   it("6: an order whose stop link was released but whose run link remains is ROUTE for a line with no rows", () => {
     expect(
       deliveredLineEditMode(line, facts({ officeLineIds: new Set(), routeRunLinked: true })),
+    ).toMatchObject({ mode: "LOCKED", reason: "ROUTE" });
+  });
+
+  it("6 (SA-1536 z): a driver or stop row on a SIBLING line locks a no-row line ROUTE, links or no links", () => {
+    expect(
+      deliveredLineEditMode(line, facts({ officeLineIds: new Set(), orderRouteRows: true })),
     ).toMatchObject({ mode: "LOCKED", reason: "ROUTE" });
   });
 

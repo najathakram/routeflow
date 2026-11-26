@@ -4,7 +4,7 @@ import { InvoiceStatus, UserRole } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRowsNoWait } from "../common/db-locks";
 import { carrierEditGuard, resyncsInPlace, type CarrierOrder } from "../orders/order-carrier-guard";
-import { holdsLiveDeliveredLine } from "../orders/delivered-line-correction";
+import { holdsLiveDeliveredLine } from "../orders/delivered-line-lock";
 /** SA-1506 PR-1a (B4): the held lines the routing rule reads; REQUIRED so no caller can leave them out. */
 type HeldLinesForRouting = {
   lineItems: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }>;

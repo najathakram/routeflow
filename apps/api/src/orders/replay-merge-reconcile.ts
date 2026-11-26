@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import * as carrierGuard from "./order-carrier-guard";
-import { holdsLiveDeliveredLine } from "./delivered-line-correction";
+import { holdsLiveDeliveredLine } from "./delivered-line-lock";
 import { IDEMPOTENCY_REPLAY_NEEDS_RECONCILE, shouldSkipInPlaceResync } from "./merge-idempotency";
 import type { AppliedCreditNoteDto } from "./dto/create-order.dto";
 

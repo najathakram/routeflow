@@ -71,6 +71,11 @@ export interface DeliveredLineFacts {
   stopCompleted: boolean;
   /** The order carries a route run link (`routeRunId`), even when its stop link was released (SA-1533 M-3). */
   routeRunLinked: boolean;
+  /**
+   * SA-1536 (z): ANY delivery row of the ORDER carries a stop or a driver (no per-line, no evidence-type filter). A pickup
+   * switch nulls both order links and keeps the rows, so a no-row sibling line stays locked ROUTE.
+   */
+  orderRouteRows: boolean;
   /** Lines with a qualifying evidence row written by a driver or a route stop. */
   routeLineIds: ReadonlySet<string>;
   /** Lines with a qualifying evidence row written by the office (no stop, no driver). */
@@ -147,7 +152,8 @@ export function deliveredLineEditMode(
   const route = facts.routeLineIds.has(line.id);
   // 6 (SA-1533 M-3, PR-1a): every delivered line of an order that is, or was, on a run answers LOCKED ROUTE, whatever rows
   // it has: master's own guards then judge it, so PR-1a changes nothing on a route order. PR-1c-server lifts this one line.
-  if (route || facts.stopCompleted || facts.routeRunLinked) return locked("ROUTE");
+  if (route || facts.stopCompleted || facts.routeRunLinked || facts.orderRouteRows)
+    return locked("ROUTE");
   if (facts.liveReturn) return locked("RETURN"); // 7
   if (facts.partlyInvoiced) return locked("SPLIT_BILL"); // 8
   if (facts.writtenOffInvoiceNumber != null)
@@ -182,6 +188,7 @@ export const NO_ORDER_FACTS: DeliveredLineFacts = {
   onRun: false,
   stopCompleted: false,
   routeRunLinked: false,
+  orderRouteRows: false,
   routeLineIds: new Set(),
   officeLineIds: new Set(),
   liveReturn: false,

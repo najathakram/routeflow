@@ -233,6 +233,25 @@ const DELIVERED_LINE_ALLOWED_FIELDS = [
 ] as const;
 
 /** A CORRECT entry keeps its real changes; a price or unit label equal to the held line's is dropped (same entry if none). */
+/**
+ * SA-1536 (ad): the write loop reaches an existing line's price only through a quantity, a box split, a note or a reason;
+ * a bare `{ id, unitPrice }` is silently dropped (the web always sends the quantity along). A price-only entry on a
+ * CORRECT line therefore carries the line's own quantity, so the price is applied, never accepted and ignored.
+ */
+function withHeldQtyWhenPriceOnly<T extends DeliveredLockEntry>(
+  entry: T,
+  held: DeliveredLockLine,
+): T {
+  const priceOnly =
+    entry.unitPrice != null &&
+    entry.qty === undefined &&
+    entry.boxes == null &&
+    entry.pieces == null;
+  const removes = entry.action === "CANCEL" || entry.action === "DELETE";
+  if (!priceOnly || removes || held.qty == null) return entry;
+  return { ...entry, qty: Number(held.qty) };
+}
+
 function withoutUnchangedPriceAndUnit<T extends DeliveredLockEntry>(
   entry: T,
   held: DeliveredLockLine,
@@ -283,7 +302,8 @@ export function reduceDeliveredLineEntries<T extends DeliveredLockEntry>(
       // B7: a real change reaches the write loop; a restated entry is cut to its note / reason below.
       // SA-1514 A3 LOW 9 (A1 B10): a price or unit the entry only restates is dropped on EVERY CORRECT entry, so it never
       // reprices a sent invoice from a stale price or trips the unit guards.
-      if (entryTouchesLine(entry, line)) return withoutUnchangedPriceAndUnit(entry, line);
+      if (entryTouchesLine(entry, line))
+        return withHeldQtyWhenPriceOnly(withoutUnchangedPriceAndUnit(entry, line), line);
     } else if (!pd && !(perLine && isLiveDeliveredLine(line) && !entryTouchesLine(entry, line))) {
       return entry;
     }
@@ -356,3 +376,8 @@ export const ORDER_HAS_NO_LIVE_DELIVERED_LINE = {
 export function isLiveDeliveredLine(line: { status?: unknown; deliveredQty?: unknown }): boolean {
   return line.status !== "CANCELLED" && Number(line.deliveredQty ?? 0) > 0;
 }
+
+/** True when any HELD line is a live delivered line: the third input of `resyncsInPlace` and the buyer window's second. */
+export const holdsLiveDeliveredLine = (
+  lines: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }> | undefined,
+): boolean => (lines ?? []).some(isLiveDeliveredLine);

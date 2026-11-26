@@ -142,7 +142,7 @@ import {
   stampOrderIdempotencyKey,
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
-import { BUYER_EDIT_CLOSED_STATUSES } from "./edit-window";
+import { buyerEditClosed } from "./edit-window";
 import { linePositionAllocator, replaceSlotPlanner, settleReplaceSlots } from "./line-position";
 import { reorderOrderLines } from "./order-line-order";
 import type { ReorderLinesDto } from "./dto/reorder-lines.dto";
@@ -2039,7 +2039,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // ownership check below already gives them on every other status — otherwise
     // an authenticated buyer could read another customer's order status off the
     // response body. The extra read only runs on the path about to throw anyway.
-    if (user?.role === UserRole.CUSTOMER && BUYER_EDIT_CLOSED_STATUSES.includes(order.status)) {
+    if (user?.role === UserRole.CUSTOMER && buyerEditClosed(order, order.lineItems)) {
       // REG-B131: `deletedAt: null` — a removed customer's still-valid token resolves to no
       // owner and takes the bare 403 below, never the dispatch-state message.
       const owner = await this.prisma
@@ -3356,6 +3356,7 @@ export class OrdersService implements OnApplicationBootstrap {
             ...dl.judgeFlags(heldItems, order.status, carrier),
           },
         );
+        await dl.restateInvoices(tx, corrected); // SA-1536 (ab): a correction restates in this tx; SA-1544 (aq) no catch
         // B215: the merge's replay key commits in THIS transaction, atomically with the fold —
         // never a second, later commit that a crash or a post-commit throw can split off.
         if (opts?.idempotency) {
@@ -3382,8 +3383,9 @@ export class OrdersService implements OnApplicationBootstrap {
       },
       // Headroom over Prisma's 5s default: the merge branch issues per-line
       // queries inside the transaction (same shape as create()'s in-tx per-line work).
-      { timeout: 15_000 },
+      dl.txOptions(), // SA-1544 (as): 20 s for the correction lock class, 15 s otherwise
     );
+    dl.flushAfterCommit(); // SA-1536 (ab): the in-tx invoice rebuild's emits
     inlineReturn.emitInlineReturnCredit(inlineRet, this.prisma.getTenantId(), inlineMinted);
 
     // R1b SAFETY (two adversarial-review catches): a PARTIALLY-invoiced order must NOT
@@ -3421,7 +3423,7 @@ export class OrdersService implements OnApplicationBootstrap {
       orderId,
       order.customerId,
       isStaffCreditEdit ? dto.appliedCreditNotes : undefined,
-      { postDeliveryEdit, skipInPlaceResync },
+      { postDeliveryEdit, skipInPlaceResync, restatedInTx: dl.restatedInTx() }, // SA-1544 (ar)
       user?.sub ?? null,
       isStaffCreditEdit,
     );
@@ -3463,7 +3465,7 @@ export class OrdersService implements OnApplicationBootstrap {
     orderId: string,
     customerId: string,
     appliedCreditNotes: AppliedCreditNoteDto[] | undefined,
-    routing: { postDeliveryEdit: boolean; skipInPlaceResync: boolean },
+    routing: { postDeliveryEdit: boolean; skipInPlaceResync: boolean; restatedInTx?: boolean },
     actor: string | null = null, // SA-763r P-3: the editing user, for the revision audit rows
     staffEdit = false, // SA-760 Q-760-1: only a staff edit re-prices DRAFT partials
   ): Promise<{

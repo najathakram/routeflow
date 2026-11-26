@@ -185,6 +185,33 @@ describe("reduceDeliveredLineEntries (A1 B7 / B8, A2 M8)", () => {
     );
   });
 
+  it("SA-1536 (ad): a price-only entry on a CORRECT line carries the line's own qty, so the price is applied, never silently dropped", () => {
+    const out = reduceDeliveredLineEntries(
+      { status: "CONFIRMED" },
+      live,
+      [{ id: "L1", action: "UPDATE", unitPrice: 2 }],
+      CORRECT,
+    );
+    expect(out).toEqual([{ id: "L1", action: "UPDATE", unitPrice: 2, qty: 10 }]); // wrong value: no qty (master drops it)
+    // a take-off, or an entry that names its own quantity, is left as it is
+    expect(
+      reduceDeliveredLineEntries(
+        { status: "CONFIRMED" },
+        live,
+        [{ id: "L1", action: "CANCEL" }],
+        CORRECT,
+      ),
+    ).toEqual([{ id: "L1", action: "CANCEL" }]);
+    expect(
+      reduceDeliveredLineEntries(
+        { status: "CONFIRMED" },
+        live,
+        [{ id: "L1", qty: 9, unitPrice: 2 }],
+        CORRECT,
+      ),
+    ).toEqual([{ id: "L1", qty: 9, unitPrice: 2 }]);
+  });
+
   it("a restated CORRECT entry is cut to its note (it never reprices from live promotions)", () => {
     const out = reduceDeliveredLineEntries(
       { status: "CONFIRMED" },

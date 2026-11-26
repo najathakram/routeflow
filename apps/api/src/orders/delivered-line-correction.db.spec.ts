@@ -412,12 +412,16 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     await expect(
       orders.updateOrderItems(o.id, { replaceAll: false, items: [{ id, qty: 8 }] }, sa),
     ).rejects.toMatchObject({ status: 403 });
-    expect(await snapshot()).toBe(frozen);
+    expect(await stock(p)).toBe(90);
+    expect(Number((await line(o.id)).qty)).toBe(10);
+    expect(await audits(o.id)).toHaveLength(0);
     // inside a tenant context a SUPER_ADMIN is not a tenant admin: LOCKED ROLE, the same 409, 0 writes
     await expect(
       edit(o.id, { replaceAll: false, items: [{ id, qty: 8 }] }, sa),
     ).rejects.toMatchObject({ status: 409, response: { code: "LINE_ALREADY_DELIVERED" } });
-    expect(await snapshot()).toBe(frozen);
+    expect(await stock(p)).toBe(90);
+    expect(Number((await line(o.id)).qty)).toBe(10);
+    expect(await audits(o.id)).toHaveLength(0);
   });
 
   it("SA-1533 (x) OBSERVE: a price-only edit on a no-row line at column 10 of 12: column and bills reported, not asserted", async () => {
@@ -455,6 +459,270 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
         ((await stock(p)) - before) +
         String.fromCharCode(10),
     );
+  });
+
+  // SA-1536 (y): a DELIVERED order is LOCKED REOPEN_FIRST for an admin: L, N, B1 and the take-off are each a 409 with the
+  // reopen sentence and 0 moves. E (a raise) is observed, not asserted.
+  it("SA-1536 (y): on a DELIVERED office order an admin's L, N, B1 and take-off are each 409 REOPEN_FIRST, 0 moves", async () => {
+    const REOPEN = "Reopen the order to correct delivered items.";
+    const cases: Array<{
+      name: string;
+      q: number;
+      d: number;
+      rows: boolean;
+      item: (id: string) => any;
+    }> = [
+      { name: "L cut 10/12 to 11", q: 12, d: 10, rows: false, item: (id) => ({ id, qty: 11 }) },
+      { name: "N cut 10/12 to 10", q: 12, d: 10, rows: false, item: (id) => ({ id, qty: 10 }) },
+      { name: "B1 cut 10/10 to 8", q: 10, d: 10, rows: true, item: (id) => ({ id, qty: 8 }) },
+      {
+        name: "take-off 10/10",
+        q: 10,
+        d: 10,
+        rows: true,
+        item: (id) => ({ id, action: "CANCEL", deliveredTo: 0 }),
+      },
+    ];
+    for (const c of cases) {
+      const p = await product("y-" + c.name.slice(0, 2));
+      const o = await reopened([plain(p, c.q, c.d)], "DELIVERED");
+      const id = o.lineItems[0].id;
+      if (c.rows) await officeRow(o.id, { id, productId: p }, c.d);
+      const read = async () => ({
+        qty: Number((await line(o.id)).qty),
+        d: Number((await line(o.id)).deliveredQty),
+        status: (await line(o.id)).status,
+        rows: await raw.deliveryMutation.count({ where: { orderId: o.id } }),
+      });
+      const before = await read();
+      await expect(edit(o.id, { replaceAll: false, items: [c.item(id)] })).rejects.toMatchObject({
+        status: 409,
+        response: { message: expect.stringContaining(REOPEN) },
+      });
+      expect([c.name, await read()]).toEqual([c.name, before]);
+      expect(await stock(p)).toBe(90);
+      expect(await ledgerNet(p)).toBe(0);
+      expect(await audits(o.id)).toHaveLength(0);
+    }
+  });
+
+  it("SA-1536 (y) OBSERVE E: a raise of a no-row 10/12 line on a DELIVERED order, report only", async () => {
+    const p = await product("y-e");
+    const o = await reopened([plain(p, 12, 10)], "DELIVERED");
+    const id = o.lineItems[0].id;
+    let outcome = "accepted";
+    try {
+      await edit(o.id, { replaceAll: false, items: [{ id, qty: 14 }] });
+    } catch (e: any) {
+      outcome = "refused " + (e?.response?.code ?? e?.message);
+    }
+    const a = await line(o.id);
+    require("fs").appendFileSync(
+      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
+      "Y-E raise 10/12 to 14 on a DELIVERED order: " +
+        outcome +
+        " column=" +
+        Number(a.deliveredQty) +
+        " qty=" +
+        Number(a.qty) +
+        " stockDelta=" +
+        ((await stock(p)) - 90) +
+        String.fromCharCode(10),
+    );
+  });
+
+  // SA-1536 (z): the route lock reads the ORDER's rows. A pickup-switched order (no run, no stop) with a driver row on a
+  // sibling line is a route order: its no-row line answers ROUTE, 409, 0 moves.
+  it("SA-1536 (z): a pickup-switched order (links null) with a driver row on a sibling line: the no-row line is LOCKED ROUTE, 0 moves", async () => {
+    const a = await product("z-a");
+    const b = await product("z-b");
+    const o = await reopened([plain(a, 5), plain(b, 10)]);
+    const sibling = o.lineItems.find((l) => l.productId === a)!;
+    const noRow = o.lineItems.find((l) => l.productId === b)!;
+    await raw.deliveryMutation.create({
+      data: {
+        orderId: o.id,
+        orderItemId: sibling.id,
+        productId: a,
+        driverId,
+        type: "PARTIAL",
+        quantityDelivered: 5,
+        tenantId,
+      },
+    });
+    const head = await raw.order.findUniqueOrThrow({ where: { id: o.id } });
+    expect([head.routeRunId, head.routeRunStopId]).toEqual([null, null]);
+    await expect(
+      edit(o.id, { replaceAll: false, items: [{ id: noRow.id, qty: 8 }] }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: "LINE_ALREADY_DELIVERED",
+        message: expect.stringContaining("A driver delivered this item."),
+      },
+    });
+    expect(Number((await raw.orderItem.findUniqueOrThrow({ where: { id: noRow.id } })).qty)).toBe(
+      10,
+    );
+    expect(await stock(b)).toBe(90);
+    expect(await ledgerNet(b)).toBe(0);
+    expect(await audits(o.id)).toHaveLength(0);
+  });
+
+  // SA-1544 (az) / L-4: the route lock reads the order's rows by orderId, the grouped per-line reader dropped a row with no line.
+  it("SA-1544 (az): a driver row with NO line id still makes the order a route order: the no-row line is LOCKED ROUTE, 0 moves", async () => {
+    const a = await product("az-a");
+    const o = await reopened([plain(a, 10)]);
+    const noRow = o.lineItems.find((l) => l.productId === a)!;
+    await raw.deliveryMutation.create({
+      data: {
+        orderId: o.id,
+        orderItemId: null,
+        productId: a,
+        driverId,
+        type: "PARTIAL",
+        quantityDelivered: 5,
+        tenantId,
+      },
+    });
+    await expect(
+      edit(o.id, { replaceAll: false, items: [{ id: noRow.id, qty: 8 }] }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: "LINE_ALREADY_DELIVERED",
+        message: expect.stringContaining("A driver delivered this item."),
+      },
+    });
+    expect(Number((await raw.orderItem.findUniqueOrThrow({ where: { id: noRow.id } })).qty)).toBe(
+      10,
+    );
+    expect(await stock(a)).toBe(90);
+  });
+
+  it("SA-1544 (az) control: an OFFICE row with no line id does not lock the order (office orders stay correctable)", async () => {
+    const a = await product("az-c");
+    const o = await reopened([plain(a, 10)]);
+    const noRow = o.lineItems.find((l) => l.productId === a)!;
+    await raw.deliveryMutation.create({
+      data: {
+        orderId: o.id,
+        orderItemId: null,
+        productId: a,
+        routeRunStopId: null,
+        driverId: null,
+        type: "DELIVERED",
+        quantityDelivered: 3,
+        note: "OFFICE_MARKED",
+        tenantId,
+      },
+    });
+    await edit(o.id, { replaceAll: false, items: [{ id: noRow.id, qty: 8 }] });
+    expect(Number((await raw.orderItem.findUniqueOrThrow({ where: { id: noRow.id } })).qty)).toBe(
+      8,
+    );
+  });
+
+  // LOW-b: on a route order WITH rows master's own guards judge the edit: a raise, a cut at or above delivered and a price
+  // change pass as master (column untouched, no row written, no correction audit row).
+  it("SA-1536 (z) LOW-b: on a route order with rows a raise, a cut at or above delivered and a price change pass as master", async () => {
+    const edits: Array<{ name: string; item: (id: string) => any; qty: number; price: number }> = [
+      { name: "raise", item: (id) => ({ id, qty: 14 }), qty: 14, price: 1 },
+      { name: "cut at delivered", item: (id) => ({ id, qty: 10 }), qty: 10, price: 1 },
+      { name: "price", item: (id) => ({ id, qty: 12, unitPrice: 2 }), qty: 12, price: 2 },
+    ];
+    for (const e of edits) {
+      const p = await product("zb-" + e.name.slice(0, 3));
+      const o = await reopened([plain(p, 12, 10)]);
+      const id = o.lineItems[0].id;
+      const stopId = await completedStop();
+      await raw.order.update({ where: { id: o.id }, data: { routeRunStopId: stopId } });
+      await raw.deliveryMutation.create({
+        data: {
+          orderId: o.id,
+          orderItemId: id,
+          productId: p,
+          routeRunStopId: stopId,
+          driverId,
+          type: "PARTIAL",
+          quantityDelivered: 10,
+          tenantId,
+        },
+      });
+      await edit(o.id, { replaceAll: false, items: [e.item(id)] });
+      const after = await line(o.id);
+      expect([
+        e.name,
+        Number(after.qty),
+        Number(after.unitPrice),
+        Number(after.deliveredQty),
+      ]).toEqual([e.name, e.qty, e.price, 10]);
+      expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(1);
+      expect(await audits(o.id)).toHaveLength(0);
+    }
+  });
+
+  // SA-1536 (aa): a take-off is accepted ONLY with deliveredTo === 0; absent and null are master's removal 409, 0 moves.
+  it("SA-1536 (aa): a take-off with deliveredTo absent or null is refused (master's removal 409), 0 moves", async () => {
+    for (const extra of [{}, { deliveredTo: null }]) {
+      const p = await product("aa-" + Object.keys(extra).length);
+      const o = await reopened([plain(p, 10)]);
+      const id = o.lineItems[0].id;
+      await officeRow(o.id, { id, productId: p }, 10);
+      await expect(
+        edit(o.id, { replaceAll: false, items: [{ id, action: "CANCEL", ...extra }] }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: "LINE_ALREADY_DELIVERED", message: DELIVERED_LINE_REMOVED_MESSAGE },
+      });
+      expect(await stock(p)).toBe(90);
+      expect(await ledgerNet(p)).toBe(0);
+      expect(await officeSum(o.id)).toBe(10);
+      expect((await line(o.id)).status).toBe("PENDING");
+      expect(await audits(o.id)).toHaveLength(0);
+    }
+  });
+
+  // SA-1536 (ad): the price-only entry is applied, never accepted and ignored.
+  it("SA-1536 (ad): a price-only edit of a delivered office line applies the price (not accepted-and-ignored)", async () => {
+    const p = await product("ad");
+    const o = await reopened([plain(p, 10)]);
+    const id = o.lineItems[0].id;
+    await officeRow(o.id, { id, productId: p }, 10);
+    await edit(o.id, { replaceAll: false, items: [{ id, action: "UPDATE", unitPrice: 2 }] });
+    const a = await line(o.id);
+    expect(Number(a.unitPrice)).toBe(2); // wrong value: 1 (accepted, the price dropped)
+    expect(Number(a.qty)).toBe(10);
+    expect(Number(a.deliveredQty)).toBe(10);
+    expect(Number(a.subtotal)).toBe(20);
+    expect(await stock(p)).toBe(90);
+  });
+
+  // SA-1536 (ae), §8.8 / P-2: every sender of a FULL list (a replace) meets 409 LINES_REPLACE_AFTER_DELIVERY, 0 moves, on a
+  // reopened order that holds a delivered line. The buyer (M1-5, B9), the driver (D2-15) and the operator (D2-13) are pinned in
+  // w946r-merge-delivered, w946r-qty-floor and buyer-edit-input; the two tenant senders are here.
+  it("SA-1536 (ae): an OPERATOR's and a TENANT_ADMIN's replace-all on a reopened order with a delivered line is 409 LINES_REPLACE_AFTER_DELIVERY, 0 moves", async () => {
+    for (const who of [operator(), admin()]) {
+      const p = await product("ae-" + who.role.slice(0, 3));
+      const o = await reopened([plain(p, 10)]);
+      const id = o.lineItems[0].id;
+      await officeRow(o.id, { id, productId: p }, 10);
+      const rows = await raw.deliveryMutation.count({ where: { orderId: o.id } });
+      await expect(
+        edit(o.id, { replaceAll: true, items: [{ productId: p, qty: 6, unitPrice: "1.00" }] }, who),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: "LINES_REPLACE_AFTER_DELIVERY" },
+      });
+      expect([
+        who.role,
+        Number((await line(o.id)).qty),
+        Number((await line(o.id)).deliveredQty),
+      ]).toEqual([who.role, 10, 10]);
+      expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(rows);
+      expect(await stock(p)).toBe(90);
+      expect(await audits(o.id)).toHaveLength(0);
+    }
   });
 
   it("P-3b: the office row a correction writes carries the order's tenantId", async () => {

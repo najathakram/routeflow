@@ -32,7 +32,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { InlineReturnsQuoteService } from "./inline-returns-quote.service";
 import { InlineReturnsService } from "./inline-returns.service";
 import { carrierEditGuard, resyncsInPlace } from "../orders/order-carrier-guard";
-import { holdsLiveDeliveredLine } from "../orders/delivered-line-correction";
+import { holdsLiveDeliveredLine } from "../orders/delivered-line-lock";
 import { SHIP_STATE_REOPENED } from "../orders/ship-state-markers";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 

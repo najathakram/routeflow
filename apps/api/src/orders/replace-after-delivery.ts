@@ -6,7 +6,7 @@ import { assertWalkInSaleEditable } from "./counter-sale/walk-in-sale-lock";
 import * as carrierGuard from "./order-carrier-guard";
 import { withOrderBillingLock } from "../invoices/order-billing-lock";
 import { lockOrderRow } from "../credit-notes/credit-note-locks";
-import { holdsLiveDeliveredLine } from "./delivered-line-correction";
+import { holdsLiveDeliveredLine } from "./delivered-line-lock";
 
 export { walkInSaleLocked } from "./counter-sale/walk-in-sale-lock";
 

@@ -157,7 +157,7 @@ export async function findOneImpl(self: OrdersService, id: string, user: JwtPayl
   // P5-08 edit window (G7): free editing is open until the order's run dispatches.
   // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
   // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
-  (order as any).editWindow = computeEditWindow(order, user.role);
+  (order as any).editWindow = computeEditWindow(order, user.role, order.lineItems);
   // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
   Object.assign(order, {
     cancelBlockedReason: await carrierGuard.carrierBlocked(self, order),
