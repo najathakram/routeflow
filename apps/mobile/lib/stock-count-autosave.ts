@@ -140,8 +140,16 @@ export function createStockCountAutosave(deps: StockCountAutosaveDeps): StockCou
     }
     if (failed.kind === "increment" && current.kind === "increment") {
       pending.set(productId, { ...current, delta: current.delta + failed.delta });
+    } else if (failed.kind === "edit" && current.kind === "increment") {
+      // The failed absolute edit is older than the newer scans: keep it and carry every scan
+      // (its own scanDelta plus the newer ones) after it, so no count is lost.
+      pending.set(productId, {
+        ...failed,
+        mode: current.mode,
+        scanDelta: (failed.scanDelta ?? 0) + current.delta,
+      });
     }
-    // Any other combination: `current` is newer and already complete — drop.
+    // Any other combination: `current` is a newer edit/remove, already complete — drop.
   }
 
   async function flushOne(productId: string, entry: PendingEntry): Promise<void> {
