@@ -120,6 +120,7 @@ import {
   changedSinceSentNumbers,
   type SendEmailArgs,
 } from "./invoice-send-state";
+import { sendInvoiceStaffCopy } from "./invoice-staff-copy";
 import { resolveInvoiceVariant } from "./invoice-stage";
 import { fingerprintOfSnapshot, readSendSnapshot, runSendCredits } from "./invoice-send-snapshot";
 import { orderShipmentFields, writeInvoiceTracking } from "./order-shipment-fields";
@@ -3631,6 +3632,12 @@ export class InvoicesService {
       variant,
       kind: opts?.kind,
     });
+    // W-1443: the sender's private copy (after the customer's delivery; never throws, never changes the result).
+    const { prisma, emailService, logger } = this;
+    const copy = await sendInvoiceStaffCopy(
+      { prisma, emailService, logger },
+      { emailPayload, actorId, customerTo: recipientEmail },
+    );
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
     const { updated, auto } = await this.markSent(id, inv.orderId, true);
@@ -3669,6 +3676,7 @@ export class InvoicesService {
     return {
       success: true,
       sentTo: recipientEmail,
+      ...(copy.copiedTo ? { copiedTo: copy.copiedTo } : {}),
       ...(sendResult.smtpFallbackReason ? { warning: sendResult.smtpFallbackReason } : {}),
       ...(sendResult.fromAddress ? { fromAddress: sendResult.fromAddress } : {}),
     };
