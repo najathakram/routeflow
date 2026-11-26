@@ -58,6 +58,8 @@ const FIXTURE = [
   t("x1", { slug: "qa-acme", class: "TEST", subscription: null }),
   t("x2", { slug: "e2e-acme", class: "TEST", deletedAt: new Date(NOW.getTime() - DAY) }),
   t("i1", { slug: "routeflow-hq", class: "INTERNAL", subscription: null }),
+  // a class outside the shared enum: the unknown bucket, loud on the attention switch
+  t("u1", { class: "LEGACY", subscription: null }),
 ];
 
 const addonFindMany = jest.fn(async () => [] as any[]);
@@ -156,11 +158,11 @@ describe("listTenantsByBucket", () => {
       // x2 is a deleted test account: hidden and not counted until Show deleted is on
       test_demo: 1,
       internal: 1,
-      unknown: 0,
+      unknown: 1, // u1
     });
     expect(ids(r)).not.toContain("c2");
     expect(ids(r)).not.toContain("x2");
-    expect(r.meta.total).toBe(9);
+    expect(r.meta.total).toBe(10);
     expect(r.meta.truncated).toBe(false);
   });
 
@@ -181,8 +183,8 @@ describe("listTenantsByBucket", () => {
   it("attention: attentionCount counts every business with a reason; ?attention filters whichever tab is open", async () => {
     const { prisma } = fakePrisma(FIXTURE);
     const all = await listTenantsByBucket(prisma, mrr, base);
-    // p2 overdue, z1 subscribed_zero, tr1 trial_ending, c-rows none, x1/i1 none (class matches slug)
-    expect(all.meta.attentionCount).toBe(3);
+    // p2 overdue, z1 subscribed_zero, tr1 trial_ending, u1 unknown, c-rows none, x1/i1 none (class matches slug)
+    expect(all.meta.attentionCount).toBe(4); // u1 is unknown
     const paying = await listTenantsByBucket(prisma, mrr, {
       ...base,
       buckets: ["paying"],
@@ -191,7 +193,7 @@ describe("listTenantsByBucket", () => {
     expect(ids(paying)).toEqual(["p2"]);
     // counts ignore bucket and attention: the tabs keep their numbers while one is open
     expect(paying.meta.bucketCounts).toEqual(all.meta.bucketCounts);
-    expect(paying.meta.attentionCount).toBe(3);
+    expect(paying.meta.attentionCount).toBe(4);
   });
 
   it("M1: the attention badge counts exactly the rows the All list shows with attention on, deleted rows included only with Show deleted", async () => {
@@ -214,6 +216,18 @@ describe("listTenantsByBucket", () => {
     });
     expect(ids(on)).toEqual(["del1"]);
     expect(on.meta.attentionCount).toBe(ids(on).length);
+  });
+
+  it("list.total === attentionCount on the attention list, with Show deleted off and on", async () => {
+    const { prisma } = fakePrisma(FIXTURE);
+    for (const includeDeleted of [false, true]) {
+      const r = await listTenantsByBucket(prisma, mrr, {
+        ...base,
+        attention: true,
+        includeDeleted,
+      });
+      expect(r.meta.total).toBe(r.meta.attentionCount);
+    }
   });
 
   it("the status filter narrows the list but not the counts", async () => {
@@ -272,7 +286,7 @@ describe("listTenantsByBucket", () => {
     const r = await listTenantsByBucket(prisma, mrr, { ...base, limit: 2, page: 2 });
     // All view, 9 visible rows in scan order: p1 p2 n1 z1 tr1 pa1 c1 x1 i1 -> page 2 = n1, z1
     expect(ids(r)).toEqual(["n1", "z1"]);
-    expect(r.meta).toMatchObject({ total: 9, page: 2, limit: 2, pages: 5 });
+    expect(r.meta).toMatchObject({ total: 10, page: 2, limit: 2, pages: 5 });
     const fetchArgs = findMany.mock.calls[1][0];
     expect(fetchArgs.where).toEqual({ id: { in: ["n1", "z1"] } });
     expect(fetchArgs.include).toEqual({ _count: true });

@@ -49,6 +49,11 @@ on:
       # these three files must run this lane, not just the one that touches
       # the spec file itself.
       - "apps/api/src/billing/config-snapshot-flag.service.ts"
+      # W-1462 PR-1: the business-bucket classifier, the card-state helper and the list scan are proven against real rows only
+      # by billing/tenant-bucket.db.spec.ts (paying == payingTenants, the sum identities); an edit to any of them alone must run this lane.
+      - "apps/api/src/billing/tenant-bucket.ts"
+      - "apps/api/src/billing/card-billing-state.ts"
+      - "apps/api/src/platform-admin/tenant-bucket-list.ts"
       - "apps/api/src/import/numbering.service.ts"
       - "apps/api/src/invoices/invoices.service.ts"
       # B667 (#1185 review round 4): recomputeOrderFromInvoices' coverage/orphan-cancel logic
