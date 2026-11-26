@@ -17,6 +17,16 @@ describe("rejectNonDigits stays on the buyer quantity box", () => {
     const boxes = src.match(/<QtyTextInput[\s\S]*?\/>/g) ?? [];
     expect(boxes.some((b) => /\brejectNonDigits\b/.test(b) && /\bmax=\{/.test(b))).toBe(true);
   });
+
+  // B1395 (R-152-D INFO-3): the edit-items box rejects "-5" whole too. It carries NO `max`: the bound is clamped by
+  // `setDraftCount` (buyer-edit-items.ts), which also returns the limit line; a box-level max would clamp first and
+  // the line would never show.
+  it("the edit-items screen passes rejectNonDigits and leaves the bound to setDraftCount", () => {
+    const src = read("app/(customer)/orders/[id]/edit-items.tsx");
+    const boxes = src.match(/<QtyTextInput[\s\S]*?\/>/g) ?? [];
+    expect(boxes.length).toBeGreaterThan(0);
+    expect(boxes.every((b) => /\brejectNonDigits\b/.test(b) && !/\bmax=\{/.test(b))).toBe(true);
+  });
 });
 
 describe("no literal buyer line limit in the mobile callers (#4509 F5)", () => {
