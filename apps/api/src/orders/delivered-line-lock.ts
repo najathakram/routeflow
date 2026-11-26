@@ -62,6 +62,8 @@ export interface DeliveredLockEntry {
   qty?: number;
   /** SA-1533 (s): 0 only, with a take-off only. */
   deliveredTo?: number;
+  /** SA-1546 M2: an admin's opt-in to apply the server's delivered correction to a quantity, box or piece change (true only). */
+  correctDelivered?: true;
   boxes?: number;
   pieces?: number;
   unitPrice?: number;
@@ -106,6 +108,15 @@ export function entryTouchesLine(entry: DeliveredLockEntry, held: DeliveredLockL
     !withinStaffOverrideTolerance(Number(entry.unitPrice), Number(held.unitPrice ?? 0))
   )
     return true;
+  return entryChangesQuantity(entry, held);
+}
+
+/**
+ * SA-1546 M3: does the entry AS SENT change the line's quantity, box split or piece count? Judged on the request against
+ * the held line, never on the row after the write (a legacy non-canonical split is rewritten by the write loop, so the after
+ * row can differ from the held one although the entry said nothing about quantity). A price, a note, a restated quantity: no.
+ */
+export function entryChangesQuantity(entry: DeliveredLockEntry, held: DeliveredLockLine): boolean {
   const splitEntered = (entry.boxes ?? 0) > 0 || (entry.pieces ?? 0) > 0;
   if (splitEntered) {
     return (entry.boxes ?? 0) !== (held.boxes ?? 0) || (entry.pieces ?? 0) !== (held.pieces ?? 0);
@@ -189,6 +200,14 @@ function assertCorrectEntry(
   // SA-1533 (s): a take-off is a correction only when it says so (`deliveredTo: 0`); a bare DELETE / CANCEL (the mobile
   // screen, old builds) keeps master's removal 409, so a phone cannot restock a delivered line by trashing it.
   if (entryRemovesLine(entry) && entry.deliveredTo !== 0) throw deliveredLineRemoved(EDIT);
+  // SA-1546 M2: a quantity, box or piece change is a correction only when it says so (`correctDelivered: true`, the admin's
+  // confirm on the web). Without it the answer is master's lock 409, so mobile and old builds never restate a delivered line.
+  if (
+    !entryRemovesLine(entry) &&
+    entry.correctDelivered !== true &&
+    entryChangesQuantity(entry, held)
+  )
+    throw deliveredLineLocked(EDIT);
   // A return and a correction read the order's stock differently: one save does one of them (SA-1506 C2).
   if (dto.inlineReturn != null && entryTouchesLine(entry, held))
     throw conflict(CORRECT_WITH_RETURN_MESSAGE);

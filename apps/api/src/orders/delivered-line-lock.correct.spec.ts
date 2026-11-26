@@ -2,6 +2,7 @@ import {
   assertDeliveredLinesUntouched,
   assertDeliveredToShape,
   DELIVERED_LINE_REMOVED_MESSAGE,
+  DELIVERED_LINE_LOCKED_MESSAGE,
   assertQtyNotBelowDelivered,
   reduceDeliveredLineEntries,
   type DeliveredModes,
@@ -48,7 +49,7 @@ describe("assertDeliveredLinesUntouched with a CORRECT decision (SA-1506)", () =
   it.each(["CONFIRMED", "PARTIALLY_DELIVERED"])(
     "a quantity cut, a price change and a take-off pass on %s",
     (status) => {
-      expect(run(status, [{ id: "L1", qty: 8 }], CORRECT)).toBeNull();
+      expect(run(status, [{ id: "L1", qty: 8, correctDelivered: true }], CORRECT)).toBeNull();
       expect(run(status, [{ id: "L1", unitPrice: 2 }], CORRECT)).toBeNull();
       expect(run(status, [{ id: "L1", action: "CANCEL", deliveredTo: 0 }], CORRECT)).toBeNull();
       expect(run(status, [{ id: "L1", action: "DELETE", deliveredTo: 0 }], CORRECT)).toBeNull();
@@ -87,12 +88,16 @@ describe("assertDeliveredLinesUntouched with a CORRECT decision (SA-1506)", () =
   });
 
   it("restating the same product id is not a product change", () => {
-    expect(run("CONFIRMED", [{ id: "L1", productId: "p1", qty: 8 }], CORRECT)).toBeNull();
+    expect(
+      run("CONFIRMED", [{ id: "L1", productId: "p1", qty: 8, correctDelivered: true }], CORRECT),
+    ).toBeNull();
   });
 
   it("a correcting entry together with an inline return is 409 with the two-saves sentence", () => {
     expect(
-      run("CONFIRMED", [{ id: "L1", qty: 8 }], CORRECT, { inlineReturn: { returnKey: "k" } }),
+      run("CONFIRMED", [{ id: "L1", qty: 8, correctDelivered: true }], CORRECT, {
+        inlineReturn: { returnKey: "k" },
+      }),
     ).toEqual({ code: "LINE_ALREADY_DELIVERED", message: CORRECT_WITH_RETURN_MESSAGE });
   });
 
@@ -100,6 +105,43 @@ describe("assertDeliveredLinesUntouched with a CORRECT decision (SA-1506)", () =
     expect(
       run("CONFIRMED", [{ id: "L1", qty: 10 }], CORRECT, { inlineReturn: { returnKey: "k" } }),
     ).toBeNull();
+  });
+});
+
+// SA-1546 M2 (lead ruling): the server applies the correction to a quantity, box or piece change only when the entry opts in with
+// `correctDelivered: true`. Without it the answer is master's lock 409 (mobile and old builds are unchanged); a price-only
+// entry, a restated quantity and a take-off with `deliveredTo: 0` need no flag; the flag on a line that is not CORRECT is ignored.
+describe("correctDelivered: the opt-in of a quantity correction (SA-1546 M2)", () => {
+  const LOCKED_409 = { code: "LINE_ALREADY_DELIVERED", message: DELIVERED_LINE_LOCKED_MESSAGE };
+  it.each(["CONFIRMED", "PARTIALLY_DELIVERED"])(
+    "a quantity, box or piece change with no flag is master's lock 409 on %s",
+    (status) => {
+      expect(run(status, [{ id: "L1", qty: 8 }], CORRECT)).toEqual(LOCKED_409);
+      expect(run(status, [{ id: "L1", action: "UPDATE", boxes: 1, pieces: 2 }], CORRECT)).toEqual(
+        LOCKED_409,
+      );
+      expect(run(status, [{ id: "L1", pieces: 3 }], CORRECT)).toEqual(LOCKED_409);
+    },
+  );
+  it("the flag lets the same changes through", () => {
+    for (const entry of [
+      { id: "L1", qty: 8 },
+      { id: "L1", qty: 12 },
+      { id: "L1", boxes: 1, pieces: 2 },
+    ])
+      expect(run("CONFIRMED", [{ ...entry, correctDelivered: true }], CORRECT)).toBeNull();
+  });
+  it("a price-only entry, a restated quantity and a take-off need no flag", () => {
+    expect(run("CONFIRMED", [{ id: "L1", unitPrice: 2 }], CORRECT)).toBeNull();
+    expect(run("CONFIRMED", [{ id: "L1", qty: 10, unitPrice: 2 }], CORRECT)).toBeNull();
+    expect(run("CONFIRMED", [{ id: "L1", action: "CANCEL", deliveredTo: 0 }], CORRECT)).toBeNull();
+  });
+  it("the flag on a line that is not CORRECT is ignored (the line judges as before)", () => {
+    const edit = modes({ mode: "EDIT" });
+    expect(run("CONFIRMED", [{ id: "L1", qty: 8, correctDelivered: true }], edit)).toBeNull();
+    expect(
+      run("PARTIALLY_DELIVERED", [{ id: "L1", qty: 8, correctDelivered: true }], new Map()),
+    ).toMatchObject({ code: "LINE_ALREADY_DELIVERED" });
   });
 });
 

@@ -83,7 +83,7 @@ describeDb("SA-1506 PR-1a: the real reopen path, the round trip, the stop and th
     expect((await orderOf(order.id)).status).toBe("CONFIRMED");
     expect(await w.stockOf(p)).toBe(0); // reopening moves no stock
 
-    await edit(order.id, [{ id: items[0].id, qty: 8 }]);
+    await edit(order.id, [{ id: items[0].id, qty: 8, correctDelivered: true }]);
     const after = await lineOf(order.id);
     expect([Number(after.qty), Number(after.deliveredQty)]).toEqual([8, 8]);
     expect(await w.stockOf(p)).toBe(2); // wrong value: 0 (master refuses or leaves the 2 on the order)
@@ -110,7 +110,7 @@ describeDb("SA-1506 PR-1a: the real reopen path, the round trip, the stop and th
     await status(order.id, "CONFIRMED", "office correction");
     // a refused correction: an operator is LOCKED ROLE (409, nothing written)
     await expect(
-      edit(order.id, [{ id: items[0].id, qty: 8 }], as("OPERATOR")),
+      edit(order.id, [{ id: items[0].id, qty: 8, correctDelivered: true }], as("OPERATOR")),
     ).rejects.toMatchObject({ status: 409, response: { code: "LINE_ALREADY_DELIVERED" } });
     // the way back, as the screen does it
     await status(order.id, "OUT_FOR_DELIVERY");

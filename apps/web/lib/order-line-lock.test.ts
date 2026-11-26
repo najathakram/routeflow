@@ -53,8 +53,30 @@ describe("copy", () => {
 });
 
 describe("SA-1506: the server's lineEditMode decides (L-072, no second rule)", () => {
-  it("LOCKED is locked on any status; CORRECT and EDIT never are", () => {
-    expect(isLineDeliveredLocked("CONFIRMED", { id: "a", lineEditMode: "LOCKED" })).toBe(true);
+  // SA-1546 M1 (lead ruling): master's web rule stays for a line the server marks LOCKED until the server enforces LOCKED itself:
+  // the screen locks it on PARTIALLY_DELIVERED only. Only CORRECT changes what the screen does.
+  it("an operator can still reprice a delivered line on a DELIVERED order; on PARTIALLY_DELIVERED it stays locked", () => {
+    const operatorLine = {
+      id: "a",
+      deliveredQty: 3,
+      lineEditMode: "LOCKED" as const,
+      lockedReason: "ROLE" as const,
+      lockedOperatorNote: true,
+    };
+    expect(isLineDeliveredLocked("DELIVERED", operatorLine)).toBe(false);
+    expect(deliveredLockedLineIds("DELIVERED", [operatorLine]).size).toBe(0);
+    expect(isLineDeliveredLocked("PARTIALLY_DELIVERED", operatorLine)).toBe(true);
+    expect([...deliveredLockedLineIds("PARTIALLY_DELIVERED", [operatorLine])]).toEqual(["a"]);
+  });
+  it("a LOCKED line on any other status than PARTIALLY_DELIVERED is not locked on the screen (master's rule)", () => {
+    for (const status of ["CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED", "PENDING"])
+      expect(isLineDeliveredLocked(status, { id: "a", lineEditMode: "LOCKED" })).toBe(false);
+    expect(isLineDeliveredLocked(undefined, { id: "a", lineEditMode: "LOCKED" })).toBe(false);
+  });
+  it("PARTIALLY_DELIVERED locks a LOCKED line; CORRECT and EDIT never lock", () => {
+    expect(isLineDeliveredLocked("PARTIALLY_DELIVERED", { id: "a", lineEditMode: "LOCKED" })).toBe(
+      true,
+    );
     expect(
       isLineDeliveredLocked("PARTIALLY_DELIVERED", {
         id: "a",

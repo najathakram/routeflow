@@ -280,7 +280,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
 
   it("case 1 + 6: a SENT invoice restates in place on a cut to 8: status SENT, order stays CONFIRMED, invoice bills 8", async () => {
     const { o, li, inv } = await fixture({ status: "SENT" });
-    await edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8 }] });
+    await edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8, correctDelivered: true }] });
     const after = await invoiceOf(inv.id);
     expect(after.status).toBe("SENT"); // wrong value: DRAFT (reverted)
     expect(Number(after.total)).toBe(80); // wrong value: 100 (master refuses, a stub leaves it)
@@ -290,7 +290,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
 
   it("case 6: an admin raise (qty 12, price 11) restates the SENT invoice too", async () => {
     const { o, li, inv } = await fixture({ status: "SENT" });
-    await edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 12, unitPrice: 11 }] });
+    await edit(o.id, {
+      replaceAll: false,
+      items: [{ id: li.id, qty: 12, unitPrice: 11, correctDelivered: true }],
+    });
     const after = await invoiceOf(inv.id);
     expect(after.status).toBe("SENT");
     expect(Number(after.total)).toBe(132);
@@ -299,7 +302,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
 
   it("R4-G invoice: a row-less line raised from 12 to 13 bills 13 (no silent shortfall)", async () => {
     const { o, li, inv } = await fixture({ status: "SENT", qty: 12, officeRow: false });
-    await edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 13 }] });
+    await edit(o.id, {
+      replaceAll: false,
+      items: [{ id: li.id, qty: 13, correctDelivered: true }],
+    });
     expect(await invoiceQty(inv.id)).toBe(13);
     expect(
       Number((await raw.orderItem.findUniqueOrThrow({ where: { id: li.id } })).deliveredQty),
@@ -310,7 +316,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     const { o, li } = await fixture({ status: "PAID", paid: 100 });
     const before = await snapshot(o.id);
     await expect(
-      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8 }] }),
+      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8, correctDelivered: true }] }),
     ).rejects.toMatchObject({
       status: 409,
       response: { code: "ORDER_EDIT_WOULD_OVERPAY" },
@@ -324,7 +330,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     await expect(
       edit(
         o.id,
-        { replaceAll: false, items: [{ id: li.id, qty: 8 }] },
+        { replaceAll: false, items: [{ id: li.id, qty: 8, correctDelivered: true }] },
         principal("OPERATOR", operatorUserId),
       ),
     ).rejects.toMatchObject({ status: 409, response: { code: "LINE_ALREADY_DELIVERED" } });
@@ -336,7 +342,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     const before = await snapshot(o.id);
     const invoiceNumber = (await invoiceOf(inv.id)).invoiceNumber;
     await expect(
-      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8 }] }),
+      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8, correctDelivered: true }] }),
     ).rejects.toMatchObject({
       status: 409,
       response: {
@@ -363,7 +369,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     });
     const before = await snapshot(o.id);
     await expect(
-      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8 }] }),
+      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8, correctDelivered: true }] }),
     ).rejects.toMatchObject({
       status: 409,
       response: { code: "LINE_ALREADY_DELIVERED", message: lockedCopy("RETURN") },
@@ -377,7 +383,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     await raw.orderItem.update({ where: { id: li.id }, data: { unitLabel: "Case" } as any });
     const before = await snapshot(o.id);
     await expect(
-      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8 }] }),
+      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8, correctDelivered: true }] }),
     ).rejects.toMatchObject({ status: 409, response: { code: "UNIT_AWARE_LINE" } });
     expect(await snapshot(o.id)).toEqual(before);
   }, 60_000);
@@ -388,7 +394,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     await expect(
       edit(
         o.id,
-        { replaceAll: false, items: [{ id: li.id, qty: 8 }] },
+        { replaceAll: false, items: [{ id: li.id, qty: 8, correctDelivered: true }] },
         principal("OPERATOR", operatorUserId),
       ),
     ).rejects.toMatchObject({ status: 409 });
@@ -402,7 +408,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
       edit(o.id, {
         replaceAll: false,
         expectedRevisionNumber: 999,
-        items: [{ id: li.id, qty: 8 }],
+        items: [{ id: li.id, qty: 8, correctDelivered: true }],
       }),
     ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_REVISION_STALE" } });
     expect(await snapshot(o.id)).toEqual(before);
@@ -419,6 +425,28 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     expect(Number(invAfter.total)).toBe(Number(invBefore.total));
     expect(invAfter.status).toBe(invBefore.status);
     expect(await snapshot(o.id)).toEqual(before);
+  }, 60_000);
+
+  // SA-1546 M2: a quantity change on a CORRECT line is a correction only with `correctDelivered: true`. Without it the answer is
+  // master's lock 409 and nothing moves: the line, the rows, the stock, the audit log and the real invoice stay as they were.
+  it("SA-1546 M2: a cut to 8 with no correctDelivered is 409 LINE_ALREADY_DELIVERED; line, stock, audit and the SENT invoice are unchanged", async () => {
+    const { o, li, inv } = await fixture({ status: "SENT" });
+    const before = await snapshot(o.id);
+    const invBefore = await invoiceOf(inv.id);
+    const qtyBefore = await invoiceQty(inv.id);
+    await expect(
+      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8 }] }),
+    ).rejects.toMatchObject({ status: 409, response: { code: "LINE_ALREADY_DELIVERED" } });
+    expect(await snapshot(o.id)).toEqual(before);
+    const invAfter = await invoiceOf(inv.id);
+    expect(Number(invAfter.total)).toBe(Number(invBefore.total));
+    expect(invAfter.status).toBe(invBefore.status);
+    expect(await invoiceQty(inv.id)).toBe(qtyBefore);
+    expect(
+      await raw.auditLog.count({
+        where: { tenantId, action: "order.line-corrected", entityId: o.id },
+      }),
+    ).toBe(0);
   }, 60_000);
 
   /** A second delivered line (5 x 10.00, an office row) on the fixture's order, billed on its invoice. */
@@ -508,7 +536,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     const fx = await fixture({ status: "SENT" });
     const resync = jest.spyOn(orders.invoicesService as any, "resyncOrderInvoicesForEdit");
     try {
-      await edit(fx.o.id, { replaceAll: false, items: [{ id: fx.li.id, qty: 8 }] });
+      await edit(fx.o.id, {
+        replaceAll: false,
+        items: [{ id: fx.li.id, qty: 8, correctDelivered: true }],
+      });
       expect(resync).toHaveBeenCalledTimes(1);
       expect(resync.mock.calls[0][1]).toBeDefined();
     } finally {
@@ -589,7 +620,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     const stockBefore = await stockOf(fx.productId);
     const resync = jest.spyOn(orders.invoicesService as any, "resyncOrderInvoicesForEdit");
     try {
-      await edit(fx.o.id, { replaceAll: false, items: [{ id: fx.li.id, qty: 10 }] });
+      await edit(fx.o.id, {
+        replaceAll: false,
+        items: [{ id: fx.li.id, qty: 10, correctDelivered: true }],
+      });
       expect(resync).toHaveBeenCalledTimes(0);
     } finally {
       resync.mockRestore();
@@ -709,7 +743,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
       await expect(
         edit(
           fx.o.id,
-          { replaceAll: false, items: [{ id: second.id, qty: 6 }] },
+          { replaceAll: false, items: [{ id: second.id, qty: 6, correctDelivered: true }] },
           principal("OPERATOR", operatorUserId),
         ),
       ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_CHANGED_DURING_EDIT" } }); // wrong value: accepted
@@ -735,7 +769,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     };
     try {
       await expect(
-        edit(fx.o.id, { replaceAll: false, items: [{ id: second.id, qty: 6 }] }),
+        edit(fx.o.id, {
+          replaceAll: false,
+          items: [{ id: second.id, qty: 6, correctDelivered: true }],
+        }),
       ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_CHANGED_DURING_EDIT" } });
     } finally {
       orders.authGuard = authGuard;
@@ -797,7 +834,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     await raw.invoice.delete({ where: { id: fx.inv.id } });
     const resync = jest.spyOn(orders.invoicesService as any, "resyncOrderInvoicesForEdit");
     try {
-      await edit(fx.o.id, { replaceAll: false, items: [{ id: fx.li.id, qty: 8 }] });
+      await edit(fx.o.id, {
+        replaceAll: false,
+        items: [{ id: fx.li.id, qty: 8, correctDelivered: true }],
+      });
       // the post-commit tail still asks the writer once (no tx, nothing to restate); none runs inside the edit
       expect(resync.mock.calls.filter((c) => c[1] !== undefined)).toHaveLength(0);
     } finally {
@@ -815,7 +855,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     const resync = jest.spyOn(invoices, "resyncOrderInvoicesForEdit");
     const follow = jest.spyOn(invoices, "followPartialPrices");
     try {
-      await edit(fx.o.id, { replaceAll: false, items: [{ id: fx.li.id, qty: 8 }] });
+      await edit(fx.o.id, {
+        replaceAll: false,
+        items: [{ id: fx.li.id, qty: 8, correctDelivered: true }],
+      });
       expect(follow).toHaveBeenCalledTimes(0); // wrong value: 1
       expect(resync).toHaveBeenCalledTimes(1);
       expect(resync.mock.calls[0][1]).toBeDefined(); // the one call is the in-tx one: wrong value: a second, after commit
@@ -829,7 +872,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
   it("SA-1544 (at): an ADMIN raise 10 -> 12 on a PAID invoice of a reopened order holding a delivered line is accepted, payments unchanged", async () => {
     const fx = await fixture({ status: "PAID", paid: 100 });
     const paymentsBefore = await paymentRows(fx.inv.id);
-    await edit(fx.o.id, { replaceAll: false, items: [{ id: fx.li.id, qty: 12 }] });
+    await edit(fx.o.id, {
+      replaceAll: false,
+      items: [{ id: fx.li.id, qty: 12, correctDelivered: true }],
+    });
     expect(await paymentRows(fx.inv.id)).toEqual(paymentsBefore); // wrong value: refused 400 ORDER_EDIT_INVOICE_HAS_PAYMENTS
     const inv = await invoiceOf(fx.inv.id);
     expect(Number(inv.total)).toBe(120);
@@ -848,7 +894,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     const paymentsBefore = await paymentRows(fx.inv.id);
     await edit(
       fx.o.id,
-      { replaceAll: false, items: [{ id: second.id, qty: 6 }] },
+      { replaceAll: false, items: [{ id: second.id, qty: 6, correctDelivered: true }] },
       principal("OPERATOR", operatorUserId),
     );
     expect(await paymentRows(fx.inv.id)).toEqual(paymentsBefore); // wrong value: 400 ORDER_EDIT_INVOICE_HAS_PAYMENTS
@@ -863,7 +909,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     const paymentsBefore = await paymentRows(fx.inv.id);
     await edit(
       fx.o.id,
-      { replaceAll: false, items: [{ id: fx.li.id, qty: 12 }] },
+      { replaceAll: false, items: [{ id: fx.li.id, qty: 12, correctDelivered: true }] },
       principal("OPERATOR", operatorUserId),
     ); // wrong value: refused (the role lock is for cuts and deletes, never a raise)
     const inv = await invoiceOf(fx.inv.id);
@@ -876,7 +922,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     const fx = await fixture({ status: "PAID", paid: 100 });
     const before = await snapshot(fx.o.id);
     await expect(
-      edit(fx.o.id, { replaceAll: false, items: [{ id: fx.li.id, qty: 8 }] }),
+      edit(fx.o.id, {
+        replaceAll: false,
+        items: [{ id: fx.li.id, qty: 8, correctDelivered: true }],
+      }),
     ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_WOULD_OVERPAY" } });
     expect(await snapshot(fx.o.id)).toEqual(before);
   }, 60_000);
@@ -917,13 +966,19 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
       [12, 120],
     ] as const) {
       const fx = await fixture({ status: "SENT" });
-      await edit(fx.o.id, { replaceAll: false, items: [{ id: fx.li.id, qty }] });
+      await edit(fx.o.id, {
+        replaceAll: false,
+        items: [{ id: fx.li.id, qty, correctDelivered: true }],
+      });
       const inv = await invoiceOf(fx.inv.id);
       expect([qty, inv.status, Number(inv.total)]).toEqual([qty, "SENT", total]);
     }
     const fx = await fixture({ status: "WRITTEN_OFF" });
     await expect(
-      edit(fx.o.id, { replaceAll: false, items: [{ id: fx.li.id, qty: 12 }] }),
+      edit(fx.o.id, {
+        replaceAll: false,
+        items: [{ id: fx.li.id, qty: 12, correctDelivered: true }],
+      }),
     ).rejects.toMatchObject({ status: 409 });
   }, 120_000);
 
@@ -942,7 +997,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     await expect(
       edit(
         fx.o.id,
-        { replaceAll: false, items: [{ id: second.id, qty: 6 }] },
+        { replaceAll: false, items: [{ id: second.id, qty: 6, correctDelivered: true }] },
         principal("OPERATOR", operatorUserId),
       ),
     ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_REVERTS_SENT_INVOICE" } }); // wrong value: accepted in place
@@ -972,7 +1027,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     await expect(
       edit(
         fx.o.id,
-        { replaceAll: false, items: [{ id: second.id, qty: 6 }] },
+        { replaceAll: false, items: [{ id: second.id, qty: 6, correctDelivered: true }] },
         principal("OPERATOR", operatorUserId),
       ),
     ).rejects.toMatchObject({ status: 400, response: { code: "ORDER_EDIT_INVOICE_HAS_PAYMENTS" } }); // wrong value: accepted in place

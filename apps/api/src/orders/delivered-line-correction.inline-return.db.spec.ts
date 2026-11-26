@@ -382,7 +382,7 @@ describeDb(
 
     it("(ac) after a cut 10 to 8: the invoice bills 8 and the quote offers 8 sold, a 9th is never sold", async () => {
       const f = await fixture("ac-cut");
-      await correct(f, { id: f.lineX, qty: 8 });
+      await correct(f, { id: f.lineX, qty: 8, correctDelivered: true });
       const billed = (
         await raw.invoiceItem.findMany({ where: { invoiceId: f.invoiceId, productId: f.x } })
       ).reduce((s, i) => s + Number(i.qty), 0);

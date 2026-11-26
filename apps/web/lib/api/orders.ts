@@ -549,6 +549,8 @@ export interface ItemUpdate {
   qty?: number;
   /** SA-1533 (s): an admin's take-off of a delivered line (CANCEL / DELETE) says nothing was delivered. 0 only. */
   deliveredTo?: 0;
+  /** SA-1546 M2: the admin's opt-in to the server's delivered-line correction of a quantity change (server derives the figure). */
+  correctDelivered?: true;
   /** Boxed split so the server prorates by BOX price (unitPrice is the box price).
    *  Omit for non-boxed lines — the server then charges unitPrice * qty. Never send
    *  alongside unitLabel (units_v1 lines are count + label only). */

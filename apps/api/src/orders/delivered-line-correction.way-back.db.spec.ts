@@ -137,7 +137,7 @@ describeDb("SA-1544 (aw): the way back after a correction, real invoices", () =>
     const { order, items, lines, inv } = await deliveredAndBilled("aw", [10]);
     const p = lines[0].productId;
     await status(order.id, "CONFIRMED", "office correction: counted 8 on the truck");
-    await edit(order.id, [{ id: items[0].id, qty: 8 }]);
+    await edit(order.id, [{ id: items[0].id, qty: 8, correctDelivered: true }]);
 
     const lineAfterCut = await w.prisma.orderItem.findUniqueOrThrow({ where: { id: items[0].id } });
     expect([Number(lineAfterCut.qty), Number(lineAfterCut.deliveredQty)]).toEqual([8, 8]);
@@ -183,7 +183,7 @@ describeDb("SA-1544 (aw): the way back after a correction, real invoices", () =>
     const { order, items, lines, inv } = await deliveredAndBilled("aws", [10, 10]);
     await w.prisma.orderItem.update({ where: { id: items[1].id }, data: { deliveredQty: 6 } });
     await status(order.id, "CONFIRMED", "office correction");
-    await edit(order.id, [{ id: items[0].id, qty: 8 }]);
+    await edit(order.id, [{ id: items[0].id, qty: 8, correctDelivered: true }]);
     const invAfterCut = await w.prisma.invoice.findUniqueOrThrow({ where: { id: inv.id } });
     const rowsAfterCut = await w.prisma.deliveryMutation.count({ where: { orderId: order.id } });
     const movesAfterCut = [
@@ -231,7 +231,9 @@ describeDb("SA-1544 (aw): the way back after a correction, real invoices", () =>
     });
     await w.prisma.invoice.update({ where: { id: inv.id }, data: { subtotal: 80, total: 80 } });
     await status(order.id, "CONFIRMED", "office correction");
-    await expect(edit(order.id, [{ id: items[0].id, qty: 8 }])).rejects.toMatchObject({
+    await expect(
+      edit(order.id, [{ id: items[0].id, qty: 8, correctDelivered: true }]),
+    ).rejects.toMatchObject({
       status: 409,
       response: {
         code: "LINE_ALREADY_DELIVERED",

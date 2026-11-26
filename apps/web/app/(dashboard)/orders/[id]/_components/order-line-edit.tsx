@@ -26,7 +26,12 @@ import {
   DeliveredLockedQty,
   TakeOffConfirm,
 } from "./DeliveredLineLock";
-import { isLineCorrectable, lockedLineHint, takeOffFields } from "@/lib/order-line-lock";
+import {
+  correctedQtyFields,
+  isLineCorrectable,
+  lockedLineHint,
+  takeOffFields,
+} from "@/lib/order-line-lock";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -485,6 +490,7 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
       updates.push({
         id: edited.id,
         qty: edited.qty,
+        ...correctedQtyFields(orig, qtyChanged),
         ...(nameChanged ? { name: edited.productName.trim() } : {}),
         ...(priceChanged ? { unitPrice: edited.unitPrice } : {}),
         ...notePatch,
@@ -493,11 +499,17 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
       // SA-1097 A-2: a pack-locked line takes a note only - no qty or split, so the server's note-only path writes it.
       if (noteChanged) updates.push({ id: edited.id, action: "UPDATE", ...notePatch });
     } else if (qtyChanged || priceChanged || noteChanged) {
+      // SA-1546 M2: a correctable line's price-only edit names no quantity (a price is never a delivered statement); a changed
+      // quantity opts in to the server's correction with `correctDelivered`.
+      const quantityFields =
+        isLineCorrectable(orig) && !qtyChanged
+          ? {}
+          : { qty: edited.qty, ...boxedDtoFields(edited) };
       updates.push({
         id: edited.id,
         action: "UPDATE",
-        qty: edited.qty,
-        ...boxedDtoFields(edited),
+        ...quantityFields,
+        ...correctedQtyFields(orig, qtyChanged),
         ...(edited.unitLabel ? { unitLabel: edited.unitLabel, productId: edited.productId } : {}),
         ...(priceChanged
           ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }

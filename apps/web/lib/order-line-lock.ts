@@ -10,7 +10,8 @@ import {
  * SA-1506 PR-1a: what the edit builder does with a DELIVERED line is the SERVER's answer, carried on every staff line read
  * (`lineEditMode`, decided by `deliveredLineEditMode` in apps/api/src/orders/delivered-line-edit-mode.ts). This file only
  * reads it (L-072: no second rule on the screen):
- *  - LOCKED: no editing control, the line's sentence says why and names the step that exists;
+ *  - LOCKED: on a PARTIALLY_DELIVERED order, no editing control; the line's sentence says why and names the step that exists
+ *    (SA-1546 M1: other statuses keep master's screen, the server judges the save);
  *  - CORRECT (an admin): the controls stay (quantity, box split, price, take off) with the correction note; never a swap;
  *  - EDIT: an ordinary line.
  * A response without the field (an older server) falls back to B1234's rule: PARTIALLY_DELIVERED + delivered = locked.
@@ -44,7 +45,12 @@ export function isLineDeliveredLocked(
   orderStatus: string | null | undefined,
   line: ModeLine,
 ): boolean {
-  if (line.lineEditMode !== undefined) return line.lineEditMode === "LOCKED";
+  if (line.lineEditMode !== undefined) {
+    // SA-1546 M1: only CORRECT changes the screen. A line the server marks LOCKED keeps master's web rule (locked on
+    // PARTIALLY_DELIVERED only) until the server enforces LOCKED itself; the server's own refusal still stands.
+    if (line.lineEditMode !== "LOCKED") return false;
+    return !!orderStatus && LEGACY_LOCK_STATUSES.includes(orderStatus);
+  }
   return (
     !!orderStatus &&
     LEGACY_LOCK_STATUSES.includes(orderStatus) &&
@@ -64,6 +70,17 @@ export const isLineCorrectable = (line: Partial<LineEditModeFields>): boolean =>
 export const takeOffFields = (
   line: Partial<LineEditModeFields> | undefined,
 ): { deliveredTo?: 0 } => (line && isLineCorrectable(line) ? { deliveredTo: 0 } : {});
+
+/**
+ * SA-1546 M2: the opt-in of a quantity correction. The server restates a delivered line's quantity, box split or piece
+ * count only when the entry says `correctDelivered: true`; the screen sends it on a line the server said an admin may
+ * correct, and only when the quantity changed. The server alone derives the corrected delivered figure.
+ */
+export const correctedQtyFields = (
+  line: Partial<LineEditModeFields> | undefined,
+  qtyChanged: boolean,
+): { correctDelivered?: true } =>
+  line && qtyChanged && isLineCorrectable(line) ? { correctDelivered: true } : {};
 
 /** The DELETE entries for the lines the user removed with the trash button. */
 export const deleteUpdates = (

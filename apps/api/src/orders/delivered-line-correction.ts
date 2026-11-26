@@ -19,6 +19,7 @@ import { CORRECTABLE_STATUSES, isAdminForCorrection } from "./delivered-line-edi
 import {
   assertDeliveredLinesUntouched,
   assertDeliveredToShape,
+  entryChangesQuantity,
   entryTouchesLine,
   holdsLiveDeliveredLine,
   reduceDeliveredLineEntries,
@@ -417,11 +418,10 @@ async function applyLineCorrections(
     // SA-1546 (bb): a delivered figure moves only when the entry changed a quantity (qty, boxes, pieces) or took the line
     // off. A price is never a delivered statement: a price-only entry keeps the column, the rows and the map untouched
     // (the price lands through the write loop; the audit row still records it, delivered before = after).
-    const quantityChanged =
-      struck ||
-      Number(a.qty) !== Number(h.qty) ||
-      (a.boxes ?? null) !== (h.boxes ?? null) ||
-      (a.pieces ?? null) !== (h.pieces ?? null);
+    // SA-1546 M3: read from the ENTRY as sent against the held line, never from the row after the write (a legacy non-canonical
+    // split is rewritten by the write loop, so the after row can differ although the entry named only a price).
+    const entry = (i.dto.items ?? []).find((e) => (e.id ?? e.orderItemId) === h.id);
+    const quantityChanged = struck || (entry != null && entryChangesQuantity(entry, h));
     if (!quantityChanged && money(a.unitPrice) === money(h.unitPrice)) continue;
     const heldD = Number(h.deliveredQty ?? 0);
     const figure = heldDeliveredFor({ id: h.id, qty: h.qty }, basis);
