@@ -156,6 +156,16 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
       }
     });
 
+  /** R-224 LOW-4: a nested refusal is 42501 AND carries the guard text for the table (the SQLSTATE alone also matches a foreign 42501). */
+  const expectGuardRefusal = (err: unknown, table: string) => {
+    expect(sqlState(err)).toBe("42501");
+    expect(
+      pgText(err)
+        .replace(/[s`'".]+$/, "")
+        .endsWith(`legacy_import_tenant_guard: ${table}`),
+    ).toBe(true);
+  };
+
   const exists = async (table: string, id: string): Promise<boolean> => {
     const rows = await prisma.$queryRawUnsafe<{ n: number }[]>(
       `SELECT count(*)::int AS n FROM "${table}" WHERE "id" = $1`,
@@ -220,18 +230,16 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
     id: string,
     documentId: string,
     productId: string | null,
-    customerId: string | null,
     lineNo = 1,
   ) =>
     tx.$executeRawUnsafe(
-      `INSERT INTO "LegacySalesLine" ("id","tenantId","documentId","lineNo","physicalLine","kind","productId","customerId","docDate")
-       VALUES ($1,$2,$3,$4,2,'PRODUCT'::"LegacySalesLineKind",$5::text,$6::text,'2026-01-01'::date)`,
+      `INSERT INTO "LegacySalesLine" ("id","tenantId","documentId","lineNo","physicalLine","kind","productId","docDate")
+       VALUES ($1,$2,$3,$4,2,'PRODUCT'::"LegacySalesLineKind",$5::text,'2026-01-01'::date)`,
       id,
       tenantId,
       documentId,
       lineNo,
       productId,
-      customerId,
     );
   const insertAlias = (tx: any, tenantId: string, id: string, productId: string | null) =>
     tx.$executeRawUnsafe(
@@ -262,7 +270,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
     await insertFile(tx, owner.id, w.file, w.batch);
     await insertIssue(tx, owner.id, w.issue, w.batch, w.file);
     await insertDoc(tx, owner.id, w.doc, w.batch, w.file, customerId);
-    await insertLine(tx, owner.id, w.line, w.doc, productId, customerId);
+    await insertLine(tx, owner.id, w.line, w.doc, productId);
     await insertAlias(tx, owner.id, w.alias, productId);
     return w;
   }
@@ -328,7 +336,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
       ],
       [
         "LegacySalesLine",
-        (tx: any) => insertLine(tx, owner.id, randomUUID(), parents.doc, productId, customerId, 99),
+        (tx: any) => insertLine(tx, owner.id, randomUUID(), parents.doc, productId, 99),
       ],
       ["SourceItemAlias", (tx: any) => insertAlias(tx, owner.id, randomUUID(), productId)],
     ] as Array<[string, (tx: any) => Promise<unknown>]>;
@@ -397,7 +405,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
       (tx: any) => insertIssue(tx, B.id, randomUUID(), worldB.batch, worldA.file),
       (tx: any) => insertDoc(tx, B.id, randomUUID(), worldA.batch, worldB.file, null),
       (tx: any) => insertDoc(tx, B.id, randomUUID(), worldB.batch, worldA.file, null),
-      (tx: any) => insertLine(tx, B.id, randomUUID(), worldA.doc, null, null, 98),
+      (tx: any) => insertLine(tx, B.id, randomUUID(), worldA.doc, null, 98),
     ];
     for (const insert of asB) {
       // eslint-disable-next-line no-await-in-loop
@@ -409,7 +417,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
       (tx: any) => insertIssue(tx, A.id, randomUUID(), worldA.batch, worldB.file),
       (tx: any) => insertDoc(tx, A.id, randomUUID(), worldB.batch, worldA.file, null),
       (tx: any) => insertDoc(tx, A.id, randomUUID(), worldA.batch, worldB.file, null),
-      (tx: any) => insertLine(tx, A.id, randomUUID(), worldB.doc, null, null, 98),
+      (tx: any) => insertLine(tx, A.id, randomUUID(), worldB.doc, null, 98),
     ];
     for (const insert of asA) {
       // eslint-disable-next-line no-await-in-loop
@@ -422,7 +430,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
       insertDoc(tx, A.id, randomUUID(), worldA.batch, worldA.file, B.customerId),
     );
     await refused(A.id, "LegacySalesLine", (tx) =>
-      insertLine(tx, A.id, randomUUID(), worldA.doc, B.productId, null, 97),
+      insertLine(tx, A.id, randomUUID(), worldA.doc, B.productId, 97),
     );
     await refused(A.id, "SourceItemAlias", (tx) =>
       insertAlias(tx, A.id, randomUUID(), B.productId),
@@ -554,7 +562,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
         (e) => e,
       ),
     );
-    expect(sqlState(err)).toBe("42501");
+    expectGuardRefusal(err, "LegacyImportBatch");
     expect(await exists("LegacyImportBatch", bBatch)).toBe(false);
   });
 
@@ -586,7 +594,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
     expect(beforeCustomer).toBe(B.customerId); // the unlink form needs a NON-NULL customerId
     expect(beforeKey).not.toBe("x");
     const { err, rows } = await nestedProbe(A.id, unlinkAndEdit(worldB.doc), docRead, [worldB.doc]);
-    expect(sqlState(err)).toBe("42501");
+    expectGuardRefusal(err, "LegacySalesDocument");
     // red without the equality clause: customerId NULL and sourceKey 'x'
     expect(rows[0]).toEqual({ customerId: B.customerId, sourceKey: beforeKey });
     expect(await cell("LegacySalesDocument", worldB.doc, "sourceKey")).toBe(beforeKey);
@@ -600,7 +608,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
     expect(beforeCustomer).toBe(A.customerId);
     expect(beforeKey).not.toBe("x");
     const { err, rows } = await nestedProbe("", unlinkAndEdit(worldA.doc), docRead, [worldA.doc]);
-    expect(sqlState(err)).toBe("42501");
+    expectGuardRefusal(err, "LegacySalesDocument");
     // red without the equality clause: customerId NULL and sourceKey 'x'
     expect(rows[0]).toEqual({ customerId: A.customerId, sourceKey: beforeKey });
     expect(await cell("LegacySalesDocument", worldA.doc, "sourceKey")).toBe(beforeKey);
@@ -614,7 +622,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
       `SELECT count(*)::int AS n FROM "LegacyImportIssue" WHERE "id" = $1`,
       [worldB.issue],
     );
-    expect(sqlState(err)).toBe("42501");
+    expectGuardRefusal(err, "LegacyImportIssue");
     // red with a nested DELETE exemption: no error and n = 0
     expect(rows[0]).toEqual({ n: 1 });
     expect(await exists("LegacyImportIssue", worldB.issue)).toBe(true);

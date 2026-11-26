@@ -182,7 +182,6 @@ CREATE TABLE "LegacySalesLine" (
     "matchMethod" "LegacyItemMatchMethod" NOT NULL DEFAULT 'NONE',
     "unitKnown" BOOLEAN NOT NULL DEFAULT false,
     "unitLabel" TEXT,
-    "customerId" TEXT,
     "docDate" DATE NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -254,7 +253,7 @@ BEGIN
     END IF;
   END IF;
 
-  -- Step 5: a stored Customer or Product id must belong to the row's tenant (the line's scalar customerId copy too).
+  -- Step 5: a stored Customer or Product id must belong to the row's tenant.
   IF TG_OP IN ('INSERT', 'UPDATE') THEN
     v := to_jsonb(NEW) ->> 'customerId';
     moved := TRUE;
@@ -340,9 +339,6 @@ CREATE INDEX "LegacySalesDocument_customerId_idx" ON "LegacySalesDocument"("cust
 
 -- CreateIndex
 CREATE UNIQUE INDEX "LegacySalesLine_documentId_lineNo_key" ON "LegacySalesLine"("documentId", "lineNo");
-
--- CreateIndex
-CREATE INDEX "LegacySalesLine_tenantId_customerId_productId_docDate_idx" ON "LegacySalesLine"("tenantId", "customerId", "productId", "docDate" DESC);
 
 -- CreateIndex
 CREATE INDEX "LegacySalesLine_tenantId_productId_docDate_idx" ON "LegacySalesLine"("tenantId", "productId", "docDate");

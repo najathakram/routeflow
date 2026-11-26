@@ -265,6 +265,33 @@ describe("stage-1 migration shape (SA-1295 sitting 1, SA-1507)", () => {
     expect(stage1Problems(stage1)).toEqual([]);
   });
 
+  it("SA-1522 Q1: LegacySalesLine has no customerId column and no index naming it (a line reaches its customer through its document)", () => {
+    const sql = executable(stage1);
+    const table = /CREATE TABLE "LegacySalesLine" \(([\s\S]*?)\n\);/.exec(sql);
+    expect(table).not.toBeNull();
+    expect(table![1]).not.toContain('"customerId"');
+    const lineIndexes = [
+      ...sql.matchAll(/CREATE (?:UNIQUE )?INDEX "[^"]+" ON "LegacySalesLine"[^;]*;/g),
+    ];
+    expect(lineIndexes.length).toBeGreaterThan(0);
+    for (const m of lineIndexes) expect(m[0]).not.toContain("customerId");
+    const prisma = readFileSync(
+      join(__dirname, "..", "..", "prisma", "schema", "finance.prisma"),
+      "utf8",
+    );
+    const model = /model LegacySalesLine \{([\s\S]*?)\n\}/.exec(prisma);
+    expect(model).not.toBeNull();
+    expect(model![1]).not.toContain("customerId");
+    // SA-1529: exactly ONE direct NEW."customerId" in the guard, in its own nested IF after the Document-table test (step 2)
+    const body = guardBody(stage1)!;
+    expect((body.match(/NEW."customerId"/g) ?? []).length).toBe(1);
+    const docTest = body.indexOf("TG_TABLE_NAME = 'LegacySalesDocument' THEN");
+    expect(docTest).toBeGreaterThan(0);
+    expect(body.indexOf('NEW."customerId"')).toBeGreaterThan(docTest);
+    expect(body).not.toMatch(/TG_TABLE_NAME = 'LegacySalesDocument' AND/);
+    expect(body).toContain("to_jsonb(NEW) ->> 'customerId'");
+  });
+
   it("the guard function body is found and has the six steps", () => {
     const body = guardBody(stage1);
     expect(body).not.toBeNull();
