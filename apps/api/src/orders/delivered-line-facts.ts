@@ -1,6 +1,6 @@
 import { Logger } from "@nestjs/common";
 import { InvoiceStatus, UserRole } from "@prisma/client";
-import { evidenceOrigin, isEvidenceRow } from "../invoices/delivered-basis-by-line";
+import { evidenceOrigin, isEvidenceRow, writtenOnRoute } from "../invoices/delivered-basis-by-line";
 import { liveReturnWhere } from "../returns/live-return-guard";
 import {
   deliveredLineEditMode,
@@ -109,7 +109,7 @@ export async function loadDeliveredLineFacts(
     onRun: stopStatus != null && stopStatus !== "COMPLETED",
     stopCompleted: stopStatus === "COMPLETED",
     routeRunLinked: head?.routeRunId != null,
-    orderRouteRows: rows.filter(isEvidenceRow).some((m) => evidenceOrigin(m) === "route"),
+    orderRouteRows: rows.some((m) => writtenOnRoute(m)), // SA-1546 (be): any stop or driver row, evidence or not
     routeLineIds,
     officeLineIds,
     liveReturn: (await i.db.return.count({ where: liveReturnWhere([i.order.id]) })) > 0,

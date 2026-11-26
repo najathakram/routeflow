@@ -1,5 +1,5 @@
 import { OrderStatus, UserRole } from "@prisma/client";
-import type { BuyerOrderEditWindow } from "@routeflow/types";
+import type { BuyerEditClosedReason, BuyerOrderEditWindow } from "@routeflow/types";
 import { holdsLiveDeliveredLine } from "./delivered-line-lock";
 
 /**
@@ -56,16 +56,16 @@ export function computeEditWindow(
   lines: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }> | undefined,
 ): BuyerOrderEditWindow {
   if (role === UserRole.CUSTOMER && buyerEditClosed(order, lines)) {
-    // W-1189: a refused order is closed by its status, not by dispatch (no "send a change request" explanation); P-5: a
-    // reopened order holding delivered goods is closed by its status too (it is not out for delivery)
-    const byStatus =
-      order.status === OrderStatus.REFUSED ||
-      !BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus);
-    return {
-      editable: false,
-      editableUntil: null,
-      closedReason: byStatus ? "STATUS" : "DISPATCHED",
-    };
+    // W-1189: a refused order is closed by its status, not by dispatch (no "send a change request" explanation); P-5 /
+    // SA-1546 10.3: a reopened order holding delivered goods is closed by its own reason (it is not out for delivery, and
+    // the buyer must never read "cancelled" on a live order)
+    const closedReason: BuyerEditClosedReason =
+      order.status === OrderStatus.REFUSED
+        ? "STATUS"
+        : BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus)
+          ? "DISPATCHED"
+          : "DELIVERED_LINES";
+    return { editable: false, editableUntil: null, closedReason };
   }
   const editable = order.status !== "CANCELLED";
   return {

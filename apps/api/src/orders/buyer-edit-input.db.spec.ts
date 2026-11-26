@@ -581,7 +581,10 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
       const x = await product("bei-p5d");
       const o = await orderFor(customerId, [plain(x, 13, 12)], "CONFIRMED");
       const read = () => tenantCtx.run(tenantId, () => orders.findOne(o.id, customerPrincipal()));
-      expect((await read()).editWindow).toMatchObject({ editable: false }); // wrong value: editable true
+      expect((await read()).editWindow).toMatchObject({
+        editable: false,
+        closedReason: "DELIVERED_LINES", // wrong value: editable true (P-5), "STATUS" (A10 10.3)
+      });
       await raw.orderItem.updateMany({ where: { orderId: o.id }, data: { deliveredQty: 0 } });
       expect((await read()).editWindow).toMatchObject({ editable: true, closedReason: null });
     }, 60_000);

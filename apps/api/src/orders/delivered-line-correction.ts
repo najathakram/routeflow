@@ -414,13 +414,15 @@ async function applyLineCorrections(
     if (!a || modes.get(h.id)?.mode !== "CORRECT") continue;
     const struck = a.status === "CANCELLED" && h.status !== "CANCELLED";
     const money = (v: unknown) => (v == null ? null : roundMoney(Number(v)));
-    const changed =
+    // SA-1546 (bb): a delivered figure moves only when the entry changed a quantity (qty, boxes, pieces) or took the line
+    // off. A price is never a delivered statement: a price-only entry keeps the column, the rows and the map untouched
+    // (the price lands through the write loop; the audit row still records it, delivered before = after).
+    const quantityChanged =
       struck ||
       Number(a.qty) !== Number(h.qty) ||
       (a.boxes ?? null) !== (h.boxes ?? null) ||
-      (a.pieces ?? null) !== (h.pieces ?? null) ||
-      money(a.unitPrice) !== money(h.unitPrice);
-    if (!changed) continue;
+      (a.pieces ?? null) !== (h.pieces ?? null);
+    if (!quantityChanged && money(a.unitPrice) === money(h.unitPrice)) continue;
     const heldD = Number(h.deliveredQty ?? 0);
     const figure = heldDeliveredFor({ id: h.id, qty: h.qty }, basis);
     const nextD = correctedDeliveredFor(
@@ -428,7 +430,7 @@ async function applyLineCorrections(
       { finalQty: Number(a.qty), struck, deliveredTo: deliveredToOf(i.dto.items, h.id) },
     );
     let restated: RestatedRow[] = [];
-    if (Math.abs(nextD - heldD) > EPS || Math.abs(nextD - figure) > EPS) {
+    if (quantityChanged && (Math.abs(nextD - heldD) > EPS || Math.abs(nextD - figure) > EPS)) {
       await tx.orderItem.update({
         where: { id: h.id, orderId: i.order.id },
         data: { deliveredQty: nextD },

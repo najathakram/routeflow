@@ -11,7 +11,7 @@
  *  5. The budget is `dl.txOptions()` (EDIT_TX_BUDGET_MS), never a literal beside the tx call.
  *  7. The restate runs before `applyReturn`.
  */
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync } from "fs";
 import { join } from "path";
 
 const read = (f: string) => readFileSync(join(__dirname, f), "utf8");
@@ -125,5 +125,16 @@ describe("SA-1544 (as): the edit transaction's lock order and budget", () => {
     );
     expect(tail).not.toMatch(/timeout:\s*\d/);
     expect(service.match(/dl\.txOptions\(\)/g)?.length).toBe(1);
+  });
+});
+
+describe("SA-1546 (bf): no spec writes outside the tree", () => {
+  it("no orders spec appends to or writes a file at an absolute machine path (CI has no such folder)", () => {
+    const offenders = readdirSync(__dirname)
+      .filter((f) => f.endsWith(".spec.ts") && f !== "delivered-line-correction.structure.spec.ts")
+      .filter((f) =>
+        ["sa1506-pr1-logs", "observe" + ".txt", ":/ClaudeCode"].some((n) => read(f).includes(n)),
+      );
+    expect(offenders).toEqual([]);
   });
 });

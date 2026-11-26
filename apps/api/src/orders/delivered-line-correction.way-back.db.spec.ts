@@ -13,6 +13,7 @@
 import { describeDb } from "../common/testing/db-spec";
 import { buildOrderStockWorld, type OrderStockWorld } from "../inventory/testing/order-stock-world";
 import { expectLedgerConsistent } from "../inventory/testing/ledger-consistency";
+import { LOCKED_COPY } from "./delivered-line-copy";
 
 const STUB_KEYS = [
   "revertLinkedInvoicesForOrderEdit",
@@ -81,11 +82,6 @@ describeDb("SA-1544 (aw): the way back after a correction, real invoices", () =>
     w.inTenant(() =>
       w.orders.updateOrderItems(id, { replaceAll: false, items }, as("TENANT_ADMIN")),
     );
-  const observe = (text: string) =>
-    require("fs").appendFileSync(
-      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
-      text + String.fromCharCode(10),
-    );
   const stockRows = (p: string) => w.prisma.stockMovement.count({ where: { productId: p } });
 
   /** An order booked 10 x 5.00, marked DELIVERED while the invoice stubs are on, then billed raw on a SENT invoice. */
@@ -152,7 +148,6 @@ describeDb("SA-1544 (aw): the way back after a correction, real invoices", () =>
       where: { orderItemId: items[0].id },
     });
     const movesAfterCut = await stockRows(p);
-    const notifiedBefore = notified.length;
 
     await status(order.id, "OUT_FOR_DELIVERY");
     await status(order.id, "DELIVERED");
@@ -178,23 +173,54 @@ describeDb("SA-1544 (aw): the way back after a correction, real invoices", () =>
     expect((await w.prisma.order.findUniqueOrThrow({ where: { id: order.id } })).status).toBe(
       "DELIVERED",
     );
-    observe(
-      "AW way back (B1 10/10 -> 8, SENT): invoice " +
-        invAfterWayBack.status +
-        " total=" +
-        Number(invAfterWayBack.total) +
-        " line invoicedQty=" +
-        Number((line as any).invoicedQty) +
-        " notifications on the way back=[" +
-        notified.slice(notifiedBefore).join(",") +
-        "]",
-    );
     await expectLedgerConsistent(w.tenantId, [p]);
   }, 180_000);
 
-  it("(aw) OBSERVE: a sibling no-row 6/10 line beside the corrected line: what the way back completes and bills", async () => {
+  // SA-1546 10.2: the producer's shape. A no-row line bills its full qty, so the sibling (delivered 6 of 10, no rows) is
+  // invoiced at 10 (invoicedQty 10, invoice line 10): nothing is partly invoiced, the correction of B1 is accepted, and
+  // the way back lifts the sibling column 6 to 10 with no new row and no stock movement.
+  it("(aw) producer-shape sibling: a no-row 6/10 line invoiced at 10 beside B1 10/10 -> 8: the correction is accepted and the way back writes no row and moves no stock", async () => {
     const { order, items, lines, inv } = await deliveredAndBilled("aws", [10, 10]);
-    // the sibling: delivered 6 of 10 with no evidence row, billed 6
+    await w.prisma.orderItem.update({ where: { id: items[1].id }, data: { deliveredQty: 6 } });
+    await status(order.id, "CONFIRMED", "office correction");
+    await edit(order.id, [{ id: items[0].id, qty: 8 }]);
+    const invAfterCut = await w.prisma.invoice.findUniqueOrThrow({ where: { id: inv.id } });
+    const rowsAfterCut = await w.prisma.deliveryMutation.count({ where: { orderId: order.id } });
+    const movesAfterCut = [
+      await stockRows(lines[0].productId),
+      await stockRows(lines[1].productId),
+    ];
+    const a = await w.prisma.orderItem.findUniqueOrThrow({ where: { id: items[0].id } });
+    expect([Number(a.qty), Number(a.deliveredQty)]).toEqual([8, 8]);
+
+    await status(order.id, "OUT_FOR_DELIVERY");
+    await status(order.id, "DELIVERED");
+
+    const b = await w.prisma.orderItem.findUniqueOrThrow({ where: { id: items[1].id } });
+    expect([Number(b.qty), Number(b.deliveredQty)]).toEqual([10, 10]); // the stamp lifts the sibling 6 to 10
+    expect(await w.prisma.deliveryMutation.count({ where: { orderId: order.id } })).toBe(
+      rowsAfterCut,
+    );
+    expect([await stockRows(lines[0].productId), await stockRows(lines[1].productId)]).toEqual(
+      movesAfterCut,
+    );
+    expect(await w.prisma.invoice.count({ where: { orderId: order.id } })).toBe(1);
+    const invAfterWayBack = await w.prisma.invoice.findUniqueOrThrow({ where: { id: inv.id } });
+    expect([invAfterWayBack.status, Number(invAfterWayBack.total)]).toEqual([
+      invAfterCut.status,
+      Number(invAfterCut.total),
+    ]);
+    await expectLedgerConsistent(
+      w.tenantId,
+      lines.map((l) => l.productId),
+    );
+  }, 180_000);
+
+  // Fixture-built (hand-written invoicedQty 6 and an invoice line of 6: no named writer produces it). The order is partly
+  // invoiced, so 9.2's row applies: LOCKED SPLIT_BILL, the correction is refused with its sentence, nothing written. The
+  // way back on such an order is master's code (ORDER_INVOICE_SETTLE_FAILED, SA-1546 10.2) and is not asserted here.
+  it("(aw) fixture-built: a no-row 6/10 sibling invoiced at 6 makes the order partly invoiced: the correction of B1 is LOCKED SPLIT_BILL, 0 writes", async () => {
+    const { order, items, inv } = await deliveredAndBilled("awf", [10, 10]);
     await w.prisma.orderItem.update({
       where: { id: items[1].id },
       data: { deliveredQty: 6, invoicedQty: 6 } as any,
@@ -204,47 +230,17 @@ describeDb("SA-1544 (aw): the way back after a correction, real invoices", () =>
       data: { qty: 6, subtotal: 30 },
     });
     await w.prisma.invoice.update({ where: { id: inv.id }, data: { subtotal: 80, total: 80 } });
-    await w.prisma.order.update({
-      where: { id: order.id },
-      data: { subtotal: 100, total: 100 } as any,
-    });
     await status(order.id, "CONFIRMED", "office correction");
-    let outcome = "accepted";
-    try {
-      await edit(order.id, [{ id: items[0].id, qty: 8 }]);
-    } catch (e: any) {
-      outcome = "refused " + (e?.status ?? "") + " " + (e?.response?.code ?? e?.message);
-    }
-    let wayBack = "completed";
-    try {
-      await status(order.id, "OUT_FOR_DELIVERY");
-      await status(order.id, "DELIVERED");
-    } catch (e: any) {
-      wayBack = "refused " + (e?.status ?? "") + " " + (e?.response?.code ?? e?.message);
-    }
-    const a = await w.prisma.orderItem.findUniqueOrThrow({ where: { id: items[0].id } });
-    const b = await w.prisma.orderItem.findUniqueOrThrow({ where: { id: items[1].id } });
-    const invoices = await w.prisma.invoice.findMany({
-      where: { orderId: order.id },
-      orderBy: { createdAt: "asc" },
+    await expect(edit(order.id, [{ id: items[0].id, qty: 8 }])).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: "LINE_ALREADY_DELIVERED",
+        message: expect.stringContaining(LOCKED_COPY.SPLIT_BILL),
+      },
     });
-    observe(
-      "AW sibling no-row 6/10 beside B1 10/10 -> 8: correction " +
-        outcome +
-        "; way back " +
-        wayBack +
-        "; B1 qty/delivered=" +
-        Number(a.qty) +
-        "/" +
-        Number(a.deliveredQty) +
-        "; sibling qty/delivered=" +
-        Number(b.qty) +
-        "/" +
-        Number(b.deliveredQty) +
-        "; invoices=[" +
-        invoices.map((i) => i.status + ":" + Number(i.total)).join(",") +
-        "]",
-    );
-    expect(lines.length).toBe(2); // the fixture stood; the outcome is in observe.txt for the SA
+    const a = await w.prisma.orderItem.findUniqueOrThrow({ where: { id: items[0].id } });
+    expect([Number(a.qty), Number(a.deliveredQty)]).toEqual([10, 10]);
+    const invoice = await w.prisma.invoice.findUniqueOrThrow({ where: { id: inv.id } });
+    expect([invoice.status, Number(invoice.total)]).toEqual(["SENT", 80]);
   }, 180_000);
 });

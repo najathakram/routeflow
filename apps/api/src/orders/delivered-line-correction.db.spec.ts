@@ -424,45 +424,58 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     expect(await audits(o.id)).toHaveLength(0);
   });
 
-  it("SA-1533 (x) OBSERVE: a price-only edit on a no-row line at column 10 of 12: column and bills reported, not asserted", async () => {
-    const p = await product("x-price");
-    const o = await reopened([plain(p, 12, 10)]);
-    const id = o.lineItems[0].id;
-    const before = await stock(p);
-    let outcome = "accepted";
-    try {
-      await edit(o.id, {
-        replaceAll: false,
-        items: [{ id, action: "UPDATE", qty: 12, unitPrice: 2 }],
-      });
-    } catch (e: any) {
-      outcome = "refused " + (e?.response?.code ?? e?.message);
-    }
-    const a = await line(o.id);
-    const basis = await deliveredBasisByLine(raw as any, o.id);
-    require("fs").appendFileSync(
-      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
-      "X price-only rowless qty 12 column 10" +
-        ": " +
-        outcome +
-        " column=" +
-        Number(a.deliveredQty) +
-        " qty=" +
-        Number(a.qty) +
-        " price=" +
-        Number(a.unitPrice) +
-        " bills=" +
-        billableQtyFromBasis({ id, qty: 12 }, basis) +
-        " rows=" +
-        (await raw.deliveryMutation.count({ where: { orderId: o.id } })) +
-        " stockDelta=" +
-        ((await stock(p)) - before) +
-        String.fromCharCode(10),
-    );
+  // SA-1546 (bb) / A10 10.1: a price is never a delivered statement. A no-row line at column 10 of 12 keeps its column when
+  // only the price changes, in BOTH payload shapes (head: 12, the price edit erased the legacy delivered figure).
+  it.each([
+    ["the bare price shape", (id: string) => ({ id, unitPrice: 2 })],
+    [
+      "the web shape (held qty carried)",
+      (id: string) => ({ id, action: "UPDATE", qty: 12, unitPrice: 2 }),
+    ],
+  ])(
+    "SA-1546 (bb): a price-only edit of a no-row 10/12 line keeps column 10 - %s",
+    async (_name, entry) => {
+      const p = await product("x-price");
+      const o = await reopened([plain(p, 12, 10)]);
+      const id = o.lineItems[0].id;
+      const before = await stock(p);
+      await edit(o.id, { replaceAll: false, items: [entry(id)] });
+      const a = await line(o.id);
+      expect(Number(a.deliveredQty)).toBe(10); // wrong value: 12 (the head restated the column to the carried qty)
+      expect(Number(a.qty)).toBe(12);
+      expect(Number(a.unitPrice)).toBe(2);
+      expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(0);
+      expect((await stock(p)) - before).toBe(0);
+      const basis = await deliveredBasisByLine(raw as any, o.id);
+      expect(billableQtyFromBasis({ id, qty: 12 }, basis)).toBe(12); // a no-row line bills its qty, before and after
+      // the audit row of a price edit says the delivered figure did not move
+      const rows = await audits(o.id);
+      expect(rows).toHaveLength(1);
+      const meta = rows[0].meta as any;
+      expect(meta.deliveredQty).toEqual({ before: 10, after: 10 });
+      expect(meta.unitPrice).toEqual({ before: 1, after: 2 });
+      expect(meta.evidenceRows).toEqual([]);
+    },
+  );
+
+  it("SA-1546 (bb) controls: a qty edit still restates the no-row column (L to 11 gives 11, N to 10 gives 10) and a take-off still zeroes it", async () => {
+    const pl = await product("x-l");
+    const ol = await reopened([plain(pl, 12, 10)]);
+    await edit(ol.id, { replaceAll: false, items: [{ id: ol.lineItems[0].id, qty: 11 }] });
+    expect(Number((await line(ol.id)).deliveredQty)).toBe(11);
+    const pn = await product("x-n");
+    const on = await reopened([plain(pn, 12, 10)]);
+    await edit(on.id, { replaceAll: false, items: [{ id: on.lineItems[0].id, qty: 10 }] });
+    expect(Number((await line(on.id)).deliveredQty)).toBe(10);
+    const pt = await product("x-t");
+    const ot = await reopened([plain(pt, 12, 10)]);
+    await edit(ot.id, {
+      replaceAll: false,
+      items: [{ id: ot.lineItems[0].id, action: "CANCEL", deliveredTo: 0 }],
+    });
+    expect(Number((await line(ot.id)).deliveredQty)).toBe(0);
   });
 
-  // SA-1536 (y): a DELIVERED order is LOCKED REOPEN_FIRST for an admin: L, N, B1 and the take-off are each a 409 with the
-  // reopen sentence and 0 moves. E (a raise) is observed, not asserted.
   it("SA-1536 (y): on a DELIVERED office order an admin's L, N, B1 and take-off are each 409 REOPEN_FIRST, 0 moves", async () => {
     const REOPEN = "Reopen the order to correct delivered items.";
     const cases: Array<{
@@ -506,29 +519,13 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     }
   });
 
-  it("SA-1536 (y) OBSERVE E: a raise of a no-row 10/12 line on a DELIVERED order, report only", async () => {
+  it("SA-1536 (y) E: a raise of a no-row 10/12 line to 14 on a DELIVERED order is accepted: column 14, qty 14, stock -2", async () => {
     const p = await product("y-e");
     const o = await reopened([plain(p, 12, 10)], "DELIVERED");
     const id = o.lineItems[0].id;
-    let outcome = "accepted";
-    try {
-      await edit(o.id, { replaceAll: false, items: [{ id, qty: 14 }] });
-    } catch (e: any) {
-      outcome = "refused " + (e?.response?.code ?? e?.message);
-    }
+    await edit(o.id, { replaceAll: false, items: [{ id, qty: 14 }] });
     const a = await line(o.id);
-    require("fs").appendFileSync(
-      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
-      "Y-E raise 10/12 to 14 on a DELIVERED order: " +
-        outcome +
-        " column=" +
-        Number(a.deliveredQty) +
-        " qty=" +
-        Number(a.qty) +
-        " stockDelta=" +
-        ((await stock(p)) - 90) +
-        String.fromCharCode(10),
-    );
+    expect([Number(a.deliveredQty), Number(a.qty), (await stock(p)) - 90]).toEqual([14, 14, -2]);
   });
 
   // SA-1536 (z): the route lock reads the ORDER's rows. A pickup-switched order (no run, no stop) with a driver row on a
@@ -598,6 +595,44 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
       10,
     );
     expect(await stock(a)).toBe(90);
+  });
+
+  // SA-1546 (be) / A10 10.4: the at-door change-request merge writes ADD_ON rows with a driver set and no delivered quantity.
+  // Such a row is not evidence, but a driver changed this order at the door: a route order, the lock fails closed.
+  it("SA-1546 (be): a driver ADD_ON row (null quantityDelivered) on a sibling line of a released-link order locks the no-row line ROUTE, 0 moves", async () => {
+    const a = await product("be-a");
+    const b = await product("be-b");
+    const o = await reopened([plain(a, 5, 0), plain(b, 10)]);
+    const sibling = o.lineItems.find((l) => l.productId === a)!;
+    const noRow = o.lineItems.find((l) => l.productId === b)!;
+    await raw.deliveryMutation.create({
+      data: {
+        orderId: o.id,
+        orderItemId: sibling.id,
+        productId: a,
+        driverId,
+        type: "ADD_ON",
+        quantityDelivered: null,
+        tenantId,
+      },
+    });
+    const head = await raw.order.findUniqueOrThrow({ where: { id: o.id } });
+    expect([head.routeRunId, head.routeRunStopId]).toEqual([null, null]); // the links are released
+    await expect(
+      edit(o.id, { replaceAll: false, items: [{ id: noRow.id, qty: 8 }] }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: "LINE_ALREADY_DELIVERED",
+        message: expect.stringContaining("A driver delivered this item."),
+      },
+    }); // wrong value: accepted (the head filtered the row out as not evidence)
+    expect(Number((await raw.orderItem.findUniqueOrThrow({ where: { id: noRow.id } })).qty)).toBe(
+      10,
+    );
+    expect(await stock(b)).toBe(90);
+    expect(await ledgerNet(b)).toBe(0);
+    expect(await audits(o.id)).toHaveLength(0);
   });
 
   it("SA-1544 (az) control: an OFFICE row with no line id does not lock the order (office orders stay correctable)", async () => {

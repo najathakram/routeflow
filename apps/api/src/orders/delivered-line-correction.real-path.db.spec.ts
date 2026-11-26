@@ -64,11 +64,6 @@ describeDb("SA-1506 PR-1a: the real reopen path, the round trip, the stop and th
   const orderOf = (id: string) => w.prisma.order.findUniqueOrThrow({ where: { id } });
   const net = async (p: string) =>
     (await w.movements(p)).reduce((s: number, m: any) => s + Number(m.quantity), 0);
-  const observe = (text: string) =>
-    require("fs").appendFileSync(
-      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
-      text + String.fromCharCode(10),
-    );
 
   it("(af) the REAL path: booked 10, marked DELIVERED, status change to CONFIRMED with a reason, then an admin cut to 8 puts 2 back", async () => {
     const p = await w.product("af", 10);
@@ -130,16 +125,10 @@ describeDb("SA-1506 PR-1a: the real reopen path, the round trip, the stop and th
       Number(before.subtotal),
       Number(before.total),
     ]);
-    observe(
-      "AF round trip: status=" +
-        after.status +
-        " column=" +
-        Number(line.deliveredQty) +
-        " deliveredAt=" +
-        (after.deliveredAt ? "set" : "null") +
-        " rows=" +
-        (await w.prisma.deliveryMutation.count({ where: { orderId: order.id } })),
-    );
+    expect(after.status).toBe("DELIVERED");
+    expect(Number(line.deliveredQty)).toBe(10);
+    expect(after.deliveredAt).not.toBeNull();
+    expect(await w.prisma.deliveryMutation.count({ where: { orderId: order.id } })).toBe(0);
     await expectLedgerConsistent(w.tenantId, [p]);
   }, 120_000);
 

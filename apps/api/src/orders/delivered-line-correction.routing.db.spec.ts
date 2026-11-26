@@ -569,9 +569,10 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     expect(await snapshot(fx.o.id)).toEqual(before);
   }, 60_000);
 
-  // SA-1536 (aj): OBSERVE ONLY, no assertion on the outcome. A reopened, partly invoiced order: a no-row 10/12 line billed
-  // for 10, cut to 10 by an admin. The lead files the bug row from observe.txt.
-  it("SA-1536 (aj) OBSERVE: a reopened, partly invoiced order, a no-row 10/12 line cut to 10 by an admin: stock, column, invoice qty", async () => {
+  // SA-1536 (aj), asserted at the observed values (SA-1546 (bf): no spec writes outside the tree). A reopened, partly
+  // invoiced order: a no-row 10/12 line billed for 10, cut to 10 by an admin. Master's partly-invoiced skip keeps the
+  // writer out (0 calls); the lead files the bug row from the observed baseline.
+  it("SA-1536 (aj): a reopened, partly invoiced order, a no-row 10/12 line billed 10 and cut to 10 by an admin: accepted, stock +2, column 10, invoice untouched, 0 rebuilds", async () => {
     const fx = await fixture({ status: "SENT", qty: 12, officeRow: false });
     await raw.orderItem.update({
       where: { id: fx.li.id },
@@ -587,112 +588,42 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     });
     const stockBefore = await stockOf(fx.productId);
     const resync = jest.spyOn(orders.invoicesService as any, "resyncOrderInvoicesForEdit");
-    let outcome = "accepted";
-    let resyncCalls = 0;
     try {
       await edit(fx.o.id, { replaceAll: false, items: [{ id: fx.li.id, qty: 10 }] });
-    } catch (e: any) {
-      outcome = "refused " + (e?.response?.code ?? e?.message);
+      expect(resync).toHaveBeenCalledTimes(0);
     } finally {
-      resyncCalls = resync.mock.calls.length;
       resync.mockRestore();
     }
     const line = await raw.orderItem.findUniqueOrThrow({ where: { id: fx.li.id } });
-    require("fs").appendFileSync(
-      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
-      "AJ partly invoiced 10/12 (invoice bills 10) cut to 10 by an admin: " +
-        outcome +
-        " stockDelta=" +
-        ((await stockOf(fx.productId)) - stockBefore) +
-        " column=" +
-        Number(line.deliveredQty) +
-        " qty=" +
-        Number(line.qty) +
-        " invoicedQty=" +
-        Number((line as any).invoicedQty) +
-        " invoiceQty=" +
-        (await invoiceQty(fx.inv.id)) +
-        " invoiceStatus=" +
-        (await invoiceOf(fx.inv.id)).status +
-        " rebuildCalls=" +
-        resyncCalls +
-        String.fromCharCode(10),
-    );
+    expect((await stockOf(fx.productId)) - stockBefore).toBe(2);
+    expect([
+      Number(line.deliveredQty),
+      Number(line.qty),
+      Number((line as any).invoicedQty),
+    ]).toEqual([10, 10, 10]);
+    expect(await invoiceQty(fx.inv.id)).toBe(10);
+    expect((await invoiceOf(fx.inv.id)).status).toBe("SENT");
   }, 60_000);
 
-  // R-265 / H-1 evidence (OBSERVE ONLY, no assertion on the outcomes): which path an admin cut and an admin raise take on a
-  // reopened (CONFIRMED) order with a SENT or PAID invoice, with and without a live delivered line. The path is read from which
-  // invoice-service functions the edit called, and with what transaction argument.
-  it("H-1 OBSERVE: the path of an admin cut and raise on a reopened CONFIRMED order with a SENT / PAID invoice, with and without a delivered line", async () => {
-    const invoices: any = orders.invoicesService;
-    const names = [
-      "resyncOrderInvoicesForEdit",
-      "reconcileOrderDraftInvoice",
-      "revertLinkedInvoicesForOrderEdit",
-    ];
-    const lines: string[] = [];
-    for (const delivered of [true, false])
-      for (const status of ["SENT", "PAID"] as const)
-        for (const kind of ["cut", "raise"] as const) {
-          const fx = await fixture({
-            status,
-            paid: status === "PAID" ? 100 : undefined,
-            officeRow: delivered,
-          });
-          if (!delivered)
-            await raw.orderItem.update({ where: { id: fx.li.id }, data: { deliveredQty: 0 } });
-          const spies = names.map((n) => jest.spyOn(invoices, n));
-          let outcome = "accepted";
-          try {
-            await edit(fx.o.id, {
-              replaceAll: false,
-              items: [{ id: fx.li.id, qty: kind === "cut" ? 8 : 12 }],
-            });
-          } catch (e: any) {
-            outcome = "refused " + (e?.status ?? "") + " " + (e?.response?.code ?? e?.message);
-          }
-          const called = spies
-            .map((s, i) =>
-              s.mock.calls.length
-                ? names[i] +
-                  "x" +
-                  s.mock.calls.length +
-                  (i === 0 ? (s.mock.calls[0][1] ? "(in tx)" : "(own tx, after commit)") : "")
-                : null,
-            )
-            .filter(Boolean)
-            .join("+");
-          spies.forEach((s) => s.mockRestore());
-          const inv = await invoiceOf(fx.inv.id);
-          const ord = await raw.order.findUniqueOrThrow({ where: { id: fx.o.id } });
-          lines.push(
-            "H1 delivered=" +
-              delivered +
-              " invoice=" +
-              status +
-              " " +
-              kind +
-              ": " +
-              outcome +
-              " | called=" +
-              (called || "none") +
-              " | invoice " +
-              status +
-              " -> " +
-              inv.status +
-              " total=" +
-              Number(inv.total) +
-              " qty=" +
-              (await invoiceQty(fx.inv.id)) +
-              " | order=" +
-              ord.status,
-          );
-        }
-    require("fs").appendFileSync(
-      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
-      lines.join(String.fromCharCode(10)) + String.fromCharCode(10),
-    );
-  }, 120_000);
+  // SA-1546 (bb), with the real invoice: a price-only edit of a no-row 10/12 line keeps the column at 10 and the invoice
+  // follows the price (B4's in-place resync): the line bills 12 at the new price.
+  it("SA-1546 (bb): a price-only edit of a no-row 10/12 line on a SENT invoice keeps column 10 and the invoice bills 12 at the new price", async () => {
+    const fx = await fixture({ status: "SENT", qty: 12, officeRow: false });
+    await raw.orderItem.update({ where: { id: fx.li.id }, data: { deliveredQty: 10 } });
+    const stockBefore = await stockOf(fx.productId);
+    await edit(fx.o.id, {
+      replaceAll: false,
+      items: [{ id: fx.li.id, action: "UPDATE", qty: 12, unitPrice: 20 }],
+    });
+    const line = await raw.orderItem.findUniqueOrThrow({ where: { id: fx.li.id } });
+    expect(Number(line.deliveredQty)).toBe(10); // wrong value: 12
+    expect(Number(line.unitPrice)).toBe(20);
+    expect((await stockOf(fx.productId)) - stockBefore).toBe(0);
+    expect(await invoiceQty(fx.inv.id)).toBe(12);
+    const inv = await invoiceOf(fx.inv.id);
+    expect(Number(inv.total)).toBe(240);
+    expect(inv.status).toBe("SENT");
+  }, 60_000);
 
   // ---------------------------------------------------------------------------------------------------------------
   // SA-1544 (Amendment 9): (ap) (aq) (ar) (at) (au) (av), real Postgres, real InvoicesService.
@@ -751,13 +682,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
       orderBy: { id: "asc" },
       select: { id: true, amount: true, status: true },
     });
-  const observeLine = (text: string) =>
-    require("fs").appendFileSync(
-      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
-      text + String.fromCharCode(10),
-    );
-
-  it("SA-1544 (as) OBSERVE: one timed run of the correction path (a take-off restated in the tx, a SENT invoice, 2 lines)", async () => {
+  it("SA-1544 (as): one timed run of the correction path (a take-off restated in the tx, a SENT invoice, 2 lines)", async () => {
     const fx = await fixture({ status: "SENT" });
     await addSecondLine(fx);
     const t0 = Date.now();
@@ -766,13 +691,6 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
       items: [{ id: fx.li.id, action: "CANCEL", deliveredTo: 0 }],
     });
     const ms = Date.now() - t0;
-    observeLine(
-      "AS timed correction (take-off, restated in tx, 2 lines, SENT): " +
-        ms +
-        " ms, budget " +
-        20_000 +
-        " ms",
-    );
     expect(ms).toBeLessThan(20_000);
   }, 60_000);
 
@@ -920,14 +838,8 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     expect((await raw.order.findUniqueOrThrow({ where: { id: fx.o.id } })).status).toBe(
       "CONFIRMED",
     );
-    observeLine(
-      "AT admin raise 10->12 on PAID(100): invoice " +
-        inv.status +
-        " total=" +
-        Number(inv.total) +
-        " payments=" +
-        paymentsBefore.length,
-    );
+    expect(inv.status).toBe("PARTIAL"); // PAID 100 against a total of 120
+    expect(paymentsBefore).toHaveLength(1);
   }, 60_000);
 
   it("SA-1544 (at): an OPERATOR raise of an undelivered line on a PAID invoice of the same order is accepted too (B4, red 7b), payments unchanged", async () => {
@@ -949,26 +861,14 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
   it("SA-1544 (at): an OPERATOR raise of the DELIVERED line itself on a PAID invoice is accepted (9.2 row: any other edit), payments unchanged", async () => {
     const fx = await fixture({ status: "PAID", paid: 100 });
     const paymentsBefore = await paymentRows(fx.inv.id);
-    let outcome = "accepted";
-    try {
-      await edit(
-        fx.o.id,
-        { replaceAll: false, items: [{ id: fx.li.id, qty: 12 }] },
-        principal("OPERATOR", operatorUserId),
-      );
-    } catch (e: any) {
-      outcome = "refused " + (e?.status ?? "") + " " + (e?.response?.code ?? e?.message);
-    }
+    await edit(
+      fx.o.id,
+      { replaceAll: false, items: [{ id: fx.li.id, qty: 12 }] },
+      principal("OPERATOR", operatorUserId),
+    ); // wrong value: refused (the role lock is for cuts and deletes, never a raise)
     const inv = await invoiceOf(fx.inv.id);
-    observeLine(
-      "AT operator raise of the delivered line 10->12 on PAID: " +
-        outcome +
-        "; invoice " +
-        inv.status +
-        " total=" +
-        Number(inv.total),
-    );
-    expect(outcome).toBe("accepted"); // wrong value: refused (the role lock is for cuts and deletes, never a raise)
+    expect(Number(inv.total)).toBe(120);
+    expect(inv.status).toBe("PARTIAL");
     expect(await paymentRows(fx.inv.id)).toEqual(paymentsBefore);
   }, 60_000);
 

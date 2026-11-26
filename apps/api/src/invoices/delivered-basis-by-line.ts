@@ -82,7 +82,20 @@ export function evidenceOrigin(m: {
   routeRunStopId?: string | null;
   driverId?: string | null;
 }): "office" | "route" {
-  return isEvidenceRow(m) && (m.routeRunStopId != null || m.driverId != null) ? "route" : "office";
+  return isEvidenceRow(m) && writtenOnRoute(m) ? "route" : "office";
+}
+
+/**
+ * SA-1546 (be): a different question from `evidenceOrigin`: did a stop or a driver write this row, whatever its type and
+ * whether or not it carries a delivered quantity? The at-door change-request merge writes ADD_ON / REFUSED rows with a
+ * stop or driver set and no `quantityDelivered`; an order a driver changed at the door is a route order, so the route
+ * lock reads this over every row of the order (no new query). The ONLY other place the two columns are tested.
+ */
+export function writtenOnRoute(m: {
+  routeRunStopId?: string | null;
+  driverId?: string | null;
+}): boolean {
+  return m.routeRunStopId != null || m.driverId != null;
 }
 
 export async function deliveredBasisByLine(

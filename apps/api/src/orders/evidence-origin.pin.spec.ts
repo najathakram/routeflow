@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
-import { evidenceOrigin } from "../invoices/delivered-basis-by-line";
+import { evidenceOrigin, writtenOnRoute } from "../invoices/delivered-basis-by-line";
 
 /**
  * SA-1506 A2 NEW-M1 / SA-1514 LOW 3: `evidenceOrigin` is the ONE test of who wrote an evidence row (a stop or a driver =
@@ -35,6 +35,22 @@ describe("evidence-origin pin (one classifier)", () => {
     expect(evidenceOrigin({ ...base, driverId: "d1" })).toBe("route");
     expect(evidenceOrigin({ ...base, routeRunStopId: null, driverId: null })).toBe("office");
     expect(evidenceOrigin({ ...base })).toBe("office");
+  });
+
+  it("SA-1546 (be): writtenOnRoute is the second named question: a stop or driver wrote the row, any type, any quantity", () => {
+    expect(writtenOnRoute({ routeRunStopId: "s1" })).toBe(true);
+    expect(writtenOnRoute({ driverId: "d1" })).toBe(true);
+    expect(writtenOnRoute({ routeRunStopId: null, driverId: null })).toBe(false);
+    expect(writtenOnRoute({})).toBe(false);
+    // an at-door ADD_ON row (no quantityDelivered) is not evidence, and still written on the route
+    const addOn = { type: "ADD_ON", quantityDelivered: null, driverId: "d1", routeRunStopId: null };
+    expect(evidenceOrigin(addOn)).toBe("office");
+    expect(writtenOnRoute(addOn)).toBe(true);
+  });
+
+  it("SA-1546 (be): the facts loader asks writtenOnRoute for the order-wide route question, never the columns", () => {
+    const code = stripComments(src("orders/delivered-line-facts.ts"));
+    expect(code).toContain("orderRouteRows: rows.some((m) => writtenOnRoute(m))");
   });
 
   it("the correction writer's office-row where-clause is the same two columns (the DB twin of 'office')", () => {

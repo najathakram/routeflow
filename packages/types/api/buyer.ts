@@ -390,11 +390,19 @@ export interface BuyerOrderListItem {
   lineItems: BuyerOrderLine[];
 }
 
+/**
+ * Why a buyer's edit window is closed. SA-1546 10.3: a wire union with no Prisma enum behind it (so not in enums.ts, L-072
+ * governs Prisma mirrors); one const, one derived type, never a hand-typed copy. DISPATCHED = out the door; STATUS =
+ * cancelled or refused; DELIVERED_LINES = the order holds delivered goods (a reopened order), so changes go by request.
+ */
+export const BUYER_EDIT_CLOSED_REASONS = ["DISPATCHED", "STATUS", "DELIVERED_LINES"] as const;
+export type BuyerEditClosedReason = (typeof BUYER_EDIT_CLOSED_REASONS)[number];
+
 /** P5-08: the server's edit window — editing closes when the order's run dispatches. */
 export interface BuyerOrderEditWindow {
   editable: boolean;
   editableUntil: string | null;
-  closedReason: "DISPATCHED" | "STATUS" | null;
+  closedReason: BuyerEditClosedReason | null;
 }
 
 /** GET /buyer/orders/:id — the list row plus the detail-only relations (OrdersService.findOne). */
