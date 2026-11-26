@@ -164,7 +164,7 @@ const complete = () =>
   fireEvent.click(screen.getByRole("button", { name: "Complete & show receipt" }));
 
 describe("CounterSaleScreen: an inline return rides the sale (W-863)", () => {
-  it("a named customer sees the Returns section; a walk-in is told returns are refunded", async () => {
+  it("a named customer sees the Returns section; a walk-in sees no return sentence on a sale with no return (B1466)", async () => {
     renderWithProviders(<CounterSaleScreen />);
     await scan("BIG");
     pickAcme();
@@ -172,7 +172,39 @@ describe("CounterSaleScreen: an inline return rides the sale (W-863)", () => {
     expect(screen.queryByTestId("counter-return-walkin-note")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Use Walk-in customer" }));
     expect(screen.queryByTestId("returns-section")).toBeNull();
-    expect(screen.getByTestId("counter-return-walkin-note")).toHaveTextContent("refunded");
+    expect(screen.queryByTestId("counter-return-walkin-note")).toBeNull();
+    expect(screen.queryByText(/walk-in return is refunded/i)).toBeNull();
+  });
+
+  it("B1466: a Return button beside Today's sales opens the sales list to take a return from", async () => {
+    (apiClient.get as jest.Mock).mockImplementation((url: string) =>
+      Promise.resolve(
+        url === "/orders/counter-sale/today"
+          ? {
+              data: {
+                data: [],
+                summary: null,
+                meta: {
+                  total: 0,
+                  page: 1,
+                  totalPages: 1,
+                  limit: 25,
+                  day: "2026-10-07",
+                  timezone: "UTC",
+                },
+              },
+            }
+          : { data: { taxRate: 0 } },
+      ),
+    );
+    renderWithProviders(<CounterSaleScreen />);
+    const today = screen.getByRole("button", { name: "Today's sales" });
+    const ret = screen.getByRole("button", { name: "Return" });
+    expect(ret.parentElement).toBe(today.parentElement);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(ret);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/Find the sale to take back/i);
   });
 
   it("a return whose quote is still being worked out blocks Complete and sends nothing", async () => {

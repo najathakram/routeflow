@@ -38,7 +38,7 @@ const STRIPE_SUB = {
   cycle: "MONTHLY",
 };
 
-function make(addonRow: Record<string, unknown> | null) {
+function make(addonRow: Record<string, unknown> | null, tenantClass: string | null = "PRODUCTION") {
   let row: any = addonRow && { ...addonRow };
   const tenantAddon = {
     findFirst: jest.fn(async () => (row ? { ...row } : null)),
@@ -67,7 +67,9 @@ function make(addonRow: Record<string, unknown> | null) {
   const prisma = {
     tenantAddon,
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ slug: "acme", name: "Acme", plan: "STARTER" }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ slug: "acme", name: "Acme", plan: "STARTER", class: tenantClass }),
     },
     tenantSubscription: { findUnique: jest.fn().mockResolvedValue(STRIPE_SUB) },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
@@ -209,4 +211,34 @@ describe("enableAddon guards (M11 SHOULDs)", () => {
     const { svc } = make(OWNED_6);
     await expect(svc.addonEnableRefusal("t1", "CUSTOMER_PACK_100")).resolves.toBeNull();
   });
+});
+
+// W-1464 R-282 M2: an add-on item create or quantity update changes what the subscription charges, so a business that
+// is not PRODUCTION is refused with the coded 409 BEFORE the first Stripe call (the orphan listing included).
+describe("enableAddon live-payments wall (W-1464)", () => {
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "class %p: a quantity change on a billed row is refused before any Stripe item update",
+    async (tenantClass) => {
+      const { svc, stripeClient, stripeCalls, getRow } = make(OWNED_6, tenantClass);
+      const out = await bodyOf(svc.enableAddon("t1", "CUSTOMER_PACK_100", 7, "u1", 6));
+      expect(out.status).toBe(409);
+      expect(out.body).toMatchObject({ code: API_ERROR_CODES.LIVE_PAYMENTS_OFF });
+      expect(stripeCalls()).toBe(0);
+      expect(stripeClient.subscriptionItems.list).not.toHaveBeenCalled();
+      expect(getRow().quantity).toBe(6);
+    },
+  );
+
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "class %p: a first purchase is refused before any Stripe item is listed, adopted or created",
+    async (tenantClass) => {
+      const { svc, stripeClient, stripeCalls, getRow } = make(null, tenantClass);
+      const out = await bodyOf(svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1", 0));
+      expect(out.status).toBe(409);
+      expect(out.body).toMatchObject({ code: API_ERROR_CODES.LIVE_PAYMENTS_OFF });
+      expect(stripeCalls()).toBe(0);
+      expect(stripeClient.subscriptionItems.list).not.toHaveBeenCalled();
+      expect(getRow()).toBeNull();
+    },
+  );
 });

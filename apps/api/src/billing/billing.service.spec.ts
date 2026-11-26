@@ -2162,6 +2162,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
 describe("BillingService.syncStripeSubscriptionPrice", () => {
   let service: BillingService;
   let prisma: {
+    tenant: { findUnique: jest.Mock };
     tenantSubscription: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     tenantAddon: { findMany: jest.Mock };
     $transaction: jest.Mock;
@@ -2173,6 +2174,8 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
 
   beforeEach(async () => {
     prisma = {
+      // W-1464: the live-payments wall reads the business class (PRODUCTION unless a case says otherwise).
+      tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
       tenantSubscription: {
         findUnique: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
@@ -2542,6 +2545,22 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       expect(stripe.getSubscription).not.toHaveBeenCalled();
       expect(stripe.updateSubscription).not.toHaveBeenCalled();
     });
+
+    // W-1464 R-282 M2: a price push changes what the subscription charges.
+    it.each(["TEST", "DEMO", "INTERNAL", null])(
+      "W-1464: class %p is refused with the coded 409 before the flag is armed or Stripe is written",
+      async (tenantClass) => {
+        arrange();
+        prisma.tenant.findUnique.mockResolvedValue({ id: "t1", class: tenantClass });
+        (armNeedsReconcile as jest.Mock).mockClear();
+        await expect(service.pushResolvedPriceToStripe("t1")).rejects.toMatchObject({
+          status: 409,
+          response: { code: "LIVE_PAYMENTS_OFF" },
+        });
+        expect(armNeedsReconcile).not.toHaveBeenCalled();
+        expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      },
+    );
 
     it("a Stripe update failure is reported as stripe_update_failed (the caller refuses the local write)", async () => {
       arrange();
@@ -3726,5 +3745,51 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
     expect(
       emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
     ).toHaveLength(1);
+  });
+});
+
+// W-1464 PR-B (SA-1538 R5): the live-payments wall in front of the billing portal and the Stripe customer create.
+describe("W-1464: a business that is not PRODUCTION never reaches Stripe from BillingService", () => {
+  const tenantOf = (cls: string | undefined) => ({
+    id: "t1",
+    slug: "acme",
+    ...(cls === undefined ? {} : { class: cls }),
+    status: "ACTIVE",
+    plan: "STARTER",
+    subscription: null,
+    config: { businessName: "Acme" },
+  });
+  const refused = { status: 409, response: { code: "LIVE_PAYMENTS_OFF" } };
+
+  it.each(["TEST", "DEMO", "INTERNAL", undefined])(
+    "the billing portal: class %p is refused and no portal session is made",
+    async (cls) => {
+      const { svc, prisma, stripe } = make();
+      prisma.tenant.findUnique.mockResolvedValue(tenantOf(cls));
+      await expect(svc.createBillingPortalSession("t1")).rejects.toMatchObject(refused);
+      expect(stripe.createBillingPortalSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["TEST", "DEMO", "INTERNAL", undefined])(
+    "ensureStripeCustomer: class %p is refused and no Stripe customer is created",
+    async (cls) => {
+      const { svc, prisma, stripe } = make();
+      stripe.createCustomer = jest.fn().mockResolvedValue({ id: "cus_new" });
+      prisma.user = { findMany: jest.fn().mockResolvedValue([]) }; // the new customer's email read
+      prisma.tenant.findUnique.mockResolvedValue(tenantOf(cls));
+      prisma.tenantSubscription.findUnique.mockResolvedValue(null);
+      await expect(svc.ensureStripeCustomer("t1")).rejects.toMatchObject(refused);
+      expect(stripe.createCustomer).not.toHaveBeenCalled();
+      expect(prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+    },
+  );
+
+  it("guard: PRODUCTION still gets its portal session", async () => {
+    const { svc, stripe } = make();
+    await expect(svc.createBillingPortalSession("t1")).resolves.toEqual({
+      portalUrl: "https://billing.stripe.test/p/session_1",
+    });
+    expect(stripe.createBillingPortalSession).toHaveBeenCalledTimes(1);
   });
 });
