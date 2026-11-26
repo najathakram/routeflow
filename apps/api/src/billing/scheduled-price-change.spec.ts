@@ -87,8 +87,14 @@ function row(over: Partial<SubRow> = {}): SubRow {
   };
 }
 
-function make(rows: SubRow[] = [row()], items: any[] = [baseItem()]) {
+function make(
+  rows: SubRow[] = [row()],
+  items: any[] = [baseItem()],
+  tenantClass: string | null = "PRODUCTION",
+) {
   const prisma: any = {
+    // W-1464: the live-payments wall reads the business class (PRODUCTION unless a case says otherwise).
+    tenant: { findUnique: jest.fn(async () => ({ class: tenantClass })) },
     tenantSubscription: {
       findUnique: jest.fn(
         async ({ where }: any) => rows.find((r) => r.tenantId === where.tenantId) ?? null,
@@ -734,4 +740,34 @@ describe("the invoice.upcoming webhook", () => {
       billing.handleWebhookEvent({ id: "e", type: "invoice.upcoming", data: { object: {} } }),
     ).resolves.toBeUndefined();
   });
+});
+
+// W-1464 R-282 M2: pushing or restoring a scheduled price changes what the subscription charges.
+describe("the live-payments wall (W-1464)", () => {
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "class %p: apply() is refused with the coded 409 before any Stripe write",
+    async (tenantClass) => {
+      const { svc, stripe } = make([row()], [baseItem()], tenantClass);
+      await expect(svc.apply("t1", NOW)).rejects.toMatchObject({
+        status: 409,
+        response: { code: "LIVE_PAYMENTS_OFF" },
+      });
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "class %p: the restore of an earlier push is refused with the coded 409 before any Stripe write",
+    async (tenantClass) => {
+      const { svc, stripe } = make(
+        [row({ downgradeToPlanKey: null, downgradeEffectiveAt: null })],
+        [baseItem({ unit_amount: 5900 })],
+        tenantClass,
+      );
+      await expect(
+        svc.restoreIfPushedLocked("t1", "STARTER", { mustBeCleared: true }),
+      ).rejects.toMatchObject({ status: 409, response: { code: "LIVE_PAYMENTS_OFF" } });
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    },
+  );
 });

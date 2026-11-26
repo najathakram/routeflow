@@ -2162,6 +2162,7 @@ describe("B216 — a Stripe reinstatement LEAVES a downgrade scheduled before th
 describe("BillingService.syncStripeSubscriptionPrice", () => {
   let service: BillingService;
   let prisma: {
+    tenant: { findUnique: jest.Mock };
     tenantSubscription: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     tenantAddon: { findMany: jest.Mock };
     $transaction: jest.Mock;
@@ -2173,6 +2174,8 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
 
   beforeEach(async () => {
     prisma = {
+      // W-1464: the live-payments wall reads the business class (PRODUCTION unless a case says otherwise).
+      tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
       tenantSubscription: {
         findUnique: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
@@ -2542,6 +2545,22 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       expect(stripe.getSubscription).not.toHaveBeenCalled();
       expect(stripe.updateSubscription).not.toHaveBeenCalled();
     });
+
+    // W-1464 R-282 M2: a price push changes what the subscription charges.
+    it.each(["TEST", "DEMO", "INTERNAL", null])(
+      "W-1464: class %p is refused with the coded 409 before the flag is armed or Stripe is written",
+      async (tenantClass) => {
+        arrange();
+        prisma.tenant.findUnique.mockResolvedValue({ id: "t1", class: tenantClass });
+        (armNeedsReconcile as jest.Mock).mockClear();
+        await expect(service.pushResolvedPriceToStripe("t1")).rejects.toMatchObject({
+          status: 409,
+          response: { code: "LIVE_PAYMENTS_OFF" },
+        });
+        expect(armNeedsReconcile).not.toHaveBeenCalled();
+        expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      },
+    );
 
     it("a Stripe update failure is reported as stripe_update_failed (the caller refuses the local write)", async () => {
       arrange();

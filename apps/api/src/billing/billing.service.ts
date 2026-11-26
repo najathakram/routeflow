@@ -910,6 +910,10 @@ export class BillingService {
       product: priceData.product,
     };
 
+    // W-1464 R-282 M2: a price push changes what the subscription charges. Not a test business, before the flag is
+    // armed and before the Stripe write (the reads above change nothing).
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
+
     // SA-733r3 N4: `needsReconcile` (+ the key/nonce audit row) is COMMITTED before Stripe is touched; the flow
     // clears it after its local write (syncStripeSubscriptionPrice / the override flow). Unwritable => nothing sent.
     const reconcileDeps = { prisma: this.prisma, logger: this.logger };

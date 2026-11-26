@@ -1993,7 +1993,11 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
       tenantAddon,
       tenantSubscription: { findUnique: jest.fn().mockResolvedValue(BILLED_SUB) },
       // SA-815a: the included-in-plan refusal reads the tenant's pin
-      tenant: { findUnique: jest.fn().mockResolvedValue({ plan: "TEAM", planVersionId: null }) },
+      tenant: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ plan: "TEAM", planVersionId: null, class: "PRODUCTION" }),
+      },
       $transaction: jest.fn(async (fn: any) =>
         fn({
           tenantAddon,

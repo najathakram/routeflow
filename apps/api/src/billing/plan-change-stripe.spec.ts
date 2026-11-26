@@ -483,7 +483,11 @@ describe("runStripeFirstPlanChange as a plain caller would use it", () => {
   };
   const version = { id: "v8", addonSkus: [] };
   const GROWTH = { planKey: "GROWTH", name: "Growth", monthlyPrice: 249, annualPrice: null };
-  const NO_ADDONS = { tenantAddon: { findMany: jest.fn().mockResolvedValue([]) } } as any;
+  const NO_ADDONS = {
+    // W-1464: the live-payments wall reads the business class.
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
+    tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+  } as any;
 
   it("pushes the catalog price with none, then runs the local write", async () => {
     const stripe = stripeWith();
@@ -546,7 +550,10 @@ describe("runStripeFirstPlanChange as a plain caller would use it", () => {
 });
 
 describe("needsReconcile — SA-733r3 N4 (armed BEFORE the Stripe write, cleared after the local one)", () => {
-  const prisma = { $transaction: jest.fn() } as any;
+  const prisma = {
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
+    $transaction: jest.fn(),
+  } as any;
 
   it("the flag + attempt nonce are armed BEFORE subscriptions.update, with the same key the update carries", async () => {
     const stripe = stripeWith();
@@ -635,6 +642,7 @@ describe("needsReconcile — SA-733r3 N4 (armed BEFORE the Stripe write, cleared
       });
     const flowPrisma = () =>
       ({
+        tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
         $transaction: jest.fn(),
         tenantAddon: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
         tenantSubscription: {
@@ -757,5 +765,36 @@ describe("a non-finite price is refused with its own code, not 'set a custom fee
     expect(err).toBeInstanceOf(BadRequestException);
     expect(String(err.getResponse()?.message ?? err.message)).toMatch(/custom monthly fee/i);
     expect(err.getResponse()?.code).toBeUndefined();
+  });
+});
+
+// W-1464 R-282 M2: a plan change that pushes a price (or deletes add-on items) changes what the subscription charges.
+describe("pushPlanChange - the live-payments wall", () => {
+  const prismaOf = (tenantClass: string | null) =>
+    ({
+      tenant: { findUnique: jest.fn(async () => ({ class: tenantClass })) },
+      tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+      $transaction: jest.fn(),
+    }) as any;
+
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "class %p is refused with the coded 409 before the flag is armed or Stripe is written",
+    async (tenantClass) => {
+      const stripe = stripeWith();
+      (armNeedsReconcile as jest.Mock).mockClear();
+      await expect(
+        pushPlanChange({ stripe, logger, prisma: prismaOf(tenantClass) }, args()),
+      ).rejects.toMatchObject({ status: 409, response: { code: "LIVE_PAYMENTS_OFF" } });
+      expect(armNeedsReconcile).not.toHaveBeenCalled();
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a PRODUCTION business still pushes", async () => {
+    const stripe = stripeWith();
+    (armNeedsReconcile as jest.Mock).mockResolvedValueOnce({ owned: true });
+    const push = await pushPlanChange({ stripe, logger, prisma: prismaOf("PRODUCTION") }, args());
+    expect(push.pushed).toBe(true);
+    expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
   });
 });

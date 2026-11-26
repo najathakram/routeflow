@@ -315,3 +315,95 @@ describe("W-1464 PR-B - every Stripe session creator sits behind the live-paymen
     expect(countOf(WALL_CALL, "await assertTenantLivePaymentsAllowed(p, t);")).toBe(1);
   });
 });
+
+/**
+ * W-1464 R-282 M2 (lead ruling): anything that changes what an EXISTING subscription charges is walled too, by the
+ * same helper and before the first Stripe call: subscription item create/update, a subscription update that moves
+ * items or prices, and invoice items or invoices. A NEW such call anywhere in `apps/api/src` fails here until it is
+ * listed with the wall in front of it, or listed as exempt with the reason. Zero found is a failure.
+ * `products.create` / `products.update` (stripe-product.ts) and prices make no charge and stay unwalled.
+ */
+const STRIPE_CHARGE_CHANGE =
+  /\b(?:subscriptionItems\s*\.\s*(?:create|update)|invoices\s*\.\s*create|invoiceItems\s*\.\s*create|subscriptions\s*\.\s*update)\s*\(|\.\s*updateSubscription\s*\(/g;
+
+/** file -> how many such calls it makes, the least number of wall calls in that same file, and why any are unwalled. */
+const CHARGE_CHANGERS: Record<string, { calls: number; walls: number; exempt?: string }> = {
+  "billing/addon.service.ts": { calls: 1, walls: 1 },
+  // adoptCheckoutSku (update), adoptOrCreateAddonItem (create + the orphan update behind it), enableAddonLocked (update)
+  "billing/subscription-mutation.service.ts": {
+    calls: 6,
+    walls: 3,
+    exempt:
+      "two updateSubscription calls only set cancel_at_period_end; the orphan update sits behind the create wall",
+  },
+  // the stub invoice and its one item
+  "billing/catchup-claim.service.ts": { calls: 2, walls: 2 },
+  // the price push (pushResolvedPriceToStripe); the portal and customer walls are the other two
+  "billing/billing.service.ts": { calls: 1, walls: 3 },
+  "billing/plan-change-stripe.ts": {
+    calls: 2,
+    walls: 1,
+    exempt: "the revert restores the prior price and is reachable only after pushPlanChange's wall",
+  },
+  "billing/scheduled-price-change.ts": { calls: 2, walls: 2 },
+  "billing/dunning-pause.ts": {
+    calls: 3,
+    walls: 0,
+    exempt: "pause_collection and its removal only; no item or price changes",
+  },
+  "billing/stripe.service.ts": {
+    calls: 2,
+    walls: 0,
+    exempt: "the generic subscriptions.update wrapper; every caller above is listed",
+  },
+};
+
+const CHARGE_SCAN = collect(SRC_ROOT)
+  .filter((f) => !rel(f).startsWith("testing/"))
+  .map((f) => {
+    const text = fs
+      .readFileSync(f, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    return {
+      file: rel(f),
+      calls: countOf(STRIPE_CHARGE_CHANGE, text),
+      walls: countOf(WALL_CALL, text),
+    };
+  });
+
+describe("W-1464 R-282 M2 - every call that changes what a subscription charges sits behind the wall", () => {
+  it("the charge-changing calls found are exactly the named ones, with the named counts (zero found is a failure)", () => {
+    const found = Object.fromEntries(
+      CHARGE_SCAN.filter((s) => s.calls > 0).map((s) => [s.file, s.calls]),
+    );
+    expect(Object.keys(found).length).toBeGreaterThan(0);
+    expect(found).toEqual(
+      Object.fromEntries(Object.entries(CHARGE_CHANGERS).map(([f, v]) => [f, v.calls])),
+    );
+  });
+
+  it.each(Object.entries(CHARGE_CHANGERS))(
+    "%s: holds enough wall calls in front of its charge-changing calls",
+    (file, { walls }) => {
+      expect(CHARGE_SCAN.find((s) => s.file === file)?.walls ?? 0).toBeGreaterThanOrEqual(walls);
+    },
+  );
+
+  it("every file with no wall of its own says why", () => {
+    for (const [file, v] of Object.entries(CHARGE_CHANGERS)) {
+      if (v.walls === 0 || v.exempt) expect(v.exempt ?? "").not.toBe("");
+      else expect(file).toBeTruthy();
+    }
+  });
+
+  it("self-control: the scanner counts charge changers and ignores the catalog-only calls", () => {
+    expect(countOf(STRIPE_CHARGE_CHANGE, "c.subscriptionItems\n .update(id, p)")).toBe(1);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "await this.stripe.updateSubscription(s, p)")).toBe(1);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "c.invoices.create(a); c.invoiceItems.create(b)")).toBe(2);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "async updateSubscription(subId, params) {")).toBe(0);
+    expect(
+      countOf(STRIPE_CHARGE_CHANGE, "client.products.create({}); client.products.update(i, p)"),
+    ).toBe(0);
+  });
+});

@@ -357,6 +357,25 @@ describe("W-1338 PR-1 — the one open-session slot", () => {
     },
   );
 
+  // R-282 M1: a business that ALREADY has a Stripe customer skips ensureStripeCustomer's wall, so the slot's own wall
+  // (open-checkout-session.ts) is the only guard. Remove it and these must fail on the missing 409.
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "W-1464: class %p with an existing Stripe customer still gets the coded 409 from the slot wall",
+    async (tenantClass) => {
+      const h = make({ tenantClass });
+      for (const surface of [admin, self]) {
+        await expect(h.billing.createCheckoutSession("t1", surface)).rejects.toMatchObject({
+          status: 409,
+          response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
+        });
+      }
+      expect(h.stripe.createCustomer).not.toHaveBeenCalled();
+      expect(h.list).not.toHaveBeenCalled();
+      expect(h.expire).not.toHaveBeenCalled();
+      expect(h.create).not.toHaveBeenCalled();
+    },
+  );
+
   it("L24: managed payments stays OFF on a new session", async () => {
     const h = make();
     await h.billing.createCheckoutSession("t1", admin);

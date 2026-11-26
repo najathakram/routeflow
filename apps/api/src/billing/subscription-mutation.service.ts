@@ -127,6 +127,7 @@ import { isLinkPending } from "./link-pending";
 import { expireOpenCheckoutSessions } from "./open-checkout-session";
 import { planGateRefusal, selfServePlanGate, type PlanGateOp } from "./self-serve-plan-gate";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
+import { assertTenantLivePaymentsAllowed } from "./live-payments-wall";
 
 export interface SubscribeInput {
   planKey: string;
@@ -2936,6 +2937,9 @@ export class SubscriptionMutationService {
     // brought to the row's quantity first (Stripe-first, prorated — a raise bills, a reduce credits),
     // exactly the billed quantity-change path; a failure fails the webhook with nothing written.
     if (keep.quantity !== row.quantity) {
+      // W-1464 R-282 M2: raising or cutting a billed item changes what the subscription charges. Not a test business,
+      // before the Stripe call and outside the try below.
+      await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
       try {
         await this.stripe.client.subscriptionItems.update(keep.itemId, {
           quantity: row.quantity,
@@ -4004,6 +4008,9 @@ export class SubscriptionMutationService {
       prorationDate?: Date;
     } = {},
   ): Promise<{ itemId: string; createdItemId: string | null }> {
+    // W-1464 R-282 M2: adopting an orphan item (a quantity update) and creating one both change what the subscription
+    // charges; adoptOrphanItem is reached only through here. Not a test business, before the first Stripe call.
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
     const adopted = await this.adoptOrphanItem(tenantId, sku, subId, qty);
     if (adopted) return { itemId: adopted, createdItemId: null };
     try {
@@ -4115,6 +4122,9 @@ export class SubscriptionMutationService {
       }
       // What is already pending for this item BEFORE the change (B1110): this call's own lines are the
       // ones that appear after it.
+      // W-1464 R-282 M2: a quantity change on a billed item changes what the subscription charges. Not a test business,
+      // before the first Stripe call and outside the try below.
+      await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
       const priorLines = await this.pendingProrationIds(sub, existing.stripeItemId);
       try {
         await this.stripe.client.subscriptionItems.update(existing.stripeItemId, {

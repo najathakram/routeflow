@@ -23,6 +23,7 @@ import {
   stripeSubscriptionPeriod,
 } from "./stripe-period";
 import { StripeService } from "./stripe.service";
+import { assertTenantLivePaymentsAllowed } from "./live-payments-wall";
 
 /**
  * SA-733 D8, lead ruling R1 (option B): a scheduled downgrade reaches Stripe BEFORE the renewal invoice is cut,
@@ -281,6 +282,10 @@ export class ScheduledPriceChangeService {
     // Only undo OUR push: Stripe bills exactly the cleared target and not already the kept plan.
     if (base.price?.unit_amount !== clearedCents) return;
 
+    // W-1464 R-282 M2: restoring a price changes what the subscription charges. Not a test business, before the
+    // Stripe write (the reads above change nothing).
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
+
     // A fresh key per restore: Stripe replays a repeated key for 24 h, which would swallow a SECOND legitimate
     // restore after another push. Replays are made harmless by the amount check above.
     const key = `${sub.stripeSubId}:scheduled-price-restore:${clearedCents}-${keptCents}:${Date.now()}`;
@@ -395,6 +400,10 @@ export class ScheduledPriceChangeService {
     // The marker: Stripe already bills the target amount (a replay, a second trigger, a custom fee whose price
     // does not change). Nothing to send.
     if (priorAmountCents === amountCents) return noop("already_applied");
+
+    // W-1464 R-282 M2: a price push changes what the subscription charges. Not a test business, before the Stripe
+    // write (the sweep logs a refusal as a held tenant and carries on).
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
 
     // The key names the STATE it moves from and to: the (prior, new) amounts AND the item's current Price id. A
     // push, a restore and a re-push of the same schedule repeat the amounts but not the Price id (an inline

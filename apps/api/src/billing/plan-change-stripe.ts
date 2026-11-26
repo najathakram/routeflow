@@ -11,6 +11,7 @@ import type { StripeService } from "./stripe.service";
 import { CHECKOUT_ADDON_EXPAND, checkoutAddonItems } from "./stripe-addon-items";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PLAN_PRICE_INVALID_MESSAGE } from "./plan-price";
+import { assertTenantLivePaymentsAllowed, type TenantClassReader } from "./live-payments-wall";
 import { prorationAllowedFor } from "./price-override";
 import { ensureAddonProduct, ensurePlanProduct, type StripeProductKind } from "./stripe-product";
 import {
@@ -338,6 +339,13 @@ export async function pushPlanChange(
       deleteItemIds: deletes.map((d) => d.itemId),
     })}`,
   );
+  // W-1464 R-282 M2: a plan change that pushes a price or deletes add-on items changes what the subscription charges.
+  // Not a test business, before the flag is armed and before the Stripe write. `deps.prisma` is always present in
+  // production (plan-change-flow.ts passes it); `revertPlanChange` below restores a prior price and is reachable only
+  // after this wall passed, so it carries none.
+  if (deps.prisma) {
+    await assertTenantLivePaymentsAllowed(deps.prisma as unknown as TenantClassReader, a.tenantId);
+  }
   // N4: the flag and the attempt's audit row (key + nonce) are COMMITTED before Stripe is touched. Unwritable =>
   // nothing was sent, so the caller's row and Stripe still agree.
   let reconcile: Armed | undefined;
