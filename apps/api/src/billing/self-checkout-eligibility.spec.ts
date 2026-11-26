@@ -18,7 +18,7 @@ const BASE: SelfCheckoutFacts = {
   planKey: "STARTER",
   stripeSubId: null,
   externalPayment: false,
-  couponFull: false,
+  couponCoversAll: false,
   linkPending: false,
   monthly: 99,
 };
@@ -40,6 +40,26 @@ describe("selfCheckoutEligibility (live branches)", () => {
     expect(
       selfCheckoutEligibility(facts({ planKey: "LITE", status: "TRIAL", readOnlyReason: null })),
     ).toEqual({ eligible: true, reason: "lite_payment_due" });
+  });
+});
+
+describe("selfCheckoutEligibility (REG-6: the invite-only lever)", () => {
+  it("an invited LITE business is not eligible while the self-serve-checkout lever is off", () => {
+    jest.isolateModules(() => {
+      jest.doMock("./plan-catalog.constants", () => ({
+        ...jest.requireActual("./plan-catalog.constants"),
+        INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT: false,
+      }));
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mod =
+        require("./self-checkout-eligibility") as typeof import("./self-checkout-eligibility");
+      expect(
+        mod.selfCheckoutEligibility(
+          facts({ planKey: "LITE", status: "TRIAL", readOnlyReason: null }),
+        ),
+      ).toEqual({ eligible: false, reason: "not_self_pay_state" });
+    });
+    jest.dontMock("./plan-catalog.constants");
   });
 });
 
@@ -97,7 +117,7 @@ describe("selfCheckoutEligibility (not live)", () => {
   });
 
   it("a full coupon is not eligible (the row is unbilled)", () => {
-    expect(selfCheckoutEligibility(facts({ couponFull: true }))).toEqual({
+    expect(selfCheckoutEligibility(facts({ couponCoversAll: true }))).toEqual({
       eligible: false,
       reason: "coupon_full",
     });

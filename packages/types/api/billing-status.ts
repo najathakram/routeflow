@@ -15,7 +15,9 @@ export type BillingStatusAction =
   | { kind: "add_card"; target: "checkout" }
   /** `portal` stays a seam for the secondary Change card; no state's primary action is this today. */
   | { kind: "change_card"; target: "portal" }
-  | { kind: "choose_plan"; target: "choose_plan" };
+  | { kind: "choose_plan"; target: "choose_plan" }
+  /** SA-1547: the trial-ended primary action of a business that may pay itself (`selfPay.eligible`): POST /billing/subscription/checkout. */
+  | { kind: "pay_now"; target: "self_checkout" };
 
 export interface BillingStatusView {
   state: BillingStatusState;
