@@ -189,9 +189,11 @@ describe("CountAdjustModal (SA-957 M1 / SA-958: one quantity row per unit)", () 
   });
 
   it("scrolls inside the dialog, so Save stays reachable on a short screen (3 rows + note + date at 390 px)", () => {
-    expect(readFileSync(resolve(__dirname, "CountAdjustModal.tsx"), "utf8")).toMatch(
-      /<Modal[^>]*\bscroll\b/,
-    );
+    // B1444: Modal scrolls by default, so the proof is that this dialog does not opt out (the old pin read the
+    // explicit `scroll` prop, which the default made redundant and B1444 removed).
+    const source = readFileSync(resolve(__dirname, "CountAdjustModal.tsx"), "utf8");
+    expect(source).toMatch(/<Modal/);
+    expect(source).not.toMatch(/<Modal[^>]*scroll={false}/);
   });
 
   it("Save and Cancel sit in the dialog's pinned footer, outside the scrolling form, and still submit it", () => {
