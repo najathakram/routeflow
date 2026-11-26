@@ -3,7 +3,7 @@
 import * as React from "react";
 import { ImagePlus, X as XIcon } from "lucide-react";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
-import { unitWords, validateSetPrice } from "@routeflow/pricing";
+import { pricedPerLabel, unitWords, validateSetPrice } from "@routeflow/pricing";
 import type { SavePricesRequest } from "@routeflow/types";
 import { useCreateProduct, useProducts, uploadProductImages } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
@@ -11,7 +11,7 @@ import { fetchPriceGrid } from "@/lib/api/usePriceGrid";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
 import { useUnitsEnabled } from "@/lib/api/product-units";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
-import { isPackUnit, priceUnitWord } from "@/lib/product-unit-label";
+import { isPackUnit } from "@/lib/product-unit-label";
 import { priceQtyHint } from "@/lib/price-qty-hint";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
 import { PackSizePrompt } from "./PackSizePrompt";
@@ -520,7 +520,10 @@ export function ProductCreateModal({
     );
 
   const packUnit = isPackUnit(form.unit);
-  const unitWord = priceUnitWord(form.unit);
+  const priceLabel = pricedPerLabel({
+    unit: form.unit,
+    unitsPerBox: Number(form.unitsPerBox) || null,
+  }).label;
   const qtyHint = packUnit
     ? priceQtyHint({
         price: form.pricePerUnit,
@@ -826,7 +829,7 @@ export function ProductCreateModal({
             >
               <div>
                 <label htmlFor="product-price" className="mb-1 block text-sm font-medium text-navy">
-                  {`Price per ${unitWord} *`}
+                  {`${priceLabel} *`}
                 </label>
                 <div className="flex items-center">
                   <span className="flex h-[38px] items-center rounded-l border border-r-0 border-surface-border bg-surface-raised px-2.5 text-sm text-navy/70">

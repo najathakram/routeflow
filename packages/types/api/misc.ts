@@ -64,6 +64,8 @@ export interface EstimateItem {
   pieces?: number;
   /** The box size the line was quoted at (null = not boxed). */
   unitsPerBox?: number | null;
+  /** units_v1 SEAM (B1387): the line's own selling unit ("Case"). Estimates write none yet. */
+  unitLabel?: string | null;
 }
 
 export interface Estimate {

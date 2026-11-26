@@ -171,6 +171,29 @@ describe("OrdersPage at phone width: secondary filters behind one Filters button
     expect(filtersButton()).toHaveAccessibleName("Filters");
   });
 
+  // R-137: the sort moved into the URL. Clearing it beside the filters with a second URL write (a history.replaceState
+  // next to the router.replace) made Next drop the filter write, so the button reset the sort and left the filters on.
+  it("Clear with a sort on removes the filters AND the sort in the same single write", async () => {
+    currentQuery = "sort=total&dir=asc&urgent=1&dateFrom=2026-10-01&status=DRAFT";
+    const replaceState = jest.spyOn(window.history, "replaceState");
+    const user = userEvent.setup();
+    renderWithProviders(<OrdersPage />);
+    expect(filtersButton()).toHaveAccessibleName("Filters, 3 active");
+    await user.click(filtersButton()!);
+    replaceState.mockClear();
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Filters" })).getByRole("button", {
+        name: "Clear filters",
+      }),
+    );
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(String(replace.mock.calls[0][0])).toBe("/orders?status=DRAFT");
+    replaceState.mockRestore();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(filtersButton()).toHaveAccessibleName("Filters");
+  });
+
   it("returns focus to the Filters button when the panel closes (Done and Escape)", async () => {
     const user = userEvent.setup();
     renderWithProviders(<OrdersPage />);

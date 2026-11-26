@@ -144,3 +144,57 @@ describe("useUrlFilters: quick successive writes (row 729)", () => {
     expect([q.get("urgent"), q.get("status")]).toEqual(["1", "DRAFT"]);
   });
 });
+
+/**
+ * R-137: `writeParams` is the page's one way to change the query by hand. The orders sort and its "Clear filters"
+ * button go through it, so a filter and the sort never leave as two URL writes.
+ */
+describe("useUrlFilters: writeParams, the one writer other URL state shares", () => {
+  const setSort = (p: URLSearchParams) => {
+    p.set("sort", "total");
+    p.set("dir", "asc");
+  };
+
+  it("a filter write, then a sort inside the pending window, then another filter: all three survive", () => {
+    const { result } = renderHook(() => useUrlFilters(DEFAULTS));
+    act(() => result.current[1]("urgent", true));
+    act(() => {
+      jest.advanceTimersByTime(100);
+    });
+    act(() => result.current[4](setSort, { keepPage: true }));
+    act(() => {
+      jest.advanceTimersByTime(100);
+    });
+    act(() => result.current[1]("fulfillPath", "ROUTE"));
+    expect(lastQuery().toString()).toBe("urgent=1&sort=total&dir=asc&fulfillPath=ROUTE");
+  });
+
+  it("keepPage leaves the page where it is; without it the page resets", () => {
+    currentQuery = "page=3";
+    const { result } = renderHook(() => useUrlFilters(DEFAULTS));
+    act(() => result.current[4](setSort, { keepPage: true }));
+    expect(lastQuery().toString()).toBe("page=3&sort=total&dir=asc");
+    act(() => result.current[4]((p) => p.delete("sort")));
+    expect(lastQuery().toString()).toBe("dir=asc");
+  });
+
+  it("several params removed together leave as ONE replace", () => {
+    currentQuery = "urgent=1&dateFrom=2026-10-01&sort=total&dir=asc&status=DRAFT";
+    const { result } = renderHook(() => useUrlFilters(DEFAULTS));
+    act(() =>
+      result.current[4]((p) => {
+        for (const key of ["urgent", "dateFrom", "sort", "dir"]) p.delete(key);
+      }),
+    );
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(replace.mock.calls[0][0]).toBe("/orders?status=DRAFT");
+  });
+
+  it("a change that changes nothing does not navigate", () => {
+    currentQuery = "status=DRAFT&page=2";
+    const { result } = renderHook(() => useUrlFilters(DEFAULTS));
+    act(() => result.current[4]((p) => p.delete("sort"), { keepPage: true }));
+    act(() => result.current[4]((p) => p.delete("sort")));
+    expect(replace).not.toHaveBeenCalled();
+  });
+});

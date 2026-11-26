@@ -1,4 +1,5 @@
-import { unitLineCount } from "./unit-line-count";
+import { maxLineCount, unitLineCount } from "./unit-line-count";
+import { BUYER_LINE_QTY_MAX } from "./unit-price-limit";
 
 /**
  * #2276 / SA-388: the ONE count rule for a stored unit line, shared by web (orders/[id]) and mobile
@@ -36,5 +37,21 @@ describe("unitLineCount (SA-388, #2276)", () => {
     ["a non-numeric factor", { qty: 36, boxes: null, unitsPerBox: "abc" }, null],
   ] as const)("%s", (_label, line, expected) => {
     expect(unitLineCount(line)).toBe(expected);
+  });
+});
+
+describe("maxLineCount (B1382)", () => {
+  it("a 12-pack case line is bounded at 8,333 cases, so 8,334 would pass the cap in pieces", () => {
+    expect(maxLineCount(BUYER_LINE_QTY_MAX, 12)).toBe(8333);
+    expect(8333 * 12).toBeLessThanOrEqual(BUYER_LINE_QTY_MAX);
+    expect(8334 * 12).toBeGreaterThan(BUYER_LINE_QTY_MAX);
+  });
+
+  it.each([null, undefined, 0, 1, -3, 2.5, "x"])("unitsPerBox %p returns the cap", (upb) => {
+    expect(maxLineCount(BUYER_LINE_QTY_MAX, upb)).toBe(100_000);
+  });
+
+  it("the buyer cap is the server's 100,000", () => {
+    expect(BUYER_LINE_QTY_MAX).toBe(100_000);
   });
 });

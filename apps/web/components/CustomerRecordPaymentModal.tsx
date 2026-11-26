@@ -486,7 +486,11 @@ export function CustomerRecordPaymentModal({
             variant="secondary"
             onClick={() => void handleSave("DRAFT")}
             loading={record.isPending}
-            disabled={totals.overAllocated || statusCheck.unknown}
+            // B1385: a draft cannot carry a leftover (it would become spendable credit)
+            disabled={totals.overAllocated || statusCheck.unknown || totals.excess > 0.001}
+            title={
+              totals.excess > 0.001 ? "Allocate the full amount to save as a draft" : undefined
+            }
           >
             Save as draft
           </Button>

@@ -15,6 +15,7 @@ import {
   ThumbsUp,
   FileText,
 } from "lucide-react";
+import { invoiceLineQtyText } from "@routeflow/pricing";
 import { canMoveEstimate, estimateClosedLine, estimateRevisionTag } from "@routeflow/types";
 import { Button, Badge, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -520,7 +521,9 @@ export default function EstimateDetailPage() {
                   {estimate.items.map((item) => (
                     <tr key={item.id} className="hover:bg-surface-raised">
                       <td className="px-6 py-3 text-navy">{item.description}</td>
-                      <td className="px-4 py-3 text-right text-navy/70">{item.qty}</td>
+                      <td className="px-4 py-3 text-right text-navy/70">
+                        {invoiceLineQtyText(item)}
+                      </td>
                       <td className="px-4 py-3 text-right text-navy/70">
                         {fmt(Number(item.unitPrice))}
                       </td>

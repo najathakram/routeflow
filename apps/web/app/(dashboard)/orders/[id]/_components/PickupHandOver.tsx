@@ -6,7 +6,7 @@ import { CheckCircle2 } from "lucide-react";
 import type { Order } from "@/lib/api/orders";
 import { useOptionalAuth } from "@/lib/auth-context";
 import { useCounterSaleGate } from "@/lib/api/counter-sale";
-import { isPosOrder } from "@/lib/api/pos-orders";
+import { isPosOrder } from "@routeflow/types";
 import { heldPickupStoreKey } from "@/lib/counter-sale";
 import { PickupCompleteDialog, type HeldPickupKey } from "./PickupCompleteDialog";
 

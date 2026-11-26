@@ -277,7 +277,7 @@ import type { InvoiceEditHeaders } from "./locked-invoice-edit";
 import { resolveLineUnits } from "../products/line-units";
 import { assertUnitLineSplit } from "../orders/unit-line-split";
 import { prepareUnitLadders, requestsUnit } from "../orders/unit-line-build";
-import { standaloneAllocationTotals } from "./standalone-payment-totals";
+import { assertDraftHasNoExcess, standaloneAllocationTotals } from "./standalone-payment-totals";
 import { retryCreditTx, retryOnTxConflict } from "../common/tx-retry";
 import { AfterCommit, gatewayFor, withAfterCommit } from "../common/after-commit";
 import {
@@ -285,6 +285,7 @@ import {
   lockInvoicesForPayment,
   nextSentStatus,
   paymentRefusal,
+  standalonePaymentRefusal,
   sendRefusal,
   voidRefusal,
   externalPaidOn,
@@ -4970,6 +4971,7 @@ export class InvoicesService {
     const status = dto.status ?? "PAID";
     // B769 / SA-112: rounded totals, and Σ allocations ≤ payment — refused before any write.
     const { excess } = standaloneAllocationTotals(dto);
+    assertDraftHasNoExcess(status, excess); // B1385: a draft's leftover must never become an advance
     // 681 (R5-5): the AdvancePayment below stores dto.customerId, and `allocations: []` (an advance-only receipt)
     // skips the per-allocation customer match, so the customer is proven here at the writer, before the payment
     // number is reserved and before the tx opens. Covers the payment-request callers too. No ArrayMinSize.
@@ -5022,7 +5024,7 @@ export class InvoicesService {
           });
           if (!invoice)
             throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
-          const refused = paymentRefusal(invoice.status); // SA-404f F1: on the LOCKED row
+          const refused = standalonePaymentRefusal(invoice.status, opts?.source); // SA-404f F1 + B1385: LOCKED row
           if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
           // SA-1124 PR-1b: staff money waits for the price review; money that already moved at the processor never does
           if (opts?.source !== "STRIPE_SETTLE" && invoice.orderId)

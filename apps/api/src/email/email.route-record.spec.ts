@@ -10,6 +10,13 @@ jest.mock("resend", () => ({
   })),
 }));
 import * as nodemailer from "nodemailer";
+import { newDeliveryRefToken } from "./bounces/email-bounce-keys";
+
+// Module boundary for the random per-send ref token: real by default, forced in the case that needs a known value.
+jest.mock("./bounces/email-bounce-keys", () => {
+  const actual = jest.requireActual("./bounces/email-bounce-keys");
+  return { ...actual, newDeliveryRefToken: jest.fn(actual.newDeliveryRefToken) };
+});
 
 /**
  * W-1286 PR-1 (SA-1202 C5, C4', C6, C29): every recorded send says which route it took (`route`), carries a per-send
@@ -72,6 +79,23 @@ function make(
   return { svc, deliveries, tenantSend, platformSend, mailbox };
 }
 
+// Fake only Date: every timer and microtask API stays real so the awaited send still settles.
+const REAL_TIMERS = [
+  "hrtime",
+  "nextTick",
+  "performance",
+  "queueMicrotask",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
+  "requestIdleCallback",
+  "cancelIdleCallback",
+  "setImmediate",
+  "clearImmediate",
+  "setInterval",
+  "clearInterval",
+  "setTimeout",
+  "clearTimeout",
+] as const;
 const ctx = { tenantId: "t1", kind: "INVOICE_SENT" as const };
 const mail = { to: "buyer@example.com", subject: "s", html: "<p>x</p>" };
 const row = (d: { record: jest.Mock }) => d.record.mock.calls[0][0];
@@ -151,11 +175,26 @@ describe("C29 / T30: the fallback keeps its class and nothing else", () => {
         },
       ),
     );
+    // A random hex token can contain "535" by chance (about 0.7% of runs); force it so the case is deterministic.
+    (newDeliveryRefToken as jest.Mock).mockReturnValueOnce("af37a70b42342a132e5354bfb0646683");
+    // sentAt is new Date() in the product: a ".535Z" millisecond part also trips the scan (about 1 run in 1000), so pin Date too.
+    jest.useFakeTimers({ now: new Date("2026-11-25T02:12:03.535Z"), doNotFake: [...REAL_TIMERS] });
     const { svc, deliveries } = make({ tenantSmtp: true, platformSmtp: true, tenantSend });
-    await svc.send({ ...mail, delivery: ctx });
+    try {
+      await svc.send({ ...mail, delivery: ctx });
+    } finally {
+      jest.useRealTimers();
+    }
     const r = row(deliveries);
     expect(r.fallbackReason).toBe("AUTH");
-    expect(JSON.stringify(r)).not.toMatch(/535|Username|jane@/);
+    // Row fields and whether each can ever hold "535": tenantId, kind, toAddress, status, providerMessageId, route,
+    // fallbackReason, error, attempts and alsoEntityIds are fixed or derived from fixed input, so they are scanned.
+    // refToken (random hex) and sentAt (new Date(), ISO milliseconds) are the only random or time-derived fields:
+    // both are left out of the scan and asserted by type instead.
+    const { refToken, sentAt, ...rest } = r;
+    expect(refToken).toMatch(/^[0-9a-f]{32}$/);
+    expect(sentAt).toBeInstanceOf(Date);
+    expect(JSON.stringify(rest)).not.toMatch(/535|Username|jane@/);
   });
 
   it("a send that never tried a tenant server stores no fallbackReason", async () => {

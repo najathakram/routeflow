@@ -1,7 +1,8 @@
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
-import { PosFinishError, isPosOrder, usePosFinish } from "./pos-orders";
+import { isPosOrder } from "@routeflow/types";
+import { PosFinishError, usePosFinish } from "./pos-orders";
 import { apiClient } from "@/lib/api-client";
 
 jest.mock("@/lib/api-client", () => ({

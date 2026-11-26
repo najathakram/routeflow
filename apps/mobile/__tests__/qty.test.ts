@@ -86,3 +86,12 @@ describe("commitQtyDraft", () => {
     expect(commitQtyDraft("3", { min: 1 })).toBe(3);
   });
 });
+
+import { isDigitsOnly } from "../lib/qty";
+
+describe("isDigitsOnly (B1382)", () => {
+  it("rejects the entries sanitizeIntInput used to rewrite", () => {
+    for (const bad of ["-5", "12.5", "1e9", " 5", "5a"]) expect(isDigitsOnly(bad)).toBe(false);
+    for (const ok of ["", "0", "100000"]) expect(isDigitsOnly(ok)).toBe(true);
+  });
+});

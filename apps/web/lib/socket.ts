@@ -150,7 +150,3 @@ export function disconnectSocket() {
     socket = null;
   }
 }
-
-export function getSocket(): Socket | null {
-  return socket;
-}

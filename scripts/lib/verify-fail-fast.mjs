@@ -41,8 +41,14 @@ export function phase0Call(calls, { env, heavy = LINT_IN_SLOT }) {
   return { jest: false, args: ["lint", ...out] };
 }
 
-/** The task words of a call (its args before the first flag). */
-export const callTasks = (c) => c.args.filter((a) => !a.startsWith("-")).join(" ");
+/**
+ * The label of a call: its task words (args before the first flag), or for the argv-only kinds (`pins`, `fsRead`,
+ * which carry `cwd` + `argv`, no `args`) their kind flag and workspace. W-1416: this threw on those kinds.
+ */
+export const callTasks = (c) =>
+  c.args
+    ? c.args.filter((a) => !a.startsWith("-")).join(" ")
+    : `${c.fsRead ? "fs-read" : "pin"} specs (${c.cwd})`;
 
 /** One line per planned call that never ran, after a fail-fast stop. */
 export function notRunLines(calls, ran) {
@@ -96,4 +102,14 @@ export function failureReport(root, sinceMs) {
   } catch {
     return none;
   }
+}
+
+/**
+ * The failure report of a fail-fast stop. The last call that ran failed: when it has no turbo task (a pins / fsRead jest
+ * call) no run summary describes it, so name the call instead of "failing task unknown". Never throws.
+ */
+export function failFastReport(root, sinceMs, calls, ran) {
+  const failing = calls[ran.length - 1];
+  if (failing && !failing.args) return [`FAILED: ${callTasks(failing)} (its jest output is above)`];
+  return failureReport(root, sinceMs);
 }

@@ -509,6 +509,25 @@ describe("Notifications page — grouped list (#1965)", () => {
     expect(screen.getByText("Sent when an order is confirmed.")).toBeInTheDocument();
   });
 
+  it("T21b (W-1306) the out-for-delivery line says the office press sends it, not the driver", () => {
+    state.config = makeConfig({
+      events: [
+        {
+          eventKey: "OUT_FOR_DELIVERY",
+          label: "Out for delivery",
+          audience: "CUSTOMER",
+          hasTrigger: true,
+          channels: [cell("EMAIL", { ruleId: "rule-ofd-email" })],
+        },
+      ],
+    });
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(
+      screen.getByText("Sent when your team marks the order out for delivery."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/driver starts/i)).not.toBeInTheDocument();
+  });
+
   it("T23 a not-set-up channel is stated ONCE, above the list, not as a column", () => {
     state.config = makeConfig({
       channelStatus: {

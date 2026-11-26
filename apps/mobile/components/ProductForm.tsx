@@ -17,7 +17,7 @@ import { sectionPickerOptions, subcategoryPickerOptions } from "../lib/regulated
 import {
   applyLadderChange,
   ladderChangeNote,
-  perUnitPrice,
+  pricedPerLabel,
   type TierField,
 } from "@routeflow/pricing";
 import {
@@ -125,8 +125,8 @@ export function ProductForm({
   const unitsPerBoxNum = parseOptionalNumber(form.unitsPerBox);
   const isBoxed = unitsPerBoxNum != null && unitsPerBoxNum > 1;
   const priceNum = parseOptionalNumber(form.pricePerUnit);
-  const perUnitPreview =
-    isBoxed && priceNum != null ? perUnitPrice(priceNum, unitsPerBoxNum) : null;
+  // B1383: the label names the box ("Price per box (12 cans)"), the hint the piece; both come from pricing
+  const priced = pricedPerLabel({ unit: form.unit, unitsPerBox: unitsPerBoxNum, price: priceNum });
 
   // Regulated section + subcategory pickers (both optional). The subcategory
   // list is scoped to the section currently chosen in the form; `current` uses
@@ -435,12 +435,10 @@ export function ProductForm({
 
       <FormSection title="Pricing">
         <FormField
-          label="Price per unit"
+          label={priced.label}
           hint={
             isBoxed
-              ? `This is the CASE price. A loose unit costs price ÷ units-per-case.${
-                  perUnitPreview != null ? ` ≈ $${perUnitPreview.toFixed(2)} / unit` : ""
-                }`
+              ? `This is the CASE price. A loose unit costs price ÷ units-per-case.${priced.hint ? ` ${priced.hint}` : ""}`
               : undefined
           }
         >

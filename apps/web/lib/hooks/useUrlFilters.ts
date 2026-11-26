@@ -14,6 +14,18 @@ type FilterState = Record<string, FilterValue>;
 const PENDING_WRITE_MS = 1500;
 
 /**
+ * The page's ONE way to change the query string by hand: `mutate` edits a copy of the latest known URL and the result
+ * goes out as a single `router.replace`. Anything else on the page that keeps state in the URL (the sort, see
+ * `useUrlSort`) writes through this, so one click is never two URL writes. Two writers in one handler lose one of the
+ * writes: Next drops a pending `replace` when a `history.replaceState` lands beside it.
+ * `keepPage` is for a change that re-orders the rows on screen and must not send the list back to page 1.
+ */
+export type UrlParamsWriter = (
+  mutate: (params: URLSearchParams) => void,
+  opts?: { keepPage?: boolean },
+) => void;
+
+/**
  * Syncs a set of named filter values to URL search params.
  * Boolean true becomes "1", false/undefined removes the param.
  *
@@ -29,6 +41,7 @@ export function useUrlFilters<T extends FilterState>(
   (key: keyof T, value: FilterValue) => void,
   () => void,
   (next: Partial<Record<keyof T, FilterValue>>) => void,
+  UrlParamsWriter,
 ] {
   const router = useRouter();
   const pathname = usePathname();
@@ -56,9 +69,9 @@ export function useUrlFilters<T extends FilterState>(
     return new URLSearchParams(current);
   }, []);
   const write = React.useCallback(
-    (params: URLSearchParams) => {
+    (params: URLSearchParams, keepPage = false) => {
       // Always reset to page 1 when filter changes
-      params.delete("page");
+      if (!keepPage) params.delete("page");
       const query = params.toString();
       pendingWrite.current = { query, at: Date.now() };
       router.replace(`${pathname}?${query}`, { scroll: false });
@@ -132,5 +145,17 @@ export function useUrlFilters<T extends FilterState>(
     write(params);
   }, [baseParams, write, defaults]);
 
-  return [state, setFilter, clearAll, setFilters];
+  const writeParams = React.useCallback<UrlParamsWriter>(
+    (mutate, opts) => {
+      const params = baseParams();
+      const before = params.toString();
+      mutate(params);
+      // Nothing changed: no navigation, so a no-op (the sort effect on mount, a second click on Clear) costs nothing.
+      if (params.toString() === before) return;
+      write(params, opts?.keepPage);
+    },
+    [baseParams, write],
+  );
+
+  return [state, setFilter, clearAll, setFilters, writeParams];
 }

@@ -1,5 +1,5 @@
-import { normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
-import type { ProductUnitLevel } from "@routeflow/types";
+import { isPlanGateError, normalizeBoxesPieces, type LadderProduct } from "@routeflow/pricing";
+import { API_ERROR_CODES, type ProductUnitLevel } from "@routeflow/types";
 import { buildUnitOptions } from "./unit-options";
 import { isFamilyProduct } from "./sellable-products";
 
@@ -77,8 +77,10 @@ export function decideResumeLine<P>(fetched: ResumeLineFetch<P>): ResumeLineDeci
  * data alone hung the spinner forever). "failed": prices settled with an error that ISN'T the
  * pricing_tiers plan gate (403) — proceeding would silently resume every line at the customer's
  * default tier even when real per-product overrides exist, so abort exactly like a failed
- * product/units fetch (decideResumeLine's own rule; matches R1). "start": safe to hydrate — a 403
- * genuinely has no overrides (cpMap stays empty, its own `?? []` fallback already handles that).
+ * product/units fetch (decideResumeLine's own rule; matches R1). "start": safe to hydrate — a
+ * PLAN_GATE 403 (isPlanGateError, the one shared rule) genuinely has no overrides (cpMap stays
+ * empty). W-1424/SA-1276: any OTHER 403 (a role denial) is "denied": retrying cannot help and
+ * resuming would book tier prices with no notice; PLAN_GATE_UNAVAILABLE is retryable, so "failed".
  * Pure/no-fetch so it can be pinned directly, never scraped from the effect's source text (L-205).
  */
 export function decideResumeHydrationStart(
@@ -86,14 +88,18 @@ export function decideResumeHydrationStart(
   pricesFetched: boolean,
   pricesErrored: boolean,
   pricesFetching: boolean,
-  pricesErrorStatus: number | null | undefined,
-): "waiting" | "start" | "failed" {
+  pricesError: unknown,
+): "waiting" | "start" | "failed" | "denied" {
   // SA-165: TanStack keeps isError true DURING a refetch, so "errored" alone is not settled — a
   // Retry that re-fires the query must gate back to waiting, never re-fail before the new attempt
   // resolves (else the "couldn't restore" dialog reopens the instant Retry is tapped).
   if (!hasCustomerDetail || !(pricesFetched || pricesErrored) || pricesFetching) return "waiting";
-  if (pricesErrored && pricesErrorStatus !== 403) return "failed";
-  return "start";
+  if (!pricesErrored || isPlanGateError(pricesError)) return "start";
+  const res = (pricesError as { response?: { status?: unknown; data?: { code?: unknown } } } | null)
+    ?.response;
+  return res?.status === 403 && res.data?.code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE
+    ? "denied"
+    : "failed";
 }
 
 /** The parked line's own fields `decideResumeUnitPrice` needs — a structural slice of

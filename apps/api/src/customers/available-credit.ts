@@ -137,6 +137,21 @@ export async function loadAdvanceSourceStatuses(
 }
 
 /**
+ * B1385: the ONE filter every "can this advance be offered or spent" site runs: the apply list, the apply write and
+ * the Payments tile keep only the rows `isAdvanceAvailable` accepts, so a DRAFT or PENDING group's excess is never
+ * offered, applied or summed. One tenant-scoped `id in` read for the source statuses (none when nothing is linked).
+ */
+export async function filterAvailableAdvances<T extends AdvanceLike>(
+  db: Pick<AvailableCreditDb, "invoicePayment">,
+  advances: ReadonlyArray<T>,
+): Promise<T[]> {
+  const sourceStatuses = await loadAdvanceSourceStatuses(db, advances);
+  return advances.filter((a) =>
+    isAdvanceAvailable(a, a.sourcePaymentId ? sourceStatuses.get(a.sourcePaymentId) : undefined),
+  );
+}
+
+/**
  * Read and sum one customer's available credit. Both reads are scoped to `customerId` and run on the caller's
  * tenant-scoped client, so another customer's credit, or another tenant's, never enters the sum.
  */

@@ -313,14 +313,14 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
     });
 
     it("(c) the same key saved as DRAFT then recorded as PAID is 409 IDEMPOTENCY_KEY_CONFLICT and writes nothing", async () => {
-      await invoices.recordStandalonePayment(standalone({ status: "DRAFT" }), {
+      await invoices.recordStandalonePayment(standalone({ status: "DRAFT", totalAmount: 100 }), {
         source: "STAFF_ALLOCATION",
         ...keyed("key-status"),
       });
       const before = committed();
 
       const err: any = await invoices
-        .recordStandalonePayment(standalone({ status: "PAID" }), {
+        .recordStandalonePayment(standalone({ status: "PAID", totalAmount: 100 }), {
           source: "STAFF_ALLOCATION",
           ...keyed("key-status"),
         })
@@ -330,10 +330,13 @@ describe("SA-824 customer money-in writers replay on the Idempotency-Key", () =>
       expect(err.getResponse()).toMatchObject({ code: CONFLICT });
       expect(committed()).toEqual(before);
       // A pure retry of the same status still replays.
-      const again: any = await invoices.recordStandalonePayment(standalone({ status: "DRAFT" }), {
-        source: "STAFF_ALLOCATION",
-        ...keyed("key-status"),
-      });
+      const again: any = await invoices.recordStandalonePayment(
+        standalone({ status: "DRAFT", totalAmount: 100 }),
+        {
+          source: "STAFF_ALLOCATION",
+          ...keyed("key-status"),
+        },
+      );
       expect(again.replayed).toBe(true);
     });
 

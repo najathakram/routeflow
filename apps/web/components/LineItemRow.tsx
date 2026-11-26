@@ -5,6 +5,7 @@ import { X, StickyNote, Pencil } from "lucide-react";
 import { cn, type BadgeStatus } from "@routeflow/ui/web";
 import { CasesPiecesInput } from "./CasesPiecesInput";
 import { heldNote, useHeldQty, type QtyEntry } from "./use-held-qty";
+import { useSumQty } from "./use-sum-qty";
 import {
   computeLineSubtotal,
   isAboveListLine,
@@ -16,6 +17,7 @@ import {
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
 import { formatMoney } from "@/lib/format";
+import { farFromListReference, farFromListText } from "@/lib/far-from-list";
 import { PriceChips, PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
@@ -190,6 +192,8 @@ export interface LineItemRowProps {
   touchTargets?: boolean;
   /** SA-1262: the counter opts in to holding qty-box text until Enter, Tab or blur. Absent = a commit per keystroke. */
   qtyEntry?: QtyEntry;
+  /** SA-1256: the quantity boxes work out a typed sum (`5*2`). The order builder's main list only; absent = number fields. */
+  acceptSums?: boolean;
   /** Accessible names that say which line a control belongs to. Absent = the row's titles. */
   labels?: {
     remove?: string;
@@ -276,6 +280,7 @@ export function LineItemRow({
   hideOriginalPrice = false,
   touchTargets = false,
   qtyEntry,
+  acceptSums,
   flexFrom = "sm",
   labels,
 }: LineItemRowProps) {
@@ -305,9 +310,40 @@ export function LineItemRow({
     },
     qtyEntry,
   );
+  const unitChange = (e: React.ChangeEvent<HTMLInputElement>) =>
+    onSetUnitQty(parseInt(e.target.value, 10) || 0);
+  const sumUnit = useSumQty(acceptSums, {
+    committed: li.qty,
+    commit: onSetUnitQty,
+    plain: { value: li.qty, onChange: unitChange },
+    min: 0,
+    disabled: qtyLocked,
+  });
+  const qtyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const typed = parseInt(e.target.value, 10);
+    // F08: a typed 0 (or less) is raised to 1 by the order; say so. An emptied field (NaN) is mid-edit.
+    setQtyBelowMin(Number.isFinite(typed) && typed < 1);
+    onSetQty?.(typed);
+  };
+  const sumQty = useSumQty(acceptSums, {
+    committed: li.qty,
+    commit: (n) => {
+      setQtyBelowMin(false); // a worked-out sum or a step is never below 1
+      onSetQty?.(n);
+    },
+    plain: { value: li.qty, onChange: qtyChange },
+    min: 1,
+    disabled: qtyLocked,
+  });
   const showQtyNote = qtyBelowMin && !li.unitsPerBox; // only the plain (unit-sold) stepper can type a 0
   const qtyNoteId = React.useId();
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
+  // UX audit 2026-11-24 F32: a typed price far from list (60 for 6.00) had no words here; the order page's price edit
+  // already says it. A customer's special price is not a typed slip, so it is left alone.
+  const farFromList = farFromListText(
+    li.unitPrice,
+    farFromListReference(li.listPrice, li.priceType === "SPECIAL", false) ?? 0,
+  );
   // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
   // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
   const priceUnit = li.unitsPerBox && li.unitsPerBox > 1 && !li.unitLabel ? w.pack.lower : li.unit;
@@ -411,6 +447,8 @@ export function LineItemRow({
                 "flex flex-wrap items-center gap-1.5",
                 onTapPrice ? "cursor-pointer" : "",
               )}
+              // F33: the price sheet hands focus back to this control when it closes.
+              data-line-price-trigger={onTapPrice ? "" : undefined}
               onClick={qtyLocked ? undefined : onTapPrice}
               onKeyDown={
                 onTapPrice
@@ -506,6 +544,14 @@ export function LineItemRow({
           {li.unitsPerBox && li.unitsPerBox > 1 && (
             <div className="mt-0.5 text-[10px] text-navy/70">
               {formatMoney(perUnitPrice(li.unitPrice, li.unitsPerBox))} / {w.base.lower}
+            </div>
+          )}
+          {farFromList && (
+            <div
+              data-testid="line-price-far-from-list"
+              className="mt-0.5 text-[11px] text-amber-700"
+            >
+              {farFromList}
             </div>
           )}
           {unitSlot && <div className="mt-1">{unitSlot}</div>}
@@ -640,7 +686,7 @@ export function LineItemRow({
                 min={0}
                 value={li.qty}
                 data-qty-box=""
-                onChange={(e) => onSetUnitQty(parseInt(e.target.value, 10) || 0)}
+                onChange={unitChange}
                 onFocus={(e) => e.target.select()}
                 className={cn(
                   "w-16 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500",
@@ -648,6 +694,7 @@ export function LineItemRow({
                 )}
                 title={`Total ${w.base.lowerOther}`}
                 {...heldUnit}
+                {...sumUnit.input}
               />
               <span
                 className="min-w-0 truncate text-xs text-navy/70"
@@ -665,11 +712,13 @@ export function LineItemRow({
               disabled={qtyLocked}
               touchTargets={touchTargets}
               qtyEntry={qtyEntry}
+              acceptSums={acceptSums}
               onSetBoxes={onSetBoxes}
               onSetPieces={onSetPieces}
             />
           )}
           {heldNote(heldUnit)}
+          {sumUnit.note}
           <span className="text-[10px] text-navy/30">
             1 {w.pack.lower} = {li.unitsPerBox} {w.base.short.other}
             {li.qty > 0 && (
@@ -717,18 +766,14 @@ export function LineItemRow({
               data-qty-box=""
               min={1}
               value={li.qty}
-              onChange={(e) => {
-                const typed = parseInt(e.target.value, 10);
-                // F08: a typed 0 (or less) is raised to 1 by the order; say so. An emptied field (NaN) is mid-edit.
-                setQtyBelowMin(Number.isFinite(typed) && typed < 1);
-                onSetQty(typed);
-              }}
+              onChange={qtyChange}
               onFocus={(e) => e.target.select()}
               // pinned KEEP literal (unit-vocabulary.pins): the order path's name; the till names its own line
               aria-label="Quantity"
               {...(labels?.qty ? { "aria-label": labels.qty } : null)}
               aria-describedby={qtyBelowMin ? qtyNoteId : undefined}
               {...heldQty}
+              {...sumQty.input}
               className={cn(
                 "h-6 w-10 max-lg:h-11 max-lg:w-14 max-lg:text-base rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
                 // the till caps a line at 100,000 pieces: a six-digit count must fit
@@ -752,6 +797,7 @@ export function LineItemRow({
             +
           </button>
           {heldNote(heldQty)}
+          {sumQty.note}
         </fieldset>
       )}
       {/* Line total */}

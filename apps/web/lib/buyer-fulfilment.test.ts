@@ -6,6 +6,7 @@ import {
   SHIP_STEP_LABELS,
   buyerOrderStatusLabel,
   buyerStatusLabel,
+  buyerTimelineNote,
   isConfiguredSeller,
   noFleetStepIndex,
   orderTravelView,
@@ -263,5 +264,16 @@ describe("one 'Shipped' answer: the card, the badge and the timeline agree (lead
       delivered: "Delivered",
       cancelled: "Cancelled",
     });
+  });
+});
+
+describe("buyerTimelineNote (W-1306): the reason a buyer sees no delivery steps", () => {
+  it("only the no-fleet timeline carries a line, and it never names the seller's add-ons", () => {
+    const note = buyerTimelineNote("none");
+    expect(note).toBe("This seller does not show each delivery step for this order.");
+    expect(note).not.toMatch(/add-on|billing|plan/i);
+    for (const v of ["route", "shipment", "pickup", "loading"] as const) {
+      expect(buyerTimelineNote(v)).toBeNull();
+    }
   });
 });

@@ -1,11 +1,15 @@
 "use client";
 
 import * as React from "react";
+import { useOptionalToast } from "@routeflow/ui/web";
 import {
+  clampNewLine,
   completeLineFromCatalog,
   hydrateCartLine,
   lineCount,
-  mergeCartLines,
+  limitLine,
+  lineLimit,
+  mergeCartLinesChecked,
   normalizeCartLine,
   setLineCount,
   setLineUnit,
@@ -88,6 +92,9 @@ function writeCart(key: string, state: CartState) {
 export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
   const key = buyerAccountId && sellerSlug ? getCartKey(buyerAccountId, sellerSlug) : null;
   const [cart, setCart] = React.useState<CartState>({ items: [] });
+  const toastCtx = useOptionalToast();
+  const cartRef = React.useRef(cart);
+  cartRef.current = cart;
 
   // Load from localStorage on mount
   React.useEffect(() => {
@@ -112,21 +119,42 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     };
   }, [key]);
 
+  const addSeqRef = React.useRef(0);
+  const pendingLimitRef = React.useRef(new Map<number, CartItem>());
+  // The limit line for every Add that clamped, said after the commit (never inside a state updater).
+  React.useEffect(() => {
+    const pending = pendingLimitRef.current;
+    if (pending.size === 0) return;
+    const lines = [...pending.values()];
+    pending.clear();
+    for (const line of lines) {
+      const { max, maxWord } = lineLimit(line);
+      toastCtx?.toast({ title: limitLine(max, maxWord), variant: "info" });
+    }
+  });
+
   const addItem = React.useCallback(
     (item: CartItem) => {
+      // B1382/B1409: whether the cap clamped is decided from `prev` (the state this Add really lands on), never from
+      // cartRef, which is stale inside a synchronous loop (Order Again). The updater stays pure: it only records the
+      // clamp under this call's id (a Map, so React re-running the updater cannot record it twice); the toast fires
+      // from an effect after the commit, once per call. Without a ToastProvider the Add still clamps and stays silent.
+      const callId = ++addSeqRef.current;
       setCart((prev) => {
         const incoming = normalizeCartLine(item);
         const existing = prev.items.find((i) => i.productId === item.productId);
         let next: CartState;
         if (existing) {
           // Merge in PIECES, then re-derive the split: never add a qty onto a stale split.
+          const checked = mergeCartLinesChecked(existing, incoming);
+          if (checked.clamped) pendingLimitRef.current.set(callId, checked.line);
           next = {
-            items: prev.items.map((i) =>
-              i.productId === item.productId ? mergeCartLines(i, incoming) : i,
-            ),
+            items: prev.items.map((i) => (i.productId === item.productId ? checked.line : i)),
           };
         } else {
-          next = { items: [...prev.items, incoming] };
+          const checked = clampNewLine(incoming);
+          if (checked.clamped) pendingLimitRef.current.set(callId, checked.line);
+          next = { items: [...prev.items, checked.line] };
         }
         if (key) writeCart(key, next);
         return next;

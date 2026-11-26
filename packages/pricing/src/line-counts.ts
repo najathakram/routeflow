@@ -43,7 +43,7 @@ export interface LineCounts {
 const BOX = "box";
 const PIECE = "pc";
 const SEPARATOR = " · ";
-const GENERIC_PIECE = /^(each|ea|piece|pc|unit)s?$/i;
+export const GENERIC_PIECE = /^(each|ea|piece|pc|unit)s?$/i;
 const BOX_LIKE = /^box(es)?$/i;
 
 const num = (v: unknown): number => Number(v ?? 0) || 0;

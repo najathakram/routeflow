@@ -1399,8 +1399,11 @@ describe("CreateOrderModal", () => {
       fireEvent.change(qty, { target: { value: "7" } });
       fireEvent.change(qty, { target: { value: "" } });
       expect(qty.value).toBe("1");
+      // SA-1256: this box takes text now, so "abc" is real text (a number box reported it as ""). It is held with
+      // nothing committed: the line stays at 1.
       fireEvent.change(qty, { target: { value: "abc" } });
-      expect(qty.value).toBe("1");
+      expect(qty.value).toBe("abc");
+      expect(qty).toHaveAttribute("aria-valuenow", "1");
       fireEvent.change(qty, { target: { value: "7" } });
       expect(saveDraft()).toEqual([{ productId: "prod-2", qty: 7 }]);
     });

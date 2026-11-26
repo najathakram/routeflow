@@ -44,6 +44,7 @@ import {
 import { prismaPreflight } from "./lib/prisma-fresh.mjs";
 import {
   PHASE0_PREBUILD,
+  failFastReport,
   failureReport,
   isFailFast,
   notRunLines,
@@ -747,7 +748,7 @@ export async function main() {
       failFast,
     );
     if (failFast && planned !== 0) {
-      console.log(failureReport(ROOT, since).join("\n"));
+      console.log(failFastReport(ROOT, since, plan.calls, ran).join("\n"));
       for (const line of notRunLines(plan.calls, ran)) console.log(line);
     }
     if (!settlesReports({ fast: runMode.fast, status: planned, env: process.env })) return planned;

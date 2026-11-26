@@ -14,6 +14,10 @@ import {
   resolveResumeLineBoxes,
   resolveResumeLinePricing,
 } from "../lib/order-draft-logic";
+import { resumeFailureCopy } from "../lib/order-draft-copy";
+
+/** An axios-shaped error: the customer-prices read's failure (W-1424, SA-1276). */
+const http = (status: number, code?: string) => ({ response: { status, data: { code } } });
 
 describe("orderSubmitGate", () => {
   it("blocks both paths without a customer", () => {
@@ -99,21 +103,69 @@ describe("decideResumeHydrationStart (B747 REQUIRED)", () => {
     expect(decideResumeHydrationStart(true, true, false, false, undefined)).toBe("start");
   });
 
-  it("starts on a 403 — the pricing_tiers plan gate means genuinely no overrides, not a failure", () => {
-    expect(decideResumeHydrationStart(true, false, true, false, 403)).toBe("start");
+  it("starts on a PLAN_GATE 403 — the pricing_tiers plan gate means genuinely no overrides, not a failure", () => {
+    expect(decideResumeHydrationStart(true, false, true, false, http(403, "PLAN_GATE"))).toBe(
+      "start",
+    );
+  });
+
+  it("W-1424 (red on the pre-fix code): a 403 with no plan-gate code is denied, never a resume at tier prices", () => {
+    expect(decideResumeHydrationStart(true, false, true, false, http(403))).toBe("denied");
+    expect(decideResumeHydrationStart(true, false, true, false, http(403, "FORBIDDEN"))).toBe(
+      "denied",
+    );
+  });
+
+  it("W-1424 (red on the pre-fix code): PLAN_GATE_UNAVAILABLE is retryable, so failed", () => {
+    expect(
+      decideResumeHydrationStart(true, false, true, false, http(403, "PLAN_GATE_UNAVAILABLE")),
+    ).toBe("failed");
   });
 
   it("fails on any other error status — a 5xx must never silently resume at the default tier", () => {
-    expect(decideResumeHydrationStart(true, false, true, false, 500)).toBe("failed");
+    expect(decideResumeHydrationStart(true, false, true, false, http(500))).toBe("failed");
   });
 
   it("fails on a network error / timeout with no response status at all", () => {
+    expect(decideResumeHydrationStart(true, false, true, false, new Error("Network Error"))).toBe(
+      "failed",
+    );
     expect(decideResumeHydrationStart(true, false, true, false, undefined)).toBe("failed");
   });
 
   it("SA-165 REQUIRED: errored AND currently refetching (a Retry in flight) is waiting, not an instant re-fail", () => {
-    expect(decideResumeHydrationStart(true, false, true, true, 500)).toBe("waiting");
-    expect(decideResumeHydrationStart(true, false, true, true, 403)).toBe("waiting");
+    expect(decideResumeHydrationStart(true, false, true, true, http(500))).toBe("waiting");
+    expect(decideResumeHydrationStart(true, false, true, true, http(403, "PLAN_GATE"))).toBe(
+      "waiting",
+    );
+    expect(decideResumeHydrationStart(true, false, true, true, http(403))).toBe("waiting");
+  });
+});
+
+/** W-1424: the dialog a failed resume shows. A denial has no Retry (retrying a role 403 cannot help). */
+describe("resumeFailureCopy (W-1424)", () => {
+  it("a prices read that failed keeps Retry and says the prices did not load", () => {
+    expect(resumeFailureCopy("failed")).toEqual({
+      title: "Couldn't restore your order",
+      body: "Prices didn't load. Try again in a moment.",
+      canRetry: true,
+    });
+  });
+
+  it("a denied prices read has no Retry and tells the operator who can finish the order", () => {
+    expect(resumeFailureCopy("denied")).toEqual({
+      title: "You can't see this customer's prices",
+      body: "Ask a manager to finish this order.",
+      canRetry: false,
+    });
+  });
+
+  it("a product or unit that failed to load keeps the original items copy and Retry", () => {
+    expect(resumeFailureCopy("items")).toEqual({
+      title: "Couldn't restore your order",
+      body: "Some items couldn't be loaded. Check your connection and try again.",
+      canRetry: true,
+    });
   });
 });
 
@@ -422,7 +474,7 @@ describe("NewOrderScreen resume never hangs on a plan-gated prices query (SA-136
   });
 
   it("Opus wiring: an already-showing failure dialog is never re-triggered by a later dep change", () => {
-    expect(screenSrc).toMatch(/gate === "failed" && !hydrateFailed/);
+    expect(screenSrc).toMatch(/hydrateFailed [?] undefined : failHydration[(]g[)]/);
   });
 
   it("the cleanup resets hydrationStartedRef — a dep-cancelled run can always be re-run, never stranded", () => {

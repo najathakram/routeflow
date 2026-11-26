@@ -38,7 +38,11 @@ export function useUrlSearch(
 
   const urlValue = searchParams.get(key) ?? "";
   const [value, setValue] = React.useState(urlValue);
-  const debounced = useDebounce(value, delay);
+  // TRIMMED: a stray space in front of "acme" (fast typing, paste) used to reach
+  // the server as part of the term and return nothing, on every list that uses
+  // this hook. The box keeps what was typed, so a space between two words is not
+  // eaten while the second word is still on its way.
+  const debounced = useDebounce(value, delay).trim();
 
   // The last value this hook put in (or took from) the URL. It lets a URL change
   // we caused be told apart from one the user caused with Back/Forward.

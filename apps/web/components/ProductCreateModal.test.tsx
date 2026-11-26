@@ -155,7 +155,7 @@ describe("ProductCreateModal price-as-quantity hint (V09)", () => {
     expect(hint).not.toBeNull();
     expect(hint).toHaveAttribute("aria-live", "polite");
     expect(hint).toHaveTextContent("A box holds 12. Is $12.00 the price for the whole box?");
-    expect(screen.getByLabelText("Price per box *")).toHaveAttribute(
+    expect(screen.getByLabelText(/^Price per box .+ pieces.+ [*]$/)).toHaveAttribute(
       "aria-describedby",
       expect.stringContaining("price-qty-hint"),
     );
@@ -164,7 +164,9 @@ describe("ProductCreateModal price-as-quantity hint (V09)", () => {
   it("does not show for 12.50", async () => {
     await fill("box", "12", "12.50");
     expect(document.getElementById("price-qty-hint")).toBeEmptyDOMElement();
-    expect(screen.getByLabelText("Price per box *")).not.toHaveAttribute("aria-describedby");
+    expect(screen.getByLabelText(/^Price per box .+ pieces.+ [*]$/)).not.toHaveAttribute(
+      "aria-describedby",
+    );
   });
 
   it("does not show when units per box is 1", async () => {

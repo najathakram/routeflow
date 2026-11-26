@@ -33,3 +33,14 @@ export function standaloneAllocationTotals(dto: {
   }
   return { allocatedTotal, excess: roundMoney(total - allocatedTotal) };
 }
+
+/** B1385: a DRAFT payment cannot carry a leftover: it would book an advance, which is spendable credit. Before any write. */
+export function assertDraftHasNoExcess(status: string, excess: number): void {
+  if (status === "PAID" || excess <= 0.001) return;
+  throw new BadRequestException({
+    code: API_ERROR_CODES.DRAFT_PAYMENT_HAS_EXCESS,
+    message:
+      "A draft payment cannot be more than the invoices it pays. Allocate the full amount, or record it as paid.",
+    excess,
+  });
+}

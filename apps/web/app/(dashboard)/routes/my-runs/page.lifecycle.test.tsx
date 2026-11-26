@@ -317,6 +317,83 @@ describe("MyRunsPage: a run that finished itself stays for Undo (A-2, D-32, D-33
     ).not.toBeInTheDocument();
   });
 
+  // UX audit 2026-11-24, F63: "No runs scheduled for you today" sat above an Upcoming card holding tomorrow's run,
+  // and the driver read it as "no work". With a later run on the list the line names its day.
+  // Review R-138: the day is written out by hand here (never built with the page's own formatter), on a fixed "today".
+  describe("no run today: the line names the next run the driver will really drive", () => {
+    beforeEach(() => {
+      // Only the clock is faked: the page's "today" is Tuesday 24 November 2026; timers stay real for findBy.
+      jest.useFakeTimers({
+        now: new Date(2026, 10, 24, 12, 0, 0),
+        doNotFake: [
+          "hrtime",
+          "nextTick",
+          "performance",
+          "queueMicrotask",
+          "requestAnimationFrame",
+          "cancelAnimationFrame",
+          "requestIdleCallback",
+          "cancelIdleCallback",
+          "setImmediate",
+          "clearImmediate",
+          "setInterval",
+          "clearInterval",
+          "setTimeout",
+          "clearTimeout",
+        ],
+      });
+    });
+    afterEach(() => jest.useRealTimers());
+    const on = (day: string, over: Partial<RouteRun> = {}) =>
+      run({ id: `run-${day}`, scheduledDate: `2026-11-${day}T00:00:00.000Z`, ...over });
+
+    it("one run tomorrow: the line names tomorrow", async () => {
+      serveList(() => [on("25")]);
+      renderWithProviders(<MyRunsPage />);
+      expect(
+        await screen.findByText("Nothing to deliver today. Your next route is Wed, Nov 25."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("No runs scheduled for you today.")).not.toBeInTheDocument();
+    });
+
+    it("later runs listed out of order: the earliest one is named", async () => {
+      serveList(() => [on("27"), on("26"), on("30")]);
+      renderWithProviders(<MyRunsPage />);
+      expect(
+        await screen.findByText("Nothing to deliver today. Your next route is Thu, Nov 26."),
+      ).toBeInTheDocument();
+    });
+
+    it("tomorrow's run is cancelled and nothing else is coming: it is not called the next route", async () => {
+      serveList(() => [on("25", { status: "CANCELLED" })]);
+      renderWithProviders(<MyRunsPage />);
+      expect(await screen.findByText("No runs scheduled for you today.")).toBeInTheDocument();
+      expect(screen.queryByText(/Your next route is/)).not.toBeInTheDocument();
+    });
+
+    // Review R-143, N1: a driver's list has no date filter, so a run from yesterday that was never started is still
+    // on the page under "Earlier, still open". It is the next job; the line must not point past it to Wednesday.
+    it("an open run from yesterday and one tomorrow: tomorrow is not called the next route", async () => {
+      serveList(() => [on("23"), on("25")]);
+      renderWithProviders(<MyRunsPage />);
+      expect(await screen.findByText("No runs scheduled for you today.")).toBeInTheDocument();
+      expect(screen.queryByText(/Your next route is/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Nothing to deliver today/)).not.toBeInTheDocument();
+    });
+
+    it("a cancelled run tomorrow and a finished one after it are passed over for the first open run", async () => {
+      serveList(() => [
+        on("28"),
+        on("25", { status: "CANCELLED" }),
+        on("26", { status: "COMPLETED" }),
+      ]);
+      renderWithProviders(<MyRunsPage />);
+      expect(
+        await screen.findByText("Nothing to deliver today. Your next route is Sat, Nov 28."),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("D-33b: a reload after a held run shows no run (the hold is in memory only)", async () => {
     let listed = true;
     serveList(() => (listed ? [live()] : []));

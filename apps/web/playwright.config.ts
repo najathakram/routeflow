@@ -849,7 +849,33 @@ export default defineConfig({
     // ENTRY THE SPEC NEVER RUNS.
     {
       name: "site-proof",
-      testMatch: /85-site-proof-pages\.spec\.ts/,
+      // 96 holds the T16 plants (SA-1203 A11); its tests exist only when T16_PLANTS=1.
+      testMatch: /(85-site-proof-pages|96-site-t16-plants)\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // Site type/alignment (spec 86, T49-T53) and site speed budget (spec 87, T44): signed out,
+    // `dependencies: []`, no storage state. Same convention as "site-proof": WITHOUT THESE ENTRIES
+    // THE SPECS NEVER RUN. The post-deploy job runs every project, so each spec must be green on
+    // master: T50-T52 turn green only after lanes 2.1b and 2.3-inner land (waves 2-3), so the
+    // rebrand branch must not reach master before then.
+    {
+      name: "site-type-alignment",
+      testMatch: /86-site-type-alignment\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "site-speed",
+      testMatch: /87-site-speed\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // Site waves 2-3 (specs 88-94): one spec file per lane, signed out, `dependencies: []`, no
+    // storage state. Same convention as "site-proof": lanes add spec files, never edit this entry.
+    {
+      name: "site-waves",
+      testMatch: /(8[89]|9[0-5])-site-w[234]-[a-z0-9-]+\.spec\.ts/,
       dependencies: [],
       use: { ...devices["Desktop Chrome"] },
     },

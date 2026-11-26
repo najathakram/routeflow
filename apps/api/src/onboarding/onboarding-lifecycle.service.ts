@@ -6,6 +6,7 @@ import { EmailService } from "../email/email.service";
 import { StorageService } from "../storage/storage.service";
 import { LeaderCron } from "../common/cron-lock";
 import { escapeHtml } from "../common/html-escape";
+import { BRAND } from "../common/brand";
 import { STAGE_ORDER, stageIndex } from "./onboarding-catalog";
 import { SECTION_LABEL } from "./onboarding-intake.service";
 import { routeflowFragmentMail } from "../email/routeflow-mail";
@@ -112,7 +113,7 @@ export class OnboardingLifecycleService {
         const r = await this.email.sendPlatform({
           to: c.contactEmail,
           ...routeflowFragmentMail({
-            subject: "Your RouteFlow setup is waiting for you",
+            subject: `Your ${BRAND.name} setup is waiting for you`,
             heading: "Your setup is waiting for you",
             bodyHtml: reminderEmailHtml({
               contactName: c.contactName,
@@ -121,7 +122,7 @@ export class OnboardingLifecycleService {
               linkSentOn: token.createdAt,
               linkExpiresOn: token.expiresAt,
             }),
-            why: "You are getting this because RouteFlow sent you a setup page that still has questions to answer.",
+            why: `You are getting this because ${BRAND.name} sent you a setup page that still has questions to answer.`,
           }),
         });
         delivered = r.delivered;
@@ -285,7 +286,7 @@ export function reminderEmailHtml(p: {
   const sent = escapeHtml(p.linkSentOn.toISOString().slice(0, 10));
   const expires = escapeHtml(p.linkExpiresOn.toISOString().slice(0, 10));
   return `<p>Hi ${escapeHtml(first)},</p>
-<p>Your RouteFlow setup for ${escapeHtml(p.companyName)} is waiting on a few answers:</p>
+<p>Your ${escapeHtml(BRAND.name)} setup for ${escapeHtml(p.companyName)} is waiting on a few answers:</p>
 <ul>${items}</ul>
 <p>Use the secure link from our email of ${sent}; it works until ${expires}. Can't find it? Ask your onboarding lead for a fresh one — we never send it in a reminder.</p>`;
 }

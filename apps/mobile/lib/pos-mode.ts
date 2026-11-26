@@ -21,9 +21,7 @@ import {
   onDriverRunCopy,
 } from "@routeflow/types/counter-copy";
 
-import { isPosOrder } from "./order-status-flow";
-
-export { isPosOrder };
+import { isPosOrder } from "@routeflow/types/api/fulfilment";
 
 /** The per-user preference key, from the shared `PREF` (a `PREFERENCE_KEYS` entry). */
 export const POS_MODE_PREF_KEY = PREF.ordersPosMode;

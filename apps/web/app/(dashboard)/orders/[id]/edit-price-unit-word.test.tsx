@@ -158,7 +158,7 @@ describe("order edit: a substituted line's price field follows the substitute (S
 
   it.each([
     ["Loose Apples", "Price per lb"],
-    ["Tray Water", "Price per Tray"],
+    ["Tray Water", "Price per Box"],
     ["Single Soap", "Price each"],
   ])("a Case of 12 swapped to %s reads %s", async (pick, want) => {
     const user = userEvent.setup();

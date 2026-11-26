@@ -131,3 +131,27 @@ describe("cartStore.setUnits (typed qty input)", () => {
     expect(useCartStore.getState().items[0].qty).toBe(4);
   });
 });
+
+describe("cartStore line limit (B1382, SA-1283)", () => {
+  it("a 6-pack boxed line stops at 16,666 boxes; 99999999 clamps to it", () => {
+    useCartStore.getState().add(boxed);
+    useCartStore.getState().setUnits("p-box", 99_999_999);
+    const line = useCartStore.getState().items[0];
+    expect(line.boxes).toBe(16_666);
+    expect(line.qty).toBeLessThanOrEqual(100_000);
+  });
+
+  it("step cannot pass the limit; a loose line stops at 100,000", () => {
+    useCartStore.getState().add(loose);
+    useCartStore.getState().setUnits("p-loose", 100_000);
+    useCartStore.getState().step("p-loose", 1);
+    expect(useCartStore.getState().items[0].qty).toBe(100_000);
+  });
+
+  it("a repeat add at the limit stays at the limit", () => {
+    useCartStore.getState().add(loose);
+    useCartStore.getState().setUnits("p-loose", 100_000);
+    useCartStore.getState().add(loose);
+    expect(useCartStore.getState().items[0].qty).toBe(100_000);
+  });
+});

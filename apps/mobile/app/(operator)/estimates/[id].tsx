@@ -17,6 +17,7 @@ import {
 import {
   estimateActionFlags,
   estimateLineAmount,
+  estimateLineQtyPriceText,
   estimatePillFor,
 } from "../../../lib/estimates-logic";
 import { showToast } from "../../../lib/toast";
@@ -246,9 +247,7 @@ export default function EstimateDetailScreen() {
                     <Text style={styles.itemName} numberOfLines={1}>
                       {it.description}
                     </Text>
-                    <Text style={styles.itemSub}>
-                      {it.qty} × {fmtCurrency(it.unitPrice)}
-                    </Text>
+                    <Text style={styles.itemSub}>{estimateLineQtyPriceText(it, fmtCurrency)}</Text>
                   </View>
                   <Text style={styles.itemTotal}>{fmtCurrency(estimateLineAmount(it))}</Text>
                 </View>

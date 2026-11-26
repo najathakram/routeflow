@@ -45,7 +45,7 @@ import {
   getTierPrice,
   applyLadderChange,
   ladderChangeNote,
-  perUnitPrice,
+  pricedPerLabel,
   unitWords,
   type TierField,
 } from "@routeflow/pricing";
@@ -88,6 +88,7 @@ import {
   ThumbImage,
   scrollCardIntoView,
 } from "./ProductEditActions";
+import { useDraftEditLeaveGuard } from "../../orders/[id]/edit-leave-guard";
 import { LegacyVariantsActions, variantModalTitle } from "./LegacyVariantsActions";
 import { useDeleteProductFlow } from "./useDeleteProductFlow";
 import { DeleteProductConfirm } from "./DeleteProductConfirm";
@@ -218,6 +219,8 @@ export default function ProductDetailPage() {
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
+  // UX audit F03: a typed edit was lost by a menu click, Back or a reload with no question (see the hook).
+  const leaveGuard = useDraftEditLeaveGuard("product", editDraft, isEditing, router, "/products");
   // The pack the form opened with: a save sends `unit` only if the operator changed it, and then sends this
   // pack back as the expected values (SA-797), so a Settings > Units rename made meanwhile is a 409, not lost.
   const packWhenEditStartedRef = React.useRef<ProductPackAtOpen | undefined>(undefined);
@@ -595,6 +598,7 @@ export default function ProductDetailPage() {
     setIsEditing(false);
     setLadderNote(null);
   };
+  leaveGuard.cancel.current = cancelEdit;
 
   // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
   // ── Crop helpers ──────────────────────────────────────────────────────────
@@ -1014,16 +1018,21 @@ export default function ProductDetailPage() {
   };
 
   // Display-only per-unit hint for a case-packed product's price fields (Tier 1 row + tier
-  // grid). NEVER enters a payload — perUnitPrice is a display derivation, not line math.
+  // grid). NEVER enters a payload — pricedPerLabel (perUnitPrice) is a display derivation, not line math.
   // Reads `activeUnitsPerBox` (the in-progress edit draft while editing, the saved value
   // otherwise) — NOT `product.unitsPerBox` directly — so accepting a pack-size suggestion
   // shows the resulting per-piece price immediately, live, before the operator ever saves.
+  const activeUnit = isEditing ? (editDraft.unit as string) : product.unit;
   const perUnitHint = (v: number) => {
-    if (!(activeUnitsPerBox > 1)) return null;
-    const pu = perUnitPrice(v, activeUnitsPerBox);
-    return pu != null ? (
+    // B1383: the piece and its word come from pricing ("≈ $0.10 / can"); the label beside it names the box
+    const pp = pricedPerLabel({
+      unit: activeUnit,
+      unitsPerBox: activeUnitsPerBox,
+      price: v,
+    }).perPiece;
+    return pp ? (
       <p className="mt-0.5 text-[11px] text-navy/50">
-        ≈ <MoneyFigure value={pu} /> / {UW.base.short.one}
+        ≈ <MoneyFigure value={pp.price} /> / {pp.word}
       </p>
     ) : null;
   };
@@ -1032,10 +1041,9 @@ export default function ProductDetailPage() {
   // other product keeps them where they always were.
   const priceEachRow = (
     <InfoRow
-      label={priceRowLabel(
-        isEditing ? (editDraft.unit as string) : product.unit,
-        tierOneLabel(tierLabels),
-      )}
+      label={priceRowLabel(activeUnit, tierOneLabel(tierLabels), {
+        unitsPerBox: activeUnitsPerBox,
+      })}
       value={
         isEditing ? (
           <>
@@ -1286,6 +1294,7 @@ export default function ProductDetailPage() {
         variant="danger"
         loading={deleteImage.isPending}
       />
+      {leaveGuard.dialog}
       <DeleteProductConfirm
         id={id}
         name={product.name}

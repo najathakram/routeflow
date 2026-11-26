@@ -5,6 +5,8 @@
  *   T1  R1   print shows the whole page, and screen is restored afterwards
  *   T2  R2   headings below the fold are not waiting for a scroll to appear
  *   T9  R10  no heading sits on top of the next block while the page rises into view
+ *   T16 R16  button and link colours, the focus ring on every band, text contrast
+ *   T18c R18 every element's box-shadow is none or the ring (one walk, helpers/site-colour-walk.ts)
  *   T12 R12  nothing is lost: links, buttons, controls, anchors and the 15 tiles (parity diff)
  *
  * Signed out. The post-deploy job runs this project, so every cell here is green on master
@@ -37,6 +39,16 @@ import {
   readParityFile,
   type ParityMap,
 } from "./helpers/site-parity";
+import {
+  WALK_PAGE_HARD_MS,
+  WALK_RUN_HARD_MS,
+  armRunKill,
+  WALK_ROUTES,
+  WALK_SIZES,
+  judgeColours,
+  judgeShadows,
+  walkPageSize,
+} from "./helpers/site-colour-walk";
 
 test.describe.configure({ mode: "parallel" });
 
@@ -642,4 +654,55 @@ test.describe("T12 R12 nothing is lost", () => {
     const diff = diffParity(base.pages, now, readChanges());
     expect(diff, "T12: differences from the baseline that no changes row explains").toEqual([]);
   });
+});
+
+// ─── T16 + T18c — one Tab walk over the 17 signed-out pages ───────────────────
+
+/** Pages that must show a focusable element on a dark band: none measured there is a red, not a skip (SA-1203 A12 S4). */
+const DARK_BAND_ON_PAGE: Record<string, string> = {
+  "/": ".end",
+  "/landing": ".price",
+  "/pricing": ".pcard.featured",
+};
+
+test.describe("T16 T18c colour walk", () => {
+  // SA-1203 A12 S13: the walk has a run-wide hard kill of 15 minutes. It is armed here, for the walk's tests only,
+  // and disarmed when each ends, so no other test in this file (or the runner) carries it.
+  let disarm: (() => void) | undefined;
+  test.beforeEach(() => {
+    disarm = armRunKill(WALK_RUN_HARD_MS);
+  });
+  test.afterEach(() => {
+    disarm?.();
+    disarm = undefined;
+  });
+  test("the walk covers 17 pages", () => {
+    expect(new Set(WALK_ROUTES).size).toBe(17);
+    expect(WALK_ROUTES).toHaveLength(17);
+  });
+
+  for (const route of nonEmpty(WALK_ROUTES, "walk routes")) {
+    for (const size of WALK_SIZES) {
+      test(`T16 T18c colour walk ${route} ${sizeName(size)}`, async () => {
+        // SA-1203 A12 S13: one page and size has a 60 s budget in the walk; the hard kill is in walkPageSize.
+        test.setTimeout(WALK_PAGE_HARD_MS + 60_000);
+        const walk = await walkPageSize(route, size);
+        const { problems, report } = judgeColours(walk);
+        await test.info().attach("T16 focusable table", {
+          body: report.join(String.fromCharCode(10)),
+          contentType: "text/plain",
+        });
+        for (const line of report)
+          test.info().annotations.push({ type: "focus-ring", description: line });
+        const band = DARK_BAND_ON_PAGE[route];
+        if (band)
+          expect(
+            walk.rows.filter((r) => r.bandDark && r.inside.includes(band)).length,
+            `T16 ${route} ${sizeName(size)}: focus stops read on a dark backdrop inside ${band}`,
+          ).toBeGreaterThan(0);
+        expect.soft(problems, `T16 ${route} ${sizeName(size)}`).toEqual([]);
+        expect.soft(judgeShadows(walk), `T18c ${route} ${sizeName(size)}`).toEqual([]);
+      });
+    }
+  }
 });

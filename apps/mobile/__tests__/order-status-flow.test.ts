@@ -1,3 +1,4 @@
+import { isPosOrder } from "@routeflow/types/api/fulfilment";
 /**
  * Order status-flow gating (PR-1): mirrors of the server's `changeStatus`
  * transition table, its demote-needs-a-reason rule, and `deleteOrder`'s allowed
@@ -9,7 +10,6 @@ import {
   canDeleteOrder,
   canTransitionOrder,
   demotionRequiresReason,
-  isPosOrder,
   posStatusMoveAllowed,
 } from "../lib/order-status-flow";
 

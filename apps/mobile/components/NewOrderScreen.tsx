@@ -130,6 +130,7 @@ import {
   decideResumeHydrationStart,
 } from "../lib/order-draft-logic";
 import { hydrateParkedLine } from "../lib/resume-draft-hydration";
+import { resumeFailureCopy, type ResumeFailKind } from "../lib/order-draft-copy";
 import {
   getOrderSubmitKey,
   resetOrderSubmitKey,
@@ -659,30 +660,29 @@ function ProductPickView({
   // The alert offering that retry is dismissible (backdrop tap on web,
   // `cancelable` on native), and nothing else re-triggers the effect — so the
   // retry ALSO lives in the spinner view itself, never only in the dialog.
-  const [hydrateFailed, setHydrateFailed] = useState(false);
+  const [hydrateFailed, setHydrateFailed] = useState<ResumeFailKind | null>(null);
   const retryHydrate = useCallback(() => {
-    setHydrateFailed(false);
+    setHydrateFailed(null);
     void refetchPrices(); // SA-165: hydrateAttempt alone never re-fires the prices query
     setHydrateAttempt((n) => n + 1);
   }, [refetchPrices]);
   const hydrationStartedRef = useRef(false);
-  const failHydration = useCallback(() => {
-    hydrationStartedRef.current = false;
-    setHydrateFailed(true);
-    chooseAction(
-      "Couldn't restore your order",
-      "Some items couldn't be loaded. Check your connection and try again.",
-      [
-        { label: "Go back", style: "cancel", onPress: onBack },
-        { label: "Retry", onPress: retryHydrate },
-      ],
-    );
-  }, [onBack, retryHydrate]);
+  const failHydration = useCallback(
+    (kind: ResumeFailKind) => {
+      hydrationStartedRef.current = false;
+      setHydrateFailed(kind);
+      const { title, body, canRetry } = resumeFailureCopy(kind);
+      const back = { label: "Go back", style: "cancel" as const, onPress: onBack };
+      const actions = canRetry ? [back, { label: "Retry", onPress: retryHydrate }] : [back];
+      chooseAction(title, body, actions);
+    },
+    [onBack, retryHydrate],
+  );
   useEffect(() => {
     if (!hydrating || hydrationStartedRef.current) return;
-    const status = (pricesError as { response?: { status?: number } })?.response?.status;
-    const gate = decideResumeHydrationStart(!!customerDetail, fetched, errored, fetching, status);
-    if (gate !== "start") return gate === "failed" && !hydrateFailed ? failHydration() : undefined;
+    const g = decideResumeHydrationStart(!!customerDetail, fetched, errored, fetching, pricesError);
+    if (g === "waiting") return;
+    if (g !== "start") return hydrateFailed ? undefined : failHydration(g);
     hydrationStartedRef.current = true;
     const parkedLines: DraftCatalogLine[] = draftSeed?.items ?? [];
     let cancelled = false;
@@ -693,7 +693,7 @@ function ProductPickView({
       const results = await Promise.all(parkedLines.map((li) => hydrateParkedLine(li)));
       if (cancelled) return;
       // Money-critical: `hydrating` stays true, so autosave stays disabled until resolved.
-      if (results.some((r) => r.failed)) return failHydration();
+      if (results.some((r) => r.failed)) return failHydration("items");
       const nextItems: Record<string, LineState> = {};
       const nextScanned: Record<string, Product> = {};
       const droppedNames: string[] = [];
@@ -2084,19 +2084,19 @@ function ProductPickView({
         <View style={styles.hydrateState}>
           {hydrateFailed ? (
             <>
-              <Text style={styles.hydrateFailTitle}>Couldn't restore your order</Text>
-              <Text style={styles.hydrateFailText}>
-                Some items couldn't be loaded. Check your connection and try again.
-              </Text>
-              <Pressable
-                style={styles.hydrateRetryBtn}
-                onPress={retryHydrate}
-                accessibilityRole="button"
-                accessibilityLabel="Retry restoring your parked order"
-              >
-                <Ionicons name="refresh" size={16} color={ios.brand} />
-                <Text style={styles.hydrateRetryText}>Retry</Text>
-              </Pressable>
+              <Text style={styles.hydrateFailTitle}>{resumeFailureCopy(hydrateFailed).title}</Text>
+              <Text style={styles.hydrateFailText}>{resumeFailureCopy(hydrateFailed).body}</Text>
+              {resumeFailureCopy(hydrateFailed).canRetry ? (
+                <Pressable
+                  style={styles.hydrateRetryBtn}
+                  onPress={retryHydrate}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry restoring your parked order"
+                >
+                  <Ionicons name="refresh" size={16} color={ios.brand} />
+                  <Text style={styles.hydrateRetryText}>Retry</Text>
+                </Pressable>
+              ) : null}
             </>
           ) : (
             <>

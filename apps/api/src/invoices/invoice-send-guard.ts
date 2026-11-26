@@ -79,6 +79,16 @@ export function paymentRefusal(status: InvoiceStatus): string | null {
 }
 
 /**
+ * B1385: the standalone writer's refusal: paymentRefusal plus a DRAFT invoice (a standalone payment never moves its
+ * status, so the PAID row would sit on a DRAFT). Standalone site only; paymentRefusal stays shared with pickup and
+ * counter. STRIPE_SETTLE is exempt: that money already moved at the processor.
+ */
+export function standalonePaymentRefusal(status: InvoiceStatus, source?: string): string | null {
+  if (status === InvoiceStatus.DRAFT && source !== "STRIPE_SETTLE") return "a draft";
+  return paymentRefusal(status);
+}
+
+/**
  * Money on an invoice comes in two flavours and they unwind differently:
  *
  *  - **Wallet money** (CREDIT_NOTE, ADVANCE) came from a balance this system

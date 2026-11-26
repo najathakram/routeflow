@@ -8,16 +8,16 @@
 // pages' own copy instead of the redesign's preview-only text.
 
 import { Package, Route, Warehouse, type LucideIcon } from "lucide-react";
+import { BRAND, SITE_BRAND } from "@routeflow/types/brand";
 
+// Name, host and mailbox come from packages/types/brand/brand.json (the brand seam, T35): nothing
+// in this file types them. `site` is the site's view (the overlay: the new name and the main host).
+// Terms and Privacy are contracts and read BRAND (today's name and host), never this table.
 export const site = {
-  name: "RouteFlow",
-  origin: "https://www.routeflow.info",
-  email: "hello@routeflow.info",
+  name: SITE_BRAND.name,
+  origin: SITE_BRAND.origin,
+  email: SITE_BRAND.email,
 };
-
-// The one label for the call button, on every page (COPY.md section 0 and 4: "video call", never "demo").
-// Sentence case, 3 words, starts with a verb. W4 adds TRIAL_CTA beside it.
-export const DEMO_CTA = "Book a video call";
 
 export interface MarketingRoute {
   slug: string;
@@ -31,47 +31,39 @@ export const routes: MarketingRoute[] = [
     slug: "product",
     label: "Product",
     title: "Product",
-    description:
-      "What RouteFlow does for businesses that sell to stores: orders, bills, payments, stock, delivery, and counter sales. 14 days free, no card needed.",
+    description: `What ${site.name} does for businesses that sell to stores: orders, bills, payments, stock, delivery, and counter sales. 14 days free, no card needed.`,
   },
   {
     slug: "pricing",
     label: "Pricing",
     title: "Pricing",
-    description:
-      "RouteFlow plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed. Pay for a year and get 2 months free.",
+    description: `${site.name} plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed.`,
   },
   {
     slug: "company",
     label: "Company",
     title: "Company",
-    description: "We make wholesalers’ lives easier. Why we built RouteFlow, and who to write to.",
+    description: `We make wholesalers’ lives easier. Why we built ${site.name}, and who to write to.`,
   },
   {
     slug: "contact",
     label: "Contact",
     title: "Contact",
-    description: "Write to hello@routeflow.info and we reply within one business day.",
+    description: `Write to ${site.email} and we reply within one business day.`,
   },
   {
     slug: "privacy",
     label: "Privacy",
     title: "Privacy Policy",
-    description: "How RouteFlow collects, uses, and protects the information you share with us.",
+    description: `How ${BRAND.name} collects, uses, and protects the information you share with us.`,
   },
   {
     slug: "terms",
     label: "Terms",
     title: "Terms of Service",
-    description: "The terms that apply to accessing and using the RouteFlow platform.",
+    description: `The terms that apply to accessing and using the ${BRAND.name} platform.`,
   },
 ];
-
-/**
- * The primary-nav routes, in header order. Contact sits before Company on purpose: the desktop nav
- * hides its LAST link from 901 to 1100 px (marketing.css), and that must stay Company, not Contact.
- */
-export const NAV_SLUGS = ["product", "pricing", "company", "contact"] as const;
 
 /** Slugs excluded from the sitemap (legal shells, R9/T9). */
 // privacy/terms were excluded while they were placeholder shells; now that they carry the
@@ -122,20 +114,3 @@ export const PLANS: PricingPlan[] = [
     ],
   },
 ];
-
-export interface DemoFormValues {
-  name: string;
-  email: string;
-  company: string;
-  notes: string;
-}
-
-/** Builds the `mailto:` draft the DemoForm hands off to the visitor's mail app. */
-export function demoEmail(values: DemoFormValues): string {
-  const body = `Hello RouteFlow,\n\nI'd like a demo for ${values.company}.\n\nName: ${values.name}\nWork email: ${values.email}\nCompany: ${values.company}\n\nWorkflow to discuss:\n${
-    values.notes || "Orders, delivery routes, and customer accounts."
-  }\n\nPlease get in touch to arrange a walkthrough.`;
-  return `mailto:${site.email}?subject=${encodeURIComponent(
-    "RouteFlow demo request — " + values.company,
-  )}&body=${encodeURIComponent(body)}`;
-}

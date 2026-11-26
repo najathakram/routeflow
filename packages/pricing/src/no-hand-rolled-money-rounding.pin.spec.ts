@@ -754,11 +754,11 @@ const ALLOW: Allow[] = [
     note: "a web money site that PR-2 converts",
   },
   {
-    file: "apps/web/app/(dashboard)/orders/[id]/price-edit-row.tsx",
+    file: "apps/web/lib/far-from-list.ts",
     form: "F3",
     count: 2,
     why: "percent",
-    note: "a percent label or bar width, not an amount",
+    note: "a percent label (moved from orders/[id]/price-edit-row.tsx, same two sites), not an amount",
   },
   {
     file: "apps/web/app/(dashboard)/orders/_components/CounterDayClose.tsx",
