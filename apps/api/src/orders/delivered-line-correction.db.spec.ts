@@ -59,6 +59,7 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
   let customerId = "";
   const productIds: string[] = [];
   const orderIds: string[] = [];
+  const stopIds: Array<{ route: string; routeStop: string; run: string; stop: string }> = [];
 
   const principal = (role: string, sub: string, extra: Partial<JwtPayload> = {}): JwtPayload =>
     ({
@@ -210,6 +211,10 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
     await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
     await raw.order.deleteMany({ where: { id: { in: orderIds } } });
+    await raw.routeRunStop.deleteMany({ where: { id: { in: stopIds.map((s) => s.stop) } } });
+    await raw.routeRun.deleteMany({ where: { id: { in: stopIds.map((s) => s.run) } } });
+    await raw.routeStop.deleteMany({ where: { id: { in: stopIds.map((s) => s.routeStop) } } });
+    await raw.route.deleteMany({ where: { id: { in: stopIds.map((s) => s.route) } } });
     await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     await raw.product.deleteMany({ where: { id: { in: productIds } } });
     await raw.customer.deleteMany({ where: { id: customerId } });
@@ -438,7 +443,7 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
       await tx.orderItem.update({ where: { id }, data: { deliveredQty: d } });
       await restateLineEvidence(
         tx,
-        { orderId: o.id, tenantId },
+        { orderId: o.id, tenantId, evidence: [], stopLinked: false },
         { id, productId: p },
         d,
         "NONE",
@@ -453,6 +458,142 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     const basis = await deliveredBasisByLine(raw as any, o.id);
     expect(billableQtyFromBasis({ id, qty: 12 }, basis)).toBe(8);
     expect(Number((await line(o.id)).deliveredQty)).toBe(8);
+  });
+
+  it("OBSERVE (A5, R-241 hold): stock and column answers of B1, E, L, N on this head; no assertion on the stock figure", async () => {
+    const cases: Array<[string, number, number, number]> = [
+      ["B1 10/10 qty 8", 10, 10, 8],
+      ["E 10/12 qty 14", 12, 10, 14],
+      ["L 10/12 qty 11", 12, 10, 11],
+      ["N 10/12 qty 10", 12, 10, 10],
+    ];
+    const out: string[] = [];
+    for (const [label, qty, delivered, newQty] of cases) {
+      const p = await product("obs");
+      const before = await stock(p);
+      const o = await reopened([plain(p, qty, delivered)]);
+      const id = o.lineItems[0].id;
+      await edit(o.id, { replaceAll: false, items: [{ id, qty: newQty }] });
+      const a = await line(o.id);
+      const rows = await raw.deliveryMutation.count({ where: { orderId: o.id } });
+      out.push(
+        `${label}: stockDelta=${(await stock(p)) - before} column=${Number(a.deliveredQty)} qty=${Number(a.qty)} rows=${rows}`,
+      );
+    }
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require("fs").appendFileSync(
+      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
+      out.join(String.fromCharCode(10)) + String.fromCharCode(10),
+    );
+  });
+
+  it("P-3: an office row is never written without the order's tenantId (explicit tenantId, 0 rows)", async () => {
+    const p = await product("p3");
+    const o = await reopened([plain(p, 12)]);
+    const id = o.lineItems[0].id;
+    await expect(
+      raw.$transaction((tx) =>
+        restateLineEvidence(
+          tx,
+          { orderId: o.id, tenantId: null, evidence: [], stopLinked: false },
+          { id, productId: p },
+          8,
+          "NONE",
+          12,
+        ),
+      ),
+    ).rejects.toThrow(/tenantId/);
+    expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(0);
+    await raw.$transaction((tx) =>
+      restateLineEvidence(
+        tx,
+        { orderId: o.id, tenantId, evidence: [], stopLinked: false },
+        { id, productId: p },
+        8,
+        "NONE",
+        12,
+      ),
+    );
+    const row = await raw.deliveryMutation.findFirstOrThrow({ where: { orderId: o.id } });
+    expect(row.tenantId).toBe(tenantId);
+  });
+
+  it("R4-L pin (SA-1525 l): the M-1 office row makes a replace-all of the DELIVERED order answer ORDER_EDIT_NEEDS_LINE_IDS, rows kept", async () => {
+    const p = await product("r4l");
+    const o = await reopened([plain(p, 12)]);
+    const id = o.lineItems[0].id;
+    await raw.$transaction(async (tx) => {
+      await tx.orderItem.update({ where: { id }, data: { deliveredQty: 8 } });
+      await restateLineEvidence(
+        tx,
+        { orderId: o.id, tenantId, evidence: [], stopLinked: false },
+        { id, productId: p },
+        8,
+        "NONE",
+        12,
+      );
+    });
+    expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(1);
+    await raw.order.update({ where: { id: o.id }, data: { status: "DELIVERED" as any } });
+    await expect(
+      edit(o.id, { replaceAll: true, items: [{ productId: p, qty: 12 }] }),
+    ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_NEEDS_LINE_IDS" } });
+    expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(1);
+    expect(Number((await line(o.id)).deliveredQty)).toBe(8);
+  });
+
+  async function completedStop() {
+    const route = await raw.route.create({
+      data: { name: `a5 route ${run}-${stopIds.length}`, tenantId } as any,
+    });
+    const routeStop = await raw.routeStop.create({
+      data: { tenantId, routeId: route.id, stopNumber: 1, customerId } as any,
+    });
+    const rr = await raw.routeRun.create({
+      data: {
+        tenantId,
+        routeId: route.id,
+        scheduledDate: new Date("2026-09-27T00:00:00.000Z"),
+        status: "COMPLETED" as any,
+        driverId,
+      },
+    });
+    const stop = await raw.routeRunStop.create({
+      data: {
+        tenantId,
+        routeRunId: rr.id,
+        routeStopId: routeStop.id,
+        stopNumber: 1,
+        status: "COMPLETED" as any,
+      } as any,
+    });
+    stopIds.push({ route: route.id, routeStop: routeStop.id, run: rr.id, stop: stop.id });
+    return stop.id;
+  }
+
+  it("R4-I2 (SA-1525 i): a stop-linked order, a line with NO rows (column 8, qty 12) cut to qty 11 is a typed 409 and writes no office row", async () => {
+    const p = await product("r4i2");
+    const o = await reopened([plain(p, 12, 8)]);
+    const id = o.lineItems[0].id;
+    await raw.order.update({
+      where: { id: o.id },
+      data: { routeRunStopId: await completedStop() },
+    });
+    await expect(edit(o.id, { replaceAll: false, items: [{ id, qty: 11 }] })).rejects.toMatchObject(
+      {
+        status: 409,
+        response: {
+          code: "LINE_ALREADY_DELIVERED",
+          message: expect.stringContaining("A driver delivered this item."),
+        },
+      },
+    );
+    expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(0); // wrong value: 1 stop-less office row
+    const after = await line(o.id);
+    expect(Number(after.qty)).toBe(12);
+    expect(Number(after.deliveredQty)).toBe(8);
+    expect(await stock(p)).toBe(90);
+    expect(await audits(o.id)).toHaveLength(0);
   });
 
   it("case 18 (A2 M8): the allow-list is CONFIRMED / PARTIALLY_DELIVERED; every other status is LOCKED STATUS with its own sentence", async () => {

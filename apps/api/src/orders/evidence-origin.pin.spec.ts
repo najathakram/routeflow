@@ -40,6 +40,7 @@ describe("evidence-origin pin (one classifier)", () => {
   it("the correction writer's office-row where-clause is the same two columns (the DB twin of 'office')", () => {
     const code = stripComments(src("orders/delivered-line-correction.ts"));
     const twins = code.match(/routeRunStopId: null, driverId: null/g) ?? [];
-    expect(twins.length).toBeGreaterThanOrEqual(2); // restateOfficeRows and officeRowSum, both office-only
+    expect(twins.length).toBeGreaterThanOrEqual(1); // restateOfficeRows (office-only); officeRowSum folds the one read through evidenceOrigin
+    expect(code).toContain('evidenceOrigin(m) === "office"');
   });
 });

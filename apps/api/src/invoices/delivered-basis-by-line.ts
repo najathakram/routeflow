@@ -93,6 +93,17 @@ export async function deliveredBasisByLine(
     where: { orderId },
     select: { orderItemId: true, type: true, quantityDelivered: true },
   });
+  return basisFromRows(mutations);
+}
+
+/** The pure fold of `deliveredBasisByLine`: callers that already read the order's evidence rows fold them, no second query. */
+export function basisFromRows(
+  mutations: ReadonlyArray<{
+    orderItemId: string | null;
+    type: string;
+    quantityDelivered: unknown;
+  }>,
+): DeliveredBasis {
   const qualifying = mutations.filter(isEvidenceRow);
   const byLineId = new Map<string, number>();
   for (const m of qualifying) {

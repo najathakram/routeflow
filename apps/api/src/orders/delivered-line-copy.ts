@@ -69,6 +69,10 @@ export const UNPROJECTED_ADDING_MESSAGE =
 export const UNPROJECTED_CUTTING_MESSAGE =
   "Invoice {invoiceNumber} has a line that was added on the invoice itself, so changes here can't update it. To bill less, add a credit note.";
 
+/** AD-3 placeholder until SA-C's words land. */
+export const EMPTIES_INVOICE_MESSAGE =
+  "This would leave invoice {invoiceNumber} with nothing on it. To bill nothing for this order, void the invoice.";
+
 /** Filed month (SA-1415 table, until PR-4 / SA-1511 replaces it): a correction that moves money in a filed month. */
 export const FILED_MONTH_MESSAGE =
   "{month} is already filed. Mark the order delivered again, then record a return.";
@@ -77,11 +81,27 @@ export const FILED_MONTH_MESSAGE =
 export const ORDER_CHANGED_DURING_EDIT_MESSAGE =
   "This order changed while you were editing it. Reload it and try again.";
 
+/** SA-1525 (k) / SA-C 7178828662: RETURN_REMAINDER on a stop-linked order; the invoice already bills the delivered figure. No button. */
+export const RETURN_REMAINDER_STOP_COPY =
+  "Part of {item} was never delivered and part was returned. The invoice already bills only what was delivered ({billed} {unit}), so nothing needs changing here.";
+
 export function lockedCopy(
   reason: keyof typeof LOCKED_COPY,
-  words: { item?: string | null; invoiceNumber?: string | null } = {},
+  words: {
+    item?: string | null;
+    invoiceNumber?: string | null;
+    stopLinked?: boolean;
+    billed?: number | string | null;
+    unit?: string | null;
+  } = {},
 ): string {
-  return fill(LOCKED_COPY[reason], words);
+  const template =
+    reason === "RETURN_REMAINDER" && words.stopLinked
+      ? RETURN_REMAINDER_STOP_COPY
+      : LOCKED_COPY[reason];
+  return fill(template, words)
+    .replace("{billed}", words.billed != null ? String(words.billed) : "what was")
+    .replace("{unit}", words.unit?.trim() || "units");
 }
 
 /** The STATUS sentence of one order status (an unknown status reads as PENDING's: confirm first). */

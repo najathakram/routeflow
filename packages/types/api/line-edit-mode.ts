@@ -91,15 +91,30 @@ export const LINE_STATUS_COPY: Record<string, string> = {
 /** The sentence an OPERATOR is told when an admin could correct the line (SA-1408 item 3, shown to operators only). */
 export const OPERATOR_CORRECT_NOTE = "Only an admin can correct a delivered line.";
 
+/** SA-1525 (k) / SA-C 7178828662: RETURN_REMAINDER on a stop-linked order. No button. */
+export const RETURN_REMAINDER_STOP_COPY =
+  "Part of {item} was never delivered and part was returned. The invoice already bills only what was delivered ({billed} {unit}), so nothing needs changing here.";
+
 export function fillLockedCopy(
   reason: Exclude<LineLockedReason, "ROLE">,
-  words: { item?: string | null; invoiceNumber?: string | null; status?: string | null } = {},
+  words: {
+    item?: string | null;
+    invoiceNumber?: string | null;
+    status?: string | null;
+    stopLinked?: boolean;
+    billed?: number | string | null;
+    unit?: string | null;
+  } = {},
 ): string {
   const template =
     reason === "STATUS"
       ? (LINE_STATUS_COPY[words.status ?? ""] ?? LINE_STATUS_COPY.PENDING)
-      : LINE_LOCKED_COPY[reason];
+      : reason === "RETURN_REMAINDER" && words.stopLinked
+        ? RETURN_REMAINDER_STOP_COPY
+        : LINE_LOCKED_COPY[reason];
   return template
     .replace("{item}", words.item?.trim() || "This item")
-    .replace("{invoiceNumber}", words.invoiceNumber?.trim() || "linked to this order");
+    .replace("{invoiceNumber}", words.invoiceNumber?.trim() || "linked to this order")
+    .replace("{billed}", words.billed != null ? String(words.billed) : "what was")
+    .replace("{unit}", words.unit?.trim() || "units");
 }

@@ -7,6 +7,7 @@ import {
   CORRECT_IDENTITY_MESSAGE,
   LOCKED_COPY,
   OPERATOR_NOTE,
+  RETURN_REMAINDER_STOP_COPY,
   STATUS_COPY,
   lockedCopy,
   statusCopy,
@@ -51,6 +52,19 @@ describe("line edit mode parity (@routeflow/types vs api)", () => {
     expect(shared().LINE_LOCKED_COPY).toEqual({ ...LOCKED_COPY });
     expect(Object.keys(LOCKED_COPY).sort()).toEqual(
       sorted(LOCKED_REASONS.filter((r) => r !== "ROLE" && r !== "STATUS")),
+    );
+  });
+
+  it("the stop-linked RETURN_REMAINDER sentence is equal and carries the billed figure", () => {
+    expect((shared() as { RETURN_REMAINDER_STOP_COPY?: string }).RETURN_REMAINDER_STOP_COPY).toBe(
+      RETURN_REMAINDER_STOP_COPY,
+    );
+    const words = { item: "Acme Widget", stopLinked: true, billed: 8, unit: "cases" };
+    const text = lockedCopy("RETURN_REMAINDER", words);
+    expect(text).toBe(shared().fillLockedCopy?.("RETURN_REMAINDER", words));
+    expect(text).toContain("(8 cases)");
+    expect(lockedCopy("RETURN_REMAINDER", { item: "Acme Widget" })).toBe(
+      LOCKED_COPY.RETURN_REMAINDER.replace("{item}", "Acme Widget"),
     );
   });
 

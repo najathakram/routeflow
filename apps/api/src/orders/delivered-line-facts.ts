@@ -47,14 +47,28 @@ export interface DeliveredModeInput {
 
 export type DeliveredModes = Map<string, LineEditDecision>;
 
-export async function loadDeliveredLineFacts(i: DeliveredModeInput): Promise<DeliveredLineFacts> {
-  const rows: Array<{
-    orderItemId: string | null;
-    type: string;
-    quantityDelivered: unknown;
-    routeRunStopId: string | null;
-    driverId: string | null;
-  }> = await i.db.deliveryMutation.findMany({
+/** The one evidence read of the edit (A5 j): rows + whether the order sits on a stop, handed on to the correction writer. */
+export interface EvidenceRowRead {
+  orderItemId: string | null;
+  type: string;
+  quantityDelivered: unknown;
+  routeRunStopId: string | null;
+  driverId: string | null;
+}
+export interface LoadedEvidence {
+  rows: ReadonlyArray<EvidenceRowRead>;
+  stopLinked: boolean;
+}
+const evidenceByModes = new WeakMap<DeliveredModes, LoadedEvidence>();
+/** The evidence the decisions in `modes` were made from (undefined when the order held no live delivered line). */
+export const evidenceOfModes = (modes: DeliveredModes): LoadedEvidence | undefined =>
+  evidenceByModes.get(modes);
+
+export async function loadDeliveredLineFacts(
+  i: DeliveredModeInput,
+  out?: { evidence?: LoadedEvidence },
+): Promise<DeliveredLineFacts> {
+  const rows: EvidenceRowRead[] = await i.db.deliveryMutation.findMany({
     where: { orderId: i.order.id },
     select: {
       orderItemId: true,
@@ -75,6 +89,7 @@ export async function loadDeliveredLineFacts(i: DeliveredModeInput): Promise<Del
       where: { id: i.order.id },
       select: { routeRunStopId: true, routeRunStop: { select: { status: true } } },
     });
+  if (out) out.evidence = { rows, stopLinked: head?.routeRunStopId != null };
   const stopStatus = head?.routeRunStopId ? (head.routeRunStop?.status ?? "PENDING") : null;
   const writtenOff = await i.db.invoice.findFirst({
     where: { orderId: i.order.id, status: InvoiceStatus.WRITTEN_OFF },
@@ -103,8 +118,10 @@ export async function deliveredLineModes(i: DeliveredModeInput): Promise<Deliver
     for (const l of i.held) if (isDeliveredLine(l)) modes.set(l.id, { mode: "EDIT" });
     return modes;
   }
-  const facts = await loadDeliveredLineFacts(i);
+  const out: { evidence?: LoadedEvidence } = {};
+  const facts = await loadDeliveredLineFacts(i, out);
   for (const l of i.held) if (isDeliveredLine(l)) modes.set(l.id, deliveredLineEditMode(l, facts));
+  if (out.evidence) evidenceByModes.set(modes, out.evidence);
   return modes;
 }
 

@@ -408,14 +408,16 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     expect(await snapshot(o.id)).toEqual(before);
   }, 60_000);
 
-  it("a take-off (CANCEL) of the delivered line drops it from the SENT invoice (observed: a zero-total invoice reads PAID, reported to the SA)", async () => {
+  it("AD-3: taking off the only line of a SENT invoice is a 409 ORDER_EDIT_EMPTIES_INVOICE with 0 writes", async () => {
     const { o, li, inv } = await fixture({ status: "SENT" });
-    await edit(o.id, { replaceAll: false, items: [{ id: li.id, action: "CANCEL" }] });
-    // observe and report: the only line taken off leaves a 0 total, and the invoice status derives to PAID
-    expect(Number((await invoiceOf(inv.id)).total)).toBe(0);
-    expect(await invoiceQty(inv.id)).toBe(0);
-    const after = await raw.orderItem.findUniqueOrThrow({ where: { id: li.id } });
-    expect(after.status).toBe("CANCELLED");
-    expect(Number(after.deliveredQty)).toBe(0);
+    const before = await snapshot(o.id);
+    const invBefore = await invoiceOf(inv.id);
+    await expect(
+      edit(o.id, { replaceAll: false, items: [{ id: li.id, action: "CANCEL" }] }),
+    ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_EMPTIES_INVOICE" } });
+    const invAfter = await invoiceOf(inv.id);
+    expect(Number(invAfter.total)).toBe(Number(invBefore.total));
+    expect(invAfter.status).toBe(invBefore.status);
+    expect(await snapshot(o.id)).toEqual(before);
   }, 60_000);
 });

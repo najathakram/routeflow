@@ -4,10 +4,12 @@ import { roundMoney } from "@routeflow/pricing";
 import type { CorrectionBasis } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
-import { deliveredBasisByLine, isEvidenceRow } from "../invoices/delivered-basis-by-line";
+import { basisFromRows, evidenceOrigin, isEvidenceRow } from "../invoices/delivered-basis-by-line";
 import { assertOrderEditNotLocked } from "../regulated/filing-lock";
 import {
   deliveredLineModes,
+  evidenceOfModes,
+  type EvidenceRowRead,
   type DeliveredModeInput,
   type DeliveredModes,
 } from "./delivered-line-facts";
@@ -24,6 +26,7 @@ import { lockReturnCustomersOf } from "../returns/return-customer-lock";
 import { lockInlineReturnCustomer } from "./order-inline-return";
 import { resyncsInPlace, type CarrierEditGuard } from "./order-carrier-guard";
 import {
+  EMPTIES_INVOICE_MESSAGE,
   FILED_MONTH_MESSAGE,
   ORDER_CHANGED_DURING_EDIT_MESSAGE,
   fill,
@@ -254,7 +257,13 @@ export async function restateOfficeRows(
  */
 export async function restateLineEvidence(
   tx: any,
-  ctx: { orderId: string; tenantId: string | null },
+  ctx: {
+    orderId: string;
+    tenantId: string | null;
+    /** The order's evidence rows (the edit's one read) and whether it sits on a stop. */
+    evidence: ReadonlyArray<EvidenceRowRead>;
+    stopLinked: boolean;
+  },
   line: { id: string; productId?: string | null },
   corrected: number,
   basis: CorrectionBasis,
@@ -263,12 +272,19 @@ export async function restateLineEvidence(
 ): Promise<RestatedRow[]> {
   if (basis === "NONE") {
     // D' = final qty stays column-only (the reader bills a row-less line in full); a short D' needs a row to bill D'.
-    if (finalQty != null && corrected < finalQty - EPS && corrected > EPS)
+    if (finalQty != null && corrected < finalQty - EPS && corrected > EPS) {
+      // A5 (i): on a stop the row belongs to the stop (PR-1c's route writer); never a stop-less office row.
+      if (ctx.stopLinked)
+        throw new ConflictException({
+          code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
+          message: lockedCopy("ROUTE"),
+        });
       await writeOfficeRow(tx, ctx, line, corrected);
+    }
     return [];
   }
   if (basis === "OFFICE") {
-    const sum = await officeRowSum(tx, ctx.orderId, line.id);
+    const sum = officeRowSum(ctx.evidence, line.id);
     if (corrected > sum + EPS) {
       await writeOfficeRow(tx, ctx, line, r3(corrected - sum));
       return [];
@@ -281,15 +297,17 @@ export async function restateLineEvidence(
   });
 }
 
-async function officeRowSum(tx: any, orderId: string, lineId: string): Promise<number> {
-  const rows: Array<{ type: string; quantityDelivered: unknown }> =
-    await tx.deliveryMutation.findMany({
-      where: { orderId, orderItemId: lineId, routeRunStopId: null, driverId: null },
-      select: { type: true, quantityDelivered: true },
-    });
+/** Sum of the line's OFFICE evidence rows, folded from the edit's one evidence read. */
+function officeRowSum(rows: ReadonlyArray<EvidenceRowRead>, lineId: string): number {
   return r3(
     rows
-      .filter((m) => isEvidenceRow(m) && m.type !== "REFUSED")
+      .filter(
+        (m) =>
+          m.orderItemId === lineId &&
+          isEvidenceRow(m) &&
+          evidenceOrigin(m) === "office" &&
+          m.type !== "REFUSED",
+      )
       .reduce((s, m) => s + Number(m.quantityDelivered), 0),
   );
 }
@@ -301,10 +319,12 @@ async function writeOfficeRow(
   line: { id: string; productId?: string | null },
   quantityDelivered: number,
 ): Promise<void> {
+  // P-3: DeliveryMutation.tenantId is nullable in the schema; a row this writer makes always names its tenant.
+  if (!ctx.tenantId) throw new Error("writeOfficeRow: the order's tenantId is required");
   await tx.deliveryMutation.create({
     data: {
       orderId: ctx.orderId,
-      ...(ctx.tenantId ? { tenantId: ctx.tenantId } : {}),
+      tenantId: ctx.tenantId,
       orderItemId: line.id,
       productId: line.productId ?? null,
       routeRunStopId: null,
@@ -333,7 +353,9 @@ async function applyLineCorrections(
     where: { id: { in: ids }, orderId: i.order.id },
   });
   const afterById = new Map(afterRows.map((a) => [a.id, a]));
-  const basis = await deliveredBasisByLine(tx, i.order.id); // the billing helper's rows, read once (the line writes leave evidence alone)
+  // The evidence read ONCE under the Order lock (A5 j): the decisions' own rows, folded here; the line writes leave evidence alone.
+  const loaded = evidenceOfModes(modes) ?? { rows: [], stopLinked: false };
+  const basis = basisFromRows(loaded.rows);
   for (const h of held) {
     const a = afterById.get(h.id);
     if (!a || modes.get(h.id)?.mode !== "CORRECT") continue;
@@ -361,7 +383,12 @@ async function applyLineCorrections(
       const d = modes.get(h.id);
       restated = await restateLineEvidence(
         tx,
-        { orderId: i.order.id, tenantId: i.order.tenantId ?? null },
+        {
+          orderId: i.order.id,
+          tenantId: i.order.tenantId ?? null,
+          evidence: loaded.rows,
+          stopLinked: loaded.stopLinked,
+        },
         h,
         nextD,
         d?.mode === "CORRECT" ? d.basis : "NONE",
@@ -402,7 +429,25 @@ async function applyLineCorrections(
       },
     });
   }
+  await assertInvoiceKeepsALine(tx, i.order.id);
   return corrected.size > 0 ? corrected : undefined;
+}
+
+/** AD-3: an edit that leaves an invoiced order with no live line is a 409 (the tx rolls back: 0 writes). The step is the void. */
+async function assertInvoiceKeepsALine(tx: any, orderId: string): Promise<void> {
+  const live = await tx.orderItem.count({ where: { orderId, status: { not: "CANCELLED" } } });
+  if (live > 0) return;
+  const inv: { invoiceNumber: string } | null = await tx.invoice.findFirst({
+    where: { orderId, status: { notIn: ["VOID"] } },
+    select: { invoiceNumber: true },
+    orderBy: { id: "asc" },
+  });
+  if (!inv) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.ORDER_EDIT_EMPTIES_INVOICE,
+    message: fill(EMPTIES_INVOICE_MESSAGE, { invoiceNumber: inv.invoiceNumber }),
+    invoiceNumber: inv.invoiceNumber,
+  });
 }
 
 /**
