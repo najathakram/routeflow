@@ -103,3 +103,21 @@ describe("recipient wall: the store", () => {
     expect(String((executed[0][0] as string[]).join(""))).toMatch(/DELETE FROM "PlatformConfig"/);
   });
 });
+
+describe("mailWallAllows: only a single plain address can match (H1)", () => {
+  const entries = ["tester+*@acme.test", "tester@acme.test"];
+  it.each([
+    "tester+a@evil.test,tester+x@acme.test",
+    "tester+Evil <evil@evil.test>@acme.test",
+    "tester+x@evil.test@acme.test",
+    '"tester+x@acme.test"',
+    "tester+x@acme.test, b@evil.test",
+    "tester@acme.test;b@evil.test",
+  ])("%j matches nothing", (to) => {
+    expect(mailWallAllows(entries, to)).toBe(false);
+  });
+  it("a plain address still matches", () => {
+    expect(mailWallAllows(entries, "tester+x@acme.test")).toBe(true);
+    expect(mailWallAllows(entries, "Tester@Acme.test")).toBe(true);
+  });
+});

@@ -22,6 +22,8 @@ function makeService() {
   // its verified own sending domain, and its business name + customer-facing reply address.
   const prisma = {
     getTenantId: () => "tenant-a",
+    // W-1464: the mail wall reads the business class; these specs are not about a test business.
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
     forTenant: () => ({
       systemConfig: {
         findMany: jest.fn().mockResolvedValue([

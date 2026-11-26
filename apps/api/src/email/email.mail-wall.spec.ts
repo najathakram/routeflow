@@ -168,9 +168,16 @@ describe("mail wall: a TEST business with a list (R1, R2)", () => {
     }
   });
 
-  it("T7: an explicit null is never held, even when the request carries a Test business", async () => {
-    const { svc, resendSend, tenantFind } = makeService({ list: LIST });
+  it("T7: an explicit null falls back to the request's business for a non-platform send", async () => {
+    const { svc, resendSend } = makeService({ list: LIST, mailboxDelivers: true });
     const res = await svc.send(mail(OTHER, null));
+    expect(res.holdCode).toBe("MAIL_WALL_HELD");
+    expect(resendSend).not.toHaveBeenCalled();
+  });
+
+  it("T7: a platform-class send with an explicit null names no business and is not held", async () => {
+    const { svc, resendSend, tenantFind } = makeService({ list: LIST });
+    const res = await svc.send({ ...mail(OTHER, null), senderClass: "platform" });
     expect(res.delivered).toBe(true);
     expect(resendSend).toHaveBeenCalledTimes(1);
     expect(tenantFind).not.toHaveBeenCalled();
@@ -226,6 +233,39 @@ describe("mail wall: a TEST business with a list (R1, R2)", () => {
   });
 });
 
+describe("mail wall: the recipient must be exactly one plain address (H1)", () => {
+  const WILD = JSON.stringify(["tester+*@acme.test"]);
+  const SHAPES = [
+    "tester+a@evil.test,tester+x@acme.test",
+    "tester+x@acme.test, someone@evil.test",
+    "tester+Evil <evil@evil.test>@acme.test",
+    '"tester+x@acme.test" <evil@evil.test>',
+    "tester+x@evil.test@acme.test",
+    "tester+x@acme.test ",
+  ];
+
+  it.each(SHAPES)("send() holds %j", async (to) => {
+    const { svc, resendSend, trySend } = makeService({ list: WILD, mailboxDelivers: true });
+    const res = await svc.send(mail(to));
+    expect(res.holdCode).toBe("MAIL_WALL_HELD");
+    expect(resendSend).not.toHaveBeenCalled();
+    expect(trySend).not.toHaveBeenCalled();
+  });
+
+  it.each(SHAPES)("sendPlatform() holds %j", async (to) => {
+    const { svc, resendSend } = makeService({ list: WILD });
+    const res = await svc.sendPlatform(platformMail(to));
+    expect(res.holdCode).toBe("MAIL_WALL_HELD");
+    expect(resendSend).not.toHaveBeenCalled();
+  });
+
+  it("a plain plus-address on the wildcard entry still sends", async () => {
+    const { svc, resendSend } = makeService({ list: WILD });
+    expect((await svc.sendPlatform(platformMail("tester+x@acme.test"))).delivered).toBe(true);
+    expect(resendSend).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("mail wall: every other case sends as today (R3, R4)", () => {
   it.each(["PRODUCTION", "DEMO", "INTERNAL"])(
     "T4 (guard): class %s is never held, whatever a list says",
@@ -266,12 +306,23 @@ describe("mail wall: every other case sends as today (R3, R4)", () => {
     ).toHaveLength(1);
   });
 
-  it("T6: a class that cannot be read sends as today and logs an error (a database outage, not a state)", async () => {
-    const { svc, trySend } = makeService({ classThrows: true, list: LIST, mailboxDelivers: true });
+  it("T6: a class that cannot be read holds (fail closed), logs an error and records the held send", async () => {
+    const { svc, trySend, resendSend, record } = makeService({
+      classThrows: true,
+      list: LIST,
+      mailboxDelivers: true,
+    });
     const error = jest.spyOn((svc as any).logger, "error");
-    const res = await svc.send(mail(OTHER));
-    expect(res.delivered).toBe(true);
-    expect(trySend).toHaveBeenCalledTimes(1);
+    const res = await svc.send({
+      ...mail(LISTED),
+      delivery: { tenantId: T, kind: "INVOICE_SENT", entityType: "Invoice", entityId: "inv1" },
+    });
+    expect(res.delivered).toBe(false);
+    expect(res.holdCode).toBe("MAIL_WALL_HELD");
+    expect(trySend).not.toHaveBeenCalled();
+    expect(resendSend).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalled();
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record.mock.calls[0][0]).toMatchObject({ status: "FAILED", attempts: 0 });
   });
 });

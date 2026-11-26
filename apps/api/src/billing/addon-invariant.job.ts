@@ -585,6 +585,7 @@ export class AddonInvariantJob {
       let delivered = false;
       for (const to of recipients) {
         const r = await this.email.sendPlatform({
+          // A notice to the platform's own staff about the platform: it names no business.
           tenantId: null,
           to,
           subject,

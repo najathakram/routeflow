@@ -259,6 +259,37 @@ describe("UsersService", () => {
     });
   });
 
+  describe("sendInviteIfOwed — the business comes from the account row, never the request (H2)", () => {
+    it("names the account's business even when the request carries none (public confirm route)", async () => {
+      (prisma as any).getTenantId = jest.fn().mockReturnValue(null);
+      await service.sendInviteIfOwed({
+        id: "u1",
+        email: "op@acme.example",
+        username: "acme_op",
+        status: "ACTIVE",
+        forcePasswordChange: true,
+        tenantId: "t-acme-test",
+      });
+      expect(email.sendSetPasswordEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSetPasswordEmail.mock.calls[0][0].tenantId).toBe("t-acme-test");
+    });
+
+    it("never reads the request's business", async () => {
+      const getTenantId = jest.fn().mockReturnValue("t-request");
+      (prisma as any).getTenantId = getTenantId;
+      await service.sendInviteIfOwed({
+        id: "u1",
+        email: "op@acme.example",
+        username: "acme_op",
+        status: "ACTIVE",
+        forcePasswordChange: true,
+        tenantId: "t-acme-test",
+      });
+      expect(getTenantId).not.toHaveBeenCalled();
+      expect(email.sendSetPasswordEmail.mock.calls[0][0].tenantId).toBe("t-acme-test");
+    });
+  });
+
   describe("resetPassword — admin-triggered, same set-password link email", () => {
     it("emails the same set-password link as createOperator", async () => {
       prisma.user.findUnique.mockResolvedValue({

@@ -272,7 +272,7 @@ export class AuthService {
         // Fire-and-forget — email failures must not block the login response.
         this.emailService
           .send({
-            tenantId: (user as any).tenantId ?? null,
+            tenantId: user.tenantId,
             to: (user as any).email as string,
             ...newLoginMessage({
               device: deviceName,
@@ -663,6 +663,8 @@ export class AuthService {
       username: change.username,
       status: "ACTIVE",
       forcePasswordChange: change.forcePasswordChange,
+      // From the user row: this route is public, so the request carries no business.
+      tenantId: change.tenantId,
     });
     // Best-effort notices, after the commit: the old address learns the change was made, the new one that it is now
     // the login email. A delivery failure never undoes the change.

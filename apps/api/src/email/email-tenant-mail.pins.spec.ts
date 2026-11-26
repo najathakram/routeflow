@@ -35,6 +35,8 @@ function service(
   };
   const prisma = {
     getTenantId: () => tenantId,
+    // W-1464: the mail wall reads the business class; these specs are not about a test business.
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
     tenantConfig: {
       findFirst: jest.fn().mockResolvedValue({
         businessName,

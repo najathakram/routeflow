@@ -353,6 +353,8 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
   function service(tenantId: string | null, businessName: string | null = "Acme Foods") {
     const prisma = {
       getTenantId: () => tenantId,
+      // W-1464: the mail wall reads the business class; these specs are not about a test business.
+      tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
       tenantConfig: { findFirst: jest.fn().mockResolvedValue({ businessName }) },
       forTenant: () => ({
         systemConfig: {
@@ -424,6 +426,8 @@ describe("the layout guard in EmailService (never RouteFlow's name on a tenant's
       };
       const prisma = {
         getTenantId: () => tenantId,
+        // W-1464: the mail wall reads the business class; these specs are not about a test business.
+        tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
         tenantConfig: { findFirst: jest.fn().mockResolvedValue({ businessName: "Acme Foods" }) },
         forTenant: () => ({
           systemConfig: {

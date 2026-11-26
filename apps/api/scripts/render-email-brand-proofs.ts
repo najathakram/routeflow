@@ -208,6 +208,7 @@ async function main() {
     (
       await capture((svc) =>
         svc.sendLowStockDigest({
+          tenantId: "t-acme",
           to: "admin@acme.example",
           businessName: "Acme Wholesale",
           items: [

@@ -38,6 +38,8 @@ function make(opts: { platformSmtp: boolean }) {
   };
   const prisma = {
     getTenantId: () => "t1",
+    // W-1464: the mail wall reads the business class; these specs are not about a test business.
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
     forTenant: () => ({
       systemConfig: {
         findMany: jest.fn().mockResolvedValue(TENANT_SMTP_ROWS),
@@ -115,6 +117,8 @@ describe("W-1289: tenant SMTP error is redacted in result.error", () => {
           },
         }),
         getTenantId: () => "t1",
+        // W-1464: the mail wall reads the business class; these specs are not about a test business.
+        tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
       },
       emailService: { isEmailConfigured: async () => true, send: svc.send.bind(svc) },
       statementPdf: {

@@ -54,9 +54,16 @@ export function parseMailWallValue(value: string | null | undefined): MailWallRe
   return { kind: "list", entries };
 }
 
+/** One `@`, and no whitespace, comma, semicolon, angle bracket, quote, parenthesis or backslash. */
+export function isSinglePlainAddress(to: string): boolean {
+  return /^[^@\s,;<>"'()\\]+@[^@\s,;<>"'()\\]+$/.test(to);
+}
+
 /** Exact match on the lower-cased address; an entry `name+*@domain` also matches `name+anything@domain`. */
 export function mailWallAllows(entries: readonly string[], to: string): boolean {
-  const addr = to.trim().toLowerCase();
+  // The wall never relies on upstream validation: anything that is not exactly one plain address is held.
+  if (!isSinglePlainAddress(to)) return false;
+  const addr = to.toLowerCase();
   return entries.some((entry) => {
     if (entry === addr) return true;
     const star = entry.indexOf("+*@");

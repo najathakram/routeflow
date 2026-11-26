@@ -1267,8 +1267,8 @@ export class EmailService {
   /**
    * W-1464 (SA-1538 PR-A): the mail wall, beside `refuseSentinel` at both public send entries. A TEST-class
    * business may mail only the addresses on its list (PlatformConfig). A caller with no business is never
-   * held. A list that cannot be read holds (fail closed); a class that cannot be read sends as today and
-   * logs (a database outage, not a state). A TEST business with no list is the dark step: sends, logs once.
+   * held. A list that cannot be read holds (fail closed); a class that cannot be read holds too
+   * and logs an error. A TEST business with no list is the dark step: sends, logs once.
    * Logs carry the recipient domain only (B911).
    */
   private async holdForTestBusiness(
@@ -1287,8 +1287,14 @@ export class EmailService {
         await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { class: true } })
       )?.class;
     } catch {
-      this.logger.error("mail wall: the business class could not be read; sending as before");
-      return null;
+      // Fail closed: a business whose class cannot be read is held, never let through.
+      this.logger.error("mail wall: the business class could not be read; the send is held");
+      return {
+        delivered: false,
+        transport: "none",
+        error: "Not sent: the business could not be checked against its allowed list.",
+        holdCode: MAIL_WALL_HOLD_CODE,
+      };
     }
     if (klass !== "TEST") return null;
     let list: Awaited<ReturnType<typeof readMailWall>>;
@@ -1348,7 +1354,13 @@ export class EmailService {
     // FAILED row (SA-615(3)); without a ctx nothing is recorded.
     const refusedTo =
       this.refuseSentinel(params.to) ??
-      (await this.holdForTestBusiness(params.tenantId, params.to));
+      (await this.holdForTestBusiness(
+        // A platform-class send names its business or none; any other send falls back to the request's.
+        params.senderClass === "platform"
+          ? params.tenantId
+          : (params.tenantId ?? this.prisma.getTenantId()),
+        params.to,
+      ));
     if (refusedTo) {
       const ctx = params.delivery;
       if (ctx) {

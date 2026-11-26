@@ -32,6 +32,8 @@ function makeService(opts: {
   const config = { get: (k: string) => envMap[k] } as any;
   const prisma = {
     getTenantId: () => (opts.tenantId === undefined ? "tenant-a" : opts.tenantId),
+    // W-1464: the mail wall reads the business class; these specs are not about a test business.
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
     forTenant: () => ({
       systemConfig: {
         findMany: jest.fn().mockResolvedValue(opts.systemConfigRows ?? []),

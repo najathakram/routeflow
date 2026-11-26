@@ -15,6 +15,7 @@
 import { ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { acceptsAutomatedWrites } from "../../tenant/tenant-automation";
 import { routeflowNotice } from "../../email/routeflow-mail";
+import type { EmailService } from "../../email/email.service";
 
 export interface GoHighLevelPollOptions {
   ignoreCutoff?: boolean;
@@ -83,7 +84,7 @@ export class GoHighLevelPollService {
     private readonly prisma: any,
     private readonly clientFactory: (connection: any) => any,
     private readonly handoffService: any,
-    private readonly emailService: any,
+    private readonly emailService: Pick<EmailService, "send">,
     /** Optional: threads tenant context (ALS) through the tick. Omitted by every unit test. */
     private readonly tenantCtx?: { run<T>(tenantId: string, fn: () => Promise<T>): Promise<T> },
   ) {}
@@ -184,7 +185,8 @@ export class GoHighLevelPollService {
     if (recipients.length === 0) return;
     await this.emailService.send({
       tenantId: connection.tenantId,
-      to: recipients,
+      // Pre-existing: send() takes one address, so a list here throws and the notice is not sent.
+      to: recipients as unknown as string,
       senderClass: "platform",
       ...routeflowNotice({
         subject: "RouteFlow lost access to GoHighLevel",
