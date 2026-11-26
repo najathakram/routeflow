@@ -1180,7 +1180,7 @@ export class BillingService {
         break;
 
       case "invoice.upcoming":
-        await this.onInvoiceUpcoming(event.data.object);
+        await this.onInvoiceUpcoming(event.data.object, event.id);
         break;
 
       case "invoice.payment_failed":
@@ -3089,7 +3089,7 @@ export class BillingService {
    * never a double push. A REFUSAL (an annual item, an unresolvable price) is alerted and acknowledged - a
    * redelivery could never succeed.
    */
-  private async onInvoiceUpcoming(invoice: any): Promise<void> {
+  private async onInvoiceUpcoming(invoice: any, eventId?: string): Promise<void> {
     if (!this.scheduledPrice) return;
     const sub = await this.matchStripeSubscription(
       stripeInvoiceSubscriptionId(invoice),
@@ -3112,8 +3112,9 @@ export class BillingService {
           {
             tenantId: sub.tenantId,
             entityType: "stripe_event",
-            entityId: invoice?.id ?? null,
+            entityId: eventId ?? null,
             what: "scheduled downgrade price push",
+            meta: { stripeSubId: (sub as any).stripeSubId ?? null },
           },
         );
         return;

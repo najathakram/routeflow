@@ -307,6 +307,10 @@ async function reconcileOne(
             await assertTenantLivePaymentsAllowed(tx, r.tenantId);
           } catch (err) {
             if (!isLivePaymentsRefusal(err)) throw err;
+            // n1: once per business per day-window, like would_unpause, not every hourly run
+            if (!deps.once(`held_unpause:${r.tenantId}:${Math.floor(runAt.getTime() / DAY_MS)}`)) {
+              return false;
+            }
             await recordLivePaymentsHeld(
               { prisma: deps.prisma, logger: deps.logger },
               {

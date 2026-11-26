@@ -62,7 +62,14 @@ export async function recordLivePaymentsHeld(
     prisma: { auditLog: { create(args: { data: Record<string, unknown> }): PromiseLike<unknown> } };
     logger: { warn(message: string): void };
   },
-  held: { tenantId: string | null; entityType: string; entityId: string | null; what: string },
+  held: {
+    tenantId: string | null;
+    entityType: string;
+    entityId: string | null;
+    what: string;
+    /** Extra ids for the audit row (no names, amounts or keys). */
+    meta?: Record<string, string | null>;
+  },
 ): Promise<void> {
   deps.logger.warn(
     `Live payments held for tenant ${held.tenantId}: ${held.what} (${held.entityType} ${held.entityId ?? "-"}) - ` +
@@ -75,7 +82,7 @@ export async function recordLivePaymentsHeld(
         action: LIVE_PAYMENTS_HELD_ACTION,
         entityType: held.entityType,
         entityId: held.entityId,
-        meta: { what: held.what },
+        meta: { what: held.what, ...(held.meta ?? {}) },
       },
     });
   } catch {

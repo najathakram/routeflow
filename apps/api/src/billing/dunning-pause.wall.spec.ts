@@ -91,6 +91,20 @@ describe("reconcilePauseCollection (the unpause arm of the reconciler)", () => {
     expect(held(w.auditLog)).toHaveLength(1);
   });
 
+  it("n1: a stray pause on a held business is recorded once per day, not on every hourly run", async () => {
+    const w = world("TEST", false, true);
+    const seen = new Set<string>();
+    w.d.once = (k: string) => (seen.has(k) ? false : (seen.add(k), true));
+    await reconcilePauseCollection(w.d, new Date("2026-11-26T01:00:00Z"));
+    w.d.prisma.tenantSubscription.findMany = jest
+      .fn()
+      .mockResolvedValueOnce([{ tenantId: "t1", stripeSubId: "sub_1" }])
+      .mockResolvedValue([]);
+    await reconcilePauseCollection(w.d, new Date("2026-11-26T02:00:00Z"));
+    expect(held(w.auditLog)).toHaveLength(1);
+    expect(w.stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
   it("the SET arm (local paused, Stripe not) stays unwalled", async () => {
     const w = world("TEST", true, false);
     await reconcilePauseCollection(w.d, new Date("2026-11-26T01:00:00Z"));

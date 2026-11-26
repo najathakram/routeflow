@@ -729,6 +729,9 @@ describe("the invoice.upcoming webhook", () => {
       const audit = (billing as any).prisma.auditLog.create;
       expect(audit).toHaveBeenCalledTimes(1);
       expect(audit.mock.calls[0][0].data.action).toBe("LIVE_PAYMENTS_HELD");
+      // n2: the Stripe event id, with the subscription id in meta (the upcoming invoice has no id yet)
+      expect(audit.mock.calls[0][0].data.entityId).toBe("evt_up_1");
+      expect(audit.mock.calls[0][0].data.meta.stripeSubId).toBe("sub_1");
     },
   );
 
