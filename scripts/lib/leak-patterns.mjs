@@ -122,6 +122,15 @@ export function matches(regexes, text) {
 }
 
 /**
+ * UTF-16LE decode of `b` with the odd trailing byte dropped (Node ignores it anyway). Decoding a Buffer view
+ * of ODD length straight with toString("utf16le") corrupts the native heap on Node 24.20 / Windows: the
+ * process dies with exit 127 (0xC0000374) and prints nothing, at a later, unrelated point.
+ */
+function utf16le(b) {
+  return b.subarray(0, b.length & ~1).toString("utf16le");
+}
+
+/**
  * True when any pattern matches the bytes `buf` in ANY plausible text form: UTF-8, and, when the
  * bytes carry a UTF-16 BOM or NULs (PowerShell 5.1 `echo x > f` writes FF FE + NULs), the NUL-stripped
  * form and UTF-16 decodes at both byte alignments (LE and BE, and a line cut at a 0x0A byte).
@@ -133,8 +142,8 @@ export function matchesBuf(regexes, input) {
   if (!bom && !buf.includes(0)) return false;
   return (
     matches(regexes, buf.toString("utf8").replace(/\0/g, "")) ||
-    matches(regexes, buf.toString("utf16le")) ||
-    matches(regexes, buf.subarray(1).toString("utf16le"))
+    matches(regexes, utf16le(buf)) ||
+    matches(regexes, utf16le(buf.subarray(1)))
   );
 }
 

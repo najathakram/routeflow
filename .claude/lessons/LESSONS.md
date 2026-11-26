@@ -84,6 +84,13 @@
 
 ## tooling
 
+### L-414 · 2026-11-26 · tooling · a hook that dies with exit 127 or 0xC0000374 and prints nothing is a runtime crash, not a missing command; the hook prints a refusal for every exit code it does not expect (#4563)
+
+- **Symptom:** pushes from the Windows PC died with exit 127 or 0xC0000374 and no output from the leak check, only on master-merge pushes with piped refs. The laptop passed the same pushes, so the first guesses were a missing command and a hook-shell problem.
+- **Root cause:** on Node 24.20 for Windows, `Buffer.toString("utf16le")` on an odd-length view corrupts the heap. The scan decoded a slice cut at an odd byte, and the hook ran the script with no branch for an exit code it did not know, so a crash looked like silence.
+- **Lesson:** **Drop the odd trailing byte before any utf16le decode. A guard hook prints a refusal and exits non-zero for every exit code that is not 0 or its own refusal code, so a runtime crash reads as a blocked push with a reason. Run the hook self-test under `sh -e`, the way git runs it, not under a forgiving shell.**
+- **Guard:** #4563 (open at filing) carries the odd-byte drop, the hook refusal on an unexpected exit code and the `sh -e` self-test; until it merges the crash is PC-only and a retry changes nothing.
+
 ### L-402 · 2026-11-22 · tooling · a gate that kills a long child on a time cap reports the timeout as a timeout, never as a genuine failure; the cap is overridable and sized for a loaded host (#4427)
 
 - **Symptom:** the forced `turbo run test --force` in `campaign-check` had a fixed 15-minute cap. On a loaded host the api suite ran longer, `spawnSync` returned `ETIMEDOUT`, and the gate printed "genuine failure"; two pushes were refused on 2026-11-22, each after a 40 to 60 minute verify.
@@ -255,13 +262,6 @@
 - **Root cause:** the gate is opt-in per control and the notice rides a component slot, so anything not built on those components is outside it; the API side had a registry plus a route-walk pin (SA-776), the web side had neither.
 - **Lesson:** **When a gate or notice is delivered by wrapper components, enumerate the surfaces by search (raw buttons that post to write routes, `role="dialog"` markup outside the shared Modal) and pin the list in a spec; state plainly which surfaces are knowingly outside it.**
 - **Guard:** none automatic yet; propose a static scan on the web like the API's route-walk pin. Known gaps recorded: hand-rolled dialogs; the driver banner shows only after a refused write (no driver-readable status). Cf. [[L-225]]. Extended 2026-11-13 (B1): a staff-control gate for the customer role was added as one helper, `seesStaffControls` (`apps/web/lib/default-unit-line.ts`), and applied by sweeping every entry point the bug did not cite: invoice list and detail, dashboard quick-create, command palette, returns list and detail, the orders bulk bar and inline-return dialogs. Each has a `*.customer-role.test.tsx`; no scan lists every staff-control site yet, so a new entry point is covered only if someone sweeps it.
-
-### L-300 · 2026-10-12 · domain · an edit screen freezes its diff baseline at edit-open and re-bases only on an explicit reload
-
-- **Symptom:** an edit screen sent every line on save after a background refetch, re-writing untouched lines and reverting another writer's change made in between.
-- **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
-- **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
-- **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. archived L-167.
 
 ### L-301 · 2026-10-12 · domain · a revision or guard value is written in the same transaction and lock as the check that reads it
 

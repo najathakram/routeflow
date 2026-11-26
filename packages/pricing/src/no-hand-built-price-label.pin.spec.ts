@@ -56,11 +56,10 @@ const ALLOW_PER = [
   // need a behaviour change, each with its own bug: not converted here
   [path.join("(customer)", "invoices", "[id].tsx"), "B1402: pieces printed before the box price"],
   [path.join("(customer)", "orders", "[id].tsx"), "B1401: needs a behaviour change"],
-  [path.join("[id]", "edit-items.tsx"), "B1395: that bug rewrites this file through the helper"],
 ] as const;
 
 // shrink-only (OP-7): lower this when an entry goes, never raise it
-const ALLOW_PER_MAX = 13;
+const ALLOW_PER_MAX = 12;
 
 function strip(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, " ");

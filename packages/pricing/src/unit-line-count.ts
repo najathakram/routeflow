@@ -46,3 +46,12 @@ export function maxLineCount(cap: number, unitsPerBox?: unknown): number {
   if (factor == null || !Number.isInteger(factor) || factor < 2) return cap;
   return Math.floor(cap / factor);
 }
+
+/**
+ * The one limit sentence the buyer surfaces show when a count hits `max` (cart row, shop stepper, Add, edit grids):
+ * "The most you can order at once is 8,333 cases." `word` is the unit in lower-case plural; none ends at the number.
+ * Built per line at render time, never once at module load. Web and mobile both call it (B1395 moved it here).
+ */
+export function limitLine(max: number, word?: string): string {
+  return `The most you can order at once is ${max.toLocaleString("en-US")}${word ? ` ${word}` : ""}.`;
+}
