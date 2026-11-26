@@ -47,6 +47,7 @@ import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 import { foldMergeItems } from "./merge-items";
 import { assertNoUnitAwareLines } from "./unit-aware-guard";
 import { mergeRequestHash } from "./merge-idempotency";
+import { assertBuyerCreateItemsWithinCap } from "./buyer-line-cap";
 import { withAdvisoryLock } from "../common/db-locks";
 import {
   LOCK_UNAVAILABLE,
@@ -151,6 +152,16 @@ export class OrdersController {
   ) {
     const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
     const offline = resolveOfflineRequest(dto, user); // SA-1124: role, money and quote checks FIRST, before any merge logic
+    // B1386: a CUSTOMER's line is capped on the piece total create builds (staff keep the DTO's own field bounds).
+    if (user.role === UserRole.CUSTOMER) {
+      const productIds = (dto.items ?? [])
+        .map((i) => i.productId)
+        .filter((id): id is string => !!id);
+      const packs = productIds.length
+        ? await this.ordersService.liveUnitsPerBoxByProduct(productIds)
+        : new Map<string, number>();
+      assertBuyerCreateItemsWithinCap(dto.items, packs);
+    }
     const isStaff = user.role === UserRole.OPERATOR || (user.role as string) === "TENANT_ADMIN";
     // Legacy: forceNew=true is treated as an explicit "separate" choice.
     const choice: "merge" | "separate" | undefined =
