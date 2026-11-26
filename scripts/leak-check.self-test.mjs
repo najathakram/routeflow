@@ -723,7 +723,11 @@ try {
       const counting = (cwd, args) => {
         calls.total++;
         if (args[0] === "cat-file") calls.catFile++;
-        const r = spawnSync("git", args, { cwd, maxBuffer: 256 * 1024 * 1024 });
+        const r = spawnSync("git", args, {
+          cwd,
+          env: scrubbedGitEnv(),
+          maxBuffer: 256 * 1024 * 1024,
+        });
         const buf = r.stdout ?? Buffer.alloc(0);
         return { ok: r.status === 0 && !r.error, buf, out: buf.toString("utf8") };
       };
