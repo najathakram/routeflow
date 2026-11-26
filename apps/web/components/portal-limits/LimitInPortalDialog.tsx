@@ -171,7 +171,6 @@ export function LimitInPortalDialog({
       open={open}
       onClose={onClose}
       title={needsCategory ? "Limit a whole category in your portal" : dialogTitle(scope)}
-      scroll
       footer={
         <>
           <NextLink href={LIMITS_HREF} className="mr-auto text-xs text-navy/60 hover:underline">

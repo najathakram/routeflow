@@ -62,7 +62,6 @@ export function LiftRuleDialog({
     <Modal
       open={!!rule}
       onClose={onClose}
-      scroll
       onOpenAutoFocus={() => {
         returnFocusTo.current = document.activeElement as HTMLElement | null;
       }}
