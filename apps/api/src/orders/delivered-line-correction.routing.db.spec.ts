@@ -346,4 +346,75 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     });
     expect(await snapshot(o.id)).toEqual(before);
   }, 60_000);
+
+  it("case 11 RETURN: a live return on the order locks the line (admin), nothing written, until PR-1c", async () => {
+    const { o, li } = await fixture({ status: "SENT" });
+    const cust = await raw.order.findUniqueOrThrow({ where: { id: o.id } });
+    await raw.return.create({
+      data: {
+        tenantId,
+        customerId: cust.customerId,
+        orderId: o.id,
+        returnNumber: `RET-${randomUUID().slice(0, 8)}`,
+        reason: "DAMAGED",
+        status: "PENDING",
+        kind: "INLINE",
+      } as any,
+    });
+    const before = await snapshot(o.id);
+    await expect(
+      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8 }] }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: "LINE_ALREADY_DELIVERED", message: lockedCopy("RETURN") },
+    });
+    expect(await snapshot(o.id)).toEqual(before);
+    await raw.return.deleteMany({ where: { orderId: o.id } });
+  }, 60_000);
+
+  it("case 11 UNIT: a delivered unit line is locked with the UNIT sentence, nothing written", async () => {
+    const { o, li } = await fixture({ status: "SENT" });
+    await raw.orderItem.update({ where: { id: li.id }, data: { unitLabel: "Case" } as any });
+    const before = await snapshot(o.id);
+    await expect(
+      edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8 }] }),
+    ).rejects.toMatchObject({ status: 409, response: { code: "LINE_ALREADY_DELIVERED" } });
+    expect(await snapshot(o.id)).toEqual(before);
+  }, 60_000);
+
+  it("case 11 WRITTEN_OFF (operator): an operator edit of the same order is refused too, nothing written", async () => {
+    const { o, li } = await fixture({ status: "WRITTEN_OFF" });
+    const before = await snapshot(o.id);
+    await expect(
+      edit(
+        o.id,
+        { replaceAll: false, items: [{ id: li.id, qty: 8 }] },
+        principal("OPERATOR", operatorUserId),
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(await snapshot(o.id)).toEqual(before);
+  }, 60_000);
+
+  it("case 12a: a stale revision is 409 ORDER_REVISION_STALE and nothing is written", async () => {
+    const { o, li } = await fixture({ status: "SENT" });
+    const before = await snapshot(o.id);
+    await expect(
+      edit(o.id, {
+        replaceAll: false,
+        expectedRevisionNumber: 999,
+        items: [{ id: li.id, qty: 8 }],
+      }),
+    ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_REVISION_STALE" } });
+    expect(await snapshot(o.id)).toEqual(before);
+  }, 60_000);
+
+  it("a take-off (CANCEL) of the delivered line drops it from the SENT invoice and keeps the status", async () => {
+    const { o, li, inv } = await fixture({ status: "SENT" });
+    await edit(o.id, { replaceAll: false, items: [{ id: li.id, action: "CANCEL" }] });
+    expect((await invoiceOf(inv.id)).status).toBe("SENT");
+    expect(await invoiceQty(inv.id)).toBe(0);
+    const after = await raw.orderItem.findUniqueOrThrow({ where: { id: li.id } });
+    expect(after.status).toBe("CANCELLED");
+    expect(Number(after.deliveredQty)).toBe(0);
+  }, 60_000);
 });
