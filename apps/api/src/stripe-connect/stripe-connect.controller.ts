@@ -1,6 +1,6 @@
+import { isLivePaymentsRefusal } from "../billing/live-payments-wall";
 import {
   BadRequestException,
-  ConflictException,
   Controller,
   Delete,
   Get,
@@ -127,7 +127,7 @@ export class StripeConnectCallbackController {
       const code2 =
         err instanceof BadRequestException
           ? String((err.getResponse() as any)?.message ?? "")
-          : err instanceof ConflictException
+          : isLivePaymentsRefusal(err)
             ? "live_payments_off"
             : "";
       res.redirect(

@@ -1005,17 +1005,20 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
 
   // W-1464 R-282 M2: the webhook-side quantity update changes what the subscription charges - walled like the rest.
   it.each(["TEST", "DEMO", "INTERNAL", null])(
-    "class %p: the item is NOT brought up to the row quantity; the webhook is refused with the coded 409",
+    "class %p: the item is NOT brought up to the row quantity; the change is held, recorded, and the webhook resolves",
     async (tenantClass) => {
       const h = make({
         rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
         items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 4500, 1)],
       });
       h.tenant.class = tenantClass;
-      await expect(h.completed()).rejects.toMatchObject({
-        status: 409,
-        response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
-      });
+      await h.completed(); // resolves: the event is acknowledged
+      expect(
+        h.prisma.auditLog.create.mock.calls.filter(
+          (c: any[]) => c[0]?.data?.action === "LIVE_PAYMENTS_HELD",
+        ),
+      ).toHaveLength(1);
+      expect(h.rows[0].quantity).toBe(3);
       expect(h.client.subscriptionItems.update).not.toHaveBeenCalled();
       expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
     },

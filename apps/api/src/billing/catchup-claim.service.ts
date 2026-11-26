@@ -34,7 +34,11 @@ import {
   stripeRefId,
 } from "./stripe-period";
 import { StripeService } from "./stripe.service";
-import { assertTenantLivePaymentsAllowed } from "./live-payments-wall";
+import {
+  assertTenantLivePaymentsAllowed,
+  isLivePaymentsRefusal,
+  recordLivePaymentsHeld,
+} from "./live-payments-wall";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -373,8 +377,24 @@ export class CatchupClaimService {
 
     // Stripe work, OUTSIDE the lock.
     let invoiceId = advanced.catchupInvoiceId;
-    if (!invoiceId) invoiceId = await this.ensureSettlingInvoice(tenantId, session, subId);
-    else await this.ensureStubItem(tenantId, session, invoiceId, subId); // a redelivery: the draft must carry its item
+    try {
+      if (!invoiceId) invoiceId = await this.ensureSettlingInvoice(tenantId, session, subId);
+      else await this.ensureStubItem(tenantId, session, invoiceId, subId); // a redelivery: the draft must carry its item
+    } catch (err) {
+      // W-1464: the wall holds the stub invoice and item for a business that is not PRODUCTION. A webhook never
+      // throws that 409 (Stripe would retry an event that cannot succeed): recorded as held, event acknowledged.
+      if (!isLivePaymentsRefusal(err)) throw err;
+      await recordLivePaymentsHeld(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId,
+          entityType: "stripe_checkout_session",
+          entityId: session.id ?? null,
+          what: "catch-up stub invoice",
+        },
+      );
+      return;
+    }
     if (!invoiceId) return; // settles on the first paid invoice (see onInvoicePaid)
 
     const facts = await this.stripe.getInvoiceFacts(invoiceId);

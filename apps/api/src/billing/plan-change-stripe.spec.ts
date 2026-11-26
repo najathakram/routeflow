@@ -68,10 +68,15 @@ const args = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => jest.clearAllMocks());
 
+/** A PRODUCTION business: the live-payments wall (W-1464) reads the class through `deps.prisma`, which pushPlanChange requires. */
+const PROD_PRISMA = {
+  tenant: { findUnique: jest.fn(async () => ({ class: "PRODUCTION" })) },
+} as any;
+
 describe("pushPlanChange", () => {
   it("a scheduled downgrade pushes the downgraded price with proration_behavior none", async () => {
     const stripe = stripeWith();
-    const push = await pushPlanChange({ stripe, logger }, args());
+    const push = await pushPlanChange({ stripe, logger, prisma: PROD_PRISMA }, args());
 
     expect(push.pushed).toBe(true);
     const [, params] = stripe.updateSubscription.mock.calls[0];
@@ -96,7 +101,10 @@ describe("pushPlanChange", () => {
       [1.005, 101],
     ] as const) {
       const stripe = stripeWith();
-      await pushPlanChange({ stripe, logger }, args({ price: { monthly: dollars, annual: 0 } }));
+      await pushPlanChange(
+        { stripe, logger, prisma: PROD_PRISMA },
+        args({ price: { monthly: dollars, annual: 0 } }),
+      );
       expect(stripe.updateSubscription.mock.calls[0][1].items[0].price_data.unit_amount).toBe(
         cents,
       );
@@ -109,41 +117,53 @@ describe("pushPlanChange", () => {
       price: { ...BASE.price, recurring: { interval: "year" }, unit_amount: 249000 },
     };
     const stripe = stripeWith({ status: "active", items: { data: [annual] } });
-    await pushPlanChange({ stripe, logger }, args({ price: { monthly: 100, annual: 1000 } }));
+    await pushPlanChange(
+      { stripe, logger, prisma: PROD_PRISMA },
+      args({ price: { monthly: 100, annual: 1000 } }),
+    );
     const pd = stripe.updateSubscription.mock.calls[0][1].items[0].price_data;
     expect(pd).toMatchObject({ unit_amount: 100000, recurring: { interval: "year" } });
   });
 
   it("skips (no write) without a subscription id, with Stripe off, and for a cancelled subscription", async () => {
     const a = stripeWith();
-    expect((await pushPlanChange({ stripe: a, logger }, args({ stripeSubId: null }))).pushed).toBe(
-      false,
-    );
+    expect(
+      (
+        await pushPlanChange(
+          { stripe: a, logger, prisma: PROD_PRISMA },
+          args({ stripeSubId: null }),
+        )
+      ).pushed,
+    ).toBe(false);
     const off = { ...stripeWith(), isConfigured: false };
-    expect((await pushPlanChange({ stripe: off, logger }, args())).pushed).toBe(false);
+    expect(
+      (await pushPlanChange({ stripe: off, logger, prisma: PROD_PRISMA }, args())).pushed,
+    ).toBe(false);
     const dead = stripeWith({ status: "canceled", items: { data: [BASE] } });
-    expect((await pushPlanChange({ stripe: dead, logger }, args())).pushed).toBe(false);
+    expect(
+      (await pushPlanChange({ stripe: dead, logger, prisma: PROD_PRISMA }, args())).pushed,
+    ).toBe(false);
     for (const s of [a, off, dead]) expect(s.updateSubscription).not.toHaveBeenCalled();
   });
 
   it("fails closed BEFORE any write: unreadable Stripe, a base price it cannot restore, no resolvable price", async () => {
     const unreadable = stripeWith();
     unreadable.getSubscription.mockRejectedValue(new Error("boom"));
-    await expect(pushPlanChange({ stripe: unreadable, logger }, args())).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
-    );
+    await expect(
+      pushPlanChange({ stripe: unreadable, logger, prisma: PROD_PRISMA }, args()),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
 
     const noPrice = stripeWith({
       status: "active",
       items: { data: [{ id: "si_base", price: { currency: "usd" } }] },
     });
-    await expect(pushPlanChange({ stripe: noPrice, logger }, args())).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
-    );
+    await expect(
+      pushPlanChange({ stripe: noPrice, logger, prisma: PROD_PRISMA }, args()),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
 
     const free = stripeWith();
     await expect(
-      pushPlanChange({ stripe: free, logger }, args({ price: null })),
+      pushPlanChange({ stripe: free, logger, prisma: PROD_PRISMA }, args({ price: null })),
     ).rejects.toBeInstanceOf(BadRequestException);
     for (const s of [unreadable, noPrice, free])
       expect(s.updateSubscription).not.toHaveBeenCalled();
@@ -154,7 +174,7 @@ describe("pushPlanChange", () => {
     const stripe = stripeWith({ status: "active", items: { data: [BASE, addon] } });
     await expect(
       pushPlanChange(
-        { stripe, logger },
+        { stripe, logger, prisma: PROD_PRISMA },
         args({
           knownAddonItemIds: new Set(["si_a"]),
           deleteItems: [{ itemId: "si_a", rowId: "r1" }],
@@ -166,7 +186,10 @@ describe("pushPlanChange", () => {
 
   it("revert replays the prior base price with the SAME proration and the :revert key", async () => {
     const stripe = stripeWith();
-    const push = await pushPlanChange({ stripe, logger }, args({ proration: "create_prorations" }));
+    const push = await pushPlanChange(
+      { stripe, logger, prisma: PROD_PRISMA },
+      args({ proration: "create_prorations" }),
+    );
     await revertPlanChange({ stripe, logger, resolveName: names }, push);
 
     const [, params, opts] = stripe.updateSubscription.mock.calls[1];
@@ -193,7 +216,10 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
 
   it("reactivates an inactive prior rf_plan_* product so Stripe accepts the old price", async () => {
     const { fake, stripe } = harness("rf_plan_growth", [{ id: "rf_plan_growth", active: true }]);
-    const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "GROWTH" }));
+    const push = await pushPlanChange(
+      { stripe, logger, prisma: PROD_PRISMA },
+      args({ fromPlanKey: "GROWTH" }),
+    );
     fake.table.get("rf_plan_growth")!.active = false; // inactive between push and revert
     await expect(revertPlanChange({ stripe, logger, resolveName: names }, push)).resolves.toEqual(
       [],
@@ -205,7 +231,10 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     const { fake, stripe } = harness("prod_checkout_born", [
       { id: "prod_checkout_born", active: true },
     ]);
-    const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "GROWTH" }));
+    const push = await pushPlanChange(
+      { stripe, logger, prisma: PROD_PRISMA },
+      args({ fromPlanKey: "GROWTH" }),
+    );
     fake.table.get("prod_checkout_born")!.active = false;
     await expect(revertPlanChange({ stripe, logger, resolveName: names }, push)).resolves.toEqual(
       [],
@@ -220,7 +249,10 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     const { fake, stripe } = harness("prod_checkout_born", [
       { id: "prod_checkout_born", active: true },
     ]);
-    const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "STARTER" }));
+    const push = await pushPlanChange(
+      { stripe, logger, prisma: PROD_PRISMA },
+      args({ fromPlanKey: "STARTER" }),
+    );
     fake.table.get("prod_checkout_born")!.active = false;
     await revertPlanChange({ stripe, logger, resolveName: names }, push);
     expect(fake.table.get("rf_plan_starter")!.name).toBe("RouteFlow Starter");
@@ -230,7 +262,10 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     const { fake, stripe } = harness("prod_checkout_born", [
       { id: "prod_checkout_born", active: true },
     ]);
-    const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "STARTER" }));
+    const push = await pushPlanChange(
+      { stripe, logger, prisma: PROD_PRISMA },
+      args({ fromPlanKey: "STARTER" }),
+    );
     fake.table.get("prod_checkout_born")!.active = false;
     const sizeBefore = fake.table.size;
     await expect(
@@ -243,7 +278,10 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
 
   it("a MISSING prior product (404) is re-made under its own deterministic id, not a random one", async () => {
     const { fake, stripe } = harness("prod_gone", [{ id: "prod_gone", active: true }]);
-    const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "GROWTH" }));
+    const push = await pushPlanChange(
+      { stripe, logger, prisma: PROD_PRISMA },
+      args({ fromPlanKey: "GROWTH" }),
+    );
     fake.table.delete("prod_gone");
     await revertPlanChange({ stripe, logger, resolveName: names }, push);
     expect(stripe.updateSubscription.mock.calls[1][1].items[0].price_data.product).toBe(
@@ -255,7 +293,10 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     const { fake, stripe } = harness("prod_checkout_born", [
       { id: "prod_checkout_born", active: true },
     ]);
-    const push = await pushPlanChange({ stripe, logger }, args({ fromPlanKey: "GROWTH" }));
+    const push = await pushPlanChange(
+      { stripe, logger, prisma: PROD_PRISMA },
+      args({ fromPlanKey: "GROWTH" }),
+    );
     fake.table.get("prod_checkout_born")!.active = false;
     await revertPlanChange({ stripe, logger, resolveName: names }, push);
     const afterFirst = fake.table.size;
@@ -271,7 +312,7 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     const { fake, stripe } = harness("prod_checkout_born", [
       { id: "prod_checkout_born", active: true },
     ]);
-    const push = await pushPlanChange({ stripe, logger }, args());
+    const push = await pushPlanChange({ stripe, logger, prisma: PROD_PRISMA }, args());
     fake.table.get("prod_checkout_born")!.active = false;
     await expect(revertPlanChange({ stripe, logger, resolveName: names }, push)).rejects.toThrow(
       /plan is unknown/,
@@ -301,7 +342,7 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
         return {};
       });
       const push = await pushPlanChange(
-        { stripe, logger },
+        { stripe, logger, prisma: PROD_PRISMA },
         args({
           knownAddonItemIds: new Set(["si_addon"]),
           deleteItems: [{ itemId: "si_addon", rowId: "row_1" }],
@@ -347,7 +388,7 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
 
   it("an active prior product is used as-is (no create, no update)", async () => {
     const { fake, stripe } = harness("prod_growth", [{ id: "prod_growth", active: true }]);
-    const push = await pushPlanChange({ stripe, logger }, args());
+    const push = await pushPlanChange({ stripe, logger, prisma: PROD_PRISMA }, args());
     fake.products.create.mockClear();
     await revertPlanChange({ stripe, logger, resolveName: names }, push);
     expect(fake.products.create).not.toHaveBeenCalled();
@@ -367,7 +408,10 @@ describe("pushPlanChange - a failed update reply may still have been APPLIED (re
       throw new Error("socket hang up"); // ...but the reply is lost
     });
 
-    const push = await pushPlanChange({ stripe: stripe as any, logger }, args());
+    const push = await pushPlanChange(
+      { stripe: stripe as any, logger, prisma: PROD_PRISMA },
+      args(),
+    );
 
     expect(push.pushed).toBe(true);
     expect(push.newAmountCents).toBe(24900);
@@ -378,9 +422,9 @@ describe("pushPlanChange - a failed update reply may still have been APPLIED (re
   it("the update rejects and Stripe did NOT apply it: a 503, as before", async () => {
     const stripe = fakeStripeSubscription([BASE as any]);
     stripe.updateSubscription.mockRejectedValueOnce(new Error("card_declined"));
-    await expect(pushPlanChange({ stripe: stripe as any, logger }, args())).rejects.toBeInstanceOf(
-      ServiceUnavailableException,
-    );
+    await expect(
+      pushPlanChange({ stripe: stripe as any, logger, prisma: PROD_PRISMA }, args()),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
   it("the update rejects and Stripe cannot be re-read: unknown outcome = a 502 PLAN_CHANGE_STRIPE_AHEAD plus a needs-reconcile alert", async () => {
@@ -389,9 +433,10 @@ describe("pushPlanChange - a failed update reply may still have been APPLIED (re
     stripe.getSubscription.mockImplementationOnce(read).mockRejectedValueOnce(new Error("down"));
     stripe.updateSubscription.mockRejectedValueOnce(new Error("socket hang up"));
 
-    const err: any = await pushPlanChange({ stripe: stripe as any, logger }, args()).catch(
-      (e) => e,
-    );
+    const err: any = await pushPlanChange(
+      { stripe: stripe as any, logger, prisma: PROD_PRISMA },
+      args(),
+    ).catch((e) => e);
 
     expect(err).toBeInstanceOf(BadGatewayException);
     expect(err.getResponse().code).toBe("PLAN_CHANGE_STRIPE_AHEAD");
@@ -408,9 +453,10 @@ describe("pushPlanChange - N4: the 502 copy fits its audience", () => {
     const read = stripe.getSubscription.getMockImplementation()!;
     stripe.getSubscription.mockImplementationOnce(read).mockRejectedValueOnce(new Error("down"));
     stripe.updateSubscription.mockRejectedValueOnce(new Error("socket hang up"));
-    const err: any = await pushPlanChange({ stripe: stripe as any, logger }, args(over)).catch(
-      (e) => e,
-    );
+    const err: any = await pushPlanChange(
+      { stripe: stripe as any, logger, prisma: PROD_PRISMA },
+      args(over),
+    ).catch((e) => e);
     expect(err).toBeInstanceOf(BadGatewayException);
     expect(err.getResponse().code).toBe("PLAN_CHANGE_STRIPE_AHEAD");
     return String(err.getResponse().message);
@@ -431,7 +477,10 @@ describe("pushPlanChange - N4: the 502 copy fits its audience", () => {
 describe("pushPlanChange — Opus review folds", () => {
   it("S4: the structured push line (tenant, key, target plan/version, base price) is logged BEFORE the Stripe write", async () => {
     const stripe = stripeWith();
-    const push = await pushPlanChange({ stripe, logger }, args({ proration: "create_prorations" }));
+    const push = await pushPlanChange(
+      { stripe, logger, prisma: PROD_PRISMA },
+      args({ proration: "create_prorations" }),
+    );
 
     const line = logger.log.mock.calls
       .map((c) => String(c[0]))
@@ -461,13 +510,15 @@ describe("pushPlanChange — Opus review folds", () => {
     };
     // Listed FIRST: Stripe does not order items base-first.
     const stripe = stripeWith({ status: "active", items: { data: [marked, BASE] } });
-    await pushPlanChange({ stripe, logger }, args());
+    await pushPlanChange({ stripe, logger, prisma: PROD_PRISMA }, args());
     expect(stripe.updateSubscription.mock.calls[0][1].items[0].id).toBe("si_base");
   });
 
   it("a paused subscription is refused with copy that says what to do, never 'try again'", async () => {
     const stripe = stripeWith({ status: "paused", items: { data: [BASE] } });
-    const err = await pushPlanChange({ stripe, logger }, args()).catch((e: unknown) => e);
+    const err = await pushPlanChange({ stripe, logger, prisma: PROD_PRISMA }, args()).catch(
+      (e: unknown) => e,
+    );
     expect(err).toBeInstanceOf(ServiceUnavailableException);
     expect((err as Error).message).toBe(PLAN_CHANGE_SUBSCRIPTION_INACTIVE);
     expect((err as Error).message).not.toMatch(/try again/i);
@@ -717,7 +768,7 @@ describe("pushPlanChange - W-810 a Checkout-born subscription whose product is i
       }),
     };
 
-    const push = await pushPlanChange({ stripe, logger }, args());
+    const push = await pushPlanChange({ stripe, logger, prisma: PROD_PRISMA }, args());
 
     expect(push.pushed).toBe(true);
     const [, params] = stripe.updateSubscription.mock.calls[0];
@@ -738,7 +789,7 @@ describe("a non-finite price is refused with its own code, not 'set a custom fee
     });
   const push = (a: ReturnType<typeof flowArgs>) =>
     pushPlanChange(
-      { stripe: stripeWith() as any, logger },
+      { stripe: stripeWith() as any, logger, prisma: PROD_PRISMA },
       args({ price: a.price, priceInvalid: a.priceInvalid }),
     ).catch((e) => e);
 
@@ -796,5 +847,16 @@ describe("pushPlanChange - the live-payments wall", () => {
     const push = await pushPlanChange({ stripe, logger, prisma: prismaOf("PRODUCTION") }, args());
     expect(push.pushed).toBe(true);
     expect(stripe.updateSubscription).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("pushPlanChange - no prisma fails closed (W-1464)", () => {
+  it("a caller that reaches it without deps.prisma gets the coded 409 and no Stripe write", async () => {
+    const stripe = stripeWith();
+    await expect(pushPlanChange({ stripe, logger } as any, args())).rejects.toMatchObject({
+      status: 409,
+      response: { code: "LIVE_PAYMENTS_OFF" },
+    });
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 });

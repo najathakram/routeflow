@@ -127,7 +127,11 @@ import { isLinkPending } from "./link-pending";
 import { expireOpenCheckoutSessions } from "./open-checkout-session";
 import { planGateRefusal, selfServePlanGate, type PlanGateOp } from "./self-serve-plan-gate";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
-import { assertTenantLivePaymentsAllowed } from "./live-payments-wall";
+import {
+  assertTenantLivePaymentsAllowed,
+  isLivePaymentsRefusal,
+  recordLivePaymentsHeld,
+} from "./live-payments-wall";
 
 export interface SubscribeInput {
   planKey: string;
@@ -2686,6 +2690,20 @@ export class SubscriptionMutationService {
         );
         changed = changed || adopted;
       } catch (err) {
+        // W-1464: the wall holds the change for a business that is not PRODUCTION. A webhook never throws that 409
+        // (Stripe would retry an event that cannot succeed): it is recorded as held and acknowledged.
+        if (isLivePaymentsRefusal(err)) {
+          await recordLivePaymentsHeld(
+            { prisma: this.prisma, logger: this.logger },
+            {
+              tenantId,
+              entityType: "stripe_checkout_session",
+              entityId: ctx.sessionId ?? null,
+              what: `checkout add-on ${sku} quantity change`,
+            },
+          );
+          continue;
+        }
         firstError ??= err instanceof Error ? err : new Error(String(err));
         this.logger.error(
           `Checkout add-on "${sku}" tenant ${tenantId}: adoption failed (the webhook is retried): ${(err as Error).message}`,

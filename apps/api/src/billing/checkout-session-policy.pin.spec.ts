@@ -407,3 +407,39 @@ describe("W-1464 R-282 M2 - every call that changes what a subscription charges 
     ).toBe(0);
   });
 });
+
+/**
+ * W-1464 lead ruling: item deletes and subscription cancels are NOT walled. They only reduce what a subscription
+ * charges, and a test business must always be able to stop its billing. Listed so a new one is a conscious choice.
+ */
+const STRIPE_REDUCE_ONLY = /\b(?:subscriptionItems\s*\.\s*del|subscriptions\s*\.\s*cancel)\s*\(/g;
+const REDUCE_ONLY: Record<string, { calls: number; exempt: string }> = {
+  "billing/addon.service.ts": { calls: 3, exempt: "removes an add-on item; only reduces charges" },
+  "billing/subscription-mutation.service.ts": {
+    calls: 3,
+    exempt: "removes an add-on item; only reduces charges",
+  },
+  "billing/stripe.service.ts": {
+    calls: 2,
+    exempt: "the cancel wrapper; a test business must be able to stop billing",
+  },
+};
+
+describe("W-1464 - calls that only reduce charges stay unwalled and are listed", () => {
+  it("the reduce-only calls found are exactly the listed ones", () => {
+    const found: Record<string, number> = {};
+    for (const f of collect(SRC_ROOT)) {
+      if (rel(f).startsWith("testing/")) continue;
+      const text = fs
+        .readFileSync(f, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      const n = countOf(STRIPE_REDUCE_ONLY, text);
+      if (n > 0) found[rel(f)] = n;
+    }
+    expect(found).toEqual(
+      Object.fromEntries(Object.entries(REDUCE_ONLY).map(([f, v]) => [f, v.calls])),
+    );
+    for (const v of Object.values(REDUCE_ONLY)) expect(v.exempt).not.toBe("");
+  });
+});

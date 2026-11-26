@@ -255,7 +255,7 @@ describe("checkout.session.completed (the claim advances; nothing is voided yet)
 
   // W-1464 R-282 M2: the stub invoice and its item are charge creators; the wall runs before either Stripe call.
   it.each(["TEST", "DEMO", "INTERNAL", null])(
-    "W-1464: class %p never gets a stub invoice or stub item (coded 409, no Stripe write)",
+    "W-1464: class %p never gets a stub invoice or stub item: held, recorded, and the webhook still resolves",
     async (tenantClass) => {
       const h = make(
         { stripeSubId: SUB, catchupState: "SESSION_OPEN", catchupSessionId: SESSION },
@@ -275,10 +275,8 @@ describe("checkout.session.completed (the claim advances; nothing is voided yet)
             },
           }),
         ),
-      ).rejects.toMatchObject({
-        status: 409,
-        response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
-      });
+      ).resolves.toBeUndefined();
+      expect(h.db.audits.map((a: any) => a.action)).toContain("LIVE_PAYMENTS_HELD");
       expect(h.stripe.client.invoices.create).not.toHaveBeenCalled();
       expect(h.stripe.client.invoiceItems.create).not.toHaveBeenCalled();
     },
