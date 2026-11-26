@@ -880,9 +880,9 @@ const PICTURE_BRAND = "picture of the app in brand colours (owner, 2026-11-21, S
 const PICTURE_BRAND_PREFIX = "picture of the app in brand colours";
 // A custom property that aliases a copper token; it paints nothing, so it is judged by its readers (SA-1203 A16).
 const COPPER_ALIAS = "copper alias, every reader tagged (SA-1203 A16)";
-const COPPER_ALIAS_COUNT = 2;
+const COPPER_ALIAS_COUNT = 1;
 
-const [LOGO, WHEEL, STEP, BARS, DOT, NOTE, LINK] = R17_JOBS;
+const [LOGO, WHEEL, , BARS, DOT, NOTE, LINK] = R17_JOBS;
 // The source cell of a row for a rule inside an @media block is the scanner's own prefix: file :: chain.
 const HOME_MQ = "css/home.css :: @media (max-width:899.98px)";
 const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, tag: string]> = [
@@ -906,8 +906,6 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   [HOME_MQ, ".home #pricing .pl-inc a", "color", LINK],
   ["css/home.css", ".hx-more", "color", LINK],
   ["css/home.css", ".n3", "background", NOTE],
-  ["css/home.css", ".rt-d--now", "fill", STEP],
-  [HOME_MQ, ".sp-all", "color", LINK],
   ["css/product.css", ".pd main a:not(.btn):not(.pd-tile):not(.link):not(.pd-go)", "color", LINK],
   ["css/product.css", ".pd-go", "color", LINK],
   ["css/product.css", ".pd-more summary", "color", LINK],
@@ -917,7 +915,6 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ["css/site.css", ".link", "color", LINK],
   ["css/site.css", ".pg-top .eyebrow::before", "background", DOT],
   ["css/start.css", ".gs-step a:not(.link)", "color", LINK],
-  ["graphics/rf-graphics.css", ":root", "--buy-deep", COPPER_ALIAS],
   ["graphics/rf-graphics.css", ":root", "--rf-accent", TOKEN_DEF],
   ["graphics/rf-graphics.css", ":root", "--rf-accent-on-panel", TOKEN_DEF],
   ["graphics/rf-graphics.css", ":root", "--rf-copper", TOKEN_DEF],
@@ -1185,7 +1182,7 @@ const CENSUS_NOW: SourceCensus = {
   svgFiles: 8,
   templates: 1,
   svgStyles: 0,
-  dataUrls: 7,
+  dataUrls: 1,
   escapes: 0,
   inlineSvg: 223,
   noscript: 0,
@@ -1775,7 +1772,7 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
     const jobs = COPPER_ALLOW.filter((r) => (R17_JOBS as readonly string[]).includes(r[3])).length;
     expect(n(PENDING_OWNER)).toBe(0);
     expect(jobs + n(TOKEN_DEF) + n(PICTURE_BRAND) + n(COPPER_ALIAS)).toBe(COPPER_ALLOW.length);
-    expect([n(TOKEN_DEF), n(PICTURE_BRAND), n(COPPER_ALIAS)]).toEqual([10, 1, 2]);
+    expect([n(TOKEN_DEF), n(PICTURE_BRAND), n(COPPER_ALIAS)]).toEqual([10, 1, 1]);
   });
 
   describe("planted brand-picture and alias fixtures (SA-1203 A9, A16)", () => {
@@ -1847,16 +1844,16 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
       expect(keys).toContain("css/x.css :: .zz :: color");
     });
     const allowedKeys = () => COPPER_ALLOW.map(([x, sel, pr]) => copperKey(x, sel, pr));
-    it("P-A19a: base-rule copper on .sp-all, outside the @media, is a separate key that is not allowed", () => {
+    it("P-A19a: base-rule copper on .fd-more, outside the @media, is a separate key that is not allowed", () => {
       const base: CopperRule = {
         source: "css/home.css",
-        selectors: [".sp-all"],
+        selectors: [".fd-more"],
         decls: { color: "var(--rf-link)" },
       };
       const keys = copperScan([base]).uses.map((u) => u.key);
-      expect(keys).toContain("css/home.css :: .sp-all :: color");
-      expect(allowedKeys()).not.toContain("css/home.css :: .sp-all :: color");
-      expect(allowedKeys()).toContain(HOME_MQ + " :: .sp-all :: color");
+      expect(keys).toContain("css/home.css :: .fd-more :: color");
+      expect(allowedKeys()).not.toContain("css/home.css :: .fd-more :: color");
+      expect(allowedKeys()).toContain(HOME_MQ + " :: .fd-more :: color");
     });
     it("P-A19b: an upper-case typed copper hex in home.css is a copper use that is not allowed", () => {
       const r: CopperRule = {
@@ -1990,9 +1987,9 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
   it("(b) the status rules are found by selector or by status token", () => {
     const { rules } = copperScan();
     const find = (sel: string) => rules.find((r) => r.selectors.includes(sel));
-    expect(find(".a-pill--bad")).toBeDefined();
+    expect(find(".a-pill--ok")).toBeDefined();
     expect(find(".rfw-tk path")).toBeDefined();
-    expect(isStatusRule(find(".a-pill--bad")!)).toBe(true);
+    expect(isStatusRule(find(".a-pill--ok")!)).toBe(true);
     expect(isStatusRule(find(".rfw-tk path")!)).toBe(true);
     expect(isStatusRule(find(".link")!)).toBe(false);
     expect(STATUS_WORDS.test("--error-c")).toBe(true);

@@ -52,7 +52,7 @@
   --app-ink:var(--rf-ink);--app-ink-2:var(--rf-ink);--app-ink-3:var(--rf-steel);--app-ink-4:var(--rf-steel);
   --app-canvas:var(--rf-bone);--app-sunken:var(--rf-bone);--app-line:var(--rf-line);--app-line-2:var(--rf-line);
   --app-rail:var(--rf-ink);--app-p:var(--rf-ink);--app-soft:var(--rf-bone);
-  --buy-rail:var(--rf-ink);--buy-p:var(--rf-ink);--buy-deep:var(--rf-copper-dark);--buy-soft:var(--rf-bone);--buy-200:var(--rf-line);
+  --buy-rail:var(--rf-ink);--buy-p:var(--rf-ink);--buy-soft:var(--rf-bone);--buy-200:var(--rf-line);
   --ios-5:var(--rf-line);--ios-6:var(--rf-bone);
 }
 @media (prefers-contrast:more){:root{--app-ink-2:var(--app-ink);--app-ink-3:var(--app-ink);--app-line:var(--rf-steel);--app-line-2:var(--rf-steel)}}

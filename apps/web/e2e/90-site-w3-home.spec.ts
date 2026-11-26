@@ -1,5 +1,5 @@
 /**
- * Wave 3, lane 2.3-home (the home page), project "site-waves": T20 (home's 14 bands hold the white, bone or ink role at
+ * Wave 3, lane 2.3-home (the home page), project "site-waves": T20 (home's 15 bands hold the white, bone or ink role at
  * 1440x900 and 390x844), T15 (every opaque background covering a quarter of the window is white, bone or ink), T47 (the
  * problem section: its invoice box sits inside its frame at 1440x900, P05; and the hand-over of the picture to the big
  * line, SA-1191: the no-harm contrast rule, A1-K1 the line stays in the window, A1-K2 the line keeps a 24 px gutter from
@@ -46,16 +46,17 @@ const SCREENS = [
 type Role = "white" | "bone" | "ink";
 type Colours = Record<Role, string>;
 
-/** The band table of ux-spec section 5, Home: selector -> the role its background holds. 14 rows. */
+/** The band table of ux-spec section 5, Home: selector -> the role its background holds. 15 rows. */
 const BANDS: ReadonlyArray<readonly [string, Role]> = [
   ["#top", "white"],
   ["#one-system", "white"],
   ["#problem", "ink"],
+  ["#story", "white"],
   ["#journey", "bone"],
-  ["#shot", "white"],
   ["#sell", "bone"],
   ["#stores", "white"],
   ["#counter", "bone"],
+  ["#delivery", "white"],
   ["#use-cases", "white"],
   ["#founder", "white"],
   ["#pricing", "bone"],
@@ -65,7 +66,7 @@ const BANDS: ReadonlyArray<readonly [string, Role]> = [
 ];
 
 /** App-picture frames: a phone's body is the device, not a band (listed, so an exemption is never silent). */
-const FRAME_EXEMPT = [".pb-phone", ".st-phone", ".dv"] as const;
+const FRAME_EXEMPT = [".pb-phone"] as const;
 
 async function open(page: Page, w: number, h: number): Promise<void> {
   await page.setViewportSize({ width: w, height: h });
@@ -92,7 +93,7 @@ async function roles(page: Page): Promise<Colours> {
 // ─── T20 ────────────────────────────────────────────────────────────────────
 
 for (const { w, h } of SCREENS) {
-  test(`T20 home's 14 bands hold their role @${w}x${h}`, async ({ page }) => {
+  test(`T20 home's 15 bands hold their role @${w}x${h}`, async ({ page }) => {
     test.setTimeout(120_000);
     await open(page, w, h);
     const want = await roles(page);
@@ -118,9 +119,7 @@ for (const { w, h } of SCREENS) {
     const problems: string[] = [];
     for (const row of seen) {
       if (!row.found) problems.push(`${row.sel}: not on the page`);
-      // the app window picture is not shown on a phone (home.css: #shot is display:none under 900px)
-      else if (!row.shown && !(row.sel === "#shot" && w < 900))
-        problems.push(`${row.sel}: not shown`);
+      else if (!row.shown) problems.push(`${row.sel}: not shown`);
       else if (row.shown && row.bg !== want[row.role as Role])
         problems.push(`${row.sel}: want ${row.role} ${want[row.role as Role]}, got ${row.bg}`);
     }

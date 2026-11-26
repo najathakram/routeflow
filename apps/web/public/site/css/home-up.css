@@ -37,18 +37,13 @@
 
 /* ---------- use cases ---------- */
 /* What the wheel no longer stops on: its words and its sample card. */
-.uc{list-style:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:clamp(48px,6vw,80px) 0 0;padding:0}
 .uc-i{display:grid;grid-template-columns:minmax(0,.62fr) minmax(0,1fr);gap:clamp(16px,2vw,28px);align-items:center;padding:clamp(20px,2.2vw,30px);border-radius:var(--r);background:var(--rf-soft)}
-.uc-t p{margin-top:8px;font-size:16px;line-height:1.42;color:var(--rf-text-2);text-wrap:pretty}
 @media (max-width:1080px){
   .uc-i{grid-template-columns:minmax(0,1fr)}
 }
 @media (max-width:899.98px){
   /* A phone: one swipe, one card at a time, the next one showing at the edge. */
-  .uc{display:flex;gap:10px;margin:26px -20px 0;padding:0 20px 6px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding-inline:20px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-  .uc::-webkit-scrollbar{display:none}
   .uc-i{flex:none;display:block;width:min(84vw,340px);padding:18px;scroll-snap-align:start}
-  .uc-t p{margin-top:6px;font-size:16px;min-height:4.3em}
   .uc-card{margin-top:12px}
 }
 

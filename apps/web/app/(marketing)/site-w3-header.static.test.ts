@@ -94,7 +94,7 @@ describe("K5: no var() read names a property nothing sets", () => {
     const css = read("css/home-up.css");
     expect(css).not.toMatch(/\.uc-t h3::before/);
     expect(css).not.toMatch(/\.uc-t h3\s*\{[^}]*display:\s*flex/);
-    expect(css).toMatch(/\.uc-t p\{/); // the sweep found the neighbouring rule: it read the right file
+    expect(css).toMatch(/\.uc-i\{/); // the sweep found the neighbouring rule: it read the right file
   });
 });
 

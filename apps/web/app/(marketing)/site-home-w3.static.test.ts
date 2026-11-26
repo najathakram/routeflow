@@ -117,7 +117,7 @@ describe("the page's still is the script's still", () => {
 describe("SA-1180 (2): a status colour marks a status", () => {
   const css = read("css/home.css");
   /** The selectors of the status marks (Paid, Pending, Overdue): a pill each. */
-  const STATUS_MARKS = [".a-pill--ok", ".a-pill--warn", ".a-pill--bad"];
+  const STATUS_MARKS = [".a-pill--ok"];
   const STATUS = /var\(--rf-(?:paid|pending|overdue)(?:-bg)?\)/;
 
   it("no paid, pending or overdue token outside the status marks", () => {
@@ -132,18 +132,6 @@ describe("SA-1180 (2): a status colour marks a status", () => {
       .filter((r) => STATUS.test(r.body))
       .flatMap((r) => r.selectors);
     for (const mark of STATUS_MARKS) expect(users).toContain(mark);
-  });
-
-  // SA-1203 A5: the change amount is ink, as R17 allows copper only in its listed jobs.
-  it("the change amount and the stock marks are text", () => {
-    const body = (sel: string) =>
-      rulesOf(css)
-        .filter((r) => r.selectors.includes(sel))
-        .map((r) => r.body)
-        .join(";");
-    expect(body(".c-chg b")).toContain("color:var(--rf-text)");
-    expect(body(".b-stk.ok")).toContain("color:var(--rf-text)");
-    expect(body(".b-stk.lo")).toContain("color:var(--rf-text-2)");
   });
 });
 
@@ -169,35 +157,6 @@ describe("SA-1185: soft is a surface, pills say their status", () => {
   };
   const largeText = (size: number, weight: number) =>
     size >= 24 || (size >= 18.66 && weight >= 700);
-
-  it("the price change is large text, or reads the link colour where it is smaller", () => {
-    const rs = rulesOf(css).filter((r) => r.selectors.includes(".c-chg b"));
-    expect(rs.length).toBeGreaterThan(0);
-    // The cascade in source order: each rule reads its own weight (font-weight, or the font shorthand), else the
-    // one a rule before it set (a breakpoint rule that only changes the size keeps the weight above it).
-    let weight = 400;
-    let checked = 0;
-    for (const r of rs) {
-      const body = r.body;
-      const short = /(?:^|[;\s])font:\s*([^;]+)/.exec(body)?.[1];
-      const w =
-        /font-weight:\s*(bold|\d+)/.exec(body)?.[1] ??
-        (short ? /(?:^|\s)(bold|[1-9]00)(?=\s)/.exec(short)?.[1] : undefined);
-      if (w !== undefined) weight = w === "bold" ? 700 : Number(w);
-      const raw =
-        /font-size:\s*([^;]+)/.exec(body)?.[1] ??
-        (short
-          ? /(?:^|\s)(clamp\([^)]*\)|[\d.]+(?:px|rem|em))(?=[\s/])/.exec(short)?.[1]
-          : undefined);
-      if (raw === undefined && short) throw new Error("cannot read the size in font: " + short);
-      if (raw === undefined) continue;
-      const size = px(raw);
-      if (size === null) throw new Error("cannot read the size " + raw);
-      checked += 1;
-      if (!largeText(size, weight)) expect(body).toContain("--rf-link");
-    }
-    expect(checked).toBeGreaterThan(0);
-  });
 
   it("the large-text rule reads rem, em and clamp, and the weight (fixtures)", () => {
     expect(px("1rem")).toBe(16);

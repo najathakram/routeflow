@@ -197,14 +197,10 @@ const INK_SURFACES: string[] = [
   ".ans-fill",
   ".btn-primary",
   ".cta",
-  ".dv",
   ".gs-n",
   ".home .inc-i .inc-ic",
-  ".home .uc-t h3",
   ".pd-cross li",
   ".pd-tick li",
-  ".st-phone",
-  ".upd-o i",
 ];
 /** The tokens that resolve to the ink colour the walk calls a band: the ink itself, the text token and the button token (S4, S15). */
 const INK_TOKENS: string[] = ["--rf-ink", "--rf-text", "--rf-btn"];

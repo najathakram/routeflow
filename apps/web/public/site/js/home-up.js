@@ -364,30 +364,6 @@
     ST.create({ trigger: s, start: function () { var h = $(".site-header"); return "top " + (h ? h.getBoundingClientRect().height : 0) + "px"; }, end: "bottom bottom", onUpdate: function (x) { goTo(idx(x.progress)); }, onRefresh: function (x) { goTo(idx(x.progress)); } });
   }
 
-  /* ---------- the real Orders screen: wide screens only, after the pain and the answer ---------- */
-  function initShot(s) {
-    return section(s, function (c, s, keep) {
-      if (!c.desk) return;
-      var pin = $(".hx-pin", s), win = $(".win", s), scrim = $(".a-scrim", s), mod = $(".a-mod", s), lines = $$(".a-mod .a-line", s), tot = $(".a-tot b", s), newBtn = $(".a-head .a-btn--p", s);
-      var hdr = function () { return header ? header.offsetHeight : 64; };
-      var fit = function () { return Math.min(1, (W.innerHeight - hdr() - 52) / win.offsetHeight); };
-      g.set(win, { transformPerspective: 2000, transformOrigin: "50% 0%" });
-      /* Pinned: the Orders screen lies flat, then New order opens the order. It fades in fast and settles slower, so the table never shows through it. */
-      g.timeline({
-        defaults: { ease: "power2.inOut", duration: 0.4 },
-        scrollTrigger: { trigger: pin, start: "top top", end: "+=115%", pin: true, scrub: SCRUB, invalidateOnRefresh: true, onToggle: wc([win, mod]) }
-      })
-        .fromTo(win, { rotationX: 16, scale: function () { return fit() * 0.9; } }, { rotationX: 0, scale: fit, duration: 0.36, ease: "power1.out" }, 0)
-        .to(newBtn, { scale: 0.93, duration: 0.03, ease: "power1.inOut", yoyo: true, repeat: 1 }, 0.46)
-        .fromTo(scrim, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.08, ease: "none" }, 0.5)
-        .fromTo(mod, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.035, ease: "none" }, 0.52)
-        .fromTo(mod, { y: 40, scale: 0.97 }, { y: 0, scale: 1, duration: 0.14, ease: "power3.out" }, 0.52)
-        .fromTo(lines, { autoAlpha: 0, y: 14 }, { autoAlpha: 1, y: 0, stagger: { each: 0.07 }, duration: 0.08, ease: "power2.out" }, 0.66)
-        .add(stepSum(keep, [tot], [0, 45, 81, 111], 0.21), 0.63)
-        .to({}, { duration: 0.12 });
-    });
-  }
-
   /* ---------- 4. Fits how you sell ---------- */
   function initSell(s) {
     return section(s, function (c, s, keep) {
@@ -438,50 +414,6 @@
         tl2.fromTo(t, { opacity: 0, y: 50 }, { opacity: 1, y: 0, duration: 0.6 }, i * 0.22)
           .to(o, { v: to, duration: 0.6, onStart: write, onUpdate: write }, i * 0.22);
       });
-    });
-  }
-
-  /* ---------- 5. Stores ---------- */
-  function initStores(s) {
-    return section(s, function (c, s) {
-      var vis = $(".st-vis", s), shop = $(".st-shop", s), phone = $(".st-phone", s), tiles = $$(".b-tile", s), rows = $$(".sp-r", s), all = $(".sp-all", s), head = $(".st-head h2", s);
-      var wideShop = isShown(shop);
-      if (c.desk) settle(head, 0, 1.1, "top 92%"); else revealOnce($$(".st-head h2, .st-head .sub", s), 0, 16);
-      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.8 }, scrollTrigger: { trigger: vis, start: c.desk ? "top 88%" : EDGE, onEnter: go, toggleActions: "none none none none" } });
-      if (wideShop) {
-        tl.fromTo(shop, { opacity: 0, y: 80, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 1 }, 0)
-          .fromTo(tiles, { opacity: 0, y: 24 }, { opacity: 1, y: 0, stagger: { each: 0.12 }, duration: 0.5 }, 0.35)
-          .fromTo(phone, { opacity: 0, y: 140 }, { opacity: 1, y: 0, duration: 0.9 }, 0.6)
-          .fromTo(all, { opacity: 0, scale: 0.96 }, { opacity: 1, scale: 1, duration: 0.4 }, 1.05)
-          .fromTo(rows, { opacity: 0, y: 16 }, { opacity: 1, y: 0, stagger: { each: 0.14 }, duration: 0.4 }, 1.1);
-      } else {
-        tl.fromTo(phone, { opacity: 0, y: 36 }, { opacity: 1, y: 0, duration: 0.6 }, 0)
-          .fromTo(all, { opacity: 0, x: -8 }, { opacity: 1, x: 0, duration: 0.35 }, 0.25)
-          .fromTo(rows, { opacity: 0, y: 12 }, { opacity: 1, y: 0, stagger: { each: 0.1 }, duration: 0.35 }, 0.32);
-      }
-    });
-  }
-
-  /* ---------- 6. Counter ---------- */
-  function initCounter(s) {
-    return section(s, function (c, s, keep) {
-      var vis = $(".ct-vis", s), win = $(".ct-win", s), lines = $$(".c-line", s), total = $(".c-big b", s), sub = $(".c-right .c-t > :last-child", s), paper = $(".rc-paper", s), rc = $(".rc", s);
-      var pay = $$(".c-tend, .c-quick, .c-right .c-t:nth-of-type(5), .c-chg", s);
-      var wideWin = isShown(win);
-      if (!c.desk) revealOnce($$(".ct-copy h2, .ct-copy .sub, .ct-note", s), 0, 16);
-      var tl = g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: vis, start: wideWin ? "top 85%" : EDGE, onEnter: go, toggleActions: "none none none none" } });
-      if (wideWin) {
-        tl.fromTo(win, { opacity: 0, y: 60 }, { opacity: 1, y: 0, duration: 0.8 }, 0)
-          .fromTo(lines, { opacity: 0, y: 14 }, { opacity: 1, y: 0, stagger: { each: 0.3 }, duration: 0.3 }, 0.35)
-          .add(stepSum(keep, [sub, total], [0, 18, 21], 0.6, true), 0.2)
-          .fromTo(pay, { opacity: 0, y: 10 }, { opacity: 1, y: 0, stagger: { each: 0.1 }, duration: 0.3 }, 0.9)
-          .fromTo(rc, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.5 }, 1.25)
-          .fromTo(paper, { yPercent: 100 }, { yPercent: 0, duration: 0.9, ease: "power2.out" }, 1.45);
-      } else {
-        /* Phones: the receipt prints, once. */
-        tl.fromTo(rc, { opacity: 0 }, { opacity: 1, duration: 0.3 }, 0)
-          .fromTo(paper, { yPercent: 100 }, { yPercent: 0, duration: 1, ease: "power2.out" }, 0.1);
-      }
     });
   }
 
@@ -553,7 +485,7 @@
   /* ---------- run, in page order ---------- */
   var cleanups = [];
   var run = function (pair) { var el = $(pair[0]); if (el) cleanups.push(pair[1](el)); };
-  [["#top", initHero], ["#problem", initProblem], ["#journey", initJourney], ["#shot", initShot], ["#sell", initSell], ["#stores", initStores], ["#counter", initCounter], ["#use-cases", initUseCases], ["#founder", initFounder], ["#pricing", initPricing], ["#faq", initFaq], ["#start", initEnd]].forEach(run);
+  [["#top", initHero], ["#problem", initProblem], ["#journey", initJourney], ["#sell", initSell], ["#use-cases", initUseCases], ["#founder", initFounder], ["#pricing", initPricing], ["#faq", initFaq], ["#start", initEnd]].forEach(run);
   var queued = 0;
   refreshSoon = function () { if (queued) return; queued = W.requestAnimationFrame(function () { queued = 0; if (W.RFWheel && W.RFWheel.refresh) W.RFWheel.refresh(); else ST.refresh(); }); };
   refreshSoon();
