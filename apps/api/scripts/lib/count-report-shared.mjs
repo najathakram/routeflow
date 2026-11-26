@@ -6,18 +6,6 @@
  * shown as an opaque rank ("business #1", "business #2", ...), ordered by its count, so the output
  * says how many businesses are affected and how unevenly, never which ones.
  */
-import { resolveDatabaseUrl } from "./railway-db-url.mjs";
-
-/** The connection string, from the environment only. Returns null (after saying why) when absent. */
-export function resolveCountDbUrl(scriptName, { env = process.env, log = console.error } = {}) {
-  try {
-    return resolveDatabaseUrl(env, { requireProxy: false });
-  } catch {
-    log(`${scriptName}: refusing to run, DATABASE_URL is not set in the environment`);
-    return null;
-  }
-}
-
 /** `host:port` with every host label masked to first and last character. No user, password or db name. */
 export function maskHost(url) {
   try {

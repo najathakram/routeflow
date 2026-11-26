@@ -25,12 +25,8 @@
  * Options: --since YYYY-MM-DD (default 2026-11-03), --json, --help. Exit 0 on success, 2 on refusal.
  */
 import { createRequire } from "module";
-import {
-  resolveCountDbUrl,
-  maskHost,
-  toOpaqueBuckets,
-  formatBuckets,
-} from "./lib/count-report-shared.mjs";
+import { maskHost, toOpaqueBuckets, formatBuckets } from "./lib/count-report-shared.mjs";
+import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const { Client } = createRequire(import.meta.url)("pg");
 
 const NAME = "report-b1461-stale-draft-tax";
@@ -40,7 +36,7 @@ const HELP = [
   "Counts DRAFT invoices updated since a date (default 2026-11-03, B1461) whose regulated ledger",
   "net (netSales / categoryTax summed per invoice line) differs from the line's stored subtotal /",
   "category tax. Prints a total and a per-business count keyed by an opaque rank. No names, ids or rows.",
-  "Needs DATABASE_URL (or the Railway proxy variables) in the environment; refuses without it.",
+  "Needs the database connection in the environment (Railway proxy variables or the usual URL); refuses without it.",
   "Usage: node apps/api/scripts/report-b1461-stale-draft-tax.mjs [--since YYYY-MM-DD] [--json]",
 ].join("\n");
 
@@ -65,8 +61,12 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(since ?? "")) {
   process.exit(2);
 }
 
-const databaseUrl = resolveCountDbUrl(NAME);
-if (!databaseUrl) process.exit(2);
+// Shared resolver (B768). Its own log line carries the user name, so it is silenced; only the masked host is printed.
+const databaseUrl = resolveReportDbUrl(NAME, { log: () => {} });
+if (!databaseUrl) {
+  console.error(`${NAME}: refusing to run, no database connection is set in the environment`);
+  process.exit(2);
+}
 console.error(`${NAME}: target ${maskHost(databaseUrl)} (READ ONLY)`);
 
 // Ledger rows are summed per invoice line, scoped to the invoice's own business, then compared with

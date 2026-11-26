@@ -22,12 +22,8 @@
  * Options: --json, --help. Exit 0 on success, 2 on refusal.
  */
 import { createRequire } from "module";
-import {
-  resolveCountDbUrl,
-  maskHost,
-  toOpaqueBuckets,
-  formatBuckets,
-} from "./lib/count-report-shared.mjs";
+import { maskHost, toOpaqueBuckets, formatBuckets } from "./lib/count-report-shared.mjs";
+import { resolveReportDbUrl } from "./lib/report-db-url.mjs";
 const { Client } = createRequire(import.meta.url)("pg");
 
 const NAME = "report-import-orphan-tenant-link";
@@ -37,8 +33,8 @@ const HELP = [
   "Counts import data missing its business link (SA-1526 section 4): rows with no business on",
   "Product, Supplier, Customer, Expense, ProductAlias, MigrationJob, VendorBill, and customers flagged",
   "supplier-only with zero orders (total plus a per-business count keyed by an opaque rank).",
-  "No names, ids or rows are printed. Needs DATABASE_URL (or the Railway proxy variables) in the",
-  "environment; refuses without it.",
+  "No names, ids or rows are printed. Needs the database connection in the environment (Railway",
+  "proxy variables or the usual URL); refuses without it.",
   "Usage: node apps/api/scripts/report-import-orphan-tenant-link.mjs [--json]",
 ].join("\n");
 
@@ -54,8 +50,12 @@ for (const a of process.argv.slice(2)) {
   }
 }
 
-const databaseUrl = resolveCountDbUrl(NAME);
-if (!databaseUrl) process.exit(2);
+// Shared resolver (B768). Its own log line carries the user name, so it is silenced; only the masked host is printed.
+const databaseUrl = resolveReportDbUrl(NAME, { log: () => {} });
+if (!databaseUrl) {
+  console.error(`${NAME}: refusing to run, no database connection is set in the environment`);
+  process.exit(2);
+}
 console.error(`${NAME}: target ${maskHost(databaseUrl)} (READ ONLY)`);
 
 // Fixed list, never from argv.

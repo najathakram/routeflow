@@ -77,7 +77,7 @@ describe.each(SCRIPTS)("%s", (script) => {
     const res = run(script, [], null);
     expect(res.status).toBe(2);
     expect(res.stdout).toBe("");
-    expect(res.stderr).toContain("DATABASE_URL");
+    expect(res.stderr).toContain("refusing to run");
   });
 
   it("refuses unknown arguments with exit 2 before connecting", () => {
