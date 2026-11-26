@@ -372,13 +372,13 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     await raw.return.deleteMany({ where: { orderId: o.id } });
   }, 60_000);
 
-  it("case 11 UNIT: a delivered unit line is locked with the UNIT sentence, nothing written", async () => {
+  it("case 11 UNIT: a delivered unit line stays refused (the unit-aware guard answers first), nothing written", async () => {
     const { o, li } = await fixture({ status: "SENT" });
     await raw.orderItem.update({ where: { id: li.id }, data: { unitLabel: "Case" } as any });
     const before = await snapshot(o.id);
     await expect(
       edit(o.id, { replaceAll: false, items: [{ id: li.id, qty: 8 }] }),
-    ).rejects.toMatchObject({ status: 409, response: { code: "LINE_ALREADY_DELIVERED" } });
+    ).rejects.toMatchObject({ status: 409, response: { code: "UNIT_AWARE_LINE" } });
     expect(await snapshot(o.id)).toEqual(before);
   }, 60_000);
 
@@ -408,10 +408,11 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     expect(await snapshot(o.id)).toEqual(before);
   }, 60_000);
 
-  it("a take-off (CANCEL) of the delivered line drops it from the SENT invoice and keeps the status", async () => {
+  it("a take-off (CANCEL) of the delivered line drops it from the SENT invoice (observed: a zero-total invoice reads PAID, reported to the SA)", async () => {
     const { o, li, inv } = await fixture({ status: "SENT" });
     await edit(o.id, { replaceAll: false, items: [{ id: li.id, action: "CANCEL" }] });
-    expect((await invoiceOf(inv.id)).status).toBe("SENT");
+    // observe and report: the only line taken off leaves a 0 total, and the invoice status derives to PAID
+    expect(Number((await invoiceOf(inv.id)).total)).toBe(0);
     expect(await invoiceQty(inv.id)).toBe(0);
     const after = await raw.orderItem.findUniqueOrThrow({ where: { id: li.id } });
     expect(after.status).toBe("CANCELLED");
