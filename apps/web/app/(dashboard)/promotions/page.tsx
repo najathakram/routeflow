@@ -429,6 +429,7 @@ function PromotionFormModal({
 
   return (
     <Modal
+      scroll={false} // B1444: OWN-SCROLL
       open={open}
       onClose={onClose}
       title={editing ? "Edit promotion" : "New promotion"}
