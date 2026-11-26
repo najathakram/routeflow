@@ -20,6 +20,8 @@
 import { readFileSync } from "fs";
 import * as path from "path";
 import { Pool } from "pg";
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 const SCRIPT = path.resolve(__dirname, "../../scripts/report-b1461-stale-draft-tax.mjs");
@@ -40,7 +42,10 @@ describeDb("B1461 stale draft count, real Postgres (rolled back)", () => {
   });
 
   it("counts only a DRAFT whose held ledger net differs from what its lines would book", async () => {
-    const T = "b1461-fixture-business";
+    const T: string = assertTestTenant(
+      "qa-b1461-fixture",
+      "report-b1461-stale-draft-tax.db.spec.ts",
+    );
     const client = await pool.connect();
     try {
       await client.query("BEGIN");

@@ -2,10 +2,14 @@
  * READ-ONLY count report (Ops W-1449, SA-1526 section 4): import data missing its business link.
  *
  * WHAT IT COUNTS. Whether any past tenantless (super-admin, no business open) import left rows behind:
- *   1. rows with no business (tenantId IS NULL) on the import-touched tables: Product, Supplier,
- *      Customer, Expense, ProductAlias, MigrationJob, VendorBill. (ProductAlias and MigrationJob
- *      declare tenantId NOT NULL, so they are expected to read 0; they are counted anyway so the
- *      answer is evidence, not an assumption.)
+ *   1. rows with no business (tenantId IS NULL) on all 13 tables the import writes with a nullable link:
+ *      Product, Supplier, Customer, CustomerAddress, ContactPerson, Expense, ExpenseCategory, VendorBill,
+ *      Invoice, InvoiceItem, InvoicePayment, ProductAlias, MigrationJob. (ProductAlias and MigrationJob
+ *      declare tenantId NOT NULL, and InvoiceItem has a not-null check, so those are expected to read 0;
+ *      they are counted anyway so the answer is evidence, not an assumption.)
+ *   1b. SEPARATE, labelled, not in the total above: User rows with no business AND role CUSTOMER (the
+ *      import creates customer logins). Platform staff (super admins) legitimately have no business, so
+ *      only the CUSTOMER role is counted.
  *   2. Customers flagged supplierOnly that have zero orders, as a total plus a per-business count
  *      keyed by an opaque rank (business #1, #2, ...); any with no business are listed apart.
  * If any count is above 0, the cleanup is its own ruling, backup first, dry-run first.
@@ -75,6 +79,8 @@ const NO_BUSINESS_TABLES = [
   "ExpenseCategory",
 ];
 
+const CUSTOMER_LOGIN_SQL = `SELECT COUNT(*)::int AS n FROM "User" WHERE "tenantId" IS NULL AND role = 'CUSTOMER'`;
+
 const SUPPLIER_ONLY_SQL = `
   SELECT c."tenantId" AS "tenantId", COUNT(*)::int AS n
     FROM "Customer" c
@@ -95,6 +101,8 @@ async function main() {
       );
       noBusiness[table] = Number(rows[0].n);
     }
+    const { rows: userRows } = await client.query(CUSTOMER_LOGIN_SQL);
+    const customerLogins = Number(userRows[0].n);
     const { rows: soRows } = await client.query(SUPPLIER_ONLY_SQL);
     await client.query("ROLLBACK");
 
@@ -108,6 +116,7 @@ async function main() {
           {
             noBusiness,
             noBusinessTotal,
+            customerLoginsNoBusiness: customerLogins,
             supplierOnlyZeroOrders: { total: supplierOnlyTotal, ...supplierOnly },
           },
           null,
@@ -120,10 +129,14 @@ async function main() {
       );
       console.log(`  rows with no business, total: ${noBusinessTotal}`);
       for (const table of NO_BUSINESS_TABLES) console.log(`    ${table}: ${noBusiness[table]}`);
+      console.log(
+        `  customer logins (User, role CUSTOMER) with no business, separate: ${customerLogins}`,
+      );
       console.log(`  supplier-only customers with zero orders, total: ${supplierOnlyTotal}`);
       console.log(formatBuckets("per business", supplierOnly));
     }
   } finally {
+    await client.query("ROLLBACK").catch(() => {});
     await client.end().catch(() => {});
   }
 }
