@@ -3,7 +3,8 @@ import { join } from "path";
 import { InvoiceStatus, UserRole } from "@prisma/client";
 import type { EditedLine } from "./invoice-edit-plan";
 import type { IssuedEditCtx, LockedInvoiceForEdit } from "./locked-invoice-edit";
-import { afterIssuedEditInTx, writeIfFigureFree } from "./issued-invoice-edit";
+import type { DisplayUnitCatalog } from "./invoice-display-unit";
+import { afterIssuedEditInTx, primeIssuedDisplay, writeIfFigureFree } from "./issued-invoice-edit";
 
 jest.mock("../regulated/filing-lock", () => ({
   assertSalesNotLockedForEdit: jest.fn().mockResolvedValue(undefined),
@@ -350,6 +351,201 @@ describe("one real issued edit, one epilogue, one row (the table)", () => {
     const tx = fakeTx();
     expect(await writeIfFigureFree(tx, lockedOf(), bump(), ctx({ mode: "DRAFT" }))).toBeNull();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * SA-1508 A1-M1 (the row-scoped display freeze). Red on master: nothing re-snapshots a row of an issued invoice, so a
+ * product swap keeps the OLD product's frozen unit label and factor, and a new row has none. The epilogue clears then
+ * freezes the rows whose product or sale unit changed, freezes the new rows, and touches no other row (including legacy
+ * rows with no snapshot, which keep reading live). A save that changed no row issues no display statement at all.
+ */
+describe("afterIssuedEditInTx: the display freeze", () => {
+  const CATALOG: DisplayUnitCatalog = {
+    customerId: "c1",
+    customerTier: null,
+    cpBy: new Map(),
+    productBy: new Map(),
+    tierUnitBy: new Map(),
+    tierOrderUnits: new Map(),
+    unitsBy: new Map(),
+    businessUnit: null,
+    customerDefault: "PIECES",
+    ladderOff: true,
+  };
+  const display = () => ({ catalog: CATALOG, labels: new Map([["p2", "Bag"]]) });
+  const displayTx = () => {
+    const tx = fakeTx();
+    tx.$executeRaw = jest.fn().mockResolvedValue(0);
+    tx.invoiceItem.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    tx.invoice.findFirst = jest.fn().mockResolvedValue({ customerId: "c1" });
+    tx.invoiceItem.findMany = jest
+      .fn()
+      .mockImplementation(async (a: any) =>
+        (a.where.id.in as string[]).map((id) => ({ id, productId: "p2" })),
+      );
+    return tx;
+  };
+  const stored2 = { ...row(), id: "r2", productId: "p3", position: 1 };
+  const lockedTwo = () => ({ ...lockedOf(), storedRows: [row(), stored2] });
+  const writes = (tx: any) => tx.invoiceItem.updateMany.mock.calls.map((c: any[]) => c[0]);
+
+  it("a product swap on a kept row clears THAT row, then freezes the new product's unit and word on it", async () => {
+    const tx = displayTx();
+    const after = afterOf({ items: [row({ productId: "p2" }), stored2] });
+    await afterIssuedEditInTx(
+      {},
+      tx,
+      lockedTwo(),
+      after,
+      { ...ctx(), display: display() },
+      {
+        money: true,
+      },
+    );
+    const w = writes(tx);
+    expect(w[0]).toEqual({
+      where: { invoiceId: "inv-1", id: { in: ["r1"] } },
+      data: { invoiceUnitLabel: null, invoiceUnitFactor: null, baseLabel: null },
+    });
+    expect(w[1].where.id).toEqual({ in: ["r1"] });
+    expect(w[1].data).toEqual({ invoiceUnitLabel: "Piece", invoiceUnitFactor: 1 });
+    expect(w[2]).toEqual({
+      where: { id: { in: ["r1"] }, invoiceId: "inv-1", baseLabel: null },
+      data: { baseLabel: "Bag" },
+    });
+    // the untouched row r2 is never named
+    expect(JSON.stringify(w)).not.toContain("r2");
+  });
+
+  it("a changed sale unit on the same product clears and refreezes the row too", async () => {
+    const tx = displayTx();
+    const after = afterOf({ items: [row({ unitLabel: "Case" }), stored2] });
+    await afterIssuedEditInTx(
+      {},
+      tx,
+      lockedTwo(),
+      after,
+      { ...ctx(), display: display() },
+      {
+        money: true,
+      },
+    );
+    expect(writes(tx)[0].where.id).toEqual({ in: ["r1"] });
+  });
+
+  it("a NEW row is frozen only (no clear: it has no snapshot to drop)", async () => {
+    const tx = displayTx();
+    const after = afterOf({ items: [row(), stored2, row({ id: "r3", productId: "p2" })] });
+    await afterIssuedEditInTx(
+      {},
+      tx,
+      lockedTwo(),
+      after,
+      { ...ctx(), display: display() },
+      {
+        money: true,
+      },
+    );
+    const w = writes(tx);
+    expect(w.some((x: any) => x.data.invoiceUnitLabel === null)).toBe(false);
+    expect(w[0].where.id).toEqual({ in: ["r3"] });
+    expect(w[0].data).toEqual({ invoiceUnitLabel: "Piece", invoiceUnitFactor: 1 });
+  });
+
+  it("no catalog loaded: the changed row is still cleared (never keeps the old product's unit), nothing is frozen", async () => {
+    const tx = displayTx();
+    const after = afterOf({ items: [row({ productId: "p2" }), stored2] });
+    await afterIssuedEditInTx(
+      {},
+      tx,
+      lockedTwo(),
+      after,
+      { ...ctx(), display: { catalog: null, labels: null } },
+      { money: true },
+    );
+    expect(writes(tx)).toHaveLength(1);
+    expect(writes(tx)[0].data).toEqual({
+      invoiceUnitLabel: null,
+      invoiceUnitFactor: null,
+      baseLabel: null,
+    });
+  });
+
+  it("a save that changed no row's product or unit and added none issues no display statement", async () => {
+    const tx = displayTx();
+    await afterIssuedEditInTx(
+      {},
+      tx,
+      lockedTwo(),
+      afterOf({ items: [row(), stored2] }),
+      { ...ctx(), display: display() },
+      { money: true },
+    );
+    expect(tx.invoiceItem.updateMany).not.toHaveBeenCalled();
+    expect(tx.invoiceItem.findMany).not.toHaveBeenCalled();
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it("a DRAFT never freezes", async () => {
+    const tx = displayTx();
+    await afterIssuedEditInTx(
+      {},
+      tx,
+      lockedTwo(),
+      afterOf({ items: [row({ productId: "p2" }), stored2] }),
+      { ...ctx({ mode: "DRAFT" }), display: display() },
+      { money: true },
+    );
+    expect(tx.invoiceItem.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("primeIssuedDisplay (read before the transaction)", () => {
+  const inv = { customerId: "c1" };
+  const flagOff = { hasFlagStrict: jest.fn().mockResolvedValue(false) };
+
+  it("sets the catalog and the base words for the sent products, read on the outer client", async () => {
+    const db: any = {
+      customer: { findFirst: jest.fn().mockResolvedValue({ invoiceUnitDefault: "PIECES" }) },
+      product: { findMany: jest.fn().mockResolvedValue([{ id: "p2", baseUnitLabel: "Bag" }]) },
+    };
+    const e = ctx();
+    await primeIssuedDisplay(
+      db,
+      e,
+      inv,
+      [{ productId: "p2" }, { productId: null }, { productId: "p2" }],
+      flagOff,
+    );
+    expect(e.display?.catalog).toMatchObject({ customerId: "c1", ladderOff: true });
+    expect(e.display?.labels?.get("p2")).toBe("Bag");
+    expect(db.product.findMany.mock.calls[0][0].where.id).toEqual({ in: ["p2"] });
+  });
+
+  it("a failing read gives null for that half and never throws", async () => {
+    const db: any = {
+      customer: { findFirst: jest.fn().mockRejectedValue(new Error("db down")) },
+      product: { findMany: jest.fn().mockRejectedValue(new Error("db down")) },
+    };
+    const e = ctx();
+    await primeIssuedDisplay(db, e, inv, [{ productId: "p2" }], flagOff);
+    expect(e.display).toEqual({ catalog: null, labels: null });
+  });
+
+  it("a DRAFT or a tenantless actor sets nothing; no product on the payload reads nothing", async () => {
+    const db: any = { customer: { findFirst: jest.fn() }, product: { findMany: jest.fn() } };
+    const draft = ctx({ mode: "DRAFT" });
+    const bare = ctx({ tenantId: null });
+    await primeIssuedDisplay(db, draft, inv, [{ productId: "p2" }]);
+    await primeIssuedDisplay(db, bare, inv, [{ productId: "p2" }]);
+    expect(draft.display).toBeUndefined();
+    expect(bare.display).toBeUndefined();
+    const none = ctx();
+    await primeIssuedDisplay(db, none, inv, [{ productId: null }]);
+    expect(none.display).toEqual({ catalog: null, labels: new Map() });
+    expect(db.customer.findFirst).not.toHaveBeenCalled();
+    expect(db.product.findMany).not.toHaveBeenCalled();
   });
 });
 

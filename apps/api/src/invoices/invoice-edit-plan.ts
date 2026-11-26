@@ -122,7 +122,9 @@ const sameMoneyTuple = (
     : same(item.qty, row.qty) && same(item.boxes, row.boxes) && same(item.pieces, row.pieces)) &&
   same(item.unitPrice, row.unitPrice) &&
   same(item.discount ?? 0, row.discount ?? 0) &&
-  same(item.promoFreeUnits ?? 0, editableFreeUnits(row as any)) &&
+  // A4-L5: the screen-shown value OR the raw stored one (an over-cap row echoed back as stored) is no change.
+  (same(item.promoFreeUnits ?? 0, editableFreeUnits(row as any)) ||
+    same(item.promoFreeUnits ?? 0, row.promoFreeUnits ?? 0)) &&
   (same(item.taxRate ?? 0, row.taxRate ?? 0) ||
     (restampRate != null &&
       Number(row.taxRate ?? 0) === 0 &&

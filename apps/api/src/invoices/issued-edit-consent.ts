@@ -38,13 +38,16 @@ export function issuedConsent(a: {
   const newTax = roundMoney(written.tax ?? storedTax);
   // A3-M2: the same cents on both is no change to ask about ("add a line for the difference" lands here).
   if (cents(newTotal) === cents(storedTotal) && cents(newTax) === cents(storedTax)) return NONE;
-  // A3-H1: a verified rate was stamped on every goods line, so the written tax IS the verified rate's: SA-814 R5-2, kept.
+  // A3-H1: a verified rate was stamped on every KEPT goods line, so the written tax IS the verified rate's: SA-814 R5-2,
+  // kept. M4: a NEW line is not a kept row (the stamp never reaches it), so a new rate-0 line does not turn this into a
+  // prompt; with no kept row at all nothing was stamped, so a moved cent still asks.
   if (recompute.state === "TAX_STALE" && recompute.restampRate != null && written.lines) {
-    const taxed = written.lines.every((l) => {
-      const row = l.rowId ? a.storedRows.find((r) => r.id === l.rowId) : undefined;
+    const kept = written.lines.filter((l) => l.rowId && a.storedRows.some((r) => r.id === l.rowId));
+    const taxed = kept.every((l) => {
+      const row = a.storedRows.find((r) => r.id === l.rowId);
       return Number(l.data.taxRate ?? 0) !== 0 || isNsfLine(row ?? l.data);
     });
-    if (taxed) return NONE;
+    if (kept.length > 0 && taxed) return NONE;
   }
   const body: InvoiceEditConsentBody = {
     storedTotal,

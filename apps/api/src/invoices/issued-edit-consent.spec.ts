@@ -109,6 +109,19 @@ describe("issuedConsent", () => {
     expect(
       issuedConsent({ ...args, accept: { storedTotal: 108.2549, newTotal: 200.004 } }).consented,
     ).toBe(true);
+    // the edge: exactly half a cent off still matches (floating dust tolerated), a hair past it does not
+    expect(
+      issuedConsent({ ...args, accept: { storedTotal: 108.255, newTotal: 200.005 } }).consented,
+    ).toBe(true);
+    expect(
+      issuedConsent({ ...args, accept: { storedTotal: 108.2451, newTotal: 199.995 } }).consented,
+    ).toBe(true);
+    expect(
+      issuedConsent({ ...args, accept: { storedTotal: 108.2551, newTotal: 200 } }).consented,
+    ).toBe(false);
+    expect(
+      issuedConsent({ ...args, accept: { storedTotal: 108.25, newTotal: 199.9949 } }).consented,
+    ).toBe(false);
   });
 
   it("an older tax is cause OLDER_TAX; with no verified rate any moved figure asks", () => {
@@ -155,6 +168,43 @@ describe("issuedConsent", () => {
           written: { total: 400, tax: 30, lines },
         }).body,
       ).toBeNull();
+    });
+    it("M4: a NEW rate-0 line beside stamped kept rows does not ask when the tax is unchanged", () => {
+      const lines = [
+        { rowId: "r1", untouched: false, data: { taxRate: 0.0825 } as any },
+        { rowId: null, untouched: false, data: { taxRate: 0 } as any },
+      ];
+      expect(
+        issuedConsent({
+          recompute: STALE_VERIFIED,
+          invoice: stale,
+          storedRows: STORED,
+          written: { total: 424.75, tax: 24.75, lines },
+        }),
+      ).toEqual({ body: null, consented: false });
+    });
+    it("M4: a kept row still at rate 0 asks even with a new line beside it; all-new lines ask (a cent moves)", () => {
+      const keptZero = [
+        { rowId: "r1", untouched: false, data: { taxRate: 0 } as any },
+        { rowId: null, untouched: false, data: { taxRate: 0.0825 } as any },
+      ];
+      expect(
+        issuedConsent({
+          recompute: STALE_VERIFIED,
+          invoice: stale,
+          storedRows: STORED,
+          written: { total: 424.75, tax: 24.75, lines: keptZero },
+        }).body,
+      ).not.toBeNull();
+      const allNew = [{ rowId: null, untouched: false, data: { taxRate: 0.0825 } as any }];
+      expect(
+        issuedConsent({
+          recompute: STALE_VERIFIED,
+          invoice: stale,
+          storedRows: STORED,
+          written: { total: 108.25, tax: 8.25, lines: allNew },
+        }).body,
+      ).not.toBeNull();
     });
     it("a header-only save has no lines to stamp (L11): it asks when a figure moves", () => {
       expect(

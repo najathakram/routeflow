@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
+import type { DisplayUnitCatalog } from "./invoice-display-unit";
 import { InvoiceStatus } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import type { AcceptLineTotal, InvoiceEditBlocked, InvoiceEditConsentBody } from "@routeflow/types";
@@ -259,6 +260,12 @@ export function assertStillDraft(invoice: { status?: unknown }): void {
 export type EditMode = "DRAFT" | "ISSUED";
 
 /** What the gate needs to know about the request, built once per `update()` after its date stamps. */
+/** SA-1508 A1-M1: the catalog and base words an issued edit freezes onto its changed and new rows, read BEFORE the transaction. */
+export interface IssuedDisplayInputs {
+  catalog: DisplayUnitCatalog | null;
+  labels: ReadonlyMap<string, string> | null;
+}
+
 export interface IssuedEditCtx {
   mode: EditMode;
   actor?: JwtPayload;
@@ -273,6 +280,8 @@ export interface IssuedEditCtx {
   due: { dueDate: Date | null; depositDueDate: Date | null };
   /** Set by the gate when the admin's echoed figures were accepted (the audit row says so). */
   consented?: boolean;
+  /** Read before the transaction by the items branch (A1-M1); absent on a header-only save, which changes no row. */
+  display?: IssuedDisplayInputs;
 }
 
 /** The 409 of a refused issued edit: `code` INVOICE_EDIT_REFUSED, `reason` for the client's own copy, plain `message`. */

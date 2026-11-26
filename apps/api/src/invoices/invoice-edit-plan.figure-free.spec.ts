@@ -61,6 +61,16 @@ describe("free units join the untouched tuple (A2-N1 rule 2, A3-H2)", () => {
     expect(m.row).toBe(stored);
   });
 
+  it("A4-L5: a client that sends the STORED free units back on an over-cap row reads untouched (not re-priced)", () => {
+    const stored = row({ qty: 12, boxes: 1, promoFreeUnits: 1, subtotal: 0 });
+    // the screen-shown value (0) and the raw stored value (1) are both "no change"; a different value is a money edit
+    expect(untouched(sent({ promoFreeUnits: 1 }), stored)).toBe(true);
+    expect(untouched(sent({ promoFreeUnits: 0 }), stored)).toBe(true);
+    expect(untouched(sent({ promoFreeUnits: 2 }), stored)).toBe(false);
+    const [m] = matchEditLines([sent({ promoFreeUnits: 1 })], [stored]);
+    expect(m.untouched).toBe(true);
+  });
+
   it("a screen that omits free units reads 0: a line with none stays untouched", () => {
     expect(untouched(sent(), row())).toBe(true);
   });

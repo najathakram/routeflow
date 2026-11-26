@@ -21,12 +21,14 @@ const FORBIDDEN =
  * place that decides when a snapshot is written, so it must be added here on purpose.
  */
 const CALLER =
-  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|writeIssueBaseLabels|freezeDraftIssueUnits|freezeIssueUnitsFromCatalog|loadStopDisplayUnitCatalog|clearIssueDisplayUnits|displayUnit)\b/;
+  /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|writeIssueBaseLabels|freezeDraftIssueUnits|freezeIssueUnitsFromCatalog|loadStopDisplayUnitCatalog|clearIssueDisplayUnits|clearIssueDisplayUnitsForRows|freezeIssueUnitsFromCatalogForRows|writeIssueBaseLabelsForRows|displayUnit)\b/;
 const CALLER_FILES = [
   "apps/api/src/invoices/invoices.service.ts",
   "apps/api/src/bookkeeping/bookkeeping.service.ts",
   // SA-1508 commit 3: revert and reopen call clearIssueDisplayUnits (a DRAFT renders live), moved with their bodies.
   "apps/api/src/invoices/invoice-draft-return.ts",
+  // SA-1508 A1-M1: the issued-edit epilogue re-snapshots ONLY the rows whose product or sale unit changed (row-scoped helpers).
+  "apps/api/src/invoices/issued-invoice-edit.ts",
 ];
 
 /** Directories whose non-spec source writes or computes money. */
@@ -169,7 +171,7 @@ describe("G1: the invoice unit never reaches a money writer", () => {
     expect(src.match(/\bclearIssueDisplayUnits\(/g)).toHaveLength(2);
   });
 
-  it("the owning services name ONLY the allowed helpers, and write the snapshot from exactly 4 call sites", () => {
+  it("the owning services name ONLY the allowed helpers, and write the snapshot from exactly 5 call sites", () => {
     const ALLOWED = new Set([
       "resolveLiveDisplayUnits",
       "withItemDisplayUnits",
@@ -182,6 +184,9 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       "freezeIssueUnitsFromCatalog",
       "loadStopDisplayUnitCatalog",
       "clearIssueDisplayUnits",
+      "clearIssueDisplayUnitsForRows",
+      "freezeIssueUnitsFromCatalogForRows",
+      "writeIssueBaseLabelsForRows",
     ]);
     const named = new Set<string>();
     let writeCalls = 0;
@@ -190,13 +195,14 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       for (const m of src.matchAll(new RegExp(CALLER.source, "g"))) named.add(m[0]);
       writeCalls += (
         src.match(
-          /\b(?:writeIssueDisplayUnits|freezeDraftIssueUnits|freezeIssueUnitsFromCatalog)\(/g,
+          /\b(?:writeIssueDisplayUnits|freezeDraftIssueUnits|freezeIssueUnitsFromCatalog(?:ForRows)?)\(/g,
         ) ?? []
       ).length;
     }
     expect([...named].filter((n) => !ALLOWED.has(n))).toEqual([]);
-    // markSent, the inline flip in createInvoiceFromOrderWithTenant, recordDeliveryPaymentInTx, bookkeeping recordPayment
-    expect(writeCalls).toBe(4);
+    // markSent, the inline flip in createInvoiceFromOrderWithTenant, recordDeliveryPaymentInTx, bookkeeping recordPayment,
+    // and (SA-1508 A1-M1) the issued-edit epilogue freezing the changed and new rows
+    expect(writeCalls).toBe(5);
   });
 });
 

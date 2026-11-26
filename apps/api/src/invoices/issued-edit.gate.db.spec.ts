@@ -739,6 +739,66 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
     }
   });
 
+  it("DB-M1 (A4-L5): a client that sends back the stored over-cap free units reads as untouched: no re-price", async () => {
+    const overCap: LineSeed = {
+      qty: 12,
+      boxes: 1,
+      pieces: 0,
+      unitPrice: 10,
+      subtotal: 0,
+      promoFreeUnits: 1,
+    };
+    const s = await seed("over-cap-echo", {
+      status: "SENT",
+      lines: [overCap, { qty: 2, unitPrice: 50, subtotal: 100 }],
+    });
+    const items = screen(s);
+    items[0] = { ...items[0], promoFreeUnits: 1 }; // the stored value, sent back as stored
+    await save(s, { items, discount: 0, shippingFee: 0, notes: "n" });
+    const after = await prisma.invoice.findUnique({
+      where: { id: s.inv.id },
+      include: { items: { orderBy: { position: "asc" } } },
+    });
+    expect(Number(after!.items[0].subtotal)).toBe(0);
+    expect(after!.items[0].promoFreeUnits).toBe(1);
+    expect(Number(after!.total)).toBe(100);
+  });
+
+  it("DB-M2 (A1-M1): a product swap on an issued row drops the old product's frozen unit; an untouched row keeps its own", async () => {
+    const s = await seed("swap-display", {
+      status: "SENT",
+      lines: [
+        { qty: 2, unitPrice: 50, subtotal: 100 },
+        { qty: 1, unitPrice: 40, subtotal: 40 },
+      ],
+    });
+    const other = await prisma.product.create({
+      data: { tenantId: s.tenantId, name: "widget other", unit: "each", pricePerUnit: 50 },
+    });
+    await prisma.invoiceItem.update({
+      where: { id: s.rows[0].id },
+      data: { invoiceUnitLabel: "OldCase", invoiceUnitFactor: 12, baseLabel: "OldBag" },
+    });
+    await prisma.invoiceItem.update({
+      where: { id: s.rows[1].id },
+      data: { invoiceUnitLabel: "KeepCase", invoiceUnitFactor: 6, baseLabel: "KeepBag" },
+    });
+    const items = screen(s);
+    items[0] = { ...items[0], productId: other.id, unitPrice: 55 };
+    await save(s, { items, discount: 0, shippingFee: 0 });
+    const after = await prisma.invoice.findUnique({
+      where: { id: s.inv.id },
+      include: { items: { orderBy: { position: "asc" } } },
+    });
+    expect(after!.items[0].productId).toBe(other.id);
+    expect(after!.items[0].invoiceUnitLabel).not.toBe("OldCase");
+    expect(after!.items[0].invoiceUnitFactor).not.toBe(12);
+    expect(after!.items[0].baseLabel).not.toBe("OldBag");
+    expect(after!.items[1].invoiceUnitLabel).toBe("KeepCase");
+    expect(Number(after!.items[1].invoiceUnitFactor)).toBe(6);
+    expect(after!.items[1].baseLabel).toBe("KeepBag");
+  });
+
   it("the token is required, and a second editor holding the old one is refused INVOICE_STALE", async () => {
     const s = await seed("token");
     const before = await snapshot(s.inv.id);

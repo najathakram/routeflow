@@ -12,7 +12,7 @@ import { linePositionAllocator } from "../orders/line-position";
 import { sendAfterCommit } from "./send-after-commit";
 import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
-import { afterIssuedEditInTx, writeIfFigureFree } from "./issued-invoice-edit";
+import { afterIssuedEditInTx, primeIssuedDisplay, writeIfFigureFree } from "./issued-invoice-edit";
 import {
   assertEditFits,
   assertPaymentFits,
@@ -3080,6 +3080,7 @@ export class InvoicesService {
         "request",
         this.entitlements,
       );
+      await primeIssuedDisplay(this.prisma, edit, inv, items, this.entitlements); // A1-M1
 
       const { updated } = await this.prisma.tenantTransaction(async (tx: any) => {
         // Serialize concurrent saves of this invoice: rows are read AFTER the lock, so a second save

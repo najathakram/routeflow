@@ -604,6 +604,30 @@ export async function freezeIssueUnitsFromCatalog(
   inv: { id: string; tenantId: string | null },
   catalog: DisplayUnitCatalog | null,
 ): Promise<void> {
+  return freezeRows(tx, inv, catalog);
+}
+
+/**
+ * SA-1508 A1-M1: {@link freezeIssueUnitsFromCatalog} over the NAMED rows only (the new rows of an issued edit, and the rows
+ * whose product or sale unit it changed after their snapshot was cleared). The same code, never a second copy; an empty set
+ * issues no statement.
+ */
+export async function freezeIssueUnitsFromCatalogForRows(
+  tx: any,
+  inv: { id: string; tenantId: string | null },
+  catalog: DisplayUnitCatalog | null,
+  rowIds: ReadonlyArray<string>,
+): Promise<void> {
+  if (!rowIds.length) return;
+  return freezeRows(tx, inv, catalog, rowIds);
+}
+
+async function freezeRows(
+  tx: any,
+  inv: { id: string; tenantId: string | null },
+  catalog: DisplayUnitCatalog | null,
+  rowIds?: ReadonlyArray<string>,
+): Promise<void> {
   if (!inv.tenantId || !catalog) return;
   const own = await tx.invoice.findFirst({
     where: { id: inv.id, tenantId: inv.tenantId },
@@ -611,7 +635,12 @@ export async function freezeIssueUnitsFromCatalog(
   });
   if (!own?.customerId || own.customerId !== catalog.customerId) return;
   const items: Array<{ id: string; productId: string | null }> = await tx.invoiceItem.findMany({
-    where: { invoiceId: inv.id, invoiceUnitFactor: null, invoice: { tenantId: inv.tenantId } },
+    where: {
+      invoiceId: inv.id,
+      invoiceUnitFactor: null,
+      invoice: { tenantId: inv.tenantId },
+      ...(rowIds && { id: { in: [...rowIds] } }),
+    },
     select: { id: true, productId: true },
   });
   if (!items.length) return;
@@ -702,10 +731,38 @@ export async function writeIssueBaseLabels(
   tenantId: string | null,
   labels: ReadonlyMap<string, string> | null,
 ): Promise<void> {
+  return writeBaseLabelRows(tx, invoiceId, tenantId, labels);
+}
+
+/** SA-1508 A1-M1: {@link writeIssueBaseLabels} over the NAMED rows only; the same code, an empty set issues nothing. */
+export async function writeIssueBaseLabelsForRows(
+  tx: any,
+  invoiceId: string,
+  tenantId: string | null,
+  labels: ReadonlyMap<string, string> | null,
+  rowIds: ReadonlyArray<string>,
+): Promise<void> {
+  if (!rowIds.length) return;
+  return writeBaseLabelRows(tx, invoiceId, tenantId, labels, rowIds);
+}
+
+async function writeBaseLabelRows(
+  tx: any,
+  invoiceId: string,
+  tenantId: string | null,
+  labels: ReadonlyMap<string, string> | null,
+  rowIds?: ReadonlyArray<string>,
+): Promise<void> {
   if (typeof invoiceId !== "string" || !invoiceId || !tenantId || !labels) return;
   await underSavepoint(tx, invoiceId, async () => {
     const rows: Array<{ id: string; productId: string | null }> = await tx.invoiceItem.findMany({
-      where: { invoiceId, baseLabel: null, productId: { not: null }, invoice: { tenantId } },
+      where: {
+        invoiceId,
+        baseLabel: null,
+        productId: { not: null },
+        invoice: { tenantId },
+        ...(rowIds && { id: { in: [...rowIds] } }),
+      },
       select: { id: true, productId: true },
     });
     const byLabel = new Map<string, string[]>();
@@ -738,10 +795,31 @@ export async function writeIssueBaseLabels(
  * ONLY those three display columns.
  */
 export async function clearIssueDisplayUnits(tx: any, invoiceId: string): Promise<void> {
+  return clearRows(tx, invoiceId);
+}
+
+/**
+ * SA-1508 A1-M1: {@link clearIssueDisplayUnits} over the NAMED rows only (an issued edit that swaps a row's product or sale
+ * unit must not keep the old product's snapshot). The same code; an empty set issues no statement.
+ */
+export async function clearIssueDisplayUnitsForRows(
+  tx: any,
+  invoiceId: string,
+  rowIds: ReadonlyArray<string>,
+): Promise<void> {
+  if (!rowIds.length) return;
+  return clearRows(tx, invoiceId, rowIds);
+}
+
+async function clearRows(
+  tx: any,
+  invoiceId: string,
+  rowIds?: ReadonlyArray<string>,
+): Promise<void> {
   if (typeof invoiceId !== "string" || !invoiceId) return;
   await underSavepoint(tx, invoiceId, async () => {
     await tx.invoiceItem.updateMany({
-      where: { invoiceId },
+      where: { invoiceId, ...(rowIds && { id: { in: [...rowIds] } }) },
       data: { invoiceUnitLabel: null, invoiceUnitFactor: null, baseLabel: null },
     });
   });

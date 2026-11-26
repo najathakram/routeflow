@@ -2,8 +2,10 @@ import { Logger } from "@nestjs/common";
 import type { InvoiceDisplayUnitView } from "@routeflow/types";
 import {
   clearIssueDisplayUnits,
+  clearIssueDisplayUnitsForRows,
   freezeDraftIssueUnits,
   freezeIssueUnitsFromCatalog,
+  freezeIssueUnitsFromCatalogForRows,
   itemsWithDisplayUnits,
   loadDisplayUnitCatalog,
   loadStopDisplayUnitCatalog,
@@ -13,6 +15,7 @@ import {
   resolveLiveDisplayUnits,
   withItemDisplayUnits,
   writeIssueBaseLabels,
+  writeIssueBaseLabelsForRows,
   writeIssueDisplayUnits,
 } from "./invoice-display-unit";
 
@@ -880,5 +883,108 @@ describe("itemsWithDisplayUnits component views", () => {
       flag(true),
     );
     expect((out[0] as any).components[0]).toMatchObject({ qty: 2, displayUnitPrice4: 0.7875 });
+  });
+});
+
+/**
+ * SA-1508 A1-M1: the ROW-scoped display snapshot of an issued edit. Each helper takes the row ids it may touch; an empty set
+ * issues no statement at all (a figure-free save pays nothing). The invoice-wide helpers are the same code over every row.
+ */
+describe("row-scoped display snapshot helpers (SA-1508 A1-M1)", () => {
+  const catalogOf = () =>
+    loadDisplayUnitCatalog(
+      makeDb({ products: [productRow("p1")], business: "smallest" }),
+      TENANT,
+      CUSTOMER,
+      ["p1"],
+      flag(true),
+    );
+  const freezeTx = () => {
+    const tx: any = makeDb({ items: [{ id: "it-a", productId: "p1" }] });
+    tx.$executeRaw = jest.fn(async () => 0);
+    tx.invoiceItem.updateMany = jest.fn(async () => ({ count: 1 }));
+    return tx;
+  };
+
+  it("clearIssueDisplayUnitsForRows nulls the three display columns on THOSE rows only, under the savepoint", async () => {
+    const { tx, sql } = makeTx();
+    await clearIssueDisplayUnitsForRows(tx, "inv-1", ["it-a", "it-b"]);
+    expect(tx.invoiceItem.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.invoiceItem.updateMany).toHaveBeenCalledWith({
+      where: { invoiceId: "inv-1", id: { in: ["it-a", "it-b"] } },
+      data: { invoiceUnitLabel: null, invoiceUnitFactor: null, baseLabel: null },
+    });
+    expect(sql).toEqual([
+      "SAVEPOINT display_unit_snapshot",
+      "RELEASE SAVEPOINT display_unit_snapshot",
+    ]);
+  });
+
+  it("an empty row set (or no invoice id) issues no statement and no savepoint", async () => {
+    const { tx, sql } = makeTx();
+    await clearIssueDisplayUnitsForRows(tx, "inv-1", []);
+    await clearIssueDisplayUnitsForRows(tx, "", ["it-a"]);
+    expect(tx.invoiceItem.updateMany).not.toHaveBeenCalled();
+    expect(sql).toEqual([]);
+  });
+
+  it("the invoice-wide clear is the SAME code over every row: its where has no id key", async () => {
+    const { tx } = makeTx();
+    await clearIssueDisplayUnits(tx, "inv-1");
+    expect(tx.invoiceItem.updateMany.mock.calls[0][0].where).toEqual({ invoiceId: "inv-1" });
+  });
+
+  it("freezeIssueUnitsFromCatalogForRows reads ONLY the named rows that have no snapshot, and writes the catalog unit", async () => {
+    const catalog = await catalogOf();
+    const tx = freezeTx();
+    await freezeIssueUnitsFromCatalogForRows(tx, { id: "inv-1", tenantId: TENANT }, catalog, [
+      "it-a",
+    ]);
+    expect(tx.invoiceItem.findMany.mock.calls[0][0].where).toEqual({
+      invoiceId: "inv-1",
+      invoiceUnitFactor: null,
+      invoice: { tenantId: TENANT },
+      id: { in: ["it-a"] },
+    });
+    expect(tx.invoiceItem.updateMany.mock.calls[0][0].data).toEqual({
+      invoiceUnitLabel: "Piece",
+      invoiceUnitFactor: 1,
+    });
+  });
+
+  it("freezeIssueUnitsFromCatalogForRows: an empty row set or a null catalog reads and writes nothing", async () => {
+    const catalog = await catalogOf();
+    const tx = freezeTx();
+    await freezeIssueUnitsFromCatalogForRows(tx, { id: "inv-1", tenantId: TENANT }, catalog, []);
+    await freezeIssueUnitsFromCatalogForRows(tx, { id: "inv-1", tenantId: TENANT }, null, ["it-a"]);
+    expect(tx.invoice.findFirst).not.toHaveBeenCalled();
+    expect(tx.invoiceItem.findMany).not.toHaveBeenCalled();
+    expect(tx.invoiceItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("writeIssueBaseLabelsForRows reads ONLY the named rows that have no word, and writes the pre-tx word", async () => {
+    const { tx } = makeTx();
+    tx.invoiceItem.findMany = jest.fn(async () => [{ id: "it-a", productId: "p1" }]);
+    await writeIssueBaseLabelsForRows(tx, "inv-1", TENANT, new Map([["p1", "Bag"]]), ["it-a"]);
+    expect(tx.invoiceItem.findMany.mock.calls[0][0].where).toEqual({
+      invoiceId: "inv-1",
+      baseLabel: null,
+      productId: { not: null },
+      invoice: { tenantId: TENANT },
+      id: { in: ["it-a"] },
+    });
+    expect(tx.invoiceItem.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["it-a"] }, invoiceId: "inv-1", baseLabel: null },
+      data: { baseLabel: "Bag" },
+    });
+  });
+
+  it("writeIssueBaseLabelsForRows: an empty row set or a null map issues nothing", async () => {
+    const { tx, sql } = makeTx();
+    tx.invoiceItem.findMany = jest.fn(async () => []);
+    await writeIssueBaseLabelsForRows(tx, "inv-1", TENANT, new Map([["p1", "Bag"]]), []);
+    await writeIssueBaseLabelsForRows(tx, "inv-1", TENANT, null, ["it-a"]);
+    expect(tx.invoiceItem.findMany).not.toHaveBeenCalled();
+    expect(sql).toEqual([]);
   });
 });
