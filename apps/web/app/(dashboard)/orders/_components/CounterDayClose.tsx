@@ -162,7 +162,6 @@ function DayCloseForm({
             ? "Sales times stay the same. A corrected Z report is emailed."
             : "Count the drawer. The totals are checked again when you close."
         }
-        scroll
         closeClassName={TAP_TARGET}
         className={cn(
           "left-0 top-0 h-[100dvh] max-h-none w-screen max-w-none translate-x-0 translate-y-0 rounded-none p-4",

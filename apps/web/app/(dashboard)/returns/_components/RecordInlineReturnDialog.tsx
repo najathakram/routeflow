@@ -466,7 +466,6 @@ export function RecordInlineReturnDialog({
       description={customerName ? `For ${customerName}` : undefined}
       className="max-w-2xl"
       closeClassName="max-lg:min-h-11 max-lg:min-w-11 max-lg:inline-flex max-lg:items-center max-lg:justify-center"
-      scroll
     >
       {/* The order picker is dialog-owned state (carryingOrderId) — safe to unmount/remount
        *  for real; InlineReturnSection below is NOT: it keeps running (hidden) across a
