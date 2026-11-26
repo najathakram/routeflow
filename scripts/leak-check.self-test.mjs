@@ -663,6 +663,46 @@ try {
         RF_REBRAND_PUSH: "launch",
       });
     }
+    // Native-crash regression: decoding an odd-length Buffer view as UTF-16LE corrupts the heap on Node 24.20 /
+    // Windows (exit 127, no output). matchesBuf must survive many such views; the child is killed, not us.
+    {
+      const fz = path.join(tmpRoot, "odd-utf16-fuzz.mjs");
+      writeFileSync(
+        fz,
+        [
+          'import { pathToFileURL } from "node:url";',
+          "const lib = await import(pathToFileURL(process.argv[2]).href);",
+          "let x = 987;",
+          "const rnd = () => ((x = (x * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);",
+          "const big = Buffer.alloc(1 << 16);",
+          "for (let i = 0; i < big.length; i++) big[i] = (rnd() * 256) | 0;",
+          "for (let i = 0; i < 3000; i++) {",
+          "  const off = 1 + 2 * ((rnd() * 1000) | 0);",
+          "  const len = 1 + 2 * ((rnd() * 400) | 0);",
+          "  const v = big.subarray(off, off + len);",
+          "  v[0] = 0; // a NUL so matchesBuf takes the UTF-16 decodes",
+          "  lib.matchesBuf([/zzfixture/i], v);",
+          "}",
+          'console.log("done");',
+        ].join("\n"),
+      );
+      const r = spawnSync(process.execPath, [fz, LIB], { encoding: "utf8" });
+      check(
+        "matchesBuf survives odd-length odd-offset UTF-16 views (no native crash)",
+        r.status === 0 && /done/.test(r.stdout),
+        `exit ${r.status} ${r.stderr}`,
+      );
+      // a guard that dies without a word must still end in a refusal line from the hook
+      const crashRepo = makeRepo();
+      commit(crashRepo, { "a.txt": "x\n" }, "chore: base");
+      writeFileSync(path.join(crashRepo, "scripts", "leak-check.mjs"), "process.exit(127);\n");
+      const h = hook(crashRepo, `refs/heads/feat ${"1".repeat(40)} refs/heads/feat ${ZERO}`);
+      check(
+        "hook: a guard that crashes silently is still refused with a message",
+        h.code === 1 && /crashed \(exit 127\)/.test(h.out),
+        JSON.stringify(h),
+      );
+    }
     // B2: unreadable / non-UTF-8 patterns files refuse
     {
       const variants = {
