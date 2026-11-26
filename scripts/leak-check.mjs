@@ -12,7 +12,7 @@
 //
 // Lines of the form `path:<prefix>` (repo-relative, forward slashes, case-insensitive) list private path
 // prefixes: under --hook a push is refused when any outgoing commit adds or modifies a file under one (binary
-// files included; deletes are fine). Output names the commit and the rule number, never the path. Only a push that carries a rebrand ref lifts them (RF_REBRAND_PUSH=launch alone never does).
+// files included; deletes are fine). Output names the commit and the rule number, never the path. Only a push that carries a rebrand ref lifts them for that ref (RF_REBRAND_PUSH=launch alone never does); any other ref pushed alongside it is path-checked.
 // A `commit:` or `path:` line that does not parse refuses to load, and the file must
 // hold at least one regex (the content scan is never off).
 //
@@ -135,9 +135,24 @@ function parseAddedLines(diffBuf) {
  * for (opts.trusted) AND origin/master fully contains the parent. A failed git call is "no" (fail closed).
  */
 function publicParent(cwd, parent, git, opts) {
-  if (!opts.trusted || !opts.trusted()) return false;
+  if (!opts.trusted) return false;
   const r = git(cwd, ["rev-list", "-n1", parent, "--not", ORIGIN_MASTER]);
-  return r.ok && r.out.trim() === "";
+  if (!r.ok || r.out.trim() !== "") return false;
+  return opts.trusted(); // the remote is asked only after the cheap local check passed
+}
+
+/** Does origin/master's tree hold this path right now? A failed call is "no". */
+function masterHasPath(cwd, git, p) {
+  return git(cwd, ["cat-file", "-e", `${ORIGIN_MASTER}:${p}`]).ok;
+}
+
+/** Does origin/master's version of `file` hold this line (latin1 key) right now? Cached per scan. */
+function masterHasLine(cwd, git, cache, file, key) {
+  if (!cache.has(file)) {
+    const r = git(cwd, ["show", `${ORIGIN_MASTER}:${file}`]);
+    cache.set(file, r.ok ? new Set(splitLines(bytesOf(r)).map((l) => l.toString("latin1"))) : null);
+  }
+  return cache.get(file)?.has(key) ?? false;
 }
 
 /**
@@ -156,6 +171,8 @@ export function masterViewTrusted(cwd, url, git = gitOut) {
     cwd,
     encoding: "utf8",
     timeout: 30000,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   });
   if (r.status !== 0 || r.error) return false;
   const remote = /^([0-9a-f]{40,64})\s+refs\/heads\/master$/m.exec(r.stdout ?? "")?.[1];
@@ -172,7 +189,10 @@ export function masterViewTrusted(cwd, url, git = gitOut) {
  * exemption: when `opts.trusted()` vouches for the local view of origin/master (see masterViewTrusted), a
  * name or line that equals what ANOTHER parent holds is not charged, but only for a parent that origin/master
  * fully contains (public, and outside the range so never scanned on its own). Any other parent, a failed
- * check, a missing origin/master or no vouching means the plain first-parent scan for that merge.
+ * check, a missing origin/master or no vouching means the plain first-parent scan for that merge. Even then
+ * the excuse also needs the name / line to be in origin/master's tree NOW: content master has since removed
+ * is charged, a revert included (the parent stays reachable, the content no longer is). One `git ls-remote` (up to 30 s,
+ * fail closed) is made per push that carries a merge with an origin/master-contained parent.
  */
 export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut, opts = {}) {
   const list = git(cwd, ["rev-list", "--reverse", ...revArgs]);
@@ -189,6 +209,7 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut, opts = {}) {
     // Other parents' view of a merge: a path or line is the merge's own only when NEW against all of the
     // origin/master-contained ones (others stay out: their content is charged to the merge).
     const others = [];
+    const masterCache = new Map();
     for (const op of parents.slice(1)) {
       if (!publicParent(cwd, op, git, opts)) continue;
       const paths = changedPaths(cwd, op, sha, git);
@@ -223,7 +244,12 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut, opts = {}) {
       if (!st) break;
       const paths = /^[RC]/.test(st) ? [ns[i++], ns[i++]] : [ns[i++]];
       for (const p of paths) {
-        if (p && others.every((o) => o.paths.has(p)) && matchesBuf(regexes, p) && !seen.has(p)) {
+        if (
+          p &&
+          matchesBuf(regexes, p) &&
+          !seen.has(p) &&
+          (others.every((o) => o.paths.has(p)) || !masterHasPath(cwd, git, p))
+        ) {
           seen.add(p);
           hits.push(`commit ${short}: file name (withheld)`);
         }
@@ -258,7 +284,12 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut, opts = {}) {
       for (const l of f.lines) {
         if (!matchesBuf(regexes, l)) continue;
         const key = l.toString("latin1");
-        if (seenIn.every((set) => set?.has(key))) count++;
+        if (
+          seenIn.every((set) => set?.has(key)) ||
+          !masterHasLine(cwd, git, masterCache, f.file, key)
+        ) {
+          count++;
+        }
       }
       if (count) {
         // A quoted name (unusual bytes) is never printed, whatever it decodes to.
@@ -300,7 +331,9 @@ function scanPaths(cwd, prefixes, revArgs, hits, opts = {}) {
       const st = ns[i++];
       if (!st) break;
       const f = ns[i++];
-      if (st === "D" || !f || !others.every((o) => o.has(f))) continue;
+      if (st === "D" || !f) continue;
+      // Excused only when another contained parent holds the file AND origin/master's tree holds it now.
+      if (!others.every((o) => o.has(f)) && masterHasPath(cwd, gitOut, f)) continue;
       const low = f.toLowerCase();
       prefixes.forEach((pre, idx) => low.startsWith(pre) && ruleHits.add(idx + 1));
     }

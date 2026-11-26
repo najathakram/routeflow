@@ -398,7 +398,13 @@ try {
     {
       // remote: "fresh" (local origin/master == the remote's master), "stale" (the local origin/master holds a
       // commit the remote's master lacks), "broken" (origin cannot be reached), "other" (push to a non-origin remote).
-      const mergeRepo = ({ own = {}, evil = null, patterns = FIXTURE, remote = "fresh" } = {}) => {
+      const mergeRepo = ({
+        own = {},
+        evil = null,
+        patterns = FIXTURE,
+        remote = "fresh",
+        evilMv = null,
+      } = {}) => {
         const repo = makeRepo({ patterns });
         const base = commit(repo, { "a.txt": "hello\n" }, "chore: base");
         const bare = path.join(tmpRoot, `bare${n++}`);
@@ -417,9 +423,12 @@ try {
             "zzfixture-brand.txt": "zzfixture brand line\n",
             "site/qqsecret-page.txt": "qqsecret page\n",
             "zzpriv/page.txt": "public page\n",
+            "site/page.txt": "public page\n",
           },
           "feat: public brand",
         );
+        // the non-origin remote HOLDS the same master, so only the URL match can refuse the push
+        if (remote === "other") git(repo, ["push", "-q", other, `${tip}:refs/heads/master`]);
         if (remote !== "stale") git(repo, ["push", "-q", "origin", `${tip}:refs/heads/master`]);
         git(repo, ["update-ref", "refs/remotes/origin/master", tip]);
         if (remote === "broken") {
@@ -430,6 +439,12 @@ try {
         for (const [f, c] of Object.entries(evil ?? {})) {
           writeFileSync(path.join(repo, f), c);
           git(repo, ["add", "-f", "--", f]);
+        }
+        if (evilMv) {
+          const [from, to, body] = evilMv;
+          git(repo, ["rm", "-q", "-f", "--", from]);
+          writeFileSync(path.join(repo, to), body);
+          git(repo, ["add", "-f", "--", to]);
         }
         git(repo, ["commit", "-q", "-m", "chore: merge master"]);
         const head = git(repo, ["rev-parse", "HEAD"]);
@@ -526,6 +541,62 @@ try {
         "octopus merge with a private non-master parent still refused",
         sideMerge({ token: { "s.txt": "side zzfixture\n" }, octopus: true }),
       );
+      // A parent that origin/master contains but whose content master has since REMOVED (R1 adds, R2 removes)
+      // must not excuse that content: the excuse also needs the line / path to be in origin/master now.
+      const removedLater = ({ add, patterns = FIXTURE }) => {
+        const repo = makeRepo({ patterns });
+        const base = commit(repo, { "a.txt": "hello\n" }, "chore: base");
+        const bare = path.join(tmpRoot, `bare${n++}`);
+        git(repo, ["init", "-q", "--bare", bare]);
+        git(repo, ["remote", "add", "origin", bare]);
+        git(repo, ["checkout", "-q", "-b", "feat"]);
+        commit(repo, { "feat.txt": "clean\n" }, "feat: own work");
+        git(repo, ["checkout", "-q", "master"]);
+        const r1 = commit(repo, add, "feat: r1");
+        for (const f of Object.keys(add)) {
+          if (f === "a.txt") writeFileSync(path.join(repo, f), "hello\n");
+          else git(repo, ["rm", "-q", "--", f]);
+        }
+        git(repo, ["add", "-f", "--", "a.txt"]);
+        git(repo, ["commit", "-q", "-m", "feat: r2"]);
+        const r2 = git(repo, ["rev-parse", "HEAD"]);
+        git(repo, ["push", "-q", "origin", `${r2}:refs/heads/master`]);
+        git(repo, ["update-ref", "refs/remotes/origin/master", r2]);
+        git(repo, ["checkout", "-q", "feat"]);
+        git(repo, ["merge", "-q", "--no-ff", "-m", "chore: merge r1", r1]);
+        const head = git(repo, ["rev-parse", "HEAD"]);
+        const url = git(repo, ["remote", "get-url", "origin"]);
+        return {
+          repo,
+          head,
+          url,
+          rargs: ["origin", url],
+          line: `refs/heads/feat ${head} refs/heads/feat ${ZERO}`,
+        };
+      };
+      probe(
+        "merge of a master commit whose private file master later removed still refused",
+        removedLater({ add: { "later.txt": "was public zzfixture\n" } }),
+        1,
+      );
+      probe(
+        "merge of a master commit whose private line master later removed still refused",
+        removedLater({ add: { "a.txt": "hello\nwas public zzfixture\n" } }),
+        1,
+      );
+      probe(
+        "merge of a master commit whose private file name master later removed still refused",
+        removedLater({ add: { "qqsecret-later.txt": "innocent\n" } }),
+        1,
+      );
+      probe(
+        "merge of a master commit whose private-path file master later removed still refused",
+        removedLater({
+          patterns: `${FIXTURE}\npath:zzpriv/`,
+          add: { "zzpriv/later.txt": "x\n" },
+        }),
+        1,
+      );
       const PAT = `${FIXTURE}\npath:zzpriv/`;
       probe(
         "merge of master's files under a private path rule: 0 hits",
@@ -552,6 +623,18 @@ try {
       probe(
         "evil merge adding a private file name still fails",
         mergeRepo({ evil: { "qqsecret-evil.txt": "innocent\n" } }),
+        1,
+      );
+      probe(
+        "evil merge adding a private line to a master file with a clean name still fails",
+        mergeRepo({ evil: { "site/page.txt": "public page\nzzfixture smuggled\n" } }),
+        1,
+      );
+      probe(
+        "evil merge renaming a master file and adding a private line still fails",
+        mergeRepo({
+          evilMv: ["site/page.txt", "site/moved.txt", "public page\nzzfixture smuggled\n"],
+        }),
         1,
       );
       probe(
