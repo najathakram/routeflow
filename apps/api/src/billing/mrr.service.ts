@@ -41,6 +41,19 @@ export function isPayingRow(
   );
 }
 
+/**
+ * REG-743-N5 / SA-1539: the one rule for a paying-set row's price class, shared by computeOverview() (its payingTenants /
+ * unpricedActiveTenants / zeroPricedActiveTenants counters) and the super admin business tabs (bucket paying vs
+ * not_billed with subscribed_zero). A row counts as paying ONLY when it actually contributes money, so "N paying
+ * tenants" and "$0" are never both true for one row.
+ */
+export type PayingPriceClass = "paying" | "unpriced" | "zero_priced";
+
+export function payingPriceClass(rowPrice: number, basePriceSnapshot: unknown): PayingPriceClass {
+  if (rowPrice > 0) return "paying";
+  return basePriceSnapshot == null ? "unpriced" : "zero_priced";
+}
+
 export interface MrrPlanRow {
   planKey: string;
   tenants: number;
@@ -277,10 +290,11 @@ export class MrrService {
       // tenant pays" — a null snapshot or a full discount prices it $0. Count it as paying
       // ONLY when it actually contributes money, so "N paying tenants" and "$0" are never
       // both true for the same row.
-      if (rowPrice > 0) {
+      const priceClass = payingPriceClass(rowPrice, s.basePriceSnapshot);
+      if (priceClass === "paying") {
         payingTenants += 1;
         row.tenants += 1;
-      } else if (s.basePriceSnapshot == null) {
+      } else if (priceClass === "unpriced") {
         // Missing a snapshot AND add-ons didn't rescue it above $0 — genuinely unpriced.
         unpricedActiveTenants += 1;
       } else {
