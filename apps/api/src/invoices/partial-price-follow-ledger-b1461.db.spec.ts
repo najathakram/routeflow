@@ -297,6 +297,7 @@ describeDb(
       await repriceAndSync(s);
       // master: { qty: 4, netSales: 40, categoryTax: 0.2 } -- the follow re-priced the line and never synced the ledger
       expect(await ledgerNet(s.bId)).toEqual({ qty: 4, netSales: 48, categoryTax: 0.2 });
+      expect(await ledgerNet(s.aId)).toEqual({ qty: 4, netSales: 40, categoryTax: 0.2 }); // issued A untouched
     }, 120_000);
 
     it("pin: issued A's ledger stays at $40 (an issued partial never follows)", async () => {
