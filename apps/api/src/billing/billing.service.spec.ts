@@ -23,6 +23,7 @@ import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { BillingService } from "./billing.service";
 import { paymentReinstatableWhere } from "./dunning-config";
+import { STRIPE_CHECKOUT_APPLIED_ACTION } from "./config-snapshot-audit.constants";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { PrismaService } from "../prisma/prisma.service";
 import { StripeService } from "./stripe.service";
@@ -3726,5 +3727,95 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
     expect(
       emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
     ).toHaveLength(1);
+  });
+});
+
+// SA-1547 PR-3 (R3): a checkout that converts a business that was NEVER activated stamps `trialConvertedAt` and emits
+// TRIAL_CONVERTED, like subscribe() does. Today a checkout-converted trial drops out of the billing export.
+describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
+  const session = (over: Record<string, unknown> = {}) => ({
+    id: "cs_conv",
+    metadata: { tenantId: "t1", planKey: "GROWTH" },
+    subscription: "sub_1",
+    customer: "cus_1",
+    payment_status: "paid",
+    ...over,
+  });
+  const tenantRow = (status: string, readOnlyReason: string | null) => ({
+    id: "t1",
+    class: "PRODUCTION",
+    status,
+    readOnlyReason,
+    plan: "STARTER",
+    planVersionId: "v1",
+  });
+  const converted = (events: any) =>
+    events.emit.mock.calls.filter((c: any[]) => c[1] === BILLING_EVENTS.TRIAL_CONVERTED);
+
+  it.each([
+    ["the plan-transition hook on", true],
+    ["the plan-transition hook off", false],
+  ])(
+    "R3: a trial-expired READ_ONLY business that pays is stamped and TRIAL_CONVERTED is emitted once (%s)",
+    async (_name, hook) => {
+      const { svc, prisma, events, planTransition } = make({ transitionCount: 1 });
+      planTransition.isEnabled.mockResolvedValue(hook);
+      prisma.tenant.findUnique.mockResolvedValue(tenantRow("READ_ONLY", "trial_expired"));
+
+      await (svc as any).onCheckoutCompleted(session());
+
+      const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
+      expect(call.update.trialConvertedAt).toBeInstanceOf(Date);
+      expect(call.create.trialConvertedAt).toBeInstanceOf(Date);
+      expect(converted(events)).toHaveLength(1);
+      expect(converted(events)[0][2]).toEqual({ planKey: "GROWTH" });
+    },
+  );
+
+  it("a TRIAL business that pays is stamped too", async () => {
+    const { svc, prisma, events } = make({ transitionCount: 1 });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("TRIAL", null));
+    await (svc as any).onCheckoutCompleted(session());
+    expect(
+      prisma.tenantSubscription.upsert.mock.calls[0][0].update.trialConvertedAt,
+    ).toBeInstanceOf(Date);
+    expect(converted(events)).toHaveLength(1);
+  });
+
+  it("an ACTIVE business (a renewal-shaped completion) is never stamped and emits no TRIAL_CONVERTED", async () => {
+    const { svc, prisma, events } = make({ transitionCount: 1 });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("ACTIVE", null));
+    await (svc as any).onCheckoutCompleted(session());
+    const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
+    expect(call.update).not.toHaveProperty("trialConvertedAt");
+    expect(call.create.trialConvertedAt ?? null).toBeNull();
+    expect(converted(events)).toHaveLength(0);
+  });
+
+  it("a suspended-and-reinstated business (paid before) is not a trial conversion", async () => {
+    const { svc, prisma, events } = make({ transitionCount: 1 });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("SUSPENDED", "overdue_suspended"));
+    await (svc as any).onCheckoutCompleted(session());
+    expect(converted(events)).toHaveLength(0);
+  });
+
+  it("an UNSETTLED session (a bank debit in flight) links but does not stamp: nothing converted yet", async () => {
+    const { svc, prisma, events } = make({ transitionCount: 1 });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("READ_ONLY", "trial_expired"));
+    await (svc as any).onCheckoutCompleted(session({ payment_status: "unpaid" }));
+    const call = prisma.tenantSubscription.upsert.mock.calls[0][0];
+    expect(call.update).not.toHaveProperty("trialConvertedAt");
+    expect(converted(events)).toHaveLength(0);
+  });
+
+  it("a redelivery of an already-applied session emits nothing (the APPLIED marker is the idempotency key)", async () => {
+    const { svc, prisma, tx, events } = make({ transitionCount: 1 });
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow("READ_ONLY", "trial_expired"));
+    const applied = (args: any) =>
+      args?.where?.action === STRIPE_CHECKOUT_APPLIED_ACTION ? { id: "applied" } : null;
+    prisma.auditLog.findFirst.mockImplementation(async (args: any) => applied(args));
+    tx.auditLog.findFirst.mockImplementation(async (args: any) => applied(args));
+    await (svc as any).onCheckoutCompleted(session());
+    expect(converted(events)).toHaveLength(0);
   });
 });
