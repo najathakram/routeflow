@@ -29,8 +29,6 @@
 .a-nav{display:grid;gap:2px;list-style:none;padding:0;margin:0}
 .a-nav li{display:flex;align-items:center;gap:12px;height:38px;padding:0 12px;border-radius:6px;font-size:14px}
 .a-nav .ico{width:18px;height:18px;stroke-width:1.8;color:rgba(255,255,255,.62)}
-.a-nav li.on{background:rgba(255,255,255,.1);color:var(--rf-white);border-left:2.5px solid var(--app-on);padding-left:9.5px}
-.a-nav li.on .ico{color:var(--app-on)}
 .a-collapse{margin-top:auto;padding:8px 12px;font-size:13px;color:rgba(255,255,255,.62)}
 .a-main{padding:0 26px 22px;display:flex;flex-direction:column;min-width:0;background:var(--rf-white)}
 .a-top{display:flex;align-items:center;gap:14px;height:58px;margin:0 -26px 20px;padding:0 26px;border-bottom:1px solid var(--app-line)}
@@ -38,7 +36,6 @@
 .a-search kbd{margin-left:auto;font:inherit;font-size:12px;color:var(--app-ink-3);background:var(--rf-white);border:1px solid var(--app-line-2);border-radius:4px;padding:0 6px}
 .a-bell{margin-left:auto;color:var(--app-ink-2);display:grid;place-items:center;width:34px;height:34px}
 .a-bell .ico{width:18px;height:18px}
-.a-av{width:30px;height:30px;border-radius:50%;background:var(--app-soft);color:var(--app-deep);display:grid;place-items:center;font-size:12px;font-weight:600}
 .a-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px}
 .a-h1{font-size:24px;font-weight:600;letter-spacing:-.02em;color:var(--app-ink);line-height:1.2}
 .a-sub{font-size:13.5px;color:var(--app-ink-3);margin-top:2px}
@@ -78,7 +75,6 @@
 .a-usual{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:12px}
 .a-usual .a-label{margin:0 4px 0 0}
 .a-chip2{font-style:normal;height:26px;padding:0 10px;border-radius:999px;background:var(--rf-white);border:1px solid var(--app-line-2);font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;color:var(--app-ink-2)}
-.a-link2{font-style:normal;font-size:12.5px;font-weight:600;color:var(--app-deep);margin-left:4px}
 .a-label--p{margin-top:14px}
 .a-prod{display:flex;gap:8px}
 .a-lines{margin-top:12px;border:1px solid var(--app-line);border-radius:10px}
@@ -262,8 +258,6 @@
 .b-nav{list-style:none;margin:0;padding:0;display:grid;gap:2px}
 .b-nav li{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:6px}
 .b-nav .ico{width:17px;height:17px;color:rgba(255,255,255,.7)}
-.b-nav li.on{background:rgba(255,255,255,.14);color:var(--rf-white);border-left:2.5px solid var(--buy-on);padding-left:7.5px}
-.b-nav li.on .ico{color:var(--buy-on)}
 .b-badge{margin-left:auto;font-style:normal;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--buy-p);color:var(--rf-white);font-size:11.5px;font-weight:700;display:grid;place-items:center}
 .b-main{padding:22px 24px;background:var(--rf-white);min-width:0}
 .b-search{margin-top:14px;height:38px;max-width:none}
@@ -295,7 +289,6 @@
 .sp-scr{border-radius:36px;background:var(--rf-white);padding:26px 16px 18px;font-size:13px;line-height:1.35}
 .sp-top{display:flex;justify-content:space-between;align-items:center}
 .sp-top b{font-size:20px;font-weight:700;letter-spacing:-.015em}
-.sp-top span{font-size:12.5px;font-weight:600;color:var(--buy-deep)}
 .sp-all{margin-top:12px;height:40px;border-radius:12px;background:var(--buy-p);color:var(--rf-white);display:grid;place-items:center;font-weight:600;font-size:13.5px}
 .sp-h{margin-top:16px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--app-ink-3)}
 .sp-r{padding:11px 0;border-bottom:1px solid var(--app-line)}
@@ -304,8 +297,6 @@
 .sp-m{font-size:12px;color:var(--app-ink-3);margin-top:2px}
 .sp-m b{font-weight:600;color:var(--app-ink-2)}
 .sp-q{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;font-size:12.5px;color:var(--app-ink-2)}
-.sp-q em{font-style:normal;color:var(--buy-deep);font-weight:600;margin-left:3px}
-.sp-q i{font-style:normal;flex:none;height:30px;padding:0 14px;border-radius:8px;border:1px solid var(--buy-200);color:var(--buy-deep);font-weight:600;display:grid;place-items:center}
 
 /* ---------- 6. Counter ---------- */
 .ct{background:var(--rf-soft)}

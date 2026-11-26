@@ -306,7 +306,7 @@ const ILLUSTRATIONS: Record<string, number> = {
   "data-in-and-out": 0,
   "does-and-doesnt": 0,
   "getting-started": 1,
-  home: 16,
+  home: 7,
   landing: 0,
   pricing: 0,
   product: 5,
@@ -374,9 +374,9 @@ describe("T10: copy rules over the visible text of every page", () => {
 describe("SA-C lines, #4531 M3 and M4: one name and no domain in the legal pages", () => {
   const read = (rel: string) => readFileSync(join(__dirname, rel), "utf8");
 
-  it("the portal picture on the home page carries the neutral label, no brand token", () => {
+  it("the home page has no portal picture, so no portal label", () => {
     const html = served("home");
-    expect(html).toContain("<b>Your stores' ordering page</b>");
+    expect(html).not.toContain("<b>Your stores' ordering page</b>");
     expect(html).not.toContain("<b>Buyer Portal</b>");
   });
 

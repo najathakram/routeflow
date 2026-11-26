@@ -880,7 +880,7 @@ const PICTURE_BRAND = "picture of the app in brand colours (owner, 2026-11-21, S
 const PICTURE_BRAND_PREFIX = "picture of the app in brand colours";
 // A custom property that aliases a copper token; it paints nothing, so it is judged by its readers (SA-1203 A16).
 const COPPER_ALIAS = "copper alias, every reader tagged (SA-1203 A16)";
-const COPPER_ALIAS_COUNT = 5;
+const COPPER_ALIAS_COUNT = 2;
 
 const [LOGO, WHEEL, STEP, BARS, DOT, NOTE, LINK] = R17_JOBS;
 // The source cell of a row for a rule inside an @media block is the scanner's own prefix: file :: chain.
@@ -897,13 +897,7 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ],
   ["css/home-up.css", ".featured .pm-bar i", "background", BARS],
   ["css/home-up.css", ".pm-bar i", "background", BARS],
-  ["css/home.css", ".a-av", "color", PICTURE_BRAND],
-  ["css/home.css", ".a-link2", "color", PICTURE_BRAND],
-  ["css/home.css", ".a-nav li.on", "border-left", PICTURE_BRAND],
-  ["css/home.css", ".a-nav li.on .ico", "color", PICTURE_BRAND],
   [HOME_MQ, ".ans-i--p .ans-bar", "background", PICTURE_BRAND],
-  ["css/home.css", ".b-nav li.on", "border-left", PICTURE_BRAND],
-  ["css/home.css", ".b-nav li.on .ico", "color", PICTURE_BRAND],
   ["css/home.css", ".end-mail a", "color", LINK],
   [HOME_MQ, ".fd-more", "color", LINK],
   ["css/home.css", ".fd-note a", "color", LINK],
@@ -914,9 +908,6 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ["css/home.css", ".n3", "background", NOTE],
   ["css/home.css", ".rt-d--now", "fill", STEP],
   [HOME_MQ, ".sp-all", "color", LINK],
-  ["css/home.css", ".sp-q em", "color", PICTURE_BRAND],
-  ["css/home.css", ".sp-q i", "color", PICTURE_BRAND],
-  ["css/home.css", ".sp-top span", "color", PICTURE_BRAND],
   ["css/product.css", ".pd main a:not(.btn):not(.pd-tile):not(.link):not(.pd-go)", "color", LINK],
   ["css/product.css", ".pd-go", "color", LINK],
   ["css/product.css", ".pd-more summary", "color", LINK],
@@ -926,10 +917,7 @@ const COPPER_ALLOW: Array<[source: string, selectors: string, property: string, 
   ["css/site.css", ".link", "color", LINK],
   ["css/site.css", ".pg-top .eyebrow::before", "background", DOT],
   ["css/start.css", ".gs-step a:not(.link)", "color", LINK],
-  ["graphics/rf-graphics.css", ":root", "--app-deep", COPPER_ALIAS],
-  ["graphics/rf-graphics.css", ":root", "--app-on", COPPER_ALIAS],
   ["graphics/rf-graphics.css", ":root", "--buy-deep", COPPER_ALIAS],
-  ["graphics/rf-graphics.css", ":root", "--buy-on", COPPER_ALIAS],
   ["graphics/rf-graphics.css", ":root", "--rf-accent", TOKEN_DEF],
   ["graphics/rf-graphics.css", ":root", "--rf-accent-on-panel", TOKEN_DEF],
   ["graphics/rf-graphics.css", ":root", "--rf-copper", TOKEN_DEF],
@@ -1071,10 +1059,11 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  *  another A16 alias in EVERY rule that defines it, has at least one reader, and every reader is a tagged
  *  row. A reader is found by name, case-insensitively, in every rule of every stylesheet, <style> and
  *  style="" of the site pages (value or property), and in their other text and scripts. */
-function aliasOffences(
+function aliasOffencesAt(
   rows: Array<[string, string, string, string]>,
   rules: CopperRule[],
   texts: Array<{ name: string; text: string }>,
+  pin: number,
 ): string[] {
   const out: string[] = [];
   const names = aliasNames(rows);
@@ -1121,10 +1110,15 @@ function aliasOffences(
       }
     if (readers === 0) out.push(`${key} (a dead alias: no reader)`);
   }
-  if (rows.filter((r) => r[3] === COPPER_ALIAS).length !== COPPER_ALIAS_COUNT)
-    out.push(`copper alias rows are not ${COPPER_ALIAS_COUNT}`);
+  if (rows.filter((r) => r[3] === COPPER_ALIAS).length !== pin)
+    out.push(`copper alias rows are not ${pin}`);
   return [...new Set(out)];
 }
+const aliasOffences = (
+  rows: Array<[string, string, string, string]>,
+  rules: CopperRule[],
+  texts: Array<{ name: string; text: string }>,
+): string[] => aliasOffencesAt(rows, rules, texts, COPPER_ALIAS_COUNT);
 /** A custom-property name built by concatenation or a template (SA-1203 A20 R7). */
 const dynamicPropertyNames = (text: string): string[] =>
   [
@@ -1184,7 +1178,7 @@ const siteJsFiles = (): JsFile[] => {
 
 // The pinned source census (A20 R4, A24 item 7): a new source is a reviewed diff, never a re-pin.
 const CENSUS_NOW: SourceCensus = {
-  stylesheets: 13,
+  stylesheets: 14,
   styleBlocks: 1,
   paletteBlocks: 10,
   styleAttrs: 24,
@@ -1193,7 +1187,7 @@ const CENSUS_NOW: SourceCensus = {
   svgStyles: 0,
   dataUrls: 7,
   escapes: 0,
-  inlineSvg: 268,
+  inlineSvg: 222,
   noscript: 0,
   inlineScripts: 11,
 };
@@ -1781,7 +1775,7 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
     const jobs = COPPER_ALLOW.filter((r) => (R17_JOBS as readonly string[]).includes(r[3])).length;
     expect(n(PENDING_OWNER)).toBe(0);
     expect(jobs + n(TOKEN_DEF) + n(PICTURE_BRAND) + n(COPPER_ALIAS)).toBe(COPPER_ALLOW.length);
-    expect([n(TOKEN_DEF), n(PICTURE_BRAND), n(COPPER_ALIAS)]).toEqual([10, 10, 5]);
+    expect([n(TOKEN_DEF), n(PICTURE_BRAND), n(COPPER_ALIAS)]).toEqual([10, 1, 2]);
   });
 
   describe("planted brand-picture and alias fixtures (SA-1203 A9, A16)", () => {
@@ -1891,11 +1885,18 @@ describe("T17 static: copper only in listed jobs, never a status", () => {
       rule1(sel, value, prop);
     const AL = (prop: string): Row => ["css/x.css", ":root", prop, COPPER_ALIAS];
     const LINK_ROW = (sel: string): Row => ["css/x.css", sel, "color", R17_JOBS[6]];
+    // The planted fixtures keep their five aliases whatever the real page pins (SA-1203 A16 plants).
+    const FIXTURE_ALIASES = 5;
+    const aliasOffences = (
+      rows: Array<[string, string, string, string]>,
+      rules: CopperRule[],
+      texts: Array<{ name: string; text: string }>,
+    ) => aliasOffencesAt(rows, rules, texts, FIXTURE_ALIASES);
     // five aliases, each with one tagged link reader: a green fixture
     const fixture = () => {
       const rows: Row[] = [];
       const rules: CopperRule[] = [];
-      for (let i = 0; i < COPPER_ALIAS_COUNT; i++) {
+      for (let i = 0; i < FIXTURE_ALIASES; i++) {
         const prop = "--a" + i;
         rows.push(AL(prop), LINK_ROW(".r" + i));
         rules.push(def(prop, i % 2 ? "var(--rf-accent)" : "var(--rf-copper-dark)"));

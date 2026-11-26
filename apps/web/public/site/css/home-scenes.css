@@ -1,0 +1,56 @@
+/* The four small scenes of the owner's motion sketch: a store orders, a customer buys at the counter, a driver delivers,
+   the owner is done. Drawn as inline SVG; JS (js/home-scenes.js) moves them. Colours are jobs from rf-graphics.css, never typed here. */
+.dl{background:var(--rf-white)}
+.sc-two{display:grid;gap:clamp(28px,5vw,88px);align-items:center;padding:clamp(100px,11vw,150px) 0}
+.sc-copy .sub{margin-top:14px}
+.sc-copy .ct-note{margin-top:16px}
+.sc-ill{margin:0;width:100%;max-width:560px;justify-self:center;padding:clamp(10px,2vw,28px);background:var(--rf-white);border-radius:var(--rf-r-card);box-shadow:var(--rf-ring)}
+.band-white .sc-ill{background:var(--rf-bone)}
+.sc-ill svg{display:block;width:100%;height:auto;overflow:hidden}
+.sc-ill text{font-family:var(--rf-font)}
+/* The art is only drawn once the script has put every part in its place. */
+.sc-ill:not(.is-set){visibility:hidden}
+html:not(.js-motion) .sc-ill{display:none}
+@media (min-width:900px){
+  .sc-two{grid-template-columns:1fr 1fr}
+  .sc-two--flip .sc-copy{order:2}
+  .sc-two--flip .sc-ill{order:1}
+}
+@media (max-width:899.98px){
+  .sc-two{padding:60px 0}
+  .sc-ill{max-width:420px}
+}
+
+/* Scene colours */
+:root{
+  --sc-mid:color-mix(in srgb,var(--rf-steel) 45%,var(--rf-white));
+  --sc-steel-d:color-mix(in srgb,var(--rf-steel) 70%,var(--rf-ink));
+  --sc-gray:color-mix(in srgb,var(--rf-steel) 55%,var(--rf-white));
+  --sc-skin-b:color-mix(in srgb,var(--rf-skin-a) 80%,var(--rf-ink));--sc-skin-c:color-mix(in srgb,var(--rf-skin-a) 55%,var(--rf-ink));--sc-skin-d:color-mix(in srgb,var(--rf-skin-a) 92%,var(--rf-ink));
+}
+.sc-g{fill:none;stroke:var(--sc-mid);stroke-width:3;stroke-linecap:round}
+.sc-f-white{fill:var(--rf-white)}.sc-f-bone{fill:var(--rf-bone)}.sc-f-line{fill:var(--rf-line)}.sc-f-mid{fill:var(--sc-mid)}
+.sc-f-ink{fill:var(--rf-ink)}.sc-f-steel{fill:var(--rf-steel)}.sc-f-sell{fill:var(--rf-wh-sell-2)}
+.sc-f-box{fill:var(--rf-box-front)}.sc-f-tape{fill:var(--rf-box-top)}.sc-f-side{fill:var(--rf-box-side)}
+.sc-f-ok{fill:var(--rf-paid)}.sc-f-warn{fill:var(--rf-pending-bg)}.sc-f-wall{fill:var(--rf-wh-work-wall)}
+.sc-f-beam{fill:var(--rf-overdue)}
+.sc-s-line{stroke:var(--rf-line)}.sc-s-mid{stroke:var(--sc-mid)}.sc-s-ink{stroke:var(--rf-ink)}.sc-s-beam{stroke:var(--rf-overdue)}
+.sc-s-ok{stroke:var(--rf-paid)}.sc-s-white{stroke:var(--rf-white)}.sc-s-glass{stroke:var(--rf-line)}
+.sc-t-ink{fill:var(--rf-ink)}.sc-t-white{fill:var(--rf-white)}.sc-t-warn{fill:var(--rf-pending)}
+.sc-i0{fill:var(--rf-ink)}.sc-i1{fill:var(--rf-steel)}.sc-i2{fill:var(--rf-box-front)}.sc-i3{fill:var(--rf-wh-sell-2)}
+.sc-i4{fill:var(--rf-box-side)}.sc-i5{fill:var(--rf-wh-work-wall)}
+.sc-ring-a{fill:none;stroke:var(--rf-steel)}.sc-ring-b{fill:none;stroke:var(--rf-box-front)}.sc-f-hub{fill:var(--rf-ink)}
+.sc-note{fill:var(--rf-pending-bg)}
+/* A person: the colours come from the cast's own custom properties. */
+.sc-pp{--pp-shoe:var(--rf-ink)}
+[data-person="store"]{--pp-shirt:var(--rf-steel);--pp-dark:var(--sc-steel-d);--pp-pants:var(--rf-ink);--pp-skin:var(--sc-skin-b);--pp-hair:var(--rf-hair)}
+[data-person="clerk"]{--pp-shirt:var(--rf-wh-sell-2);--pp-dark:var(--rf-ink);--pp-pants:var(--rf-ink);--pp-skin:var(--rf-skin-a);--pp-hair:var(--rf-hair)}
+[data-person="walkin"]{--pp-shirt:var(--rf-box-front);--pp-dark:var(--rf-box-side);--pp-pants:var(--rf-steel);--pp-skin:var(--sc-skin-c);--pp-hair:var(--rf-ink)}
+[data-person="driver"]{--pp-shirt:var(--rf-ink);--pp-dark:var(--rf-ink-press);--pp-pants:var(--rf-steel);--pp-skin:var(--sc-skin-d);--pp-hair:var(--rf-hair)}
+[data-person="owner"]{--pp-shirt:var(--rf-ink);--pp-dark:var(--rf-ink-press);--pp-pants:var(--rf-steel);--pp-skin:var(--sc-skin-d);--pp-hair:var(--sc-gray)}
+.pp-shirt{fill:var(--pp-shirt)}.pp-dark-s{fill:none;stroke:var(--pp-dark)}.pp-shirt-s{fill:none;stroke:var(--pp-shirt)}
+.pp-pants{fill:var(--pp-pants)}.pp-skin{fill:var(--pp-skin)}.pp-hair{fill:var(--pp-hair)}.pp-shoe{fill:var(--pp-shoe)}
+.pp-apron{fill:var(--rf-bone)}.pp-cap{fill:var(--rf-steel)}.pp-brim{fill:var(--sc-steel-d)}
+.pp-eye{fill:var(--rf-ink)}.pp-mouth{fill:none;stroke:var(--rf-ink);stroke-width:1.6;stroke-linecap:round}
+.pp-scr{fill:var(--sc-mid)}.pp-scr-on{fill:var(--rf-box-top)}.pp-phone{fill:var(--rf-ink)}
+.pp-opaque{opacity:.82}

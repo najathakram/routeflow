@@ -270,11 +270,10 @@
     });
   }
   function journeyDesk(s, keep) {
-    var pin = $(".jr-pin", s), track = $(".jr-track", s), panels = $$(".jr-p", s), bar = $(".jr-bar", s), rtLine = $(".rt-l", s), rtDots = $$(".rt-d", s);
+    var pin = $(".jr-pin", s), track = $(".jr-track", s), panels = $$(".jr-p", s), bar = $(".jr-bar", s);
     var figs = panels.map(function (p) { return $(".jr-fig", p); });
     var ordTot = $(".jr-p:nth-child(1) .a-sum b", s), invTots = $$(".jr-p:nth-child(2) .a-tots p > :last-child", s);
     var paid = $$(".jr-pd .a-tots p > :last-child", s), paidPill = $(".jr-pd .a-pill", s), payRow = $(".jr-pd .a-pay", s), chk = $(".jr-pd .chk, .jr-paid .chk", s);
-    var phone = $(".dv", s);
     var rowsOf = function (i) { return $$(".a-r:not(.a-rh)", panels[i]); };
     /* Payments received and the balance always add up to the invoice, on every frame. */
     var payCount = function () {
@@ -297,11 +296,6 @@
           .add(stepSum(keep, invTots, [0, 45, 81, 111], 0.42), 0.2);
       },
       function (tl) {
-        tl.fromTo(phone, { opacity: 0, y: 60 }, { opacity: 1, y: 0 }, 0)
-          .fromTo(rtLine, { strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.6, ease: "none" }, 0.1)
-          .fromTo(rtDots, { scale: 0, transformOrigin: "50% 50%" }, { scale: 1, duration: 0.18, stagger: { each: 0.14 } }, 0.1);
-      },
-      function (tl) {
         tl.fromTo(chk, { opacity: 0, x: -50, rotation: -9 }, { opacity: 1, x: 0, rotation: -4 }, 0)
           .add(payCount(), 0.45)
           .fromTo(payRow, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3 }, 0.8)
@@ -317,17 +311,17 @@
     /* The track moves with the scroll, ease none; everything inside rides on it (containerAnimation). */
     var move = g.to(track, { x: function () { return -dist(); }, ease: "none",
       scrollTrigger: { trigger: pin, start: "top top", end: function () { return "+=" + dist(); }, pin: true, scrub: SCRUB, invalidateOnRefresh: true, onToggle: wc([track, bar]) } });
-    g.fromTo(bar, { x: 0 }, { x: function () { return bar.offsetWidth * 3; }, ease: "none",
+    g.fromTo(bar, { x: 0 }, { x: function () { return bar.offsetWidth * (panels.length - 1); }, ease: "none",
       scrollTrigger: { trigger: pin, start: "top top", end: function () { return "+=" + dist(); }, scrub: SCRUB, invalidateOnRefresh: true } });
     /* No tween that waits on a toggleActions trigger hides its target before the trigger fires (immediateRender false in each timeline's
-     defaults); only the scrubbed scenes, whose progress is the scroll, set their start state. Step 1 plays once as the section arrives; steps 2-4 as each one slides in. */
+     defaults); only the scrubbed scenes, whose progress is the scroll, set their start state. Step 1 plays once as the section arrives; steps 2-3 as each one slides in. */
     step[0](g.timeline({ defaults: { immediateRender: false, ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: s, start: "top 60%", onEnter: go, toggleActions: "none none none none" } }));
-    for (var i = 1; i < 4; i++) step[i](g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: panels[i], containerAnimation: move, start: "left 78%", end: "left 22%", scrub: SCRUB } }));
+    for (var i = 1; i < panels.length; i++) step[i](g.timeline({ defaults: { ease: "power2.out", duration: 0.6 }, scrollTrigger: { trigger: panels[i], containerAnimation: move, start: "left 78%", end: "left 22%", scrub: SCRUB } }));
     /* One step in focus: the panels either side stay dim. Opacity only, riding on the track. */
     panels.forEach(function (p, i) {
       var fade = g.timeline({ defaults: { ease: "none", duration: 1 }, scrollTrigger: { trigger: p, containerAnimation: move, start: "left right", end: "right left", scrub: SCRUB } });
       if (i) fade.fromTo(p, { opacity: 0.14 }, { opacity: 1 }, 0.2);
-      if (i < 3) fade.fromTo(p, { opacity: 1 }, { opacity: 0.14, immediateRender: false }, 2.4);
+      if (i < panels.length - 1) fade.fromTo(p, { opacity: 1 }, { opacity: 0.14, immediateRender: false }, 2.4);
       fade.to({}, { duration: 0.2 }, 3.4);
     });
     return function () { ST.removeEventListener("refreshInit", fitFigs); };

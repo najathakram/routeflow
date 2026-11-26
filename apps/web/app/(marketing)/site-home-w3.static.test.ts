@@ -242,7 +242,7 @@ describe("home.html: pictures and cards by role", () => {
 
   it("no use-case card carries an inline colour pair", () => {
     const cards = html.match(/class="inc-i"/g) ?? [];
-    if (cards.length < 20) throw new Error(`expected the use-case cards, found ${cards.length}`);
+    if (cards.length < 10) throw new Error(`expected the use-case cards, found ${cards.length}`);
     expect(html.match(/style="[^"]*--p[ci]:/g) ?? []).toEqual([]);
   });
 
