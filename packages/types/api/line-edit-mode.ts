@@ -108,7 +108,7 @@ export function fillLockedCopy(
 ): string {
   const template =
     reason === "STATUS"
-      ? (LINE_STATUS_COPY[words.status ?? ""] ?? LINE_STATUS_COPY.PENDING)
+      ? (LINE_STATUS_COPY[words.status ?? ""] ?? LINE_STATUS_COPY.PENDING ?? "")
       : reason === "RETURN_REMAINDER" && words.stopLinked
         ? RETURN_REMAINDER_STOP_COPY
         : LINE_LOCKED_COPY[reason];
