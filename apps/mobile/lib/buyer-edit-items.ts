@@ -1,4 +1,14 @@
-import { formatQtySplit } from "@routeflow/pricing";
+import {
+  editRowCount,
+  editRowLimitLine,
+  editRowMax,
+  formatQtySplit,
+  pricedPerLabel,
+  seedEditRowUnit,
+  setEditRowCount,
+  type EditRow,
+  type EditRowUnit,
+} from "@routeflow/pricing";
 import type { BuyerOrderItemEdit } from "@routeflow/types";
 import { unitLineCount } from "./edit-items-draft";
 import { invoiceLineUnitNoun } from "./invoice-line-display";
@@ -21,10 +31,11 @@ export interface BuyerOrderLineLike {
   qty: number | string;
   unitPrice: number | string;
   boxes?: number | null;
+  pieces?: number | null;
   unitsPerBox?: number | null;
   unitLabel?: string | null;
   status?: string | null;
-  product?: { name?: string; unit?: string } | null;
+  product?: { name?: string; unit?: string; unitsPerBox?: number | null } | null;
 }
 
 export interface BuyerDraftItem {
@@ -39,8 +50,12 @@ export interface BuyerDraftItem {
   unit?: string;
   /** Set only when the count below is the unit's COUNT, so the row never reads "48 / Case". */
   unitLabel?: string | null;
+  /** The wire quantity: PIECES on a box-split line, packs on a pack row (the count shown is `draftCount`). */
   qty: number;
   unitPrice: number;
+  /** B1395: the product's pack TODAY (the server re-splits at it) and the unit the row counts in, decided at seed. */
+  unitsPerBox?: number | null;
+  editUnit?: EditRowUnit;
   /** A live unit line whose COUNT can't be derived (SA-388 LOCKED) — shown as "locked", never a number. */
   locked?: boolean;
 }
@@ -114,41 +129,133 @@ export function hydrateBuyerDraft(
       unitLabel: count != null ? li.unitLabel : null,
       qty: count ?? Number(li.qty),
       unitPrice: Number(li.unitPrice),
+      unitsPerBox: li.product?.unitsPerBox ?? null,
+      // a unit line is read-only here and already holds its COUNT; every other row counts in its seeded unit
+      editUnit: unitLine
+        ? "PACK"
+        : seedEditRowUnit({
+            orderItemId: li.id,
+            qty: Number(li.qty),
+            boxes: li.boxes,
+            pieces: li.pieces,
+            storedUnitsPerBox: li.unitsPerBox,
+            unitsPerBox: li.product?.unitsPerBox ?? null,
+          }),
       ...(unitLine && count == null ? { locked: true } : {}),
     };
   }
   return draft;
 }
 
-/** A row's stepper: a count of 0 or less drops the row from the draft, any other count replaces it. */
-export function setDraftQty(
-  d: Record<string, BuyerDraftItem>,
-  key: string,
-  qty: number,
-): Record<string, BuyerDraftItem> {
-  if (qty <= 0) {
-    const next = { ...d };
-    delete next[key];
-    return next;
-  }
-  return { ...d, [key]: { ...d[key], qty } };
+/** The row as the one pricing helper reads it (B1395): step, typed count, bound and limit line all go through it. */
+function editRowOf(i: BuyerDraftItem): EditRow {
+  return { orderItemId: i.orderItemId, qty: i.qty, unitsPerBox: i.unitsPerBox, unit: i.editUnit };
+}
+
+/** The count the row's box shows: whole boxes on a box line, else its qty (SA-1292). */
+export function draftCount(i: BuyerDraftItem): number {
+  return editRowCount(editRowOf(i));
+}
+
+/** The most the row may count (8,333 boxes at 12 a box); the box passes it to `QtyTextInput`. */
+export function draftMax(i: BuyerDraftItem): number {
+  return editRowMax(editRowOf(i));
+}
+
+export interface DraftEdit {
+  draft: Record<string, BuyerDraftItem>;
+  /** The row a count of 0 or less just took out of the draft, for the Undo strip. Null for any other edit. */
+  removed: BuyerDraftItem | null;
+  /** The limit sentence when the count hit the bound, else null. */
+  limit: string | null;
 }
 
 /**
- * Add from the catalog: +1 to a row of that product still in the draft, else a new row with no line id at the
- * catalog's buyer price. A row stepped to 0 has left the draft, so adding its product back is a new row
- * (SA-1131 R-4); the server reads that unnamed count as the pack (SA-601).
+ * B1395 (SA-1292): set a row's count in ITS unit; "+", "-", the typed box and every other writer come through here.
+ * A count of 0 or less takes the row out of the draft (the screen offers Undo), a count past the bound stays at it
+ * and says so, and any other count becomes `setEditRowCount`'s qty (PIECES on a box line, so the wire never changes).
+ */
+export function setDraftCount(
+  d: Record<string, BuyerDraftItem>,
+  key: string,
+  count: number,
+): DraftEdit {
+  const row = d[key];
+  if (!row) return { draft: d, removed: null, limit: null };
+  if (!(Math.trunc(Number(count)) > 0)) {
+    const { [key]: removed, ...rest } = d;
+    return { draft: rest, removed, limit: null };
+  }
+  const limit = count > draftMax(row) ? editRowLimitLine(editRowOf(row), { unit: row.unit }) : null;
+  return {
+    draft: { ...d, [key]: { ...row, qty: setEditRowCount(editRowOf(row), count) } },
+    removed: null,
+    limit,
+  };
+}
+
+/** One tap of "+" (1) or "-" (-1): one of the row's own unit. */
+export function stepDraftCount(
+  d: Record<string, BuyerDraftItem>,
+  key: string,
+  delta: number,
+): DraftEdit {
+  const row = d[key];
+  if (!row) return { draft: d, removed: null, limit: null };
+  return setDraftCount(d, key, draftCount(row) + delta);
+}
+
+/**
+ * Undo: put a removed row back exactly. Its key cannot be held again before Undo: a re-add from the catalog is a new
+ * row under its own key (the removed line's id is never reused) and the screen drops the Undo on any add.
+ */
+export function restoreDraftRow(
+  d: Record<string, BuyerDraftItem>,
+  removed: BuyerDraftItem,
+): Record<string, BuyerDraftItem> {
+  return { ...d, [draftKey(removed)]: removed };
+}
+
+/**
+ * Add from the catalog: one more of the unit of a row of that product still in the draft (a box on a box row, a pack
+ * on a pack row), else a new row with no line id at the catalog's buyer price. A row stepped to 0 has left the
+ * draft, so adding its product back is a new row (SA-1131 R-4); the server reads that unnamed count as the pack
+ * (SA-601), so a new row is PACK.
  */
 export function addCatalogItem(
   d: Record<string, BuyerDraftItem>,
-  p: { id: string; name: string; unit?: string; buyerPrice: number },
+  p: { id: string; name: string; unit?: string; buyerPrice: number; unitsPerBox?: number | null },
 ): Record<string, BuyerDraftItem> {
   const held = Object.values(d).find((i) => i.productId === p.id);
-  if (held) return { ...d, [draftKey(held)]: { ...held, qty: held.qty + 1 } };
+  if (held) return stepDraftCount(d, draftKey(held), 1).draft;
   return {
     ...d,
-    [p.id]: { productId: p.id, name: p.name, unit: p.unit, qty: 1, unitPrice: p.buyerPrice },
+    [p.id]: {
+      productId: p.id,
+      name: p.name,
+      unit: p.unit,
+      qty: 1,
+      unitPrice: p.buyerPrice,
+      unitsPerBox: p.unitsPerBox ?? null,
+      editUnit: "PACK",
+    },
   };
+}
+
+/**
+ * The price line under a row or a catalog entry: "$18.00 per box (12 cans)". The unit word is `pricedPerLabel`'s, so
+ * a box price never reads "per can" (B1383); a units_v1 line keeps its own unit's name (#2222).
+ */
+export function buyerEditPriceText(item: {
+  unitPrice: number;
+  unit?: string;
+  unitsPerBox?: number | null;
+  unitLabel?: string | null;
+}): string {
+  const money = `$${item.unitPrice.toFixed(2)}`;
+  if (item.unitLabel?.trim()) return `${money} / ${invoiceLineUnitNoun(item)}`;
+  if (!item.unit) return money;
+  return `${money} ${pricedPerLabel({ unit: item.unit, unitsPerBox: item.unitsPerBox }).perText}`;
 }
 
 /**
