@@ -290,10 +290,6 @@ export class SettingsBillingController {
     if (portalUrl || hostedInvoiceUrl) return { portalUrl, hostedInvoiceUrl };
     // Neither is available. A workspace with no Stripe customer (manual / external payment) is a clean 400; a Stripe
     // outage is a retryable 503. Both coded, never a bare 500.
-    // W-1464: the live-payments wall's own coded 409 is not an outage; it reaches the caller as is
-    if (portal.status === "rejected" && isLivePaymentsRefusal(portal.reason)) {
-      throw portal.reason;
-    }
     if (portal.status === "rejected" && portal.reason instanceof BadRequestException) {
       throw new BadRequestException({
         code: API_ERROR_CODES.BILLING_PORTAL_UNAVAILABLE,
