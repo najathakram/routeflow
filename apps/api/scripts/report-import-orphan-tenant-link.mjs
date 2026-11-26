@@ -31,7 +31,7 @@ const NAME = "report-import-orphan-tenant-link";
 const HELP = [
   `${NAME} (READ ONLY, counts only)`,
   "Counts import data missing its business link (SA-1526 section 4): rows with no business on",
-  "Product, Supplier, Customer, Expense, ProductAlias, MigrationJob, VendorBill, and customers flagged",
+  "the import-written tables (products, suppliers, customers and their addresses and contacts, expenses and categories, invoices, items and payments, aliases, migration jobs, vendor bills), and customers flagged",
   "supplier-only with zero orders (total plus a per-business count keyed by an opaque rank).",
   "No names, ids or rows are printed. Needs the database connection in the environment (Railway",
   "proxy variables or the usual URL); refuses without it.",
@@ -67,6 +67,12 @@ const NO_BUSINESS_TABLES = [
   "ProductAlias",
   "MigrationJob",
   "VendorBill",
+  "CustomerAddress",
+  "ContactPerson",
+  "Invoice",
+  "InvoicePayment",
+  "InvoiceItem",
+  "ExpenseCategory",
 ];
 
 const SUPPLIER_ONLY_SQL = `

@@ -8,8 +8,8 @@
  * `resyncInvoiceLedger`). Such a draft's regulated ledger net differs from what its current lines
  * would book. This counts DRAFT invoices updated since the cutoff (default 2026-11-03) that hold, on
  * at least one line, a ledger net (SUM of netSales / categoryTax over the line's
- * RegulatedSalesLedger rows, SALE and REVERSAL) different from the line's stored subtotal /
- * categoryTaxAmount (exactly what `toSaleLedgerLines` books). Lines with no ledger rows at all are
+ * RegulatedSalesLedger rows, SALE and the line's own sale-record REVERSALs; return and credit-note REVERSALs are left out, as the booker's preserveReturns does) different from the line's stored subtotal /
+ * categoryTaxAmount (exactly what `toSaleLedgerLines` books; a line with no tracked category targets 0, as the booker reverses it). Money only: qty is not compared. Lines with no ledger rows at all are
  * not counted (a never-booked line is a different class). Output: total drifted invoices, total
  * drifted lines, and a per-business count keyed by an opaque rank (business #1, #2, ...).
  *
@@ -84,12 +84,13 @@ const DRIFT_SQL = `
              SUM(l."categoryTax") AS tax
         FROM "RegulatedSalesLedger" l
        WHERE l."invoiceItemId" IS NOT NULL
+         AND NOT (l."entryType" = 'REVERSAL' AND (l."returnId" IS NOT NULL OR l."creditNoteId" IS NOT NULL))
        GROUP BY l."invoiceItemId", l."tenantId"
     ) led ON led.item_id = it.id AND led.tenant_id = i."tenantId"
    WHERE i.status = 'DRAFT'
      AND i."updatedAt" >= $1::date
-     AND (ABS(led.net - it.subtotal) >= 0.005
-          OR ABS(led.tax - it."categoryTaxAmount") >= 0.005)
+     AND (ABS(led.net - CASE WHEN it."trackedCategoryId" IS NULL THEN 0 ELSE it.subtotal END) >= 0.005
+          OR ABS(led.tax - CASE WHEN it."trackedCategoryId" IS NULL THEN 0 ELSE it."categoryTaxAmount" END) >= 0.005)
    GROUP BY i."tenantId"`;
 
 async function main() {
@@ -115,6 +116,7 @@ async function main() {
       console.log(formatBuckets("drifted DRAFT invoices per business", buckets));
     }
   } finally {
+    await client.query("ROLLBACK").catch(() => {});
     await client.end().catch(() => {});
   }
 }
