@@ -33,6 +33,7 @@ import { showToast } from "../../../lib/toast";
 import { useAuthStore } from "../../../lib/auth-store";
 import { duplicateRefChoice, duplicateRefPrompt } from "../../../lib/duplicate-payment-ref";
 import { fmtCalendarDate } from "../../../lib/format-date";
+import { paymentRefusalCopy } from "../../../lib/payment-refusal-copy";
 import { hasUnsavedPayment } from "../../../lib/discard-guard";
 import { isOpenInvoiceStatus } from "../../../lib/invoices-logic";
 import {
@@ -314,7 +315,11 @@ function PaymentForm({
             return;
           }
           showToast(
-            paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+            paymentRefusalCopy(e) ??
+              paymentKeyRefusalCopy(e) ??
+              e?.response?.data?.message ??
+              e?.message ??
+              "Try again.",
           );
         },
       },

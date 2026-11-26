@@ -286,8 +286,8 @@ import {
   lockInvoiceRow,
   lockInvoicesForPayment,
   nextSentStatus,
-  paymentRefusal,
-  standalonePaymentRefusal,
+  assertPayable,
+  assertStandalonePayable,
   sendRefusal,
   voidRefusal,
   externalPaidOn,
@@ -4240,8 +4240,7 @@ export class InvoicesService {
         include: { payments: { where: { status: { not: "VOID" } } } },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
-      const refusal = paymentRefusal(inv.status); // #2472 (4): VOID and WRITTEN_OFF, like the others
-      if (refusal) throw new BadRequestException(`Cannot record payment on ${refusal} invoice`);
+      assertPayable(inv.status); // B1396: DRAFT, VOID, WRITTEN_OFF (the one refusal)
       if (inv.orderId) await assertOrderReviewed(tx, inv.orderId); // SA-1124 PR-1b: staff money waits for the price review
 
       const total = Number(inv.total);
@@ -5023,8 +5022,7 @@ export class InvoicesService {
           });
           if (!invoice)
             throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
-          const refused = standalonePaymentRefusal(invoice.status, opts?.source); // SA-404f F1 + B1385: LOCKED row
-          if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
+          assertStandalonePayable(invoice.status, alloc.invoiceId, opts?.source); // B1396: LOCKED row
           // SA-1124 PR-1b: staff money waits for the price review; money that already moved at the processor never does
           if (opts?.source !== "STRIPE_SETTLE" && invoice.orderId)
             await assertOrderReviewed(tx, invoice.orderId);
