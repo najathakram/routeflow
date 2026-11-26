@@ -128,7 +128,7 @@ describe("REG-B1395 mobile edit-items counts the selling unit", () => {
     expect(edit.removed?.orderItemId).toBe("li-1");
   });
 
-  it("Undo after the product was added back joins the counts, clamped (3 boxes + 1 new box = 4)", () => {
+  it("Undo after the product was added back brings the removed line back beside the new row", () => {
     const removed = setDraftCount(open(line()), "li-1", 0);
     const readded = addCatalogItem(removed.draft, {
       id: "p-1",
@@ -139,11 +139,9 @@ describe("REG-B1395 mobile edit-items counts the selling unit", () => {
     });
     expect(readded["p-1"]).toMatchObject({ qty: 1, editUnit: "PACK" });
     // a different key, so the removed row comes back beside it (the server reads each line by its own id)
-    expect(Object.keys(restoreDraftRow(readded, removed.removed!)).sort()).toEqual(["li-1", "p-1"]);
-    // the same key held again: the counts join and clamp to the bound
-    const held = setDraftCount(open(line()), "li-1", 8333).draft;
-    const joined = restoreDraftRow(held, open(line())["li-1"]);
-    expect(joined["li-1"].qty).toBe(99_996);
+    const restored = restoreDraftRow(readded, removed.removed!);
+    expect(Object.keys(restored).sort()).toEqual(["li-1", "p-1"]);
+    expect(restored["li-1"]).toEqual(removed.removed);
   });
 
   it("the save plan sends the CASE row at 4 boxes as { productId, qty: 48, orderItemId } and nothing else", () => {

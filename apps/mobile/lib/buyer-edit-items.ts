@@ -205,15 +205,15 @@ export function stepDraftCount(
   return setDraftCount(d, key, draftCount(row) + delta);
 }
 
-/** Undo: put a removed row back; if its key was re-added since, the counts join (clamped like any add). */
+/**
+ * Undo: put a removed row back exactly. Its key cannot be held again before Undo: a re-add from the catalog is a new
+ * row under its own key (the removed line's id is never reused) and the screen drops the Undo on any add.
+ */
 export function restoreDraftRow(
   d: Record<string, BuyerDraftItem>,
   removed: BuyerDraftItem,
 ): Record<string, BuyerDraftItem> {
-  const key = draftKey(removed);
-  const held = d[key];
-  if (!held) return { ...d, [key]: removed };
-  return setDraftCount(d, key, draftCount(held) + draftCount(removed)).draft;
+  return { ...d, [draftKey(removed)]: removed };
 }
 
 /**
