@@ -190,6 +190,10 @@ const WRAPPER_CALLERS: Record<string, Record<string, LockRow>> = {
       locks: ["lockOrderRow("],
       why: "SA-962 row 721: the Order row is the creation tx's first statement; the settle follows the item create and the invoicedQty bump",
     },
+    "invoices/invoices.service.ts#followPartialPrices": {
+      locks: ["inOrderBillingTx("],
+      why: "B1461: the DRAFT-partial price follow binds the re-sync inside inOrderBillingTx (Order then its Invoices, SA-760 R-1), on that tx, for the apply only",
+    },
   },
   cancelStandaloneInTx: {
     "returns/inline-returns.service.ts#cancel": {
