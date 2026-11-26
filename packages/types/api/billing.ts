@@ -63,6 +63,7 @@ export type SelfPayReason =
   | "live_subscription"
   | "link_pending"
   | "not_paying_row"
+  | "live_payments_off"
   | "coupon_full"
   | "no_price"
   | "not_admin"

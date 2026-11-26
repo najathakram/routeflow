@@ -1,6 +1,7 @@
 import type { SelfPayReason, SelfPayView } from "@routeflow/types";
 import { READ_ONLY_STATUS, paymentReinstatable } from "./dunning-config";
 import { isPayingRow } from "./mrr.service";
+import { LIVE_PAYMENTS_CLASS, livePaymentsAllowed, type StripeKeyMode } from "./live-payments-wall";
 import {
   INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
   isInviteOnlyPlanKey,
@@ -35,6 +36,7 @@ const REASON_SET: Record<SelfPayReason, true> = {
   live_subscription: true,
   link_pending: true,
   not_paying_row: true,
+  live_payments_off: true,
   coupon_full: true,
   no_price: true,
   not_admin: true,
@@ -46,8 +48,11 @@ export const SELF_PAY_REASONS = Object.keys(REASON_SET) as SelfPayReason[];
 export interface SelfCheckoutFacts {
   status: string;
   readOnlyReason: string | null;
-  /** The tenant's class and `deletedAt`: `isPayingRow` reads them. */
-  class: string;
+  /** The tenant's class: judged by the live-payments wall's own predicate (never a second copy of the rule). */
+  class: string | null;
+  /** The Stripe key mode the wall reads (a test key opens every class); defaults to the configured key. */
+  keyMode?: StripeKeyMode;
+  /** `deletedAt`: `isPayingRow` reads it. */
   deletedAt: Date | null;
   planKey: string | null;
   /** The stored Stripe subscription id (a stale id fails closed: no Pay now; the checkout re-reads Stripe itself). */
@@ -79,10 +84,13 @@ export function selfCheckoutEligibility(f: SelfCheckoutFacts): SelfCheckoutVerdi
   if (f.externalPayment) return no("external_payment");
   if (f.linkPending) return no("link_pending");
   if (f.stripeSubId) return no("live_subscription");
-  // `isPayingRow` also wants status ACTIVE, which is what the payment will make it: judge the other conditions.
+  // The class is the wall's call (ruling 7203127751 item 1): never offer Pay now where the wall would refuse the session.
+  if (!livePaymentsAllowed(f.class, f.keyMode)) return no("live_payments_off");
+  // `isPayingRow` also wants status ACTIVE, which is what the payment will make it, and a PRODUCTION class, which the
+  // wall has just judged: judge the other conditions (deleted, plan, full coupon).
   if (
     !isPayingRow(
-      { status: "ACTIVE", deletedAt: f.deletedAt, class: f.class },
+      { status: "ACTIVE", deletedAt: f.deletedAt, class: LIVE_PAYMENTS_CLASS },
       f.planKey,
       f.couponCoversAll,
     )
