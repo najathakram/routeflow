@@ -1178,15 +1178,28 @@ export class EmailService {
     extraAttachments?: { filename: string; content: Buffer; contentType: string }[];
     /** W-1286 (SA-1202 C6): the other invoices this email is about (a completion email); each gets its own delivery row. */
     alsoInvoiceIds?: string[];
+    /**
+     * W-1443 (SA-1516): this is the PRIVATE copy to the staff member who sent the invoice (`to` = that member), not the
+     * customer's email: `sentTo` is the customer address it went to. Same body and attachments as the customer got.
+     */
+    staffCopy?: { sentTo: string };
   }) {
     const businessName = await this.getTenantBusinessName();
-    const subject = params.completion
+    const baseSubject = params.completion
       ? `Your order ${params.completion.orderNumber} is complete — invoice attached`
       : params.isReminder
         ? `Payment Reminder — Invoice ${params.invoiceNumber}`
         : `Invoice ${params.invoiceNumber}`;
+    const copyOf = params.staffCopy?.sentTo;
+    const subject = copyOf
+      ? headerSafeSubject(`Copy: ${baseSubject} (sent to ${copyOf})`)
+      : baseSubject;
 
-    const { html, text } = this.buildInvoiceEmail(params, businessName, await this.tenantLook());
+    const { html, text } = this.buildInvoiceEmail(
+      copyOf ? { ...params, staffCopyNote: `You sent this invoice to ${copyOf}.` } : params,
+      businessName,
+      await this.tenantLook(),
+    );
     // W-1286 (SA-1202 C6): the invoice email records its own delivery row (one per invoice it names), so a later bounce
     // finds it. No tenant in scope (a system caller) = nothing recorded, as before.
     const tenantId = this.prisma.getTenantId();
@@ -1203,7 +1216,11 @@ export class EmailService {
         ? {
             delivery: {
               tenantId,
-              kind: params.isReminder ? ("INVOICE_REMINDER" as const) : ("INVOICE_SENT" as const),
+              kind: copyOf
+                ? ("INVOICE_STAFF_COPY" as const)
+                : params.isReminder
+                  ? ("INVOICE_REMINDER" as const)
+                  : ("INVOICE_SENT" as const),
               entityType: "Invoice",
               entityId: params.invoiceId,
               ...(params.alsoInvoiceIds?.length ? { alsoEntityIds: params.alsoInvoiceIds } : {}),
@@ -1788,6 +1805,8 @@ export class EmailService {
       completion?: { orderNumber: string };
       /** B1372 K2: see sendInvoice's doc; a reminder never passes it. */
       changedSinceSent?: string[];
+      /** W-1443: the one plain line above the body of a staff copy ("You sent this invoice to ..."). */
+      staffCopyNote?: string;
       /** Tenant's `invoice.hideOriginalPrice` — see sendInvoice's doc. */
       hideOriginalPrice?: boolean;
       /** Tenant's `invoice.hidePerPiece` — see sendInvoice's doc. */
@@ -1955,7 +1974,11 @@ export class EmailService {
                 <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
               </tr>`;
 
+    const staffNoteHtml = params.staffCopyNote
+      ? `<p style="margin:0 0 16px;font-size:13px;color:#6b7280;" data-staff-copy>${escapeHtml(params.staffCopyNote)}</p>`
+      : "";
     const bodyHtml = `
+          ${staffNoteHtml}
           ${reminderBanner}
           ${depositBanner}
           <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Dear ${escapeHtml(params.customerName)},</p>
@@ -2022,6 +2045,7 @@ export class EmailService {
     // Plain-text alternative — built from the same figures, not derived from the HTML
     // above, so a tag-stripping approximation can never silently drop a dollar figure.
     const bodyText: string[] = [];
+    if (params.staffCopyNote) bodyText.push(headerSafeSubject(params.staffCopyNote));
     if (params.isReminder) {
       bodyText.push(
         "Payment Reminder: This invoice is overdue. Please arrange payment at your earliest convenience.",
