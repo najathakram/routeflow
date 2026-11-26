@@ -127,6 +127,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ORDER_STATUS_VALUES", "OrderStatus"],
   // SA-1124 PR-0: brand-new Prisma enum, mirrored immediately — see the triage tripwire below.
   ["ORDER_REVIEW_FLAG_KIND_VALUES", "OrderReviewFlagKind"],
+  // SA-1215 set 4 (P-85): two brand-new Prisma enums, mirrored immediately (123 -> 125).
+  ["PURCHASE_ORDER_CHARGE_KIND_VALUES", "PurchaseOrderChargeKind"],
+  ["PURCHASE_ORDER_CHARGE_BASIS_VALUES", "PurchaseOrderChargeBasis"],
   ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
   ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
   ["HANDOFF_REALM_VALUES", "HandoffRealm"],
@@ -326,13 +329,16 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // folder adds BAD_DEBT to the existing OperatorPermissionGroup (a value, not an enum, so no count change from it).
 // Triage for OrderReviewFlagKind (SA-1124 PR-0, migration 20261110000000_order_review_flags_offline): a brand-new Prisma
 // enum, mirrored as `ORDER_REVIEW_FLAG_KIND_VALUES` + its `ENUM_TABLE` row above (122 → 123).
+// Triage for PurchaseOrderChargeKind and PurchaseOrderChargeBasis (SA-1215 set 4, migration 20261124000200_po_charges): two
+// brand-new Prisma enums, mirrored as `PURCHASE_ORDER_CHARGE_KIND_VALUES` / `PURCHASE_ORDER_CHARGE_BASIS_VALUES` + their
+// `ENUM_TABLE` rows above (123 -> 125).
 // Triage for LegacyImportBatchStatus, LegacyImportFileKind, LegacyImportIssueSeverity, LegacySalesDocumentKind,
 // LegacySalesLineKind, LegacyItemMatchMethod (SA-1295 A2, migration 20261126000000_legacy_import_stage1): six brand-new
 // Prisma enums, all MIRRORED as LEGACY_IMPORT_BATCH_STATUS_VALUES … LEGACY_ITEM_MATCH_METHOD_VALUES + their ENUM_TABLE
 // rows (the web import screen shows batch status, file kind, issue severity, document kind, line kind and match method)
-// (123 → 129). IMPORTED_SUMMARY is a value on an existing enum, mirrored in INVOICE_ITEM_SYSTEM_KIND_VALUES; it does not
+// (125 → 131). IMPORTED_SUMMARY is a value on an existing enum, mirrored in INVOICE_ITEM_SYSTEM_KIND_VALUES; it does not
 // move the count.
-const PINNED_PRISMA_ENUM_COUNT = 129;
+const PINNED_PRISMA_ENUM_COUNT = 131;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {

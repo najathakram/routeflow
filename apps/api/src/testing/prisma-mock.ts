@@ -210,6 +210,7 @@ export function createMockPrisma(): MockPrisma {
     productMapping: modelProxy(),
     purchaseOrder: modelProxy(),
     purchaseOrderItem: modelProxy(),
+    purchaseOrderCharge: modelProxy(), // SA-1268 (cleared by the financial-data wipe)
     tenantAddon: modelProxy(),
     tobaccoReport: modelProxy(),
     tenantConfig: modelProxy(),
