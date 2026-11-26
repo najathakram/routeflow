@@ -80,17 +80,25 @@ describe("closed world (T1-2, T1-4)", () => {
 /**
  * KNOWN DISAGREEMENTS (reported to the lead, NOT edited here: "never edit an existing anyOf in this PR"). Each is an
  * EXISTING route-map entry whose page's main list read is guarded differently on the server. The brief says to stop
- * and send the lead this list; the exemption keeps the pin green without hiding it. Each row must keep disagreeing
- * (asserted below), so fixing the entry (or the server) forces this list to shrink.
+ * and send the lead this list; the exemption keeps the pin green without hiding it. Each row pins the EXACT pair
+ * (route-map side, server side) and must keep it (asserted below): fixing the entry or the server forces this list to
+ * shrink, and a second drift on either side is red, never silent.
  */
-const KNOWN_DISAGREEMENTS: Readonly<Record<string, string>> = {
-  "/deliveries": "route map ORDERS|DISPATCH; RoutesController.findAll is DISPATCH only",
-  "/drivers": "route map DISPATCH; DriversController.findAll is BASE",
-  "/customers": "route map CUSTOMERS; CustomersController.findAll is BASE",
-  "/inventory": "route map CATALOG; InventoryController.getStockOverview is BASE",
-  "/products": "route map CATALOG; ProductsController.findAll is BASE",
-  "/credit-notes": "route map FINANCE; CreditNotesController.findAll is UNGUARDED",
+const KNOWN_DISAGREEMENTS: Readonly<Record<string, { page: string; server: string }>> = {
+  "/deliveries": { page: "DISPATCH|ORDERS", server: "DISPATCH" }, // RoutesController.findAll
+  "/drivers": { page: "DISPATCH", server: "BASE" }, // DriversController.findAll
+  "/customers": { page: "CUSTOMERS", server: "BASE" }, // CustomersController.findAll
+  "/inventory": { page: "CATALOG", server: "BASE" }, // InventoryController.getStockOverview
+  "/products": { page: "CATALOG", server: "BASE" }, // ProductsController.findAll
+  "/credit-notes": { page: "FINANCE", server: "UNGUARDED" }, // CreditNotesController.findAll
 };
+
+/** One comparable word per side: "BASE", "ADMIN", "UNKNOWN", "UNGUARDED", or the sorted groups joined by "|". */
+function sideOf(access: RouteAccess | "UNGUARDED"): string {
+  if (access === "UNGUARDED") return "UNGUARDED";
+  if (access.kind === "GROUPS") return [...access.anyOf].sort().join("|");
+  return access.kind;
+}
 
 function agrees(href: string, primaryRead: string): boolean {
   const server = serverAccess(PERMISSION_MAP[primaryRead]);
@@ -119,11 +127,16 @@ describe("PAGE_SURFACES agree with the server (T1-5)", () => {
     expect(disagree.sort()).toEqual(Object.keys(KNOWN_DISAGREEMENTS).sort());
   });
 
-  it("every known disagreement is still a real one and a real menu page (shrink the list when fixed)", () => {
-    for (const href of Object.keys(KNOWN_DISAGREEMENTS)) {
+  it("every known disagreement is still exactly the pinned pair and a real menu page (shrink the list when fixed)", () => {
+    for (const [href, pinned] of Object.entries(KNOWN_DISAGREEMENTS)) {
       const row = PAGE_SURFACES.find((s) => s.href === href);
       expect({ href, inRegistry: row !== undefined }).toEqual({ href, inRegistry: true });
       expect({ href, agrees: agrees(href, row!.primaryRead) }).toEqual({ href, agrees: false });
+      const actual = {
+        page: sideOf(routeAccess(href)),
+        server: sideOf(serverAccess(PERMISSION_MAP[row!.primaryRead])),
+      };
+      expect({ href, ...actual }).toEqual({ href, ...pinned });
     }
   });
 
