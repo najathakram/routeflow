@@ -860,3 +860,24 @@ describe("pushPlanChange - no prisma fails closed (W-1464)", () => {
     expect(stripe.updateSubscription).not.toHaveBeenCalled();
   });
 });
+
+describe("pushPlanChange without deps.prisma (SA-1547 L5)", () => {
+  it.each(["sk_test_x", "sk_live_x", ""])(
+    "returns the coded 409 (never a TypeError) under key %p, and touches no Stripe",
+    async (key) => {
+      const prev = process.env.STRIPE_SECRET_KEY;
+      process.env.STRIPE_SECRET_KEY = key;
+      try {
+        const stripe = stripeWith();
+        await expect(pushPlanChange({ stripe, logger } as any, args())).rejects.toMatchObject({
+          status: 409,
+          response: { code: "LIVE_PAYMENTS_OFF" },
+        });
+        expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      } finally {
+        if (prev === undefined) delete process.env.STRIPE_SECRET_KEY;
+        else process.env.STRIPE_SECRET_KEY = prev;
+      }
+    },
+  );
+});

@@ -181,3 +181,42 @@ describe("SettingsBillingController.getSubscription - role-trimmed view (B4 S3)"
     expect(out).toEqual(view);
   });
 });
+
+describe("SettingsBillingController.createPortal refusal narrowing (SA-1547 L4)", () => {
+  const wall = () =>
+    new ConflictException({
+      code: API_ERROR_CODES.LIVE_PAYMENTS_OFF,
+      message: "This is a test business. Payments are switched off.",
+    });
+
+  it("a NON-wall 409 from the portal is the retryable 503, not passed through", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(new ConflictException("some other conflict")),
+      pay: jest.fn().mockResolvedValue(null),
+    });
+    await expect(controller.createPortal({ tenantId: "t1" } as any)).rejects.toMatchObject({
+      status: 503,
+    });
+  });
+
+  it("the wall's 409 still reaches the caller when no pay link exists", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(wall()),
+      pay: jest.fn().mockResolvedValue(null),
+    });
+    await expect(controller.createPortal({ tenantId: "t1" } as any)).rejects.toMatchObject({
+      status: 409,
+      response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
+    });
+  });
+
+  it("a NON-wall 409 with a pay link available keeps the pay link (S2 narrowing)", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(new ConflictException("some other conflict")),
+    });
+    expect(await controller.createPortal({ tenantId: "t1" } as any)).toEqual({
+      portalUrl: null,
+      hostedInvoiceUrl: "https://invoice.example/i/1",
+    });
+  });
+});
