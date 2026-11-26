@@ -216,6 +216,8 @@ import { rebuildKeptItems } from "./kept-invoice-lines";
 import { assertSalesNotLockedForEdit } from "../regulated/filing-lock";
 import {
   applyPartialPriceFollow,
+  hasLiveOrderInvoice,
+  noFollow,
   planPartialPriceFollow,
   type FollowDeps,
 } from "./partial-price-follow";
@@ -1487,18 +1489,15 @@ export class InvoicesService {
 
   /**
    * SA-760 Q-760-1: DRAFT partials follow a staff order edit's PRICE changes; issued partials never do and
-   * are returned for the edit response. Under the R-1 lock order (own tx unless one is passed).
+   * are returned for the edit response. Under the R-1 lock order (own tx unless one is passed). B1461: the
+   * ledger funnel is bound HERE, under the locks, for the apply only (plan mode never gets a writer).
    */
   async followPartialPrices(orderId: string, tx?: any) {
-    if (!tx) {
-      // most edits touch an order with no invoice at all: no transaction for that
-      const live = await this.prisma.forTenant().invoice.count({
-        where: { orderId, status: { not: InvoiceStatus.VOID } },
-      });
-      if (live === 0) return { issuedPartialsUnchanged: [], followed: [] as string[] };
-    }
+    if (!tx && !(await hasLiveOrderInvoice(this.prisma.forTenant(), orderId))) return noFollow();
     return inOrderBillingTx(this.prisma, tx, orderId, (db) =>
-      applyPartialPriceFollow(this.followDeps(), db, orderId),
+      applyPartialPriceFollow(this.followDeps(), db, orderId, (id, items) =>
+        this.resyncInvoiceLedger(id, orderId, items, db),
+      ),
     );
   }
 

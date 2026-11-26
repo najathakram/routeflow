@@ -3196,6 +3196,7 @@ export class BillingService {
       why: "You are getting this because you manage this RouteFlow account’s billing.",
     });
     await this.email.send({
+      tenantId: sub.tenantId,
       to: adminUser.email,
       ...mail,
       delivery: {

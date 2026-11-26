@@ -607,6 +607,7 @@ module.exports = {
     VERIFICATION_LINK_EXPIRED: "VERIFICATION_LINK_EXPIRED",
     DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
     DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
+    BUYER_LINE_QTY_OVER_MAX: "BUYER_LINE_QTY_OVER_MAX",
   },
   // SA-814e: hand copy of packages/types/api/error-codes.ts (pinned to the API's literal by the API parity spec).
   FILING_STALE_COPY:
