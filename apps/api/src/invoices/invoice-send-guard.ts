@@ -74,12 +74,14 @@ export function writeOffRefusal(status: InvoiceStatus): string | null {
 }
 
 /** Why an invoice cannot take a payment: the `reason` of the coded 400 INVOICE_NOT_PAYABLE. */
-export type PaymentRefusalReason = "DRAFT" | "VOID" | "WRITTEN_OFF";
+// Built from the enum members, not literals: a literal group of these statuses reads as a hand-typed enum mirror.
+export type PaymentRefusalReason =
+  typeof InvoiceStatus.DRAFT | typeof InvoiceStatus.VOID | typeof InvoiceStatus.WRITTEN_OFF;
 
 const NOT_PAYABLE_WORD: Record<PaymentRefusalReason, string> = {
-  DRAFT: "a draft",
-  VOID: "voided",
-  WRITTEN_OFF: "written-off",
+  [InvoiceStatus.DRAFT]: "a draft",
+  [InvoiceStatus.VOID]: "voided",
+  [InvoiceStatus.WRITTEN_OFF]: "written-off",
 };
 
 /**
@@ -89,9 +91,9 @@ const NOT_PAYABLE_WORD: Record<PaymentRefusalReason, string> = {
  * writer go through it; pin: invoices.service.payment-not-payable.spec.ts.
  */
 export function paymentRefusal(status: InvoiceStatus): PaymentRefusalReason | null {
-  if (status === InvoiceStatus.DRAFT) return "DRAFT";
-  if (status === InvoiceStatus.VOID) return "VOID";
-  if (status === InvoiceStatus.WRITTEN_OFF) return "WRITTEN_OFF";
+  if (status === InvoiceStatus.DRAFT) return InvoiceStatus.DRAFT;
+  if (status === InvoiceStatus.VOID) return InvoiceStatus.VOID;
+  if (status === InvoiceStatus.WRITTEN_OFF) return InvoiceStatus.WRITTEN_OFF;
   return null;
 }
 
