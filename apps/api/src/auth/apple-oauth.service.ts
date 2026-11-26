@@ -412,6 +412,8 @@ export class AppleOAuthService {
           }
           void this.emailService
             .send({
+              // a buyer account is global: it belongs to no business.
+              tenantId: null,
               to: buyer.email,
               ...signInLinkedMessage({
                 provider: "Apple",
@@ -534,6 +536,7 @@ export class AppleOAuthService {
     if (user.email) {
       void this.emailService
         .send({
+          tenantId: user.tenantId,
           to: user.email,
           ...signInLinkedMessage({ provider: "Apple", address: email, portal: false }),
           senderClass: "platform",

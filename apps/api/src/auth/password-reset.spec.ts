@@ -187,6 +187,8 @@ describe("AuthService — password reset (RF-018)", () => {
           to: "alice@example.com",
           subject: expect.stringContaining("Reset"),
           senderClass: "platform",
+          // W-1464: the reset mail names the account's business so the mail wall can hold it.
+          tenantId: "t-1",
         }),
       );
     });
