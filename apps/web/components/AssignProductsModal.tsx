@@ -1,10 +1,11 @@
 "use client";
 
+import { useCatalogWhenOpen } from "@/lib/api/catalog-when-open";
 import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Search, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
-import { useProducts } from "@/lib/api/products";
+
 import { displayProductName } from "@/lib/product-display";
 import {
   useTrackedCategories,
@@ -28,7 +29,7 @@ interface Props {
  */
 export function AssignProductsModal({ isOpen, onClose, category }: Props) {
   const { toast } = useToast();
-  const { data: productsData, isLoading } = useProducts({ limit: 0 });
+  const { data: productsData, isLoading } = useCatalogWhenOpen(isOpen);
   const { data: categories = [] } = useTrackedCategories();
   const assign = useAssignProductsToCategory();
   const unassign = useUnassignProductsFromCategory();
