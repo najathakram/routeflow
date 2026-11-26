@@ -113,7 +113,7 @@ import { resolvePendingMirror } from "./pending-mirror";
 import { assertOrderReviewed, hasOpenReviewBlock } from "../orders/offline/order-review-gate";
 import {
   guardedEmail,
-  invoiceFingerprintOf,
+  recheckEmailedFingerprint,
   recordInvoiceEmailed,
   assertOrderInvoiceUnlockedFor,
   sendFieldsFor,
@@ -3634,29 +3634,10 @@ export class InvoicesService {
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
     const { updated, auto } = await this.markSent(id, inv.orderId, true);
-    // SA-860: verify after the commit. The money truth is the real tx; if the live invoice no longer hashes to what was
-    // emailed (a concurrent credit or edit between the dry run and the commit), append ONE correction record with fp null
-    // (the newest row decides: "emailed, changes can't be checked"). Never refuse and never roll back: the email has gone.
-    // Best-effort: the email went and the money committed, so a failed re-read must not turn this into a 500 or skip the
-    // emit and the notification below; the record then simply stays the snapshot's.
-    try {
-      const live = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, stage);
-      if (live !== fingerprint) {
-        await recordInvoiceEmailed(this.prisma, {
-          id,
-          actorId,
-          to: recipientEmail,
-          fingerprint: null,
-          variant,
-          kind: opts?.kind, // I-120: a completion email's correction keeps its kind
-          note: "the copy emailed may not match the credits applied",
-        });
-      }
-    } catch (err) {
-      this.logger.warn(
-        `invoice ${id}: the post-send fingerprint check failed (${err instanceof Error ? err.message : String(err)})`,
-      );
-    }
+    // SA-860: verify after the commit; best-effort, never refuses (invoice-send-state.ts).
+    const to = recipientEmail;
+    const recheck = { id, actorId, to, stage, fingerprint, variant, kind: opts?.kind };
+    await recheckEmailedFingerprint(this.prisma, this.featureConfig, recheck);
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
