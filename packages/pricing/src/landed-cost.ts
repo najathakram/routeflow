@@ -70,6 +70,10 @@ function allocateExact(total: number, weights: number[]): number[] {
  * takes the typed per-line amounts (which must sum to `amount` exactly). A line with nothing
  * received (0 pieces, 0 value) gets 0; only received lines carry a posting.
  *
+ * Callers must pass the lines in a STABLE order (PO line position, else line id): on an exact tie the odd cent goes
+ * to the earlier line (largest remainder breaks ties by index), so the preview, the post and any re-split agree only
+ * when every caller orders the lines the same way (R-322 LOW-3).
+ *
  * Throws MoneyInvariantError on a bad amount/value/pieces, a line with a value but no pieces, an
  * unknown basis, a positive amount with no received weight, an allocation whose cents x weight sum
  * exceeds 2^53, MANUAL amounts that do not sum to the charge, or a manual amount on a line with
