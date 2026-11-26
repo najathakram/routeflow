@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
-import { scanRevs } from "./leak-check.mjs";
+import { scanPaths, scanRevs } from "./leak-check.mjs";
 import { loadPatterns, matches } from "./lib/leak-patterns.mjs";
 import { symlinkSync } from "node:fs";
 
@@ -115,7 +115,8 @@ function hook(repo, refsLine, extra, remoteArgs = []) {
   if (block === null) return { code: 99, out: "hook has no leak-guard block" };
   const stub = path.join(repo, "stub-pre-push");
   writeFileSync(stub, `refs="$(cat)"\n${block}\nexit 0\n`);
-  const r = spawnSync("sh", [stub, ...remoteArgs], {
+  // `sh -e`, as husky runs hooks: a failing command must still reach the refusal message
+  const r = spawnSync("sh", ["-e", stub, ...remoteArgs], {
     cwd: repo,
     env: env(extra),
     encoding: "utf8",
@@ -701,6 +702,49 @@ try {
         "hook: a guard that crashes silently is still refused with a message",
         h.code === 1 && /crashed \(exit 127\)/.test(h.out),
         JSON.stringify(h),
+      );
+    }
+    // Cost pin: a path rule must not cost one git call per merged file. Only files under a rule's prefix may
+    // be looked up in origin/master's tree (R-316: 3,505 calls, 29 s on a 3,499-file master merge).
+    {
+      const repo = makeRepo({ patterns: `${FIXTURE}\npath:zzpriv/` });
+      const base = commit(repo, { "a.txt": "hello\n" }, "chore: base");
+      git(repo, ["checkout", "-q", "-b", "feat"]);
+      commit(repo, { "feat.txt": "clean\n" }, "feat: own work");
+      git(repo, ["checkout", "-q", "master"]);
+      const many = {};
+      for (let i = 0; i < 60; i++) many[`docs/f${i}.txt`] = `line ${i}\n`;
+      many["zzpriv/page.txt"] = "public page\n";
+      const tip = commit(repo, many, "feat: many files");
+      git(repo, ["update-ref", "refs/remotes/origin/master", tip]);
+      git(repo, ["checkout", "-q", "feat"]);
+      git(repo, ["merge", "-q", "--no-ff", "-m", "chore: merge master", "master"]);
+      const calls = { catFile: 0, total: 0 };
+      const counting = (cwd, args) => {
+        calls.total++;
+        if (args[0] === "cat-file") calls.catFile++;
+        const r = spawnSync("git", args, { cwd, maxBuffer: 256 * 1024 * 1024 });
+        const buf = r.stdout ?? Buffer.alloc(0);
+        return { ok: r.status === 0 && !r.error, buf, out: buf.toString("utf8") };
+      };
+      const hits = [];
+      const ok = scanPaths(
+        repo,
+        ["zzpriv/"],
+        ["HEAD", "--not", "refs/remotes/origin/master"],
+        hits,
+        { trusted: () => true },
+        counting,
+      );
+      check(
+        "path scan: git cat-file calls only for files under a rule prefix",
+        ok && calls.catFile <= 2,
+        `cat-file calls ${calls.catFile} of ${calls.total}`,
+      );
+      check(
+        "path scan: the same merge still has no hit for master's own file",
+        hits.length === 0,
+        JSON.stringify(hits),
       );
     }
     // B2: unreadable / non-UTF-8 patterns files refuse

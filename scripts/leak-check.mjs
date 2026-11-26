@@ -305,35 +305,42 @@ export function scanRevs(cwd, regexes, revArgs, hits, git = gitOut, opts = {}) {
  * Refuse any commit in the range that ADDS or MODIFIES a file under a `path:` prefix (binary files too).
  * Deletes are allowed. Output names the commit and the rule number, never the path. False on a git failure.
  */
-function scanPaths(cwd, prefixes, revArgs, hits, opts = {}) {
-  const list = gitOut(cwd, ["rev-list", "--reverse", ...revArgs]);
+export function scanPaths(cwd, prefixes, revArgs, hits, opts = {}, git = gitOut) {
+  const list = git(cwd, ["rev-list", "--reverse", ...revArgs]);
   if (!list.ok) return false;
   for (const sha of list.out.split("\n").filter(Boolean)) {
-    const parR = gitOut(cwd, ["log", "-1", "--format=%P", sha]);
+    const parR = git(cwd, ["log", "-1", "--format=%P", sha]);
     if (!parR.ok) return false;
     const parents = parR.out.trim().split(/\s+/).filter(Boolean);
     const parent = parents[0];
-    // A merge answers only for paths it changes relative to every origin/master-contained parent (see scanRevs).
-    const others = [];
-    for (const op of parents.slice(1)) {
-      if (!publicParent(cwd, op, gitOut, opts)) continue;
-      const paths = changedPaths(cwd, op, sha, gitOut);
-      if (!paths) return false;
-      others.push(paths);
-    }
     const nsR = parent
-      ? gitOut(cwd, ["diff-tree", "-r", "--no-renames", "--name-status", "-z", parent, sha])
-      : gitOut(cwd, ["diff-tree", "-r", "--root", "--no-renames", "--name-status", "-z", sha]);
+      ? git(cwd, ["diff-tree", "-r", "--no-renames", "--name-status", "-z", parent, sha])
+      : git(cwd, ["diff-tree", "-r", "--root", "--no-renames", "--name-status", "-z", sha]);
     if (!nsR.ok) return false;
-    const ns = nsR.out.split("\0");
-    const ruleHits = new Set();
+    const ns = nsR.out.split(" ");
+    // Cheap test first: only files under a rule prefix can hit, so only those ever cost a git call.
+    const cands = [];
     for (let i = 0; i < ns.length;) {
       const st = ns[i++];
       if (!st) break;
       const f = ns[i++];
       if (st === "D" || !f) continue;
-      // Excused only when another contained parent holds the file AND origin/master's tree holds it now.
-      if (!others.every((o) => o.has(f)) && masterHasPath(cwd, gitOut, f)) continue;
+      const low = f.toLowerCase();
+      if (prefixes.some((pre) => low.startsWith(pre))) cands.push(f);
+    }
+    if (!cands.length) continue;
+    // A merge answers only for paths it changes relative to every origin/master-contained parent (see scanRevs).
+    const others = [];
+    for (const op of parents.slice(1)) {
+      if (!publicParent(cwd, op, git, opts)) continue;
+      const paths = changedPaths(cwd, op, sha, git);
+      if (!paths) return false;
+      others.push(paths);
+    }
+    const ruleHits = new Set();
+    for (const f of cands) {
+      // Excused only when another contained parent holds the file AND origin/master tree holds it now.
+      if (!others.every((o) => o.has(f)) && masterHasPath(cwd, git, f)) continue;
       const low = f.toLowerCase();
       prefixes.forEach((pre, idx) => low.startsWith(pre) && ruleHits.add(idx + 1));
     }
