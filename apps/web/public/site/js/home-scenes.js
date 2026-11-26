@@ -280,6 +280,6 @@
       if (n !== last) { last = n; steps.forEach(function (li, k) { var s = k + 3; li.className = n === s ? "on" : (n > s ? "done" : ""); }); q(".stx-steps").style.opacity = (n >= 2 && n <= 8) ? 1 : 0; }
     }
     hud();
-    ST.create({ trigger: sec, start: function () { return "top " + (d.querySelector(".site-header, header") ? d.querySelector(".site-header, header").offsetHeight : 64); }, end: "bottom bottom", scrub: 0.5, animation: tl, invalidateOnRefresh: true });
+    ST.create({ trigger: sec, start: function () { return "top " + (d.querySelector(".site-header, header") ? d.querySelector(".site-header, header").offsetHeight : 64); }, end: "bottom bottom", scrub: 0.5, animation: tl });
   })();
 })();

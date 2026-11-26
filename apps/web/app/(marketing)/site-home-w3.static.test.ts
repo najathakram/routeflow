@@ -116,6 +116,18 @@ describe("the story's ring carries the script's fifteen parts, in the script's o
     expect(list.match(/<li><b>/g) ?? []).toHaveLength(15);
   });
 
+  it("the story art holds each moving part once: one pill, one shadow, one hub, four mess pieces", () => {
+    // a second pill sat visible at scroll 0, because the script only sets the first (browser check, 2026-11-26)
+    const art = page.slice(
+      page.indexOf("data-story-art"),
+      page.indexOf("</figure>", page.indexOf("data-story-art")),
+    );
+    expect(art.match(/class="pill"/g) ?? []).toHaveLength(1);
+    expect(art.match(/class="oshadow/g) ?? []).toHaveLength(1);
+    expect(art.match(/class="hub"/g) ?? []).toHaveLength(1);
+    expect(art.match(/class="mess /g) ?? []).toHaveLength(4);
+  });
+
   it("the hub's mark is one image, drawn from the brand symbol token, with no colour typed on it", () => {
     const at = page.indexOf('<g class="hub">');
     const hub = page.slice(at, page.indexOf("</g>", at));
