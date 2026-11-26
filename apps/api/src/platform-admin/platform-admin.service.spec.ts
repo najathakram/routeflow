@@ -1506,7 +1506,6 @@ describe("PlatformAdminService — audit provenance", () => {
       catalog();
       tenant("STARTER");
       prisma.tenant.findUnique.mockResolvedValue({
-        class: "PRODUCTION",
         id: TENANT_ID,
         slug: "acme",
         plan: "STARTER",

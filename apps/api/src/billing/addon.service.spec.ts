@@ -103,6 +103,8 @@ interface Opts {
    *  `isPayingRow` shape). Defaults to a paying (ACTIVE/PRODUCTION) row so the pre-existing
    *  priced-enable pins (T8/T9/T15, B342) keep booking unless a test overrides it. */
   tenantRow?: any;
+  /** W-1464 R-282 M2: the business class `enableAddon` reads before it creates a Stripe item (PRODUCTION unless set). */
+  tenantClass?: string | null;
   /** SA-815a: the version the subscription is pinned to, and that pinned catalog's `includedAtPlan` per SKU. */
   pinnedVersionId?: string;
   pinnedIncludedAtPlan?: Record<string, string>;
