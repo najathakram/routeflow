@@ -12,7 +12,7 @@ import { linePositionAllocator } from "../orders/line-position";
 import { sendAfterCommit } from "./send-after-commit";
 import { invoiceCompositionFields } from "./invoice-line-composition";
 import { applyComposedLineEdits } from "./invoice-composed-edit";
-import { writeIfFigureFree } from "./issued-invoice-edit";
+import { afterIssuedEditInTx, writeIfFigureFree } from "./issued-invoice-edit";
 import {
   assertEditFits,
   assertPaymentFits,
@@ -3231,7 +3231,8 @@ export class InvoicesService {
         // A save that changed no line leaves the ledger alone too (no reverse-and-rewrite churn).
         if (syncLines?.length)
           await this.resyncInvoiceLedger(id, inv.orderId ?? null, u.items ?? [], tx);
-        return { updated: u };
+        const deps = { commissionEngine: this.commissionEngine };
+        return { updated: await afterIssuedEditInTx(deps, tx, locked, u, edit, { money: true }) }; // SA-1508
       });
       // Backward sync: keep the linked order in step with the edited invoice.
       // SA-233/235: ALWAYS the full coverage recompute (no payload-shape gate); identical rows are skipped inside it.
@@ -3275,11 +3276,13 @@ export class InvoicesService {
               newTotal: totals.total,
               newTax: totals.taxAmount,
             });
-            return tx.invoice.update({
+            const u = await tx.invoice.update({
               where: { id },
               data: { ...headerData, ...totals },
               include,
             });
+            const deps = { commissionEngine: this.commissionEngine };
+            return afterIssuedEditInTx(deps, tx, locked, u, edit, { money: true }); // SA-1508
           });
     // Backward sync: discount/shipping changes alter the order total too (lines unchanged: no ledger resync).
     if (inv.orderId && needsRecalc) await this.recomputeOrderFromInvoices(inv.orderId);

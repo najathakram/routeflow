@@ -42,7 +42,7 @@ const cur = {
   shippingFee: 0,
   total: 100,
   issueDate: new Date("2026-11-01T00:00:00Z"),
-  dueDate: new Date("2026-12-01T00:00:00Z"),
+  dueDate: new Date("2099-12-01T00:00:00Z"),
   notes: null,
   depositPercent: null,
   depositDueDate: null,
@@ -68,10 +68,12 @@ const ctx = (over: Partial<IssuedEditCtx> = {}): IssuedEditCtx => ({
 });
 const fakeTx = (): any => ({
   invoice: {
-    update: jest.fn().mockResolvedValue({ id: "inv-1", updated: true }),
+    update: jest.fn().mockResolvedValue({ ...cur, updated: true, items: [stored] }),
     findUnique: jest.fn().mockResolvedValue({ id: "inv-1", reread: true }),
   },
   invoiceItem: { update: jest.fn().mockResolvedValue({}) },
+  auditLog: { create: jest.fn().mockResolvedValue({}) }, // SA-1508 commit 7: the epilogue row
+  tenantConfig: { findUnique: jest.fn().mockResolvedValue(null) },
   buyerPaymentRequest: { findMany: jest.fn().mockResolvedValue([]) },
   creditNote: { count: jest.fn().mockResolvedValue(0) },
   returnItem: { count: jest.fn().mockResolvedValue(0) },
@@ -117,7 +119,7 @@ describe("writeIfFigureFree (items branch)", () => {
       [line()],
       ctx({ dto: { notes: "gate code 42" } }),
     );
-    expect(out).toEqual({ id: "inv-1", updated: true });
+    expect(out).toMatchObject({ id: "inv-1", updated: true });
     expect(tx.invoice.update).toHaveBeenCalledTimes(1);
     const data = tx.invoice.update.mock.calls[0][0].data;
     expect(data).toEqual({ notes: "gate code 42", pdfUrl: null });
@@ -178,7 +180,7 @@ describe("writeIfFigureFree (header-only branch, no lines in the save)", () => {
       null,
       ctx({ dto: { discount: 0, shippingFee: 0, notes: "n" } }),
     );
-    expect(out).toEqual({ id: "inv-1", updated: true });
+    expect(out).toMatchObject({ id: "inv-1", updated: true });
     expect(tx.invoice.update.mock.calls[0][0].data).toEqual({ notes: "n", pdfUrl: null });
   });
 

@@ -13,6 +13,10 @@ import {
 } from "./locked-invoice-edit";
 import { stampEditedPositions } from "./invoice-line-position";
 import { roundMoney } from "@routeflow/pricing";
+import { tenantTimeZone } from "../common/tenant-time-zone";
+import { auditIssuedInvoiceEdit } from "./invoice-audit";
+import { statusFromPayments } from "./invoice-status";
+import { sumConfirmed } from "./payment-predicates";
 
 /**
  * SA-1508 A2-HOMES: the in-place edit of an ISSUED invoice lives here, never in `InvoiceService`'s body (size ratchet).
@@ -34,6 +38,63 @@ const INCLUDE = {
 };
 
 const LINE_KEYS = ["description", "notes", "position"] as const;
+
+export interface IssuedEditDeps {
+  commissionEngine?: { syncInvoiceCommissionSafe(id: string, db?: any): Promise<void> };
+}
+
+/**
+ * The epilogue of ONE real issued edit, in the caller's transaction, after its writes: the status is re-judged from the
+ * confirmed payments and the NEW total and due date (VIEWED becomes SENT; a due date moved into or out of the past flips
+ * OVERDUE; written only when it differs, and `after` carries the new status and token); a MONEY edit re-syncs the
+ * commission (a figure-free edit never touches it); and exactly one `invoice.revised` row is written. A DRAFT is
+ * untouched. Returns `after` (updated in place) so a call site returns it as its result.
+ */
+export async function afterIssuedEditInTx(
+  deps: IssuedEditDeps,
+  tx: any,
+  locked: LockedInvoiceForEdit,
+  after: any,
+  edit: IssuedEditCtx,
+  opts: { money?: boolean } = {},
+): Promise<any> {
+  if (edit.mode !== "ISSUED") return after;
+  const { invoice: before } = locked;
+  const zone = await tenantTimeZone(
+    { tenantConfig: tx.tenantConfig, getTenantId: () => edit.tenantId ?? null },
+    { tenantId: edit.tenantId },
+  );
+  const status = statusFromPayments(
+    roundMoney(sumConfirmed(locked.payments as any[])),
+    Number(after.total),
+    after.dueDate ?? null,
+    before.status,
+    zone,
+    "NOT_PAID",
+  );
+  if (status !== before.status) {
+    const row = await tx.invoice.update({
+      where: { id: before.id },
+      data: { status },
+      select: { status: true, updatedAt: true },
+    });
+    after.status = status;
+    after.updatedAt = row?.updatedAt ?? after.updatedAt;
+  }
+  if (opts.money) await deps.commissionEngine?.syncInvoiceCommissionSafe(before.id, tx);
+  await auditIssuedInvoiceEdit(tx, {
+    invoiceId: before.id,
+    actor: edit.actor?.sub ?? null,
+    impersonatedBy: edit.actor?.impersonatedBy,
+    fromStatus: before.status,
+    toStatus: status,
+    before: { ...before, lines: locked.storedRows },
+    after: { ...after, lines: after.items ?? [] },
+    figureFree: !opts.money,
+    consented: !!edit.consented,
+  });
+  return after;
+}
 
 export async function writeIfFigureFree(
   tx: any,
@@ -78,9 +139,10 @@ export async function writeIfFigureFree(
     return tx.invoice.findUnique({ where: { id: cur.id }, include: INCLUDE });
   }
   for (const p of patches) await tx.invoiceItem.update({ where: { id: p.id }, data: p.data });
-  return tx.invoice.update({
+  const updated = await tx.invoice.update({
     where: { id: cur.id },
     data: { ...headerData, pdfUrl: null },
     include: INCLUDE,
   });
+  return afterIssuedEditInTx({}, tx, locked, updated, edit);
 }

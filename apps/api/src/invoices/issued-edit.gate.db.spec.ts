@@ -62,6 +62,7 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
   let prisma: PrismaService;
   let tenantCtx: TenantContextService;
   let invoicesService: InvoicesService;
+  let commission: { syncInvoiceCommissionSafe: jest.Mock };
   const createdTenantIds: string[] = [];
 
   const mockCreditNotes = {
@@ -160,6 +161,7 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
     }).compile();
 
     invoicesService = module.get(InvoicesService);
+    commission = module.get(CommissionEngineService);
   });
 
   afterAll(async () => {
@@ -611,6 +613,104 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
         324.75,
         "n",
       ]);
+    });
+  });
+
+  describe("epilogue (SA-1508 commit 7)", () => {
+    const rowsOf = (s: S) =>
+      prisma.auditLog.findMany({
+        where: { tenantId: s.tenantId, action: "invoice.revised", entityId: s.inv.id },
+      });
+
+    it("DB-E1: a money edit writes ONE invoice.revised row (before/after) and re-syncs the commission once", async () => {
+      const s = await seed("epi-money");
+      commission.syncInvoiceCommissionSafe.mockClear();
+      await save(s, { items: screen(s, { qty: 3 }) });
+      const rows = await rowsOf(s);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].userId).toBe(s.actor("TENANT_ADMIN").sub);
+      expect(rows[0].impersonatedBy).toBeNull();
+      expect(rows[0].meta).toMatchObject({
+        source: "invoice-edit",
+        fromStatus: "SENT",
+        toStatus: "SENT",
+        totalBefore: 100,
+        totalAfter: 150,
+        linesChanged: 1,
+        figureFree: false,
+      });
+      expect((rows[0].meta as any).before.lines[0]).toMatchObject({ qty: 2, subtotal: 100 });
+      expect((rows[0].meta as any).after.lines[0]).toMatchObject({ qty: 3, subtotal: 150 });
+      expect(commission.syncInvoiceCommissionSafe).toHaveBeenCalledTimes(1);
+      expect(commission.syncInvoiceCommissionSafe.mock.calls[0][0]).toBe(s.inv.id);
+    });
+
+    it("DB-E2: a figure-free save writes one row, says so, and never touches the commission", async () => {
+      const s = await seed("epi-free");
+      commission.syncInvoiceCommissionSafe.mockClear();
+      await save(s, { items: screen(s), discount: 0, shippingFee: 0, notes: "gate code 42" });
+      const rows = await rowsOf(s);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].meta).toMatchObject({ figureFree: true, notesChanged: true, linesChanged: 0 });
+      expect(commission.syncInvoiceCommissionSafe).not.toHaveBeenCalled();
+    });
+
+    it("DB-E3: a due date moved into the past flips SENT to OVERDUE (response, row, audit), and the new token works", async () => {
+      const s = await seed("epi-overdue");
+      const out: any = await save(s, {
+        items: screen(s),
+        discount: 0,
+        shippingFee: 0,
+        dueDate: "2020-01-01",
+      });
+      expect(out.status).toBe("OVERDUE");
+      const after = await prisma.invoice.findUnique({ where: { id: s.inv.id } });
+      expect(after!.status).toBe("OVERDUE");
+      expect(out.updatedAt.toISOString()).toBe(after!.updatedAt.toISOString());
+      expect((await rowsOf(s))[0].meta).toMatchObject({ fromStatus: "SENT", toStatus: "OVERDUE" });
+      // the client holds the token it was just handed: the next save is not stale
+      await expect(
+        save(s, { items: screen(s), discount: 0, shippingFee: 0, notes: "second" }),
+      ).resolves.toBeTruthy();
+    });
+
+    it("DB-E3b: an OVERDUE invoice whose due date moves out is SENT again", async () => {
+      const s = await seed("epi-unoverdue", { status: "OVERDUE" });
+      const out: any = await save(s, {
+        items: screen(s),
+        discount: 0,
+        shippingFee: 0,
+        dueDate: "2099-01-01",
+      });
+      expect(out.status).toBe("SENT");
+    });
+
+    it("DB-E4: an edit under a support session records impersonatedBy on the row", async () => {
+      const s = await seed("epi-imp");
+      await run(s.tenantId, async () =>
+        invoicesService.update(
+          s.inv.id,
+          { expectedUpdatedAt: await token(s.inv.id), items: screen(s, { qty: 3 }) } as never,
+          { ...s.actor("TENANT_ADMIN"), impersonatedBy: "sa-test-1" },
+        ),
+      );
+      expect((await rowsOf(s))[0].impersonatedBy).toBe("sa-test-1");
+    });
+
+    it("DB-E5: a DRAFT edit writes no invoice.revised row and no commission sync from the issued path", async () => {
+      const s = await seed("epi-draft", { status: "DRAFT" });
+      await save(s, { items: screen(s, { qty: 3 }) });
+      expect(await rowsOf(s)).toHaveLength(0);
+    });
+
+    it("DB-E6: a header-only discount edit writes one row with both totals", async () => {
+      const s = await seed("epi-header");
+      commission.syncInvoiceCommissionSafe.mockClear();
+      await save(s, { discount: 10 });
+      const rows = await rowsOf(s);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].meta).toMatchObject({ totalBefore: 100, totalAfter: 90, figureFree: false });
+      expect(commission.syncInvoiceCommissionSafe).toHaveBeenCalledTimes(1);
     });
   });
 
