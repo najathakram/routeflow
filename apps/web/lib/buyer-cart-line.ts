@@ -125,7 +125,7 @@ export function normalizeCartLine<T extends CartLineShape>(l: T): T {
 /**
  * The most the line may count in its CURRENT unit (B1382): its piece total stays within BUYER_LINE_QTY_MAX, so a
  * Case line is bounded at floor(cap / pack) Cases and an Each line at the cap. Every cart write clamps to it
- * (`setLineCount`, `setLineUnit`); a repeat Add merging into a line clamps too (SA-1292); Undo restoring an absent line does not merge, so it restores exactly.
+ * (`setLineCount`, `setLineUnit`); a repeat Add merging into a line clamps too (SA-1292).
  */
 export function lineMaxCount(l: CartLineShape): number {
   const upb = packOf(l);
