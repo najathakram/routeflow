@@ -1,5 +1,6 @@
 import {
   MAIL_WALL_MAX_ENTRIES,
+  isSinglePlainAddress,
   decideRecipientWall,
   mailWallAllows,
   mailWallKey,
@@ -23,6 +24,8 @@ describe("recipient wall: entries", () => {
     "gmail.com",
     "+*@gmail.com",
     "a b@acme.example",
+    "te%st@acme.example",
+    "tester+a%b@acme.example",
     "",
     "a@b",
     7,
@@ -131,4 +134,13 @@ describe("mailWallAllows: the local part is a closed character set (H1 residual)
     "tester+a[b@acme.test",
     "tester+é@acme.test",
   ])("%j matches nothing", (to) => expect(mailWallAllows(entries, to)).toBe(false));
+});
+
+describe("isSinglePlainAddress: the domain is ASCII letters, digits, dot and hyphen only", () => {
+  it.each(["a@é.test", "a@acme.tést", "a@ac_me.test", "a@acme.test!"])("%j is not plain", (to) => {
+    expect(isSinglePlainAddress(to)).toBe(false);
+  });
+  it("an ASCII domain is plain", () => {
+    expect(isSinglePlainAddress("a@sub-1.acme.test")).toBe(true);
+  });
 });

@@ -271,7 +271,7 @@ describe("mail wall: an undefined business is a programming error and holds (cla
     const { svc, resendSend } = makeService({ list: LIST });
     const error = jest.spyOn((svc as any).logger, "error");
     const res = await svc.sendPlatform({ ...mail(LISTED), tenantId: undefined } as any);
-    expect(res.holdCode).toBe("MAIL_WALL_HELD");
+    expect(res.holdCode).toBe("MAIL_WALL_UNCHECKED");
     expect(resendSend).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalled();
   });
@@ -284,7 +284,7 @@ describe("mail wall: an undefined business is a programming error and holds (cla
       tenantId: undefined,
       senderClass: c as any,
     } as any);
-    expect(res.holdCode).toBe("MAIL_WALL_HELD");
+    expect(res.holdCode).toBe("MAIL_WALL_UNCHECKED");
     expect(resendSend).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalled();
   });

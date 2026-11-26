@@ -13,6 +13,8 @@ export const MAIL_WALL_MAX_ENTRIES = 20;
 
 /** The coded reason a held send carries; the web maps it to its own words (no server text on the client). */
 export const MAIL_WALL_HOLD_CODE = "MAIL_WALL_HELD" as const;
+/** A send reached the wall with no business field at all: a programming error, not a test-business hold. */
+export const MAIL_WALL_UNCHECKED_CODE = "MAIL_WALL_UNCHECKED" as const;
 
 /** The log-only code word for the dark step (a Test business with no list yet). */
 export const MAIL_WALL_WOULD_HOLD = "would hold" as const;
@@ -20,7 +22,7 @@ export const MAIL_WALL_WOULD_HOLD = "would hold" as const;
 export const mailWallKey = (tenantId: string): string => `mail.wall.${tenantId}`;
 
 /** `name@domain` or `name+*@domain` (plus-addressing). Never a bare domain, never a wildcard domain. */
-const ENTRY_RE = /^[a-z0-9._%-]+(\+\*|\+[a-z0-9._%-]+)?@[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+const ENTRY_RE = /^[a-z0-9._-]+(\+\*|\+[a-z0-9._-]+)?@[a-z0-9-]+(\.[a-z0-9-]+)+$/;
 
 /** Lower-case, trimmed entry, or null when it is not one of the two allowed forms. */
 export function normalizeMailWallEntry(raw: unknown): string | null {
@@ -54,9 +56,9 @@ export function parseMailWallValue(value: string | null | undefined): MailWallRe
   return { kind: "list", entries };
 }
 
-/** One `@`; a local part of letters, digits and . _ + - only; no whitespace, comma, semicolon, bracket, quote or backslash in the domain. */
+/** One `@`; a local part of letters, digits and . _ + - only; a domain of ASCII letters, digits, dot and hyphen only. */
 export function isSinglePlainAddress(to: string): boolean {
-  return /^[a-z0-9._+-]+@[^@\s,;<>"'()\\]+$/i.test(to);
+  return /^[a-z0-9._+-]+@[a-z0-9.-]+$/i.test(to);
 }
 
 /** Exact match on the lower-cased address; an entry `name+*@domain` also matches `name+anything@domain`. */

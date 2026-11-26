@@ -1,6 +1,7 @@
 import { logRecipient, redactAddresses } from "./redact-addresses";
 import {
   MAIL_WALL_HOLD_CODE,
+  MAIL_WALL_UNCHECKED_CODE,
   MAIL_WALL_WOULD_HOLD,
   decideRecipientWall,
   readMailWall,
@@ -286,7 +287,7 @@ export type PlatformSendResult = {
   id?: string;
   error?: string;
   /** W-1464: set only when the mail wall held the send. */
-  holdCode?: typeof MAIL_WALL_HOLD_CODE;
+  holdCode?: typeof MAIL_WALL_HOLD_CODE | typeof MAIL_WALL_UNCHECKED_CODE;
 };
 
 /** What a send resolves to. */
@@ -316,7 +317,7 @@ export type EmailSendResult = {
   /** C29: why a tenant-server send fell back, as a class only (never provider text). Set on the fallback's result. */
   fallbackReason?: EmailFallbackClass;
   /** W-1464: set only when the mail wall held the send (a Test business, recipient not on its list). The web maps the code to its own words. */
-  holdCode?: typeof MAIL_WALL_HOLD_CODE;
+  holdCode?: typeof MAIL_WALL_HOLD_CODE | typeof MAIL_WALL_UNCHECKED_CODE;
 };
 
 @Injectable()
@@ -1266,8 +1267,9 @@ export class EmailService {
 
   /**
    * W-1464 (SA-1538 PR-A): the mail wall, beside `refuseSentinel` at both public send entries. A TEST-class
-   * business may mail only the addresses on its list (PlatformConfig). A caller with no business is never
-   * held. A list that cannot be read holds (fail closed); a class that cannot be read holds too
+   * business may mail only the addresses on its list (PlatformConfig). A platform-class caller that names no
+   * business (null) is never held; any other send falls back to the request's business; a send with no business
+   * field at all is held under its own code. A list that cannot be read holds (fail closed); a class that cannot be read holds too
    * and logs an error. A TEST business with no list is the dark step: sends, logs once.
    * Logs carry the recipient domain only (B911).
    */
@@ -1278,7 +1280,7 @@ export class EmailService {
     delivered: false;
     transport: "none";
     error: string;
-    holdCode: typeof MAIL_WALL_HOLD_CODE;
+    holdCode: typeof MAIL_WALL_HOLD_CODE | typeof MAIL_WALL_UNCHECKED_CODE;
   } | null> {
     if (tenantId === undefined) {
       // A path that should name its business and does not is a programming error: fail closed, loudly.
@@ -1289,7 +1291,7 @@ export class EmailService {
         delivered: false,
         transport: "none",
         error: "Not sent: the business could not be checked against its allowed list.",
-        holdCode: MAIL_WALL_HOLD_CODE,
+        holdCode: MAIL_WALL_UNCHECKED_CODE,
       };
     }
     if (!tenantId) return null;
