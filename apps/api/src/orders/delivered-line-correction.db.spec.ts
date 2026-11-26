@@ -235,14 +235,14 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     expect((await raw.order.findUniqueOrThrow({ where: { id: o.id } })).status).toBe("CONFIRMED");
   });
 
-  it("case 1b: raising 10/10 to 12 takes 2 more from stock; delivered stays 10 (2 still to deliver)", async () => {
+  it("case 1b (SA-1514 R1 case 2): raising 10/10 to 12 takes 2 more from stock; a fully delivered line stays fully delivered (12, one office row of 2)", async () => {
     const p = await product("c1b");
     const o = await reopened([plain(p, 10)]);
     await officeRow(o.id, { id: o.lineItems[0].id, productId: p }, 10);
     await edit(o.id, { replaceAll: false, items: [{ id: o.lineItems[0].id, qty: 12 }] });
     expect(Number((await line(o.id)).qty)).toBe(12);
-    expect(Number((await line(o.id)).deliveredQty)).toBe(10);
-    expect(await officeSum(o.id)).toBe(10);
+    expect(Number((await line(o.id)).deliveredQty)).toBe(12);
+    expect(await officeSum(o.id)).toBe(12);
     expect(await stock(p)).toBe(88);
   });
 
@@ -307,7 +307,7 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     expect(await stock(p)).toBe(92);
   });
 
-  it("case 5: a delivered-quantity recompute after the correction still reads 8; raising qty to 12 later leaves delivered 8", async () => {
+  it("case 5: a delivered-quantity recompute after the correction still reads 8; raising qty to 12 later keeps it fully delivered (12)", async () => {
     const { deliveredQtyRecompute } = await import("../routes/delivered-so-far");
     const p = await product("c5");
     const o = await reopened([plain(p, 10)]);
@@ -319,7 +319,7 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(1); // restated, never deleted
     await edit(o.id, { replaceAll: false, items: [{ id, qty: 12 }] });
     const raised = await line(o.id);
-    expect(Number(raised.qty) - Number(raised.deliveredQty)).toBe(4); // delivered stays 8, 4 remain
+    expect(Number(raised.qty) - Number(raised.deliveredQty)).toBe(0); // fully delivered stays fully delivered (R1 case 2)
   });
 
   it("case 7: an operator lowering the delivered line is refused with the admin sentence, nothing moves", async () => {
@@ -407,6 +407,55 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     expect(await stock(p)).toBe(92);
     const { deliveredQtyRecompute } = await import("../routes/delivered-so-far");
     await raw.$transaction((tx) => deliveredQtyRecompute(tx, o.id, [id]));
+    expect(Number((await line(o.id)).deliveredQty)).toBe(8);
+  });
+
+  it("R4-G (SA-1520): a row-less line (column 8, qty 12) on an order whose other lines have rows: qty to 13 gives delivered 13 and bills 13", async () => {
+    const { deliveredBasisByLine, billableQtyFromBasis } =
+      await import("../invoices/delivered-basis-by-line");
+    const p = await product("r4g");
+    const q = await product("r4g2");
+    const o = await reopened([plain(p, 12, 8), plain(q, 5)]);
+    const [rowless, withRows] = o.lineItems;
+    await officeRow(o.id, { id: withRows.id, productId: q }, 5);
+    await edit(o.id, { replaceAll: false, items: [{ id: rowless.id, qty: 13 }] });
+    const after = await raw.orderItem.findUniqueOrThrow({ where: { id: rowless.id } });
+    expect(Number(after.deliveredQty)).toBe(13); // wrong value: 8 (the column) while the invoice bills 13
+    const basis = await deliveredBasisByLine(raw as any, o.id);
+    expect(billableQtyFromBasis({ id: rowless.id, qty: 13 }, basis)).toBe(13);
+  });
+
+  it("R4-F (SA-1520 M-1): a NONE line (qty 12, no rows) corrected to deliveredTo 8 writes ONE office row of 8: bills 8, column 8", async () => {
+    const { restateLineEvidence } = await import("./delivered-line-correction");
+    const { deliveredBasisByLine, billableQtyFromBasis } =
+      await import("../invoices/delivered-basis-by-line");
+    const p = await product("r4f");
+    const o = await reopened([plain(p, 12)]);
+    const id = o.lineItems[0].id;
+    // the DTO field deliveredTo is PR-1c's; the seam and the one function are PR-1a's
+    await raw.$transaction(async (tx) => {
+      const { correctedDeliveredFor } = await import("./corrected-delivered");
+      const d = correctedDeliveredFor(
+        { deliveredQty: 12, qty: 12 },
+        { finalQty: 12, struck: false, deliveredTo: 8 },
+      );
+      await tx.orderItem.update({ where: { id }, data: { deliveredQty: d } });
+      await restateLineEvidence(
+        tx,
+        { orderId: o.id, tenantId },
+        { id, productId: p },
+        d,
+        "NONE",
+        12,
+      );
+    });
+    const rows = await raw.deliveryMutation.findMany({ where: { orderId: o.id } });
+    expect(rows).toHaveLength(1); // wrong value: 0 rows, so the invoice bills 12
+    expect(Number(rows[0].quantityDelivered)).toBe(8);
+    expect(rows[0].routeRunStopId).toBeNull();
+    expect(rows[0].driverId).toBeNull();
+    const basis = await deliveredBasisByLine(raw as any, o.id);
+    expect(billableQtyFromBasis({ id, qty: 12 }, basis)).toBe(8);
     expect(Number((await line(o.id)).deliveredQty)).toBe(8);
   });
 

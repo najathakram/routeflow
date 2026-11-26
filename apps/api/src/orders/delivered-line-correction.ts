@@ -4,7 +4,7 @@ import { roundMoney } from "@routeflow/pricing";
 import type { CorrectionBasis } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
-import { isEvidenceRow } from "../invoices/delivered-basis-by-line";
+import { deliveredBasisByLine, isEvidenceRow } from "../invoices/delivered-basis-by-line";
 import { assertOrderEditNotLocked } from "../regulated/filing-lock";
 import {
   deliveredLineModes,
@@ -30,7 +30,8 @@ import {
   lockedCopy,
 } from "./delivered-line-copy";
 import { needsLivePack, toPieces } from "./order-stock";
-import { correctedDeliveredFor } from "./corrected-delivered";
+import { correctedDeliveredFor, heldDeliveredFor } from "./corrected-delivered";
+import { OFFICE_MARKED_NOTE } from "./office-evidence-completion";
 
 /**
  * SA-1506 PR-1a (Amendment 1, C1-C2, B2-B5, B8): the edit-side glue of a delivered-line correction, kept out of
@@ -254,15 +255,63 @@ export async function restateOfficeRows(
 export async function restateLineEvidence(
   tx: any,
   ctx: { orderId: string; tenantId: string | null },
-  line: { id: string },
+  line: { id: string; productId?: string | null },
   corrected: number,
   basis: CorrectionBasis,
+  /** The line's FINAL quantity: a NONE line below it gets ONE office row (SA-1520 M-1). */
+  finalQty?: number,
 ): Promise<RestatedRow[]> {
-  if (basis === "NONE") return [];
-  if (basis === "OFFICE") return restateOfficeRows(tx, ctx.orderId, line.id, corrected);
+  if (basis === "NONE") {
+    // D' = final qty stays column-only (the reader bills a row-less line in full); a short D' needs a row to bill D'.
+    if (finalQty != null && corrected < finalQty - EPS && corrected > EPS)
+      await writeOfficeRow(tx, ctx, line, corrected);
+    return [];
+  }
+  if (basis === "OFFICE") {
+    const sum = await officeRowSum(tx, ctx.orderId, line.id);
+    if (corrected > sum + EPS) {
+      await writeOfficeRow(tx, ctx, line, r3(corrected - sum));
+      return [];
+    }
+    return restateOfficeRows(tx, ctx.orderId, line.id, corrected);
+  }
   throw new ConflictException({
     code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
     message: lockedCopy("ROUTE"),
+  });
+}
+
+async function officeRowSum(tx: any, orderId: string, lineId: string): Promise<number> {
+  const rows: Array<{ type: string; quantityDelivered: unknown }> =
+    await tx.deliveryMutation.findMany({
+      where: { orderId, orderItemId: lineId, routeRunStopId: null, driverId: null },
+      select: { type: true, quantityDelivered: true },
+    });
+  return r3(
+    rows
+      .filter((m) => isEvidenceRow(m) && m.type !== "REFUSED")
+      .reduce((s, m) => s + Number(m.quantityDelivered), 0),
+  );
+}
+
+/** ONE office DELIVERED row (no stop, no driver), the same shape `completeOfficeEvidencedLines` writes. */
+async function writeOfficeRow(
+  tx: any,
+  ctx: { orderId: string; tenantId: string | null },
+  line: { id: string; productId?: string | null },
+  quantityDelivered: number,
+): Promise<void> {
+  await tx.deliveryMutation.create({
+    data: {
+      orderId: ctx.orderId,
+      orderItemId: line.id,
+      productId: line.productId ?? null,
+      routeRunStopId: null,
+      driverId: null,
+      type: "DELIVERED",
+      quantityDelivered,
+      note: OFFICE_MARKED_NOTE,
+    },
   });
 }
 
@@ -283,6 +332,7 @@ async function applyLineCorrections(
     where: { id: { in: ids }, orderId: i.order.id },
   });
   const afterById = new Map(afterRows.map((a) => [a.id, a]));
+  const basis = await deliveredBasisByLine(tx, i.order.id); // the billing helper's rows, read once (the line writes leave evidence alone)
   for (const h of held) {
     const a = afterById.get(h.id);
     if (!a || modes.get(h.id)?.mode !== "CORRECT") continue;
@@ -296,9 +346,13 @@ async function applyLineCorrections(
       money(a.unitPrice) !== money(h.unitPrice);
     if (!changed) continue;
     const heldD = Number(h.deliveredQty ?? 0);
-    const nextD = correctedDeliveredFor(h, { finalQty: Number(a.qty), struck });
+    const figure = heldDeliveredFor({ id: h.id, qty: h.qty }, basis);
+    const nextD = correctedDeliveredFor(
+      { deliveredQty: figure, qty: h.qty },
+      { finalQty: Number(a.qty), struck },
+    );
     let restated: RestatedRow[] = [];
-    if (nextD < heldD - EPS) {
+    if (Math.abs(nextD - heldD) > EPS || Math.abs(nextD - figure) > EPS) {
       await tx.orderItem.update({
         where: { id: h.id, orderId: i.order.id },
         data: { deliveredQty: nextD },
@@ -310,6 +364,7 @@ async function applyLineCorrections(
         h,
         nextD,
         d?.mode === "CORRECT" ? d.basis : "NONE",
+        struck ? undefined : Number(a.qty),
       );
       corrected.set(h.id, nextD);
     }

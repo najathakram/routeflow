@@ -18,6 +18,7 @@ import type {
   ToCollectState,
   PriceType,
   OrderCancelBlockedReason,
+  LineEditModeFields,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 import type {
@@ -194,7 +195,7 @@ export interface OrderRevision {
 }
 
 /** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name); a buyer read never does. */
-export interface OrderItem extends Partial<OverrideStampView> {
+export interface OrderItem extends Partial<OverrideStampView>, Partial<LineEditModeFields> {
   restrictionOverrideByName?: string | null;
   id: string;
   /** Null for unlisted (ad-hoc, non-catalog) lines — `name` carries the label instead. */

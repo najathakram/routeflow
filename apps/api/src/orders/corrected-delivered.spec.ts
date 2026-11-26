@@ -84,3 +84,25 @@ describe("reduceDeliveredLineEntries: unchanged price and unit on a CORRECT entr
     expect(run({ action: "DELETE", unitPrice: 2.5 })).toEqual([{ id: "L1", action: "CANCEL" }]);
   });
 });
+
+describe("correctedDeliveredFor: SA-1520 (held figure is billing's; fully delivered stays delivered)", () => {
+  const run = (held: { deliveredQty: number; qty: number }, e: object) =>
+    correctedDeliveredFor(held, { finalQty: 13, struck: false, ...e });
+  it("R4-G: a line billed in full (figure 12 of 12) raised to 13 is delivered 13", () => {
+    expect(run({ deliveredQty: 12, qty: 12 }, {})).toBe(13);
+  });
+  it("a fully delivered line cut stays fully delivered at the new quantity", () => {
+    expect(run({ deliveredQty: 12, qty: 12 }, { finalQty: 8 })).toBe(8);
+  });
+  it("a short line (6 of 12) raised keeps its figure", () => {
+    expect(run({ deliveredQty: 6, qty: 12 }, {})).toBe(6);
+  });
+  it("R4-F: deliveredTo wins, and a short one stays below the quantity", () => {
+    expect(run({ deliveredQty: 12, qty: 12 }, { finalQty: 12, deliveredTo: 8 })).toBe(8);
+  });
+  it("deliveredTo above the final quantity is a 400", () => {
+    expect(() => run({ deliveredQty: 12, qty: 12 }, { finalQty: 12, deliveredTo: 13 })).toThrow(
+      "Delivered can't be more than the quantity.",
+    );
+  });
+});

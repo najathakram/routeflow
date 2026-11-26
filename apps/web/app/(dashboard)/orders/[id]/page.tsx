@@ -110,7 +110,7 @@ import { EditItemsLockedNote, InvoicedEditNotice } from "./_components/InvoicedE
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
-import { deliveredLockedLineIds } from "@/lib/order-line-lock";
+import { deliveredLockedLineIds, savedTitle } from "@/lib/order-line-lock";
 import { findLockedUnitLineEdit, lockedUnitLineRefusal } from "./_components/unit-line-lock";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
@@ -677,7 +677,7 @@ export default function OrderDetailPage() {
       setCreditsTouched(false);
       returnSave.onSuccess();
       // r4 F16: the page used to return to the detail with only a small "Edited 1×" chip.
-      toast({ title: "Order updated", variant: "success" });
+      toast({ title: savedTitle(order!, editItems, pendingDeletes), variant: "success" });
     };
     updateItems.mutate(
       rw.attach({
