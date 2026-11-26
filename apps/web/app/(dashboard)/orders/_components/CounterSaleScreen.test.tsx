@@ -1295,7 +1295,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
           await screen.findByTestId("counter-sale-receipt");
           expect(screen.queryByTestId("counter-payment-not-recorded")).toBeNull();
           expect(screen.getByText("Paid").nextSibling).toHaveTextContent("$3.00");
-          expect(screen.getByText("Balance due").nextSibling).toHaveTextContent("$2.00");
+          expect(screen.getByText("On account").nextSibling).toHaveTextContent("$2.00");
           expect(mutateAsync).toHaveBeenCalledTimes(1);
         });
 
@@ -1508,7 +1508,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       mutateAsync.mockResolvedValue(partlyPaid);
       await completeAndNext();
       expect(await screen.findByTestId("counter-sale-receipt")).toBeInTheDocument();
-      expect(screen.getByText("Balance due").nextSibling).toHaveTextContent("$1.50");
+      expect(screen.getByText("On account").nextSibling).toHaveTextContent("$1.50");
       expect(screen.queryByText("No items yet.")).toBeNull();
     });
 

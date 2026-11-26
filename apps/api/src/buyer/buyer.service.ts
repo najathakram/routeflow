@@ -535,6 +535,7 @@ export class BuyerService {
     for (const op of operators.filter((o) => o.email)) {
       await this.emailService
         .send({
+          tenantId: tenantId,
           to: op.email,
           subject: `Buyer portal connection request from ${requestEmail}`,
           html:

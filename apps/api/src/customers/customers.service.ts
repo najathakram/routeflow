@@ -2719,6 +2719,7 @@ export class CustomersService {
     // out while the customer received nothing, with no way for either of them
     // to discover the gap.
     const sendResult = await this.email.send({
+      tenantId: this.prisma.getTenantId() ?? null,
       to: toEmail,
       // W-1163: the LOOK is the tenant's (finished html, so the platform path needs no `layout`).
       ...portalInviteEmail(sellerName, inviteUrl, await this.email.tenantLook()),

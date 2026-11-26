@@ -178,7 +178,9 @@ describe("SA-1067 M2b: a tender far over the total needs a second Enter", () => 
     await user.type(screen.getByLabelText("Amount paying now"), "4011{Enter}");
     expect(posted()).toBe(0);
     expect(hint()).toBeNull();
-    expect(screen.getByRole("alert")).toHaveTextContent(/can't be more than the total/);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "$4,011.00 is more than the $12.50 total. Check the card amount.",
+    );
   });
 
   it("T8: part pay under the balance, Enter posts on one Enter as today", async () => {
