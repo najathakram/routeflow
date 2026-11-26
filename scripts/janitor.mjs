@@ -469,17 +469,19 @@ function isWindows() {
   return process.platform === "win32";
 }
 
+/** A stalled disk read must not stall a caller's heartbeat (R-216 LOW-4): the read gives up after this long. */
+const FREE_SPACE_TIMEOUT_MS = 20_000;
+
 export function getFreeSpaceGb() {
   if (isWindows()) {
-    const out = trySh("powershell", [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      "(Get-PSDrive -Name C).Free",
-    ]);
+    const out = trySh(
+      "powershell",
+      ["-NoProfile", "-NonInteractive", "-Command", "(Get-PSDrive -Name C).Free"],
+      { timeout: FREE_SPACE_TIMEOUT_MS },
+    );
     if (out) return Number(out) / 1024 ** 3;
   }
-  const out = sh("df", ["-k", "."]);
+  const out = sh("df", ["-k", "."], { timeout: FREE_SPACE_TIMEOUT_MS });
   const line = out.split("\n").slice(1).find(Boolean) ?? "";
   const kb = Number(line.trim().split(/\s+/)[3]);
   return kb / (1024 * 1024);

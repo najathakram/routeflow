@@ -324,6 +324,16 @@ export const NPM_INSTALL_VERBS = new Set([
   "install-ci-test",
   "clean-install-test",
   "sit",
+  // other verbs that reify node_modules and run lifecycle scripts (R-216 MEDIUM-1)
+  "update",
+  "up",
+  "upgrade",
+  "udpate",
+  "rebuild",
+  "rb",
+  "dedupe",
+  "ddp",
+  "find-dupes",
 ]);
 
 /** npm global/config options that consume the NEXT arg unless written `--opt=value`. */
@@ -364,22 +374,47 @@ const NPM_VALUE_OPTS = new Set([
   "--json-pointer",
 ]);
 
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "cmd", "powershell", "pwsh"]);
+/** Commands that run another command from their own arguments: shells, and wrappers such as `env X=1 npm ci`. */
+const SHELLS = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
+  "ksh",
+  "fish",
+  "cmd",
+  "powershell",
+  "pwsh",
+  "env",
+  "time",
+  "nice",
+  "nohup",
+  "sudo",
+  "doas",
+  "command",
+  "exec",
+  "start",
+  "corepack",
+]);
 
-/** The words after each `npm` inside a shell command string among `args` (`sh -c 'a && npm ci'`). */
+/**
+ * The words after each `npm` among the arguments of a shell or wrapper, however they were split: `sh -c 'a && npm ci'`
+ * (one string), `cmd /c npm ci` and `powershell -Command npm ci` (one word each). The arguments are joined and scanned as
+ * one command line, so an argument without a space is not skipped.
+ */
 function* npmCallsInShell(args) {
-  for (const a of args.map(String)) {
-    if (!/\s/.test(a)) continue;
-    for (const seg of a.split(/&&|\|\||[;|\n]/)) {
-      const w = seg
-        .replace(/['"`()]/g, " ")
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-      for (let i = 0; i < w.length; i++) {
-        const name = path.basename(w[i]).replace(/\.(cmd|exe)$/i, "");
-        if (name.toLowerCase() === "npm") yield w.slice(i + 1);
-      }
+  for (const seg of args
+    .map(String)
+    .join(" ")
+    .split(/&&|\|\||[;|\n]/)) {
+    const w = seg
+      .replace(/['"`()]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    for (let i = 0; i < w.length; i++) {
+      const name = path.basename(w[i]).replace(/\.(cmd|exe)$/i, "");
+      if (name.toLowerCase() === "npm") yield w.slice(i + 1);
     }
   }
 }

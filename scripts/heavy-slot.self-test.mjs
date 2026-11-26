@@ -32,6 +32,7 @@ import {
   activeChildCount,
   spawnAsync,
   formatStatus,
+  jobKind,
   formatWaitLine,
   historyRecord,
   nextGrant as nextGrantRaw,
@@ -2496,6 +2497,48 @@ check(
       "A6b status prints an `install:` line: none, then the holder",
       [none.length, /^install: none/.test(none[0]), /^install: ghost-install/.test(held[0])],
       [1, true, true],
+    );
+  }
+
+  // A7: shell and wrapper forms of an install are class install (R-216 MEDIUM-1); non-installs stay job.
+  {
+    const forms = {
+      "cmd /c npm ci": ["cmd", ["/c", "npm", "ci", "--ignore-scripts"]],
+      "powershell -Command npm ci": ["powershell", ["-Command", "npm", "ci", "--ignore-scripts"]],
+      "pwsh -c npm.cmd i": ["pwsh", ["-c", "npm.cmd", "i"]],
+      "bash -c npm ci": ["bash", ["-c", "npm", "ci"]],
+      "env X=1 npm ci": ["env", ["X=1", "npm", "ci", "--ignore-scripts"]],
+      "time npm install": ["time", ["npm", "install"]],
+      "sudo nice npm ci": ["sudo", ["nice", "npm", "ci"]],
+      "corepack npm ci": ["corepack", ["npm", "ci"]],
+      "npm update": ["npm", ["update", "--ignore-scripts"]],
+      "npm rebuild": ["npm", ["rebuild"]],
+      "npm dedupe": ["npm", ["dedupe", "--ignore-scripts"]],
+      "sh -c a && npm up": ["sh", ["-c", "echo a && npm up"]],
+    };
+    const got = Object.fromEntries(Object.entries(forms).map(([k, [c, a]]) => [k, jobKind(c, a)]));
+    check(
+      "A7a shell/wrapper/update/rebuild/dedupe install forms are all class install",
+      got,
+      Object.fromEntries(Object.keys(forms).map((k) => [k, "install"])),
+    );
+    check(
+      "A7b non-install look-alikes stay class job",
+      [
+        jobKind("cmd", ["/c", "echo", "npm"]),
+        jobKind("env", ["X=1", "node", "-e", "1"]),
+        jobKind("cmd", ["/c", "npm", "test"]),
+        jobKind("npm", ["run", "build"]),
+      ],
+      ["job", "job", "job", "job"],
+    );
+    check(
+      "A7c a bare wrapped npm update (no --ignore-scripts) is refused like npm ci",
+      [
+        /refusing a bare/.test(String(bareNpmReason("cmd", ["/c", "npm", "update"], {}))),
+        bareNpmReason("cmd", ["/c", "npm", "update", "--ignore-scripts"], {}),
+      ],
+      [true, null],
     );
   }
 }
