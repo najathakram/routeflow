@@ -313,18 +313,29 @@ describeDb(
       amount: number,
       legacy: boolean,
     ) {
-      // B1396: a draft cannot take a payment (INVOICE_NOT_PAYABLE), so the invoice is issued for the
-      // payment, as production does; recordPayment then sets the status as before.
+      // B1396: recordPayment now refuses a DRAFT, but a CHECK booked on a draft before the guard is still real
+      // legacy data, so a DRAFT gets the payment row written directly and stays DRAFT (setCheckStatus has no guard).
       const before = await prisma.invoice.findUniqueOrThrow({
         where: { id: invoiceId },
         select: { status: true },
       });
       if (before.status === "DRAFT") {
-        await prisma.invoice.update({ where: { id: invoiceId }, data: { status: "SENT" } });
+        await prisma.invoicePayment.create({
+          data: {
+            tenantId,
+            invoiceId,
+            amount,
+            method: "CHECK",
+            status: "PAID",
+            checkStatus: "RECORDED",
+            paidAt: new Date(),
+          },
+        });
+      } else {
+        await tenantCtx.run(tenantId, () =>
+          invoices.recordPayment(invoiceId, { amount, method: "CHECK" } as any),
+        );
       }
-      await tenantCtx.run(tenantId, () =>
-        invoices.recordPayment(invoiceId, { amount, method: "CHECK" } as any),
-      );
       const check = await prisma.invoicePayment.findFirstOrThrow({
         where: { invoiceId, method: "CHECK" },
       });

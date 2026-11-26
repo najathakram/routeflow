@@ -393,7 +393,7 @@ export const API_ERROR_CODES = {
   ADVANCE_NOT_AVAILABLE: "ADVANCE_NOT_AVAILABLE",
   /** B1385: a DRAFT payment cannot carry a leftover; it would become spendable credit (invoices). 400. */
   DRAFT_PAYMENT_HAS_EXCESS: "DRAFT_PAYMENT_HAS_EXCESS",
-  /** SA-1299 P4 (B1396): money lands only on an issued invoice; 400 from the invoices.service payment writers (ledger and advance apply still uncoded, B1454), body carries `reason` (DRAFT, VOID or WRITTEN_OFF). Nothing was written (invoices). */
+  /** SA-1299 P4 (B1396): money lands only on an issued invoice; 400 from the invoices.service writers and advance apply; the ledger writer (bookkeeping) still takes a DRAFT, B1454, body carries `reason` (DRAFT, VOID or WRITTEN_OFF). Nothing was written (invoices). */
   INVOICE_NOT_PAYABLE: "INVOICE_NOT_PAYABLE",
   PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
   UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
