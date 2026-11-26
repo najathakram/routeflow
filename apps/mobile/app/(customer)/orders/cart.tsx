@@ -6,7 +6,7 @@ import { useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
-import { maxLineUnits, useCartStore } from "../../../store/cartStore";
+import { maxLineUnits, useCartStore, type CartItem } from "../../../store/cartStore";
 import { BUYER_QTY_SPLIT_MISMATCH_COPY, isQtySplitMismatch } from "../../../lib/buyer-qty-split";
 import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer";
 import {
@@ -25,6 +25,8 @@ import {
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { QtyTextInput } from "../../../components/QtyStepper";
+import { UndoStrip } from "../../../components/UndoStrip";
+import { ENTER_ONE_OR_MORE } from "../../../lib/qty";
 import { QTY_INPUT_WIDTH } from "../../../lib/row-layout";
 
 function formatDateInput(raw: string): string {
@@ -59,7 +61,7 @@ function addDays(n: number): string {
 
 export default function CartScreen() {
   const router = useRouter();
-  const { items, step, setUnits, clear } = useCartStore();
+  const { items, step, setUnits, remove, restore, clear } = useCartStore();
   const createMut = useBuyerCreateOrder();
   const { data: promotions } = useBuyerPromotions();
   const qc = useQueryClient();
@@ -69,6 +71,14 @@ export default function CartScreen() {
   const unavailableCopy = sellerUnavailableCopy(sellerName);
   const [notes, setNotes] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
+  // B1395 F6: the line just removed (Undo) and the one line a row says about a rejected entry ("Enter 1 or more.").
+  const [removed, setRemoved] = useState<CartItem | null>(null);
+  const [note, setNote] = useState<{ productId: string; text: string } | null>(null);
+  const removeLine = (item: CartItem) => {
+    setRemoved(item);
+    setNote(null);
+    remove(item.productId);
+  };
 
   // Apply each line's best promotion so the buyer sees the SAME net the server
   // bills (server re-prices on submit; this is display-only). Keyed per line by
@@ -175,6 +185,15 @@ export default function CartScreen() {
             </Text>
           </View>
         ) : null}
+        {removed ? (
+          <UndoStrip
+            name={removed.name}
+            onUndo={() => {
+              restore(removed);
+              setRemoved(null);
+            }}
+          />
+        ) : null}
         {items.length === 0 ? (
           <View style={styles.empty}>
             <Ionicons name="cart-outline" size={48} color={ios.label3} />
@@ -226,11 +245,16 @@ export default function CartScreen() {
                           {boxed ? " / box" : item.unit ? ` / ${item.unit}` : ""}
                         </Text>
                         {freeLabel ? <Text style={styles.itemFreeLabel}>{freeLabel}</Text> : null}
+                        {note?.productId === item.productId ? (
+                          <Text style={styles.itemNote}>{note.text}</Text>
+                        ) : null}
                       </View>
                       <View style={styles.qtyRow}>
                         <Pressable
                           style={styles.qtyBtn}
-                          onPress={() => step(item.productId, -1)}
+                          onPress={() =>
+                            units === 1 ? removeLine(item) : step(item.productId, -1)
+                          }
                           hitSlop={4}
                         >
                           <Ionicons
@@ -245,7 +269,14 @@ export default function CartScreen() {
                           max={maxLineUnits(item.unitsPerBox)}
                           rejectNonDigits
                           emptyMeansZero={false}
-                          onChangeQty={(n) => setUnits(item.productId, n)}
+                          onChangeQty={(n) => {
+                            setNote(null);
+                            setUnits(item.productId, n);
+                          }}
+                          onReject={() =>
+                            setNote({ productId: item.productId, text: ENTER_ONE_OR_MORE })
+                          }
+                          onZero={() => removeLine(item)}
                           style={[styles.qtyText, styles.qtyInputReset]}
                         />
                         {boxed ? (
@@ -425,6 +456,7 @@ const styles = StyleSheet.create({
   itemPrice: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   itemPriceWas: { color: ios.label3, textDecorationLine: "line-through" },
   itemPriceNet: { color: ios.brand, fontFamily: "Inter_600SemiBold" },
+  itemNote: { fontSize: 12, color: ios.label2, marginTop: 2 },
   itemFreeLabel: {
     fontSize: 11,
     fontFamily: "Inter_600SemiBold",

@@ -20,8 +20,11 @@ const UW = unitWords();
 export function PurchaseOrderReadOnlyLines({
   items,
   catalogById,
+  status,
 }: {
   items: POItem[];
+  /** On PARTIAL each line also says what is still to come. */
+  status?: string;
   catalogById: Map<
     string,
     {
@@ -32,6 +35,7 @@ export function PurchaseOrderReadOnlyLines({
     }
   >;
 }) {
+  const showToCome = status === "PARTIAL";
   return (
     <div className="rounded-lg border border-surface-border overflow-x-auto bg-white">
       <table className="w-full text-xs">
@@ -41,6 +45,7 @@ export function PurchaseOrderReadOnlyLines({
             <th className="px-3 py-2 text-right font-medium">Qty</th>
             <th className="px-3 py-2 text-right font-medium">Cost</th>
             <th className="px-3 py-2 text-right font-medium">Received</th>
+            {showToCome && <th className="px-3 py-2 text-right font-medium">Still to come</th>}
             <th className="px-3 py-2 text-right font-medium">On hand</th>
             <th className="px-3 py-2 text-right font-medium">Subtotal</th>
           </tr>
@@ -61,29 +66,34 @@ export function PurchaseOrderReadOnlyLines({
             // MONEY: the stored exact total through the shared resolver — never `qtyOrdered x unitCost`,
             // which re-multiplies a boxed line's rounded per-piece cost (#1199: $11,000.40 for $11,000.00).
             const subtotal = resolveStoredPOLineAmounts(item, upb).totalCost;
+            // Every quantity carries its unit: boxed lines print pieces plus the box split, an unboxed
+            // line keeps its own noun ("48 can"), never a bare number.
+            const unitNoun = item.unitLabel?.trim() || item.product?.unit;
+            const qtyText = (n: number) =>
+              isBoxed ? unitsLabel(n, upb) : unitsLabel(n, null, unitNoun);
+            const toCome = Math.max(0, ordered - received);
             return (
               <tr key={item.id}>
                 <td className="px-3 py-2 font-medium text-navy">
                   {poLineName(item, catalogById.get(item.productId)?.name)}
                 </td>
-                <td className="px-3 py-2 text-right text-navy/70">
-                  {isBoxed ? unitsLabel(ordered, upb) : ordered}
-                </td>
+                <td className="px-3 py-2 text-right text-navy/70">{qtyText(ordered)}</td>
                 <td className="px-3 py-2 text-right text-navy/70">
                   ${Number(item.unitCost).toFixed(isBoxed ? 4 : 2)}
                   {isBoxed && <span className="text-navy/30"> /{UW.base.short.one}</span>}
                 </td>
                 <td className="px-3 py-2 text-right text-navy/70">
                   {item.qtyReceived != null ? (
-                    isBoxed ? (
-                      unitsLabel(received, upb)
-                    ) : (
-                      received
-                    )
+                    qtyText(received)
                   ) : (
                     <span className="text-navy/30">—</span>
                   )}
                 </td>
+                {showToCome && (
+                  <td data-testid="po-line-to-come" className="px-3 py-2 text-right text-navy/70">
+                    {toCome > 0 ? qtyText(toCome) : <span className="text-navy/30">—</span>}
+                  </td>
+                )}
                 <td data-testid="po-line-on-hand" className="px-3 py-2 text-right text-navy/70">
                   {onHandText}
                 </td>

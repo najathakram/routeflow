@@ -53,10 +53,17 @@ Exit codes: 0 clean, 1 hit, 2 usage or patterns file missing/empty/invalid.
   branch lives only in local clones and moves between machines by `git bundle`, never through GitHub.
 - `RF_REBRAND_PUSH=launch` is only for launch-day pushes of the name to master or other refs: it lifts
   the refusal and the content scan for rebrand-named refs only; any other ref in the same
-  push is still scanned.
+  push is still scanned, path rules included. The switch alone, with no rebrand ref in the push, lifts
+  neither the content scan nor the `path:` rules.
 - `git push --no-verify` and `HUSKY=0` skip the whole guard. House rule: never use them.
-- Merge commits are scanned against their first parent, annotated tag messages are scanned, and any
-  failed git call or non-UTF-8 patterns file refuses the push (exit 2) instead of passing.
+- Merge commits are scanned against their first parent. The one exemption is for a merge of master: a name
+  or line that another parent holds is not charged when ALL of these hold: the push goes to origin (the hook
+  passes git's URL; `--range` takes `--remote-url`), the local origin/master equals or precedes the master
+  that `git ls-remote` reports right now (one call, 30 s limit), origin/master fully contains that parent,
+  and origin/master's tree still holds the line or path. Anything else, a failed or slow remote check
+  included, gets the plain first-parent scan, and so does content master has since removed (a revert
+  included). Annotated tag messages are scanned, and any failed git
+  call or non-UTF-8 patterns file refuses the push (exit 2) instead of passing.
 
 ## Retirement (after launch)
 
