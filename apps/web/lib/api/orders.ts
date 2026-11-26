@@ -546,6 +546,8 @@ export interface ItemUpdate {
    *  Cases) — never expanded to base pieces client-side, and boxes/pieces must be
    *  omitted (assertUnitLabelNamed refuses an unnamed qty/price edit of a unit line). */
   qty?: number;
+  /** SA-1533 (s): an admin's take-off of a delivered line (CANCEL / DELETE) says nothing was delivered. 0 only. */
+  deliveredTo?: 0;
   /** Boxed split so the server prorates by BOX price (unitPrice is the box price).
    *  Omit for non-boxed lines — the server then charges unitPrice * qty. Never send
    *  alongside unitLabel (units_v1 lines are count + label only). */

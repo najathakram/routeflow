@@ -22,10 +22,10 @@ import { isDeliveredLine, isLiveDeliveredLine } from "./delivered-line-lock";
  *  1 not a live delivered line: EDIT   2 unit line: UNIT   3 not a tenant admin / no tenant: ROLE
  *  4 DELIVERED: REOPEN_FIRST; any status but CONFIRMED / PARTIALLY_DELIVERED: STATUS
  *  5 the order's stop is not COMPLETED: ON_RUN
- *  6 ROUTE basis (a driver / stop row on the line, or a COMPLETED stop with rows): ROUTE
+ *  6 a driver / stop row on the line, a COMPLETED stop, or any run link on the order (routeRunId): ROUTE (SA-1533 M-3)
  *  7 a live return: RETURN   8 partly invoiced: SPLIT_BILL   9 a linked invoice WRITTEN_OFF: WRITTEN_OFF
  *  10 bills-at-shipment order with the carrier: SHIPMENT_BILLED   11 otherwise CORRECT (OFFICE if the line has rows, else NONE).
- * A line with zero rows is CORRECT NONE even on a stop-linked order (A2 NEW-M2: zero rows wins over ROUTE basis).
+ * A line with zero rows on an order that never was on a run is CORRECT NONE (A2 NEW-M2); on a run order case 6 locks it.
  */
 export const LINE_EDIT_MODES = [
   "EDIT",
@@ -69,6 +69,8 @@ export interface DeliveredLineFacts {
   onRun: boolean;
   /** The order is linked to a COMPLETED route stop. */
   stopCompleted: boolean;
+  /** The order carries a route run link (`routeRunId`), even when its stop link was released (SA-1533 M-3). */
+  routeRunLinked: boolean;
   /** Lines with a qualifying evidence row written by a driver or a route stop. */
   routeLineIds: ReadonlySet<string>;
   /** Lines with a qualifying evidence row written by the office (no stop, no driver). */
@@ -143,8 +145,9 @@ export function deliveredLineEditMode(
   if (facts.onRun) return locked("ON_RUN"); // 5
   const office = facts.officeLineIds.has(line.id);
   const route = facts.routeLineIds.has(line.id);
-  // 6: a driver / stop row on the line, or a COMPLETED stop the line has any row under. Zero rows wins over ROUTE basis.
-  if (route || (facts.stopCompleted && office)) return locked("ROUTE");
+  // 6 (SA-1533 M-3, PR-1a): every delivered line of an order that is, or was, on a run answers LOCKED ROUTE, whatever rows
+  // it has: master's own guards then judge it, so PR-1a changes nothing on a route order. PR-1c-server lifts this one line.
+  if (route || facts.stopCompleted || facts.routeRunLinked) return locked("ROUTE");
   if (facts.liveReturn) return locked("RETURN"); // 7
   if (facts.partlyInvoiced) return locked("SPLIT_BILL"); // 8
   if (facts.writtenOffInvoiceNumber != null)
@@ -178,6 +181,7 @@ export const NO_ORDER_FACTS: DeliveredLineFacts = {
   orderStatus: "",
   onRun: false,
   stopCompleted: false,
+  routeRunLinked: false,
   routeLineIds: new Set(),
   officeLineIds: new Set(),
   liveReturn: false,

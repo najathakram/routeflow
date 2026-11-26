@@ -57,7 +57,6 @@ export interface EvidenceRowRead {
 }
 export interface LoadedEvidence {
   rows: ReadonlyArray<EvidenceRowRead>;
-  stopLinked: boolean;
 }
 const evidenceByModes = new WeakMap<DeliveredModes, LoadedEvidence>();
 /** The evidence the decisions in `modes` were made from (undefined when the order held no live delivered line). */
@@ -84,12 +83,19 @@ export async function loadDeliveredLineFacts(
     if (!m.orderItemId) continue;
     (evidenceOrigin(m) === "route" ? routeLineIds : officeLineIds).add(m.orderItemId);
   }
-  const head: { routeRunStopId: string | null; routeRunStop?: { status: string } | null } | null =
-    await i.db.order.findUnique({
-      where: { id: i.order.id },
-      select: { routeRunStopId: true, routeRunStop: { select: { status: true } } },
-    });
-  if (out) out.evidence = { rows, stopLinked: head?.routeRunStopId != null };
+  const head: {
+    routeRunId: string | null;
+    routeRunStopId: string | null;
+    routeRunStop?: { status: string } | null;
+  } | null = await i.db.order.findUnique({
+    where: { id: i.order.id },
+    select: {
+      routeRunId: true,
+      routeRunStopId: true,
+      routeRunStop: { select: { status: true } },
+    },
+  });
+  if (out) out.evidence = { rows };
   const stopStatus = head?.routeRunStopId ? (head.routeRunStop?.status ?? "PENDING") : null;
   const writtenOff = await i.db.invoice.findFirst({
     where: { orderId: i.order.id, status: InvoiceStatus.WRITTEN_OFF },
@@ -102,6 +108,7 @@ export async function loadDeliveredLineFacts(
     orderStatus: i.status,
     onRun: stopStatus != null && stopStatus !== "COMPLETED",
     stopCompleted: stopStatus === "COMPLETED",
+    routeRunLinked: head?.routeRunId != null,
     routeLineIds,
     officeLineIds,
     liveReturn: (await i.db.return.count({ where: liveReturnWhere([i.order.id]) })) > 0,

@@ -17,6 +17,7 @@ const facts = (over: Partial<DeliveredLineFacts> = {}): DeliveredLineFacts => ({
   orderStatus: "CONFIRMED",
   onRun: false,
   stopCompleted: false,
+  routeRunLinked: false,
   routeLineIds: new Set(),
   officeLineIds: new Set(["L1"]),
   liveReturn: false,
@@ -114,20 +115,26 @@ describe("deliveredLineEditMode", () => {
     ).toMatchObject({ reason: "ROUTE" });
   });
 
-  it("6: a COMPLETED stop makes a line with rows ROUTE", () => {
+  it("6: a COMPLETED stop makes a line ROUTE, with rows or without (SA-1533 M-3: zero rows no longer wins)", () => {
     expect(deliveredLineEditMode(line, facts({ stopCompleted: true }))).toMatchObject({
       reason: "ROUTE",
     });
+    expect(
+      deliveredLineEditMode(line, facts({ officeLineIds: new Set(), stopCompleted: true })),
+    ).toMatchObject({ mode: "LOCKED", reason: "ROUTE" });
   });
 
-  it("6/11: zero rows wins over ROUTE basis: CORRECT NONE, even on a stop-linked order (A2 NEW-M2)", () => {
+  it("6: an order whose stop link was released but whose run link remains is ROUTE for a line with no rows", () => {
+    expect(
+      deliveredLineEditMode(line, facts({ officeLineIds: new Set(), routeRunLinked: true })),
+    ).toMatchObject({ mode: "LOCKED", reason: "ROUTE" });
+  });
+
+  it("6/11: an order never on a run, a line with no rows: CORRECT NONE (A2 NEW-M2 stays for office orders)", () => {
     expect(deliveredLineEditMode(line, facts({ officeLineIds: new Set() }))).toEqual({
       mode: "CORRECT",
       basis: "NONE",
     });
-    expect(
-      deliveredLineEditMode(line, facts({ officeLineIds: new Set(), stopCompleted: true })),
-    ).toEqual({ mode: "CORRECT", basis: "NONE" });
   });
 
   it("7: RETURN, a live return stands on the order", () => {

@@ -413,7 +413,7 @@ describeDb("SA-1506 PR-1a: a delivered-line correction restates the real invoice
     const before = await snapshot(o.id);
     const invBefore = await invoiceOf(inv.id);
     await expect(
-      edit(o.id, { replaceAll: false, items: [{ id: li.id, action: "CANCEL" }] }),
+      edit(o.id, { replaceAll: false, items: [{ id: li.id, action: "CANCEL", deliveredTo: 0 }] }),
     ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_EMPTIES_INVOICE" } });
     const invAfter = await invoiceOf(inv.id);
     expect(Number(invAfter.total)).toBe(Number(invBefore.total));

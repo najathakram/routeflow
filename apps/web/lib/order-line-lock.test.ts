@@ -1,5 +1,7 @@
 import {
   DELIVERED_LINE_LOCK_HINT,
+  deleteUpdates,
+  takeOffFields,
   deliveredLockedLineIds,
   isLineDeliveredLocked,
   lockedLineHint,
@@ -114,5 +116,29 @@ describe("SA-1506: the server's lineEditMode decides (L-072, no second rule)", (
     expect(savedTitle(order, [it("c", 4, true), it("e", 5)], [])).toBe(CORRECTED_SAVED_TITLE);
     expect(savedTitle(order, [it("e", 4)], [])).toBe("Order updated");
     expect(savedTitle(order, [it("e", 5)], ["c"])).toBe(CORRECTED_SAVED_TITLE);
+  });
+});
+
+describe("take-off payload (SA-1533 (s))", () => {
+  const lines = [
+    { id: "ok", lineEditMode: "CORRECT" as const },
+    { id: "locked", lineEditMode: "LOCKED" as const },
+    { id: "plain", lineEditMode: "EDIT" as const },
+    { id: "old" },
+  ];
+
+  it("a take-off of a line the server said is CORRECT carries deliveredTo 0", () => {
+    expect(takeOffFields(lines[0])).toEqual({ deliveredTo: 0 });
+    expect(deleteUpdates(lines, ["ok"])).toEqual([{ id: "ok", action: "DELETE", deliveredTo: 0 }]);
+  });
+
+  it("every other line, and a line the screen does not know, is a bare DELETE", () => {
+    expect(takeOffFields(undefined)).toEqual({});
+    expect(deleteUpdates(lines, ["locked", "plain", "old", "gone"])).toEqual([
+      { id: "locked", action: "DELETE" },
+      { id: "plain", action: "DELETE" },
+      { id: "old", action: "DELETE" },
+      { id: "gone", action: "DELETE" },
+    ]);
   });
 });

@@ -1,3 +1,4 @@
+import type { ItemUpdate } from "@/lib/api/orders";
 import {
   OPERATOR_CORRECT_NOTE,
   fillLockedCopy,
@@ -54,6 +55,26 @@ export function isLineDeliveredLocked(
 /** An admin may correct this delivered line (the server said CORRECT). */
 export const isLineCorrectable = (line: Partial<LineEditModeFields>): boolean =>
   line.lineEditMode === "CORRECT";
+
+/**
+ * SA-1533 (s): the take-off of a line the server said an admin may correct carries `deliveredTo: 0`: the confirm
+ * ("Stock goes back on the shelf") is the admin saying nothing was delivered. Without it the server keeps master's
+ * removal 409, so a bare take-off (mobile, an old build) never restocks a delivered line.
+ */
+export const takeOffFields = (
+  line: Partial<LineEditModeFields> | undefined,
+): { deliveredTo?: 0 } => (line && isLineCorrectable(line) ? { deliveredTo: 0 } : {});
+
+/** The DELETE entries for the lines the user removed with the trash button. */
+export const deleteUpdates = (
+  lines: ReadonlyArray<ModeLine>,
+  ids: ReadonlyArray<string>,
+): ItemUpdate[] =>
+  ids.map((id) => ({
+    id,
+    action: "DELETE",
+    ...takeOffFields(lines.find((l) => l.id === id)),
+  }));
 
 /** The ids of the order's locked lines, for the edit builder. */
 export function deliveredLockedLineIds(

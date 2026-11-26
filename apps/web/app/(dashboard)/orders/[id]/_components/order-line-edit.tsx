@@ -26,7 +26,7 @@ import {
   DeliveredLockedQty,
   TakeOffConfirm,
 } from "./DeliveredLineLock";
-import { isLineCorrectable, lockedLineHint } from "@/lib/order-line-lock";
+import { isLineCorrectable, lockedLineHint, takeOffFields } from "@/lib/order-line-lock";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -477,7 +477,7 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
     const notePatch = noteChanged ? { notes: (edited.notes ?? "").trim() } : {};
 
     if (edited.cancelled) {
-      updates.push({ id: edited.id, action: "CANCEL" });
+      updates.push({ id: edited.id, action: "CANCEL", ...takeOffFields(orig) });
     } else if (edited.substituteProductId) {
       updates.push(substituteDtoUpdate(edited));
     } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged || noteChanged)) {

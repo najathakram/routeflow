@@ -38,6 +38,7 @@ const VALUE: Record<string, unknown> = {
   productId: "x",
   orderItemId: "x",
   qty: 1,
+  deliveredTo: 0, // SA-1533 (s): staff take-off only; a buyer entry carrying it is refused
   action: "CANCEL",
   substituteProductId: "x",
   unitLabel: "x",

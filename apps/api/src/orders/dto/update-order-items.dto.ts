@@ -74,6 +74,15 @@ class UpdateOrderItemDto {
   qty?: number;
 
   /**
+   * SA-1533 (s): an admin's explicit take-off of a delivered line says that nothing was delivered. PR-1a accepts the value
+   * 0 only, and only on a CANCEL / DELETE entry (the cross-field rule is `assertDeliveredToShape`, a 400); PR-1c-server
+   * widens the same field. Without it a take-off of a delivered line is master's removal 409.
+   */
+  @IsOptional()
+  @IsIn([0])
+  deliveredTo?: 0;
+
+  /**
    * Box/piece split for products with `unitsPerBox > 1`. When EITHER is
    * present the server recomputes `qty` from them (boxes × unitsPerBox +
    * pieces) and uses BOX-price proration for the line subtotal — matching

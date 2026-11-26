@@ -110,7 +110,7 @@ import { EditItemsLockedNote, InvoicedEditNotice } from "./_components/InvoicedE
 import { StickyEditBar } from "./_components/StickyEditBar";
 import { DemoteReasonModal } from "./_components/DemoteReasonModal";
 import { EditTaxLabel } from "./_components/EditTaxLabel";
-import { deliveredLockedLineIds, savedTitle } from "@/lib/order-line-lock";
+import { deleteUpdates, deliveredLockedLineIds, savedTitle } from "@/lib/order-line-lock";
 import { findLockedUnitLineEdit, lockedUnitLineRefusal } from "./_components/unit-line-lock";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
 import { parseSellingRestricted } from "@/lib/api/selling-restricted";
@@ -646,7 +646,7 @@ export default function OrderDetailPage() {
 
     // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
     const updates: ItemUpdate[] = [
-      ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
+      ...deleteUpdates(order!.lineItems, pendingDeletes),
       ...buildItemUpdates(editItems, stale.baseLines() ?? order!.lineItems),
     ];
 
@@ -1548,7 +1548,7 @@ export default function OrderDetailPage() {
                             // publishing straight from edit mode can't bill differently.
                             if (refuseLockedUnitLineEdit()) return;
                             const updates: ItemUpdate[] = [
-                              ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
+                              ...deleteUpdates(order!.lineItems, pendingDeletes),
                               ...buildItemUpdates(editItems, stale.baseLines() ?? order!.lineItems),
                             ];
                             const doPublish = () =>

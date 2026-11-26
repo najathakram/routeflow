@@ -16,6 +16,7 @@ import {
 import { CORRECTABLE_STATUSES, isAdminForCorrection } from "./delivered-line-edit-mode";
 import {
   assertDeliveredLinesUntouched,
+  assertDeliveredToShape,
   entryTouchesLine,
   isLiveDeliveredLine,
   reduceDeliveredLineEntries,
@@ -32,7 +33,7 @@ import {
   fill,
   lockedCopy,
 } from "./delivered-line-copy";
-import { needsLivePack, toPieces } from "./order-stock";
+import { bookedPieces } from "./order-stock";
 import { correctedDeliveredFor, heldDeliveredFor } from "./corrected-delivered";
 import { OFFICE_MARKED_NOTE } from "./office-evidence-completion";
 
@@ -46,8 +47,9 @@ import { OFFICE_MARKED_NOTE } from "./office-evidence-completion";
  *    corrected line (or zeroes a taken-off one), restates the line's OFFICE evidence rows in place (never deleting
  *    one), writes the `order.line-corrected` audit row, and returns the `correctedDelivered` map the stock settle reads.
  *
- * A correction only ever LOWERS what was delivered: an admin who raises the quantity leaves the delivered figure
- * where it was (the rest is still to deliver); a cut below it takes the delivered figure down with it.
+ * The corrected delivered figure is `correctedDeliveredFor`'s: a cut below it takes the delivered figure down with it, a
+ * take-off (`deliveredTo: 0`) zeroes it, a raise leaves a part-delivered line's figure where it was (the rest is still to
+ * deliver) and carries a fully delivered line's figure with its quantity.
  */
 const EPS = 0.0005;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -133,6 +135,7 @@ export function deliveredLineEdit(i: DeliveredLineEditInput): DeliveredLineEdit 
     assertDeliveredLinesUntouched({ status }, held, i.dto, i.user, i.isDiffPayload, modes);
   return {
     async assertPre() {
+      assertDeliveredToShape(i.dto.items);
       const held = i.order.lineItems ?? [];
       const modes = await modesOn(i.prisma.forTenant(), held, i.order.status);
       assertWith(held, i.order.status, modes);
@@ -176,6 +179,11 @@ export function deliveredLineEdit(i: DeliveredLineEditInput): DeliveredLineEdit 
     }),
     applyCorrections: (tx, modes, held) => applyLineCorrections(tx, i, modes, held),
   };
+}
+
+/** The `deliveredTo` the edit sent for one line (the DTO allows 0 only, with a take-off). */
+function deliveredToOf(items: readonly DeliveredLockEntry[] | undefined, lineId: string) {
+  return (items ?? []).find((e) => (e.id ?? e.orderItemId) === lineId)?.deliveredTo ?? null;
 }
 
 /** True when an entry actually changes (or takes off) a CORRECT line: a restated entry is not a correction. */
@@ -260,9 +268,8 @@ export async function restateLineEvidence(
   ctx: {
     orderId: string;
     tenantId: string | null;
-    /** The order's evidence rows (the edit's one read) and whether it sits on a stop. */
+    /** The order's evidence rows (the edit's one read). */
     evidence: ReadonlyArray<EvidenceRowRead>;
-    stopLinked: boolean;
   },
   line: { id: string; productId?: string | null },
   corrected: number,
@@ -273,12 +280,7 @@ export async function restateLineEvidence(
   if (basis === "NONE") {
     // D' = final qty stays column-only (the reader bills a row-less line in full); a short D' needs a row to bill D'.
     if (finalQty != null && corrected < finalQty - EPS && corrected > EPS) {
-      // A5 (i): on a stop the row belongs to the stop (PR-1c's route writer); never a stop-less office row.
-      if (ctx.stopLinked)
-        throw new ConflictException({
-          code: API_ERROR_CODES.LINE_ALREADY_DELIVERED,
-          message: lockedCopy("ROUTE"),
-        });
+      // An order that is or was on a run never reaches here: the decider locks its lines (ROUTE, SA-1533 M-3).
       await writeOfficeRow(tx, ctx, line, corrected);
     }
     return [];
@@ -336,10 +338,6 @@ async function writeOfficeRow(
   });
 }
 
-/** The booked pieces of one line at a quantity (max(qty, delivered) is the caller's), as the stock settle sizes it. */
-const piecesAt = (li: CorrectionHeldLine, qty: unknown, livePack: unknown): number =>
-  needsLivePack(li) ? toPieces({ boxes: null }, qty, livePack) : toPieces(li, qty, undefined);
-
 async function applyLineCorrections(
   tx: any,
   i: DeliveredLineEditInput,
@@ -354,7 +352,7 @@ async function applyLineCorrections(
   });
   const afterById = new Map(afterRows.map((a) => [a.id, a]));
   // The evidence read ONCE under the Order lock (A5 j): the decisions' own rows, folded here; the line writes leave evidence alone.
-  const loaded = evidenceOfModes(modes) ?? { rows: [], stopLinked: false };
+  const loaded = evidenceOfModes(modes) ?? { rows: [] };
   const basis = basisFromRows(loaded.rows);
   for (const h of held) {
     const a = afterById.get(h.id);
@@ -372,7 +370,7 @@ async function applyLineCorrections(
     const figure = heldDeliveredFor({ id: h.id, qty: h.qty }, basis);
     const nextD = correctedDeliveredFor(
       { deliveredQty: figure, qty: h.qty },
-      { finalQty: Number(a.qty), struck },
+      { finalQty: Number(a.qty), struck, deliveredTo: deliveredToOf(i.dto.items, h.id) },
     );
     let restated: RestatedRow[] = [];
     if (Math.abs(nextD - heldD) > EPS || Math.abs(nextD - figure) > EPS) {
@@ -387,7 +385,6 @@ async function applyLineCorrections(
           orderId: i.order.id,
           tenantId: i.order.tenantId ?? null,
           evidence: loaded.rows,
-          stopLinked: loaded.stopLinked,
         },
         h,
         nextD,
@@ -400,10 +397,15 @@ async function applyLineCorrections(
       ? await tx.product.findUnique({ where: { id: h.productId }, select: { unitsPerBox: true } })
       : null;
     const pack = product?.unitsPerBox;
-    const bookedBefore = Math.max(piecesAt(h, h.qty, pack), piecesAt(h, heldD, pack));
-    const bookedAfter = struck
-      ? piecesAt(h, nextD, pack)
-      : Math.max(piecesAt(a, a.qty, pack), piecesAt(a, corrected.get(h.id) ?? heldD, pack));
+    // SA-1533 (w): the booking rule has ONE home (`bookedTerms`, through `bookedPieces`), with the same map the stock settle
+    // reads, so the audit row's delta can never drift from what the counter moved.
+    const booked = bookedPieces(
+      [{ ...h, qty: h.qty }],
+      struck ? [] : [{ ...a, qty: a.qty }],
+      pack,
+      "stable",
+      corrected,
+    );
     await tx.auditLog.create({
       data: {
         tenantId: i.order.tenantId ?? null,
@@ -424,7 +426,7 @@ async function applyLineCorrections(
           unitPrice: { before: money(h.unitPrice), after: money(a.unitPrice) },
           deliveredQty: { before: heldD, after: corrected.get(h.id) ?? heldD },
           evidenceRows: restated,
-          stockDeltaPieces: r3(bookedBefore - bookedAfter),
+          stockDeltaPieces: r3(booked.before - booked.after),
         },
       },
     });

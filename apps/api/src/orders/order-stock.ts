@@ -272,7 +272,8 @@ function unlistedLineDeltas(
  * says how the final lines relate to the held ones (`lineIdentity`):
  *  - "stable" (default; an in-place diff edit): a line is the SAME line when both sides carry the same
  *    NON-NULL id (undefined never matches). C_after = Σ matched max(q, d) + Σ removed held d + Σ new q;
- *    a struck delivered line stays booked (its d) and never nets against a new line of the product.
+ *    a struck delivered line stays booked (its d, or the restated figure when a correction took it off) and never nets
+ *    against a new line of the product.
  *  - "recreated" (the deleteMany + re-create paths: operator replaceAll, CUSTOMER/DRIVER non-diff):
  *    ids are fresh, so nothing can match; C_after = max(Σ final q, Σ held d), the pooled behaviour.
  * C_before = Σ held max(q, d) either way; the counter moves by C_after − C_before. No credit cap.
@@ -343,7 +344,7 @@ export function bookedTerms(
         b: cd != null ? partsOf(f, cd) : d,
       });
     } else if (identity === "stable") {
-      terms.push({ bucket: "unmatched", side: "after", a: cd != null ? partsOf(h, cd) : d }); // removed: delivered stays booked, unless corrected
+      terms.push({ bucket: "unmatched", side: "after", a: cd != null ? partsOf(h, cd) : d }); // removed: delivered stays booked, unless a correction restated it (a take-off books 0)
     } else {
       heldD = plusParts(heldD, d);
     }
@@ -368,10 +369,12 @@ export function bookedPieces(
   final: BookedLine[],
   livePack?: unknown,
   identity: LineIdentity = "stable",
+  /** SA-1533 (w): the restated delivered figures of a correction (see `bookedTerms`); an ordinary caller omits it. */
+  corrected?: ReadonlyMap<string, number>,
 ) {
   const r3 = (n: number) => Math.round(n * 1000) / 1000;
   const out = { matched: { before: 0, after: 0 }, unmatched: { before: 0, after: 0 } };
-  for (const t of bookedTerms(held, final, identity))
+  for (const t of bookedTerms(held, final, identity, corrected))
     out[t.bucket][t.side] += termPieces(t, livePack);
   return {
     matched: { before: r3(out.matched.before), after: r3(out.matched.after) },
@@ -419,9 +422,10 @@ function effectiveDeltaParts(terms: BookedTerm[]): BookedParts | null {
  *   - a product whose booked qty FALLS (line reduced, removed, or zeroed)
  *     returns the difference to currentStock. Booked qty is per line
  *     `max(qty, deliveredQty)` (B1050 / SA-703, see `bookedTerms`): delivered
- *     goods are gone and never come back via an edit, and an edit below
- *     delivered neither credits nor, on the way back up, decrements them a
- *     second time. There is no pooled per-product cap. This is new; the
+ *     goods are gone and never come back via an edit (except an admin's
+ *     delivered-line CORRECTION, which restates the figure, SA-1506), and an
+ *     edit below delivered neither credits nor, on the way back up,
+ *     decrements them a second time. There is no pooled per-product cap. This is new; the
  *     pre-refactor version only validated increases, it never wrote
  *     anything.
  * Held/requested are compared over the UNION of product ids on both sides

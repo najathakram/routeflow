@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { OrderStatus } from "@prisma/client";
 import { withinStaffOverrideTolerance } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -60,6 +60,8 @@ export interface DeliveredLockEntry {
   substituteProductId?: string;
   unitLabel?: string | null;
   qty?: number;
+  /** SA-1533 (s): 0 only, with a take-off only. */
+  deliveredTo?: number;
   boxes?: number;
   pieces?: number;
   unitPrice?: number;
@@ -184,9 +186,21 @@ function assertCorrectEntry(
   const productChange = entry.productId != null && entry.productId !== (held.productId ?? null);
   if (entry.substituteProductId != null || productChange || unitChange)
     throw conflict(CORRECT_IDENTITY_MESSAGE);
+  // SA-1533 (s): a take-off is a correction only when it says so (`deliveredTo: 0`); a bare DELETE / CANCEL (the mobile
+  // screen, old builds) keeps master's removal 409, so a phone cannot restock a delivered line by trashing it.
+  if (entryRemovesLine(entry) && entry.deliveredTo !== 0) throw deliveredLineRemoved(EDIT);
   // A return and a correction read the order's stock differently: one save does one of them (SA-1506 C2).
   if (dto.inlineReturn != null && entryTouchesLine(entry, held))
     throw conflict(CORRECT_WITH_RETURN_MESSAGE);
+}
+
+/** SA-1533 (s): `deliveredTo` is 0 and only with a take-off; anything else is a 400 before any read or write. */
+export function assertDeliveredToShape(items: ReadonlyArray<DeliveredLockEntry> | undefined): void {
+  for (const entry of items ?? []) {
+    if (entry.deliveredTo == null) continue;
+    if (entry.deliveredTo !== 0 || !(entry.action === "CANCEL" || entry.action === "DELETE"))
+      throw new BadRequestException("Delivered can only be set to 0, when taking a line off.");
+  }
 }
 
 const conflict = (message: string) =>

@@ -1,4 +1,4 @@
-import { bookedTerms, settleStockForEdit, type OrderStockDeps } from "./order-stock";
+import { bookedPieces, bookedTerms, settleStockForEdit, type OrderStockDeps } from "./order-stock";
 
 /**
  * SA-1506 PR-1a (A1 B2): `bookedTerms` books max(qty, delivered) per line. A correction that lowers the delivered column
@@ -40,6 +40,44 @@ describe("bookedTerms: correctedDelivered (SA-1506 B2)", () => {
     const terms = bookedTerms(held as any, final8 as any, "stable", new Map([["other", 1]]));
     const after = terms.find((t) => t.bucket === "matched" && t.side === "after");
     expect(after?.b?.perPack).toBe(10);
+  });
+});
+
+describe("bookedPieces with the map: the ONE booking rule (SA-1533 (t), (w))", () => {
+  it("a cancelled line the map does not name stays booked: 10 before, 10 after, nothing comes back", () => {
+    const out = bookedPieces(held as any, [], undefined, "stable", new Map([["other", 0]]));
+    expect(out.before).toBe(10);
+    expect(out.after).toBe(10);
+  });
+
+  it("a cancelled line the map names as 0 books 0 after: all 10 come back", () => {
+    const out = bookedPieces(held as any, [], undefined, "stable", new Map([["L1", 0]]));
+    expect(out.before - out.after).toBe(10);
+  });
+
+  it("a cut to 8 with the map at 8 frees 2; without the map it frees nothing (the audit row reads this same number)", () => {
+    const withMap = bookedPieces(
+      held as any,
+      final8 as any,
+      undefined,
+      "stable",
+      new Map([["L1", 8]]),
+    );
+    expect(withMap.before - withMap.after).toBe(2);
+    const noMap = bookedPieces(held as any, final8 as any);
+    expect(noMap.before - noMap.after).toBe(0);
+  });
+
+  it("a raise to 14 on a line delivered 10 books the new 14: stock down 2 more, map or not", () => {
+    const final14 = [{ id: "L1", qty: 14, deliveredQty: 10 }];
+    const out = bookedPieces(
+      held as any,
+      final14 as any,
+      undefined,
+      "stable",
+      new Map([["L1", 10]]),
+    );
+    expect(out.before - out.after).toBe(-4);
   });
 });
 

@@ -8,8 +8,8 @@ import { billableQtyFromBasis, type DeliveredBasis } from "../invoices/delivered
  *
  * First match wins:
  *  0. a take-off (the line struck) delivers 0.
- *  1. the entry's `deliveredTo`, when sent (the DTO field is PR-1c's; the function already honours it). In the line's own
- *     unit; above the final quantity it is a 400.
+ *  1. the entry's `deliveredTo`, when sent (SA-1533 (s): PR-1a's DTO accepts 0 only, on a take-off only; PR-1c-server
+ *     widens it, and this function already honours any figure). In the line's own unit; above the final quantity it is a 400.
  *  2. a line that was fully delivered (held delivered >= held qty) stays fully delivered: D' = final qty, for a raise or a cut.
  *  3. otherwise D' = min(final qty, held delivered) (A2's rule): a short line is not raised to the quantity.
  *

@@ -1,5 +1,7 @@
 import {
   assertDeliveredLinesUntouched,
+  assertDeliveredToShape,
+  DELIVERED_LINE_REMOVED_MESSAGE,
   assertQtyNotBelowDelivered,
   reduceDeliveredLineEntries,
   type DeliveredModes,
@@ -48,8 +50,21 @@ describe("assertDeliveredLinesUntouched with a CORRECT decision (SA-1506)", () =
     (status) => {
       expect(run(status, [{ id: "L1", qty: 8 }], CORRECT)).toBeNull();
       expect(run(status, [{ id: "L1", unitPrice: 2 }], CORRECT)).toBeNull();
-      expect(run(status, [{ id: "L1", action: "CANCEL" }], CORRECT)).toBeNull();
-      expect(run(status, [{ id: "L1", action: "DELETE" }], CORRECT)).toBeNull();
+      expect(run(status, [{ id: "L1", action: "CANCEL", deliveredTo: 0 }], CORRECT)).toBeNull();
+      expect(run(status, [{ id: "L1", action: "DELETE", deliveredTo: 0 }], CORRECT)).toBeNull();
+    },
+  );
+
+  // SA-1533 (s): a take-off is a correction only when it says so. A bare CANCEL / DELETE (mobile, an old build) is master's
+  // removal 409, so trashing a delivered line on a phone never puts its stock back.
+  it.each(["CONFIRMED", "PARTIALLY_DELIVERED"])(
+    "a bare CANCEL or DELETE of a CORRECT line is master's removal 409 on %s",
+    (status) => {
+      for (const action of ["CANCEL", "DELETE"])
+        expect(run(status, [{ id: "L1", action }], CORRECT)).toEqual({
+          code: "LINE_ALREADY_DELIVERED",
+          message: DELIVERED_LINE_REMOVED_MESSAGE,
+        });
     },
   );
 
@@ -197,5 +212,34 @@ describe("reduceDeliveredLineEntries (A1 B7 / B8, A2 M8)", () => {
   it("a status outside CONFIRMED / PARTIALLY_DELIVERED with no CORRECT line returns the items untouched", () => {
     const items = [{ id: "L1", qty: 10, unitPrice: 1 }];
     expect(reduceDeliveredLineEntries({ status: "DELIVERED" }, live, items, new Map())).toBe(items);
+  });
+});
+
+describe("assertDeliveredToShape (SA-1533 (s))", () => {
+  const code = (items: any[]) => {
+    try {
+      assertDeliveredToShape(items);
+    } catch (e: any) {
+      return e.getStatus();
+    }
+    return null;
+  };
+
+  it("0 on a CANCEL or DELETE passes; no field passes", () => {
+    expect(code([{ id: "L1", action: "CANCEL", deliveredTo: 0 }])).toBeNull();
+    expect(code([{ id: "L1", action: "DELETE", deliveredTo: 0 }])).toBeNull();
+    expect(
+      code([
+        { id: "L1", qty: 4 },
+        { id: "L2", action: "CANCEL" },
+      ]),
+    ).toBeNull();
+  });
+
+  it("any other figure, or 0 without a take-off, is a 400", () => {
+    expect(code([{ id: "L1", action: "CANCEL", deliveredTo: 3 }])).toBe(400);
+    expect(code([{ id: "L1", action: "DELETE", deliveredTo: -1 }])).toBe(400);
+    expect(code([{ id: "L1", qty: 4, deliveredTo: 0 }])).toBe(400);
+    expect(code([{ id: "L1", action: "UPDATE", deliveredTo: 0 }])).toBe(400);
   });
 });
