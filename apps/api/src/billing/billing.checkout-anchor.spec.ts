@@ -49,6 +49,7 @@ function make(
       findUnique: jest.fn(async () => ({
         id: "t1",
         slug: "acme",
+        class: "PRODUCTION",
         name: "Acme",
         status: "ACTIVE",
         readOnlyReason: null,

@@ -227,12 +227,19 @@ describe("BillingNotificationService", () => {
       const expected = cancelledTemplate({ businessName: "Acme Retail", adminName: "Jamie" });
       expect(sendPlatform).toHaveBeenCalledTimes(1);
       expect(sendPlatform.mock.calls[0][0]).toStrictEqual({
+        tenantId: "t1",
         to: "admin@acme.test",
         subject: expected.subject,
         html: expected.html,
         text: expected.text,
       });
-      expect(Object.keys(sendPlatform.mock.calls[0][0])).toEqual(["to", "subject", "html", "text"]);
+      expect(Object.keys(sendPlatform.mock.calls[0][0])).toEqual([
+        "tenantId",
+        "to",
+        "subject",
+        "html",
+        "text",
+      ]);
       expect(expected.subject).toBe("Subscription cancelled — Acme Retail");
     });
   });

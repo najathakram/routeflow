@@ -50,6 +50,7 @@ export class EmailChannelProvider implements MessageProvider {
       const look = await this.emailService.tenantLook();
       const brandName = look.kind === "tenant" ? look.name : null;
       const result = await this.emailService.send({
+        tenantId: input.tenantId,
         to: input.to,
         subject,
         html: buildNotificationEmailBody(input.body),

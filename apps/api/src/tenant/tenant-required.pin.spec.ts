@@ -99,6 +99,7 @@ const EXPECTED_PLATFORM_WRITES: string[] = [
   "PUT /api/v1/platform-admin/entitlements/config-snapshot PlatformAdminController#setConfigSnapshotFlag",
   "PUT /api/v1/platform-admin/entitlements/mode PlatformAdminController#setEntitlementsMode",
   "PUT /api/v1/platform-admin/tenants/:id/feature-config/:key FeatureConfigController#setState",
+  "PUT /api/v1/platform-admin/tenants/:id/mail-wall PlatformAdminController#setMailWall",
 ];
 
 describe("W-767: the @PlatformScoped() write routes (TenantRequiredInterceptor's allow-list)", () => {

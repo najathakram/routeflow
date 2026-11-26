@@ -272,6 +272,7 @@ export class AuthService {
         // Fire-and-forget — email failures must not block the login response.
         this.emailService
           .send({
+            tenantId: user.tenantId,
             to: (user as any).email as string,
             ...newLoginMessage({
               device: deviceName,
@@ -611,6 +612,7 @@ export class AuthService {
       toEmail: string;
       username: string;
       forcePasswordChange: boolean;
+      tenantId: string | null;
     };
     try {
       // A plain transaction on purpose: the tenant guard only sees forTenant()/tenantTransaction, so this is never reported.
@@ -623,8 +625,9 @@ export class AuthService {
             toEmail: string;
             username: string;
             forcePasswordChange: boolean;
+            tenantId: string | null;
           }[]
-        >`SELECT c."id", c."userId", c."fromEmail", c."toEmail", u."username", u."forcePasswordChange"
+        >`SELECT c."id", c."userId", c."fromEmail", c."toEmail", u."username", u."forcePasswordChange", u."tenantId"
           FROM "UserEmailChange" c JOIN "User" u ON u."id" = c."userId"
           WHERE c."tokenHash" = ${tokenHash} AND c."usedAt" IS NULL AND c."expiresAt" > ${now}`;
         if (!row) throw refused();
@@ -660,11 +663,14 @@ export class AuthService {
       username: change.username,
       status: "ACTIVE",
       forcePasswordChange: change.forcePasswordChange,
+      // From the user row: this route is public, so the request carries no business.
+      tenantId: change.tenantId,
     });
     // Best-effort notices, after the commit: the old address learns the change was made, the new one that it is now
     // the login email. A delivery failure never undoes the change.
     try {
       const old = await this.emailService.sendEmailChangedNotice({
+        tenantId: change.tenantId,
         to: change.fromEmail,
         username: change.username,
         newEmail: change.toEmail,
@@ -675,6 +681,7 @@ export class AuthService {
         );
       }
       const added = await this.emailService.sendEmailChangeConfirmation({
+        tenantId: change.tenantId,
         to: change.toEmail,
         username: change.username,
       });
@@ -705,7 +712,7 @@ export class AuthService {
     const MSG = { message: "If that address is registered you will receive a reset link shortly." };
 
     const lower = email.toLowerCase();
-    const select = { id: true, tenant: { select: { name: true } } } as const;
+    const select = { id: true, tenantId: true, tenant: { select: { name: true } } } as const;
     const active = { email: lower, deletedAt: null, status: "ACTIVE" as const };
 
     // One address can belong to several businesses (unique per business, not globally). When the
@@ -775,6 +782,7 @@ export class AuthService {
       });
       this.emailService
         .send({
+          tenantId: user.tenantId,
           to: email,
           subject: resetMail.subject,
           html: resetMail.html,
@@ -934,6 +942,7 @@ export class AuthService {
       // Fire-and-forget — email failures must not block the mutation.
       this.emailService
         .send({
+          tenantId: user.tenantId,
           to: user.email,
           ...passwordSetMessage({
             portal: false,
