@@ -603,7 +603,11 @@ export class UsersService {
       // any outstanding token; then — only if the user has never set their own password — mint and
       // send a fresh one to the corrected address so they aren't left with no way in at all.
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
-      await this.sendInviteIfOwed({ ...updated, deletedAt: user.deletedAt });
+      await this.sendInviteIfOwed({
+        ...updated,
+        deletedAt: user.deletedAt,
+        tenantId: user.tenantId,
+      });
     }
     if (roleChanged) {
       // A link minted for the old role does not carry over to the new one (burned above).
@@ -616,7 +620,12 @@ export class UsersService {
         changedByUsername ?? "an administrator",
       );
       // The same rule as the email branch: a person who has never set a password is not left with a dead first mail.
-      if (!emailWritten) await this.sendInviteIfOwed({ ...updated, deletedAt: user.deletedAt });
+      if (!emailWritten)
+        await this.sendInviteIfOwed({
+          ...updated,
+          deletedAt: user.deletedAt,
+          tenantId: user.tenantId,
+        });
     }
 
     // The user as it stands, plus the address it is waiting on. A write at once burned any pending row (above).
@@ -817,6 +826,7 @@ export class UsersService {
       ...updated,
       deletedAt: user.deletedAt,
       forcePasswordChange: user.forcePasswordChange,
+      tenantId: user.tenantId,
     });
     return updated;
   }

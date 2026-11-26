@@ -1280,6 +1280,18 @@ export class EmailService {
     error: string;
     holdCode: typeof MAIL_WALL_HOLD_CODE;
   } | null> {
+    if (tenantId === undefined) {
+      // A path that should name its business and does not is a programming error: fail closed, loudly.
+      this.logger.error(
+        "mail wall: a send reached the wall with no business field; the send is held",
+      );
+      return {
+        delivered: false,
+        transport: "none",
+        error: "Not sent: the business could not be checked against its allowed list.",
+        holdCode: MAIL_WALL_HOLD_CODE,
+      };
+    }
     if (!tenantId) return null;
     let klass: string | undefined;
     try {
@@ -1358,7 +1370,9 @@ export class EmailService {
         // A platform-class send names its business or none; any other send falls back to the request's.
         params.senderClass === "platform"
           ? params.tenantId
-          : (params.tenantId ?? this.prisma.getTenantId()),
+          : params.tenantId === undefined
+            ? undefined
+            : (params.tenantId ?? this.prisma.getTenantId()),
         params.to,
       ));
     if (refusedTo) {

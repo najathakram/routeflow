@@ -290,6 +290,65 @@ describe("UsersService", () => {
     });
   });
 
+  describe("the invite names the account's business when the update returns only its selected fields (N1)", () => {
+    const TENANT = "t-acme-test";
+    const stored = {
+      id: "u1",
+      username: "acme_op",
+      email: "old@acme.example",
+      role: "OPERATOR",
+      status: "ACTIVE",
+      tenantId: TENANT,
+      isAdmin: false,
+      canActAsDriver: false,
+      forcePasswordChange: true,
+      deniedPermissionGroups: [],
+      lastLoginAt: null,
+      createdAt: new Date("2026-10-01T00:00:00Z"),
+    };
+    // Exactly the fields the update selects: no tenantId, as in the real query.
+    const selectedOnly = (over: Record<string, unknown>) => ({
+      id: "u1",
+      username: "acme_op",
+      email: "old@acme.example",
+      role: "OPERATOR",
+      status: "ACTIVE",
+      isAdmin: false,
+      canActAsDriver: false,
+      forcePasswordChange: true,
+      ...over,
+    });
+
+    it("an email written at once", async () => {
+      prisma.user.findUnique.mockResolvedValue(stored as any);
+      prisma.user.update.mockResolvedValue(selectedOnly({ email: "new@acme.example" }) as any);
+      await service.updateUser(
+        "u1",
+        { email: "new@acme.example" } as any,
+        undefined,
+        "OPERATOR" as any,
+      );
+      expect(email.sendSetPasswordEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSetPasswordEmail.mock.calls[0][0].tenantId).toBe(TENANT);
+    });
+
+    it("a role change", async () => {
+      prisma.user.findUnique.mockResolvedValue(stored as any);
+      prisma.user.update.mockResolvedValue(selectedOnly({ role: "DRIVER" }) as any);
+      await service.updateUser("u1", { role: "DRIVER" } as any, "ad", "TENANT_ADMIN" as any);
+      expect(email.sendSetPasswordEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSetPasswordEmail.mock.calls[0][0].tenantId).toBe(TENANT);
+    });
+
+    it("an admin-flag toggle", async () => {
+      prisma.user.findUnique.mockResolvedValue(stored as any);
+      prisma.user.update.mockResolvedValue(selectedOnly({ isAdmin: true }) as any);
+      await service.toggleAdmin("u1", true);
+      expect(email.sendSetPasswordEmail).toHaveBeenCalledTimes(1);
+      expect(email.sendSetPasswordEmail.mock.calls[0][0].tenantId).toBe(TENANT);
+    });
+  });
+
   describe("resetPassword — admin-triggered, same set-password link email", () => {
     it("emails the same set-password link as createOperator", async () => {
       prisma.user.findUnique.mockResolvedValue({

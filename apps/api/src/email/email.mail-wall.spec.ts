@@ -266,6 +266,57 @@ describe("mail wall: the recipient must be exactly one plain address (H1)", () =
   });
 });
 
+describe("mail wall: an undefined business is a programming error and holds (class hardening)", () => {
+  it("sendPlatform() with no tenantId field holds and logs an error", async () => {
+    const { svc, resendSend } = makeService({ list: LIST });
+    const error = jest.spyOn((svc as any).logger, "error");
+    const res = await svc.sendPlatform({ ...mail(LISTED), tenantId: undefined } as any);
+    expect(res.holdCode).toBe("MAIL_WALL_HELD");
+    expect(resendSend).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalled();
+  });
+
+  it.each(["platform", undefined])("send() (class %s) with no tenantId field holds", async (c) => {
+    const { svc, resendSend } = makeService({ list: LIST, mailboxDelivers: true });
+    const error = jest.spyOn((svc as any).logger, "error");
+    const res = await svc.send({
+      ...mail(LISTED),
+      tenantId: undefined,
+      senderClass: c as any,
+    } as any);
+    expect(res.holdCode).toBe("MAIL_WALL_HELD");
+    expect(resendSend).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalled();
+  });
+
+  it("an explicit platform null is still not held", async () => {
+    const { svc, resendSend } = makeService({ list: LIST });
+    expect((await svc.sendPlatform(platformMail(OTHER, null))).delivered).toBe(true);
+    expect(resendSend).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("mail wall: the local part is a closed character set (H1 residual)", () => {
+  const WILD = JSON.stringify(["tester+*@acme.test"]);
+  it.each([
+    "tester+a:b@acme.test",
+    "tester+a%evil.test@acme.test",
+    "tester+a!b@acme.test",
+    "tester+a[b@acme.test",
+    "tester+é@acme.test",
+  ])("%j is held on send() and sendPlatform()", async (to) => {
+    const a = makeService({ list: WILD, mailboxDelivers: true });
+    expect((await a.svc.send(mail(to))).holdCode).toBe("MAIL_WALL_HELD");
+    const b = makeService({ list: WILD });
+    expect((await b.svc.sendPlatform(platformMail(to))).holdCode).toBe("MAIL_WALL_HELD");
+    expect(b.resendSend).not.toHaveBeenCalled();
+  });
+  it("letters, digits, dot, underscore, plus and hyphen still pass, in any case", async () => {
+    const { svc } = makeService({ list: WILD });
+    expect((await svc.sendPlatform(platformMail("Tester+A.b_c-9@Acme.test"))).delivered).toBe(true);
+  });
+});
+
 describe("mail wall: every other case sends as today (R3, R4)", () => {
   it.each(["PRODUCTION", "DEMO", "INTERNAL"])(
     "T4 (guard): class %s is never held, whatever a list says",

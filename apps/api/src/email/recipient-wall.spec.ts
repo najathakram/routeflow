@@ -121,3 +121,14 @@ describe("mailWallAllows: only a single plain address can match (H1)", () => {
     expect(mailWallAllows(entries, "Tester@Acme.test")).toBe(true);
   });
 });
+
+describe("mailWallAllows: the local part is a closed character set (H1 residual)", () => {
+  const entries = ["tester+*@acme.test"];
+  it.each([
+    "tester+a:b@acme.test",
+    "tester+a%b@acme.test",
+    "tester+a!b@acme.test",
+    "tester+a[b@acme.test",
+    "tester+é@acme.test",
+  ])("%j matches nothing", (to) => expect(mailWallAllows(entries, to)).toBe(false));
+});

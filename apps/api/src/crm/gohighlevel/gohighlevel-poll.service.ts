@@ -183,20 +183,22 @@ export class GoHighLevelPollService {
       .map((u: { email?: string }) => u.email)
       .filter((e: unknown): e is string => typeof e === "string" && e.length > 0);
     if (recipients.length === 0) return;
-    await this.emailService.send({
-      tenantId: connection.tenantId,
-      // Pre-existing: send() takes one address, so a list here throws and the notice is not sent.
-      to: recipients as unknown as string,
-      senderClass: "platform",
-      ...routeflowNotice({
-        subject: "RouteFlow lost access to GoHighLevel",
-        heading: "RouteFlow lost access to GoHighLevel",
-        lines: [
-          "RouteFlow lost access to GoHighLevel. Re-enter the token in Settings → GoHighLevel to resume syncing leads.",
-        ],
-        why: "You are getting this because you manage this RouteFlow account’s GoHighLevel connection.",
-      }),
-    });
+    // The mail service takes one address, so each recipient gets their own send.
+    for (const to of recipients) {
+      await this.emailService.send({
+        tenantId: connection.tenantId,
+        to,
+        senderClass: "platform",
+        ...routeflowNotice({
+          subject: "RouteFlow lost access to GoHighLevel",
+          heading: "RouteFlow lost access to GoHighLevel",
+          lines: [
+            "RouteFlow lost access to GoHighLevel. Re-enter the token in Settings → GoHighLevel to resume syncing leads.",
+          ],
+          why: "You are getting this because you manage this RouteFlow account’s GoHighLevel connection.",
+        }),
+      });
+    }
   }
 
   private searchParams(connection: any, page: number): Record<string, unknown> {

@@ -206,6 +206,7 @@ describe("EmailService.send — delivery ctx rows", () => {
       .mockResolvedValue({ delivered: true, transport: "mailbox", id: "gmail-123" });
     const { svc, deliveries } = make(mailbox);
     const res = await svc.send({
+      tenantId: "t1",
       to: "a@example.com",
       subject: "s",
       html: "<p>x</p>",
@@ -234,6 +235,7 @@ describe("EmailService.send — delivery ctx rows", () => {
     });
     const { svc, deliveries } = make(mailbox);
     const res = await svc.send({
+      tenantId: "t1",
       to: "a@example.com",
       subject: "s",
       html: "<p>x</p>",
@@ -252,6 +254,7 @@ describe("EmailService.send — delivery ctx rows", () => {
     const mailbox = jest.fn().mockRejectedValue(new Error("boom for a@example.com"));
     const { svc, deliveries } = make(mailbox);
     const res = await svc.send({
+      tenantId: "t1",
       to: "a@example.com",
       subject: "s",
       html: "<p>x</p>",
@@ -275,6 +278,7 @@ describe("EmailService.send — delivery ctx rows", () => {
     const mailbox = jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox", id: "x" });
     const { svc } = make(mailbox, { record: jest.fn().mockRejectedValue(new Error("audit down")) });
     const res = await svc.send({
+      tenantId: "t1",
       to: "a@example.com",
       subject: "s",
       html: "<p>x</p>",
@@ -293,7 +297,13 @@ describe("EmailService.send — delivery ctx rows", () => {
     async (to, domain) => {
       const mailbox = jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox" });
       const { svc, deliveries } = make(mailbox);
-      const res = await svc.send({ to, subject: "s", html: "<p>x</p>", delivery: ctx } as any);
+      const res = await svc.send({
+        tenantId: "t1",
+        to,
+        subject: "s",
+        html: "<p>x</p>",
+        delivery: ctx,
+      } as any);
       expect(res).toEqual({ delivered: false, transport: "none", error: SENTINEL_ERR });
       expect(mailbox).not.toHaveBeenCalled();
       expect(deliveries.record).toHaveBeenCalledTimes(1);

@@ -54,9 +54,9 @@ export function parseMailWallValue(value: string | null | undefined): MailWallRe
   return { kind: "list", entries };
 }
 
-/** One `@`, and no whitespace, comma, semicolon, angle bracket, quote, parenthesis or backslash. */
+/** One `@`; a local part of letters, digits and . _ + - only; no whitespace, comma, semicolon, bracket, quote or backslash in the domain. */
 export function isSinglePlainAddress(to: string): boolean {
-  return /^[^@\s,;<>"'()\\]+@[^@\s,;<>"'()\\]+$/.test(to);
+  return /^[a-z0-9._+-]+@[^@\s,;<>"'()\\]+$/i.test(to);
 }
 
 /** Exact match on the lower-cased address; an entry `name+*@domain` also matches `name+anything@domain`. */
