@@ -22,7 +22,7 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 import { RestrictionAckDto } from "../../selling-restrictions/dto/restriction-ack.dto";
 import { IsOptionalNotNull } from "../../common/validators/optional-not-null";
-import { MAX_UNIT_PRICE } from "@routeflow/pricing";
+import { BUYER_LINE_QTY_MAX, MAX_UNIT_PRICE } from "@routeflow/pricing";
 import { CREATE_ORDER_MAX_ITEMS } from "./create-order-limits";
 import { OfflineQuoteDto } from "./offline-quote.dto";
 
@@ -43,14 +43,14 @@ export class OrderItemDto {
   @MaxLength(256)
   @StripHtml()
   name?: string;
-  @IsInt() @Min(1) @Max(100_000) qty: number;
+  @IsInt() @Min(1) @Max(BUYER_LINE_QTY_MAX) qty: number;
   /**
    * units_v1: sell by this unit of the product's ladder (Case, Pallet, Piece …). STAFF ONLY, behind
    * flag.units_v1; `qty` then counts the unit and boxes/pieces must be omitted. Blank = the pack.
    */
   @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
-  @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
-  @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(BUYER_LINE_QTY_MAX) boxes?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(BUYER_LINE_QTY_MAX) pieces?: number;
   /** One-time discount price override — operator-supplied, not stored in CustomerPrice */
   @IsOptionalNotNull() @IsNumber() @Min(0) @Max(MAX_UNIT_PRICE) unitPrice?: number;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
