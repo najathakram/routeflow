@@ -194,6 +194,28 @@ describe("listTenantsByBucket", () => {
     expect(paying.meta.attentionCount).toBe(3);
   });
 
+  it("M1: the attention badge counts exactly the rows the All list shows with attention on, deleted rows included only with Show deleted", async () => {
+    // one paying business, one deleted business with a past-due clock (it is Closed, so All hides it)
+    const rows = [
+      t("ok1"),
+      t("del1", {
+        deletedAt: new Date(NOW.getTime() - DAY),
+        subscription: sub({ pastDueSince: NOW }),
+      }),
+    ];
+    const { prisma } = fakePrisma(rows);
+    const off = await listTenantsByBucket(prisma, mrr, { ...base, attention: true });
+    expect(ids(off)).toEqual([]);
+    expect(off.meta.attentionCount).toBe(ids(off).length);
+    const on = await listTenantsByBucket(prisma, mrr, {
+      ...base,
+      attention: true,
+      includeDeleted: true,
+    });
+    expect(ids(on)).toEqual(["del1"]);
+    expect(on.meta.attentionCount).toBe(ids(on).length);
+  });
+
   it("the status filter narrows the list but not the counts", async () => {
     const { prisma } = fakePrisma(FIXTURE);
     const r = await listTenantsByBucket(prisma, mrr, { ...base, status: "TRIAL" });

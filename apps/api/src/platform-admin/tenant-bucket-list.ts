@@ -197,8 +197,10 @@ export async function listTenantsByBucket(
     const deleted = r.deletedAt != null;
     // A deleted business of the real-customer class is always under Closed; any other deleted row only with the toggle.
     const counted = !deleted || q.includeDeleted || c.bucket === "closed";
-    if (counted) {
-      bucketCounts[c.bucket] += 1;
+    if (counted) bucketCounts[c.bucket] += 1;
+    // M1: the badge counts exactly what the All list shows with attention on, so a deleted business (hidden on All)
+    // never inflates it; with Show deleted on it is listed, so it counts.
+    if (!deleted || q.includeDeleted) {
       if (c.attention.length > 0) attentionCount += 1;
     }
     const visible =
