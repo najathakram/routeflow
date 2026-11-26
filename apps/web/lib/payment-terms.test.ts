@@ -3,6 +3,10 @@ import * as path from "path";
 import { PAYMENT_TERM_PRESETS, netLabel, termDays } from "@routeflow/types/payment-terms";
 import { addDaysIso, getDaysForTerms } from "./invoice-terms";
 
+const { GENERATED_DIRS } = require("../../../scripts/lib/generated-dirs.cjs") as {
+  GENERATED_DIRS: readonly string[];
+};
+
 /** W-1487: one shared payment-terms table. B-1, B-2, B-3, B-4 and B-8 (the fs-read pin). */
 describe("termDays (B-1, B-2)", () => {
   it("B-1: Net 7 is 7 and Net 90 is 90", () => {
@@ -73,16 +77,8 @@ describe("web getDaysForTerms + addDaysIso (B-3, B-4)", () => {
 /** B-8: the shared helper is the only day table. Comments may still say "Net 45"; code may not. */
 describe("B-8: no second payment-terms day table in apps/web or apps/mobile", () => {
   const repo = path.resolve(__dirname, "../../..");
-  const SKIP_DIRS = new Set([
-    "node_modules",
-    ".next",
-    ".jest-cache",
-    ".expo",
-    "dist",
-    "coverage",
-    "e2e",
-    "__tests__",
-  ]);
+  // The shared generated-folder list (generated-dirs.pin.spec): web jest renames temp files under .jest-cache mid-walk.
+  const SKIP_DIRS = new Set([...GENERATED_DIRS, "e2e", "__tests__"]);
   // Supplier terms are another row (W-1487 brief): their lists stay as they are.
   const OTHER_ROW = ["app/(dashboard)/suppliers/page.tsx", "app/(dashboard)/vendor-bills/page.tsx"];
 
