@@ -33,6 +33,11 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { INVOICE_EDIT_STUBS } from "./testing/invoice-edit-stubs";
+import { completeOfficeEvidencedLines } from "./office-evidence-completion";
+import { deliveredQtyRecompute } from "../routes/delivered-so-far";
+import { deliveredBasisByLine, billableQtyFromBasis } from "../invoices/delivered-basis-by-line";
+import { restateLineEvidence } from "./delivered-line-correction";
+import { correctedDeliveredFor } from "./corrected-delivered";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -172,7 +177,7 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
         reconcileOrderDraftInvoice: async () => undefined,
       },
       logger: new Logger(OrdersService.name),
-      inlineReturns: {},
+      inlineReturns: { assertInlineReturnAllowed: async () => undefined },
       creditNotes: { settleOrderCreditsInTx: async () => ({ applied: 0, unapplied: 0 }) },
     });
     tenantId = (await raw.tenant.create({ data: { slug, name: `sa1506 ${slug}` } })).id;
@@ -292,7 +297,6 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
   });
 
   it("case 4: correct to 8, then mark DELIVERED again: still 8, no remainder row, no stock move", async () => {
-    const { completeOfficeEvidencedLines } = await import("./office-evidence-completion");
     const p = await product("c4");
     const o = await reopened([plain(p, 10)]);
     await officeRow(o.id, { id: o.lineItems[0].id, productId: p }, 10);
@@ -308,7 +312,6 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
   });
 
   it("case 5: a delivered-quantity recompute after the correction still reads 8; raising qty to 12 later keeps it fully delivered (12)", async () => {
-    const { deliveredQtyRecompute } = await import("../routes/delivered-so-far");
     const p = await product("c5");
     const o = await reopened([plain(p, 10)]);
     const id = o.lineItems[0].id;
@@ -405,14 +408,11 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     expect(Number(after.deliveredQty)).toBe(8);
     expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(0);
     expect(await stock(p)).toBe(92);
-    const { deliveredQtyRecompute } = await import("../routes/delivered-so-far");
     await raw.$transaction((tx) => deliveredQtyRecompute(tx, o.id, [id]));
     expect(Number((await line(o.id)).deliveredQty)).toBe(8);
   });
 
   it("R4-G (SA-1520): a row-less line (column 8, qty 12) on an order whose other lines have rows: qty to 13 gives delivered 13 and bills 13", async () => {
-    const { deliveredBasisByLine, billableQtyFromBasis } =
-      await import("../invoices/delivered-basis-by-line");
     const p = await product("r4g");
     const q = await product("r4g2");
     const o = await reopened([plain(p, 12, 8), plain(q, 5)]);
@@ -426,15 +426,11 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
   });
 
   it("R4-F (SA-1520 M-1): a NONE line (qty 12, no rows) corrected to deliveredTo 8 writes ONE office row of 8: bills 8, column 8", async () => {
-    const { restateLineEvidence } = await import("./delivered-line-correction");
-    const { deliveredBasisByLine, billableQtyFromBasis } =
-      await import("../invoices/delivered-basis-by-line");
     const p = await product("r4f");
     const o = await reopened([plain(p, 12)]);
     const id = o.lineItems[0].id;
     // the DTO field deliveredTo is PR-1c's; the seam and the one function are PR-1a's
     await raw.$transaction(async (tx) => {
-      const { correctedDeliveredFor } = await import("./corrected-delivered");
       const d = correctedDeliveredFor(
         { deliveredQty: 12, qty: 12 },
         { finalQty: 12, struck: false, deliveredTo: 8 },

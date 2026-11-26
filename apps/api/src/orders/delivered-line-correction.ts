@@ -304,6 +304,7 @@ async function writeOfficeRow(
   await tx.deliveryMutation.create({
     data: {
       orderId: ctx.orderId,
+      ...(ctx.tenantId ? { tenantId: ctx.tenantId } : {}),
       orderItemId: line.id,
       productId: line.productId ?? null,
       routeRunStopId: null,
