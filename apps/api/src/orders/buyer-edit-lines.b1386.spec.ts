@@ -221,7 +221,9 @@ describe("buyer edit cap pins (B1386)", () => {
     ).not.toThrow();
   });
 
-  it("P3 the cart fold (no buyerLineIds) is not capped here", () => {
+  // pairEditLines itself does not cap the cart fold (no buyerLineIds). The merge cap is enforced in
+  // BuyerController.createOrder, on the fold's output, before updateOrderItems: REG-B1386 M1-M3 (b1386-merge-cap.spec.ts).
+  it("P3 pairEditLines does not cap the cart fold itself (the merge cap lives in the controller, REG-B1386 M1)", () => {
     expect(() =>
       pairEditLines(
         { items: [{ productId: "p1", qty: 120_000 }] },

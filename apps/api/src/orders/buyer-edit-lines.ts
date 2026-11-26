@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
+  buyerCreateLinePieces,
   buyerLinePieces,
   normalizeBoxesPieces,
   round4,
@@ -394,6 +395,46 @@ function assertResolvedBuyerLinesWithinCap(
       pieces: halves.reduce((sum, p) => sum + p, 0),
       storedPieces,
     })),
+  );
+}
+
+/**
+ * B1386 (REG-B1386 M1-M3, supersedes SA-1285 section 3 "the cart fold does not cap"): a buyer's cart folded into an
+ * open order, judged on what `updateOrderItems`' replace write will store, rise-only against the line each folded item
+ * merges into. `foldMergeItems` returns the order's COMPLETE new line set: one item per existing line (carrying its
+ * `sourceLineId`) plus one per new bucket (no `sourceLineId`, stored pieces 0), and a quantity at a changed rate trio
+ * is already a separate item, so there are no halves to sum. Pieces are read as the write reads them: an item with a
+ * split counts boxes x pack + pieces (`buyerCreateLinePieces`, at the pack the fold resolved for it, else the live
+ * one); otherwise the same `denominationGate` the edit cap uses decides pieces or packs. A line that already held
+ * more than the cap may be resent but not raised, so an old oversized line elsewhere on the order never blocks a
+ * cart for another product. `pairEditLines` itself stays uncapped: this runs in the controller, before it.
+ */
+export function assertFoldedBuyerLinesWithinCap(
+  items: ReadonlyArray<Record<string, unknown>>,
+  lineItems: ReadonlyArray<StoredEditLine>,
+  packByProduct: ReadonlyMap<string, number>,
+): void {
+  const denom = denominationGate(lineItems, true, false);
+  const byId = new Map(lineItems.map((l) => [l.id, l]));
+  assertBuyerLinesWithinCap(
+    items.flatMap((item) => {
+      const productId = typeof item.productId === "string" ? item.productId : null;
+      if (!productId) return []; // an unlisted line carries no catalogue quantity
+      const live = packByProduct.get(productId) ?? 0;
+      const entry = {
+        productId,
+        qty: item.qty as number | undefined,
+        boxes: item.boxes as number | null | undefined,
+        pieces: item.pieces as number | null | undefined,
+      };
+      const hasSplit = (entry.boxes ?? 0) > 0 || (entry.pieces ?? 0) > 0;
+      const pieces = hasSplit
+        ? buyerCreateLinePieces({ ...entry, unitsPerBox: Number(item.unitsPerBox ?? 0) || live })
+        : buyerLinePieces(Number(entry.qty ?? 0), denom.isPieces(entry), live);
+      const own = typeof item.sourceLineId === "string" ? byId.get(item.sourceLineId) : undefined;
+      const storedPieces = own ? buyerLinePieces(Number(own.qty ?? 0), isBoxSplit(own), live) : 0;
+      return [{ productId, pieces, storedPieces }];
+    }),
   );
 }
 

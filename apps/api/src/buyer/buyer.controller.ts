@@ -42,6 +42,7 @@ import { UpdateBuyerProfileDto } from "./dto/update-buyer-profile.dto";
 import { OrdersService } from "../orders/orders.service";
 import { assertDeliveryDateNotPast } from "../orders/delivery-date-guard";
 import { assertBuyerCreateItemsWithinCap } from "../orders/buyer-line-cap";
+import { assertFoldedBuyerLinesWithinCap } from "../orders/buyer-edit-lines";
 import { loadLiveUnitsPerBoxByProduct } from "../orders/live-pack-map";
 import { ChangeRequestsService } from "../orders/change-requests.service";
 import { CreateChangeRequestDto } from "../orders/dto/create-change-request.dto";
@@ -625,13 +626,11 @@ export class BuyerController {
   ) {
     // B1386: a line whose built PIECE total passes the cap is refused first, before the key, the lock, the create or
     // the fold into an open order (each incoming line is judged on its own here).
-    assertBuyerCreateItemsWithinCap(
-      dto.items,
-      await loadLiveUnitsPerBoxByProduct(
-        this.prisma.forTenant(),
-        dto.items.map((i) => i.productId),
-      ),
+    const capPacks = await loadLiveUnitsPerBoxByProduct(
+      this.prisma.forTenant(),
+      dto.items.map((i) => i.productId),
     );
+    assertBuyerCreateItemsWithinCap(dto.items, capPacks);
     // Row 531 F2: a contradictory qty / box split is refused before the key, the lock or any write.
     await assertBuyerQtySplit(
       this.prisma.forTenant(),
@@ -794,6 +793,13 @@ export class BuyerController {
               );
             }
             const mergedItems = foldResult.items.filter((i) => i.productId);
+            // B1386 (REG-B1386 M1-M3): the cart's fold into this order is capped, rise-only against the line each
+            // item merges into, on the stored lines and packs read above (no second read); before anything is written.
+            assertFoldedBuyerLinesWithinCap(
+              mergedItems,
+              lineItems,
+              new Map([...upbByProduct, ...capPacks]),
+            );
             await this.ordersService.updateOrderItems(
               activeOrder.id,
               { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,

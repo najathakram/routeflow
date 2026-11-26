@@ -73,8 +73,9 @@ const INLINE_RETURN_STAFF_ONLY =
 const NO_QTY_BODY = (what: string) => `untyped body, but it carries ${what}, no line quantity`;
 
 const INVENTORY: Record<string, Guard> = {
-  // Buyer portal cart: the controller caps each line's built PIECE total (assertBuyerCreateItemsWithinCap) before the
-  // create path and the merge path; the body DTO's per-field bound stays pinned.
+  // Buyer portal cart: the controller caps each incoming line's built PIECE total (assertBuyerCreateItemsWithinCap, K1)
+  // before the create path and the merge path, and caps the fold into an open order rise-only against the line it merges
+  // into (assertFoldedBuyerLinesWithinCap, REG-B1386 M1-M3, b1386-merge-cap.spec.ts); the DTO's per-field bound stays pinned.
   "BuyerController.createOrder": {
     guard: "service-cap",
     reg: "REG-B1386 K1",
