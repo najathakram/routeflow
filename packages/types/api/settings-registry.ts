@@ -306,6 +306,13 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
     adminOnly: true,
   },
   {
+    key: PREF.invoiceEmailCopy,
+    home: "userPref",
+    kind: "preference",
+    status: "live",
+    screen: "/settings?tab=notifications#invoice-copies",
+  },
+  {
     key: PREF.pushEnabled,
     home: "userPref",
     kind: "preference",

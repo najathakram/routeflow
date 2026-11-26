@@ -8,6 +8,12 @@ export const PREF = {
   pushEnabled: "pushEnabled",
   staffOrderEmail: "staffOrderEmail",
   staffBuyerChangeEmail: "staffBuyerChangeEmail",
+  /**
+   * W-1443 (SA-1516): "send me a copy of invoices I email". The first OPT-IN email key: absent = OFF, only the
+   * exact value "true" turns it on (the others above are opt-out, absent = on). Read by the api's
+   * invoice-staff-copy.ts only.
+   */
+  invoiceEmailCopy: "invoiceEmailCopy",
   locale: "locale",
   billLastSupplierId: "bill.lastSupplierId",
   paymentLastMethod: "payment.lastMethod",
@@ -19,6 +25,7 @@ export const PREFERENCE_KEYS = [
   PREF.pushEnabled,
   PREF.staffOrderEmail,
   PREF.staffBuyerChangeEmail,
+  PREF.invoiceEmailCopy,
   PREF.locale,
   PREF.billLastSupplierId,
   PREF.paymentLastMethod,
