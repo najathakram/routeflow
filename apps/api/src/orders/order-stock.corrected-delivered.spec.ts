@@ -1,4 +1,4 @@
-import { bookedTerms } from "./order-stock";
+import { bookedTerms, settleStockForEdit, type OrderStockDeps } from "./order-stock";
 
 /**
  * SA-1506 PR-1a (A1 B2): `bookedTerms` books max(qty, delivered) per line. A correction that lowers the delivered column
@@ -40,5 +40,26 @@ describe("bookedTerms: correctedDelivered (SA-1506 B2)", () => {
     const terms = bookedTerms(held as any, final8 as any, "stable", new Map([["other", 1]]));
     const after = terms.find((t) => t.bucket === "matched" && t.side === "after");
     expect(after?.b?.perPack).toBe(10);
+  });
+});
+
+describe("settleStockForEdit: correctedDelivered needs the stable identity (SA-1531 M-1)", () => {
+  const deps: OrderStockDeps = { logger: { warn: jest.fn() }, tenantId: "t-1" };
+  const tx = { product: { findMany: jest.fn() } } as any;
+
+  it("throws, before any read, when the map arrives with lineIdentity recreated", async () => {
+    await expect(
+      settleStockForEdit(
+        deps,
+        tx,
+        { id: "o-1", status: "CONFIRMED" } as any,
+        held as any,
+        [{ id: "L1", productId: "p1", qty: 8 }] as any,
+        undefined,
+        undefined,
+        { lineIdentity: "recreated", correctedDelivered: new Map([["L1", 8]]) },
+      ),
+    ).rejects.toThrow(/stable line identity/);
+    expect(tx.product.findMany).not.toHaveBeenCalled();
   });
 });

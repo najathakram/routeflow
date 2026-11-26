@@ -266,8 +266,9 @@ function unlistedLineDeltas(
 }
 
 /**
- * B1050 (SA-703): per-line booking. `deliveredQty` is never rewritten by an edit, so a line can sit
- * with qty < delivered; delivered goods are gone, so a line books `max(qty, delivered)`. The CALLER
+ * B1050 (SA-703): per-line booking. `deliveredQty` is not rewritten by an ordinary edit, so a line can sit
+ * with qty < delivered; the one exception is an admin's delivered-line CORRECTION (SA-1506), which passes the restated
+ * figure in `correctedDelivered` (read only in the "stable" identity; "recreated" with the map throws); delivered goods are gone, so a line books `max(qty, delivered)`. The CALLER
  * says how the final lines relate to the held ones (`lineIdentity`):
  *  - "stable" (default; an in-place diff edit): a line is the SAME line when both sides carry the same
  *    NON-NULL id (undefined never matches). C_after = Σ matched max(q, d) + Σ removed held d + Σ new q;
@@ -503,6 +504,10 @@ export async function settleStockForEdit(
     correctedDelivered?: ReadonlyMap<string, number>;
   },
 ): Promise<void> {
+  // SA-1506 A6 M-1: the "recreated" branch never reads the corrected map, so the goods a correction says never left
+  // would stay booked silently. Fail closed, before any read or write.
+  if (opts?.correctedDelivered && opts.lineIdentity === "recreated")
+    throw new Error("settleStockForEdit: correctedDelivered needs the stable line identity");
   if (order.status === "DRAFT") return;
 
   // SA-696a: an order with the carrier has a fixed line set, unlisted lines included (they carry no

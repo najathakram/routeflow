@@ -37,6 +37,7 @@ import { completeOfficeEvidencedLines } from "./office-evidence-completion";
 import { deliveredQtyRecompute } from "../routes/delivered-so-far";
 import { deliveredBasisByLine, billableQtyFromBasis } from "../invoices/delivered-basis-by-line";
 import { restateLineEvidence } from "./delivered-line-correction";
+import { captureRecreatedCarry } from "./delivered-stamp";
 import { correctedDeliveredFor } from "./corrected-delivered";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -460,31 +461,53 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     expect(Number((await line(o.id)).deliveredQty)).toBe(8);
   });
 
-  it("OBSERVE (A5, R-241 hold): stock and column answers of B1, E, L, N on this head; no assertion on the stock figure", async () => {
-    const cases: Array<[string, number, number, number]> = [
-      ["B1 10/10 qty 8", 10, 10, 8],
-      ["E 10/12 qty 14", 12, 10, 14],
-      ["L 10/12 qty 11", 12, 10, 11],
-      ["N 10/12 qty 10", 12, 10, 10],
+  it("SA-1531 M-1 table: B1, E, L, N and a struck line book exactly the derived stock figures (observed on this head)", async () => {
+    // [label, qty, delivered, new qty, stock delta, column after]
+    const cases: Array<[string, number, number, number, number, number]> = [
+      ["B1 10/10 qty 8", 10, 10, 8, 2, 8],
+      ["E 10/12 qty 14", 12, 10, 14, -2, 14],
+      ["L 10/12 qty 11", 12, 10, 11, 1, 11],
+      ["N 10/12 qty 10", 12, 10, 10, 2, 10],
     ];
-    const out: string[] = [];
-    for (const [label, qty, delivered, newQty] of cases) {
-      const p = await product("obs");
+    for (const [label, qty, delivered, newQty, delta, column] of cases) {
+      const p = await product("m1");
       const before = await stock(p);
       const o = await reopened([plain(p, qty, delivered)]);
       const id = o.lineItems[0].id;
       await edit(o.id, { replaceAll: false, items: [{ id, qty: newQty }] });
       const a = await line(o.id);
-      const rows = await raw.deliveryMutation.count({ where: { orderId: o.id } });
-      out.push(
-        `${label}: stockDelta=${(await stock(p)) - before} column=${Number(a.deliveredQty)} qty=${Number(a.qty)} rows=${rows}`,
-      );
+      expect([label, (await stock(p)) - before, Number(a.deliveredQty), Number(a.qty)]).toEqual([
+        label,
+        delta,
+        column,
+        newQty,
+      ]);
+      expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(0);
     }
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("fs").appendFileSync(
-      "C:/ClaudeCode/wt/sa1506-pr1-logs/observe.txt",
-      out.join(String.fromCharCode(10)) + String.fromCharCode(10),
+    const p = await product("m1s");
+    const o = await reopened([plain(p, 10, 10)]);
+    const id = o.lineItems[0].id;
+    await edit(o.id, { replaceAll: false, items: [{ id, action: "CANCEL" }] });
+    expect(await stock(p)).toBe(100); // struck 10 -> 0: +10
+    expect(Number((await line(o.id)).deliveredQty)).toBe(0);
+  });
+
+  it("P-3b: the office row a correction writes carries the order's tenantId", async () => {
+    const p = await product("p3b");
+    const o = await reopened([plain(p, 12, 8)]);
+    const id = o.lineItems[0].id;
+    await raw.$transaction((tx) =>
+      restateLineEvidence(
+        tx,
+        { orderId: o.id, tenantId: o.tenantId, evidence: [], stopLinked: false },
+        { id, productId: p },
+        8,
+        "NONE",
+        12,
+      ),
     );
+    const row = await raw.deliveryMutation.findFirstOrThrow({ where: { orderId: o.id } });
+    expect(row.tenantId).toBe(o.tenantId);
   });
 
   it("P-3: an office row is never written without the order's tenantId (explicit tenantId, 0 rows)", async () => {
@@ -535,8 +558,11 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     });
     expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(1);
     await raw.order.update({ where: { id: o.id }, data: { status: "DELIVERED" as any } });
+    // the request path answers LINES_REPLACE_AFTER_DELIVERY first; the net under it is the carry capture
     await expect(
-      edit(o.id, { replaceAll: true, items: [{ productId: p, qty: 12 }] }),
+      raw.$transaction((tx) =>
+        captureRecreatedCarry(tx, o.id, [{ id, productId: p, qty: 12, deliveredQty: 8 }]),
+      ),
     ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_NEEDS_LINE_IDS" } });
     expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(1);
     expect(Number((await line(o.id)).deliveredQty)).toBe(8);
@@ -571,29 +597,35 @@ describeDb("SA-1506 PR-1a: an admin corrects a delivered line of a reopened orde
     return stop.id;
   }
 
-  it("R4-I2 (SA-1525 i): a stop-linked order, a line with NO rows (column 8, qty 12) cut to qty 11 is a typed 409 and writes no office row", async () => {
+  it("R4-I2 (SA-1525 i): a stop-linked order never gets a stop-less office row: the seam answers the ROUTE 409, the edit writes no row", async () => {
     const p = await product("r4i2");
     const o = await reopened([plain(p, 12, 8)]);
     const id = o.lineItems[0].id;
-    await raw.order.update({
-      where: { id: o.id },
-      data: { routeRunStopId: await completedStop() },
-    });
-    await expect(edit(o.id, { replaceAll: false, items: [{ id, qty: 11 }] })).rejects.toMatchObject(
-      {
-        status: 409,
-        response: {
-          code: "LINE_ALREADY_DELIVERED",
-          message: expect.stringContaining("A driver delivered this item."),
-        },
+    const stopId = await completedStop();
+    await raw.order.update({ where: { id: o.id }, data: { routeRunStopId: stopId } });
+    // the seam: a NONE line with a short D' on a stop-linked order (deliveredTo is PR-1c's DTO)
+    await expect(
+      raw.$transaction((tx) =>
+        restateLineEvidence(
+          tx,
+          { orderId: o.id, tenantId, evidence: [], stopLinked: true },
+          { id, productId: p },
+          8,
+          "NONE",
+          12,
+        ),
+      ),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: {
+        code: "LINE_ALREADY_DELIVERED",
+        message: expect.stringContaining("A driver delivered this item."),
       },
-    );
+    });
     expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(0); // wrong value: 1 stop-less office row
-    const after = await line(o.id);
-    expect(Number(after.qty)).toBe(12);
-    expect(Number(after.deliveredQty)).toBe(8);
-    expect(await stock(p)).toBe(90);
-    expect(await audits(o.id)).toHaveLength(0);
+    // the real path: a row-less line bills in full, so its cut stays column-only and writes no row either
+    await edit(o.id, { replaceAll: false, items: [{ id, qty: 11 }] });
+    expect(await raw.deliveryMutation.count({ where: { orderId: o.id } })).toBe(0);
   });
 
   it("case 18 (A2 M8): the allow-list is CONFIRMED / PARTIALLY_DELIVERED; every other status is LOCKED STATUS with its own sentence", async () => {
