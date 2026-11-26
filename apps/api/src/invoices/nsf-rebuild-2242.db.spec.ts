@@ -313,6 +313,15 @@ describeDb(
       amount: number,
       legacy: boolean,
     ) {
+      // B1396: a draft cannot take a payment (INVOICE_NOT_PAYABLE), so the invoice is issued for the
+      // payment, as production does; recordPayment then sets the status as before.
+      const before = await prisma.invoice.findUniqueOrThrow({
+        where: { id: invoiceId },
+        select: { status: true },
+      });
+      if (before.status === "DRAFT") {
+        await prisma.invoice.update({ where: { id: invoiceId }, data: { status: "SENT" } });
+      }
       await tenantCtx.run(tenantId, () =>
         invoices.recordPayment(invoiceId, { amount, method: "CHECK" } as any),
       );
