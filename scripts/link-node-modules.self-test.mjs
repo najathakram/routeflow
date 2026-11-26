@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { linkOne, main } from "./link-node-modules.mjs";
 
 let failures = 0;
@@ -29,7 +30,7 @@ const git = (cwd, ...args) => {
   const r = spawnSync(
     "git",
     ["-c", "user.name=t", "-c", "user.email=t@t.test", "-c", "commit.gpgsign=false", ...args],
-    { cwd, encoding: "utf8", windowsHide: true },
+    { cwd, encoding: "utf8", windowsHide: true, env: scrubbedGitEnv() },
   );
   if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
   return r.stdout.trim();

@@ -15,6 +15,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 
 const inside = (root, p) => {
   const rel = path.relative(root, p);
@@ -60,7 +61,11 @@ export function linkOne(tree, link, target, symlink = fs.symlinkSync) {
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 function gitOut(dir, args) {
-  const r = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8", windowsHide: true });
+  const r = spawnSync("git", ["-C", dir, ...args], {
+    encoding: "utf8",
+    windowsHide: true,
+    env: scrubbedGitEnv(),
+  });
   return {
     status: r.status,
     out: String(r.stdout ?? "").trim(),
