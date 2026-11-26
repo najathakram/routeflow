@@ -149,6 +149,7 @@ import {
 import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
 import { LineNote } from "@/components/LineNote";
+import { withCopyNote } from "@/lib/invoice-email-copy";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -1779,7 +1780,7 @@ export default function InvoiceDetailPage() {
           }
           toast({
             title: `${pdfVariant === "draft" ? "Draft" : "Final"} invoice emailed`,
-            description: `Sent to ${res.sentTo}.`,
+            description: withCopyNote(`Sent to ${res.sentTo}.`, res.copiedTo),
             variant: "success",
           });
         },
