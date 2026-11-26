@@ -4,18 +4,14 @@
 // SA-1178 A2 K4: the keys whose target does not exist yet (the addresses, the mark files and the legal
 // entity) are byte-identical to their value at the lane base, and the two name keys are back on today's name (the new one is the `site` overlay). It fails
 // if a lane moves an address or a mark early. The switch commit deletes this test with the key changes.
-import { execFileSync } from "child_process";
+import * as fs from "fs";
 import * as path from "path";
 import { BRAND } from "@routeflow/types/brand";
 
-const BASE = "c8690bbb1f";
-const REPO = path.resolve(__dirname, "../../../..");
-
+// The lane-base brand.json (commit c8690bbb1f) is committed as a fixture: reading it with `git show` needed
+// that object, which a shallow CI checkout does not have.
 const base = JSON.parse(
-  execFileSync("git", ["show", `${BASE}:packages/types/brand/brand.json`], {
-    cwd: REPO,
-    encoding: "utf8",
-  }),
+  fs.readFileSync(path.join(__dirname, "site-brand-keys.base.fixture.json"), "utf8"),
 ) as Record<string, unknown>;
 
 /** Dotted paths of every leaf in the brand object. */
