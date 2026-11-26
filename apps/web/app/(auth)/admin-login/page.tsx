@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Shield } from "lucide-react";
 import axios from "axios";
+import { BRAND } from "@routeflow/types/brand";
 import { isInShell } from "@/lib/in-shell";
 
 // ─── Google Icon (inline SVG, no external requests) ───────────────────────────
@@ -124,7 +125,7 @@ export default function AdminLoginPage() {
           >
             <Shield className="h-7 w-7 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white">RouteFlow Platform</h1>
+          <h1 className="text-2xl font-bold text-white">{BRAND.name} Platform</h1>
           <p className="text-sm text-[#c2d0e5]">Platform administrator sign-in</p>
         </div>
 
@@ -264,7 +265,7 @@ export default function AdminLoginPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-[#c2d0e5]">
-          RouteFlow Platform Administration — authorized personnel only
+          {BRAND.name} Platform Administration — authorized personnel only
         </p>
       </div>
     </div>

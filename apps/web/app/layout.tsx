@@ -1,34 +1,13 @@
 import type { Metadata, Viewport } from "next";
+import { BRAND } from "@routeflow/types/brand";
 import { geistSans, geistMono, inter, instrumentSerif, splineSans, splineSansMono } from "./fonts";
 import "./globals.css";
 // #2653: hides Google sign-in inside the app shell (html[data-shell]); globals.css is hash-pinned.
 import "./shell.css";
 import { SHELL_MARK_SCRIPT } from "@/lib/in-shell";
-// Marketing stylesheet. It has to be imported here, not from the segments that
-// use it: the App Router drops the `not-found` segment's own CSS chunk on
-// hydration, so `app/not-found.tsx` rendered completely unstyled (verified in
-// the browser — the <link> is in the server HTML but is removed by the client
-// router and never fetched). Loading it at the root is safe because every rule
-// in the file is scoped under `.rf-marketing` (asserted in
-// `app/(marketing)/marketing-port.static.test.ts`).
-// Accepted cost: the whole marketing stylesheet (214,999 B raw / 35,939 B gzip,
-// against globals.css at 6,433 / 2,328) now ships in the shared root chunk on
-// every route, authenticated ones included. Follow-up condition: once
-// `next build` succeeds on master (it fails today for the pre-existing
-// ReactCurrentDispatcher reason), verify against a PRODUCTION build whether
-// importing marketing.css from `app/(marketing)/layout.tsx` + `app/not-found.tsx`
-// keeps the 404 styled — if it does, move the import back out of the root.
-import "./(marketing)/marketing.css";
-// The glass design system (2026-09-16 study) layers on top of marketing.css:
-// same `.rf-marketing` scope, loaded after so it wins where the two overlap.
-import "./(marketing)/glass.css";
-import "./(marketing)/glass-pages.css";
-// PR-3: the remaining 9 marketing pages, ported onto the same tokens — see
-// glass-site.css's own header for why this is a separate file from
-// glass-pages.css (booking/auth) rather than a merge.
-import "./(marketing)/glass-site.css";
-// The frame the public React pages wear (Privacy, Terms, sign-in, sign-up, 404). Root import: see
-// the not-found note above.
+// The frame the public React pages wear (Privacy, Terms, sign-in, sign-up, 404). Root import: the
+// App Router drops the `not-found` segment's own CSS chunk on hydration, so the frame's stylesheet
+// has to load from the root for app/not-found.tsx to be styled.
 import "@/components/site-frame/site-frame.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
@@ -43,34 +22,43 @@ export const viewport: Viewport = {
   // No maximumScale / userScalable lock — users must be able to pinch-zoom
   // (WCAG 2.1 SC 1.4.4 Resize Text). Locking zoom breaks low-vision access on
   // this data-dense app.
-  // Match the RouteFlow brand: ink (#0E1F36) for the iOS/Android status-bar
+  // Match the brand: ink (#0E1F36) for the iOS/Android status-bar
   // tint. The old #2563eb pre-dated the cream/ink/teal palette.
   themeColor: "#0E1F36",
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://www.routeflow.info"),
-  title: { default: "RouteFlow", template: "%s · RouteFlow" },
+  // The browser identity of every route that does not set its own: all of it comes from the brand
+  // seam. The signed-out layouts restate it (lib/front-door-metadata.ts); the signed-in app keeps
+  // this one until Program B.
+  metadataBase: new URL(BRAND.origin),
+  title: { default: BRAND.name, template: `%s · ${BRAND.name}` },
   description:
     "The all-in-one platform for wholesale distribution. Manage orders, plan routes, track deliveries, and invoice customers.",
   manifest: "/operator-manifest.json",
   appleWebApp: {
     capable: true,
-    title: "RouteFlow",
+    title: BRAND.name,
     statusBarStyle: "black-translucent",
-    startupImage: "/brand/routeflow-mark-192.png",
+    startupImage: BRAND.icon["192"],
   },
   icons: {
-    icon: [{ url: "/brand/routeflow-mark-64.png", type: "image/png", sizes: "64x64" }],
-    apple: [{ url: "/brand/routeflow-mark-180.png", sizes: "180x180" }],
-    shortcut: "/brand/routeflow-mark-64.png",
+    // Next always puts a file-based app/favicon.ico first in every route's icons, so no child
+    // layout could replace it. It lives in public/ and is listed here, where a layout's own
+    // `icons` now take its place.
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: BRAND.icon.favicon, type: "image/png", sizes: "64x64" },
+    ],
+    apple: [{ url: BRAND.icon.apple, sizes: "180x180" }],
+    shortcut: BRAND.icon.favicon,
   },
   openGraph: {
-    title: "RouteFlow",
+    title: BRAND.name,
     description: "Wholesale distribution, simplified.",
-    siteName: "RouteFlow",
+    siteName: BRAND.name,
     type: "website",
-    images: [{ url: "/brand/routeflow-mark-512.png" }],
+    images: [{ url: BRAND.icon["512"] }],
   },
 };
 

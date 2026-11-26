@@ -9,6 +9,9 @@ describe("tenantSlugFromHostname", () => {
     ["acme.up.railway.app", null],
     ["app.acme.example.com", null],
     ["billing.routeflow.info", null],
+    // SA-1253 T8: the site's main host (a www form) and its bare alias host are never a tenant
+    ["www.xrov.io", null],
+    ["xrov.io", null],
   ];
 
   it.each(cases)("%s -> %s", (hostname, expected) => {

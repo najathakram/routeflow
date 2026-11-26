@@ -1,0 +1,23 @@
+{
+  "color": {
+    "ink": "#0E1726",
+    "copper": "#B5683A",
+    "copper-light": "#D69062",
+    "copper-dark": "#8F4E27",
+    "steel": "#5A6675",
+    "bone": "#F6F4F0",
+    "white": "#FFFFFF",
+    "line": "#E4E1DB",
+    "paid-bg": "#DDF3E6",
+    "paid-text": "#12714A",
+    "pending-bg": "#FFEFC7",
+    "pending-text": "#8A5A00",
+    "overdue-bg": "#FBE0DC",
+    "overdue-text": "#A1261D"
+  },
+  "font": {
+    "family": "Inter",
+    "headline-weight": 700,
+    "text-weight": 400
+  }
+}
