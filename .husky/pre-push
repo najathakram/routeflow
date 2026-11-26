@@ -66,7 +66,14 @@ if [ ! -f scripts/leak-check.mjs ]; then
   echo "leak-check: scripts/leak-check.mjs is missing; push refused (fail-closed)." >&2
   exit 1
 fi
-printf '%s\n' "$refs" | node scripts/leak-check.mjs --hook --remote-name "$1" --remote-url "$2" || exit 1
+# husky runs this under sh -e: capture the status with || so the message below can still print.
+leak_rc=0
+printf '%s\n' "$refs" | node scripts/leak-check.mjs --hook --remote-name "$1" --remote-url "$2" || leak_rc=$?
+if [ "$leak_rc" -ne 0 ]; then
+  # 1 (hit) and 2 (usage/config) print their own reason; any other code is a crash that printed nothing.
+  [ "$leak_rc" -gt 2 ] && echo "leak-check: the guard crashed (exit $leak_rc) before it printed a verdict. Push refused (fail-closed)." >&2
+  exit 1
+fi
 # <<< leak-guard
 
 # B1298: judge the refs being PUSHED, not only the checked-out branch. (a) Any remote ref that is

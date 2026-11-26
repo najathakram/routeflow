@@ -1154,6 +1154,8 @@ export const API_ERROR_CODES = {
   DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
   /** 409 from PATCH /users/:id: the person is a driver with an open run, so their role cannot move off Driver yet. Nothing was written (B862, SA-1171 K4). */
   DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
+  /** 400 from a buyer's order edit, a CUSTOMER change request or a CUSTOMER order template: a line's piece total would pass BUYER_LINE_QTY_MAX (rise-only: a line already above it may stay). Body carries `productIds`. Nothing was written (B1386, SA-1285). */
+  BUYER_LINE_QTY_OVER_MAX: "BUYER_LINE_QTY_OVER_MAX",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

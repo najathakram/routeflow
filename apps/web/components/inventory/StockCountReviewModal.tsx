@@ -190,7 +190,7 @@ export function StockCountReviewModal({
           <div>
             <h2 className="text-base font-semibold text-navy">Review stock count</h2>
             <p className="mt-0.5 text-xs text-navy/70">
-              {changed.length} change{changed.length === 1 ? "" : "es"}
+              {changed.length} change{changed.length === 1 ? "" : "s"}
               {matched.length > 0 &&
                 ` · ${matched.length} match${matched.length === 1 ? "" : "es"}`}
             </p>
