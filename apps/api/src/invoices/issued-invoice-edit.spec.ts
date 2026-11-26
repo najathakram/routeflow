@@ -51,7 +51,7 @@ const locked = (): LockedInvoiceForEdit => ({
   invoice: { ...cur },
   storedRows: [{ ...stored }],
   isTaxExempt: false,
-  payments: [{ status: "PENDING" }], // a waiting payment must not stop a figure-free save
+  payments: [{ amount: 10, status: "PENDING" }], // a waiting payment must not stop a figure-free save
 });
 const line = (over: Record<string, any> = {}, untouched = true): EditedLine => ({
   rowId: "r1",

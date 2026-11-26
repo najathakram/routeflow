@@ -258,7 +258,7 @@ describeDb("an admin edits an issued invoice in place - real Postgres (SA-1508 g
         total: opts.header?.total ?? total,
       },
     });
-    const rows = [];
+    const rows: Array<Awaited<ReturnType<typeof prisma.invoiceItem.create>>> = [];
     for (const [i, l] of lines.entries()) {
       rows.push(
         await prisma.invoiceItem.create({
