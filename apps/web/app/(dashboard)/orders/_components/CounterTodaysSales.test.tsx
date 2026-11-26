@@ -663,7 +663,7 @@ describe("CounterTodaysSales", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Reprint" }));
     const root = await screen.findByTestId("receipt-print-root");
     expect(root).toHaveTextContent("Paid$15.00");
-    expect(root).toHaveTextContent("Balance due$3.00");
+    expect(root).toHaveTextContent("On account$3.00");
   });
 
   it("Return items is the real gate: hidden without the add-on", async () => {

@@ -106,9 +106,12 @@ function make(opts: {
   const prisma = {
     tenantAddon,
     tenant: {
-      findUnique: jest
-        .fn()
-        .mockResolvedValue({ slug: "acme", name: "Acme Foods", plan: "STARTER" }),
+      findUnique: jest.fn().mockResolvedValue({
+        slug: "acme",
+        name: "Acme Foods",
+        plan: "STARTER",
+        class: "PRODUCTION",
+      }),
     },
     // The mock returns the whole row whatever `select` asks for, so a service that does NOT select
     // `couponFull` would still see it here: the pins below prove the DECISION, and the select is
