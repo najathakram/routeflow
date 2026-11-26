@@ -91,10 +91,21 @@ export function mintSaleKey(): string {
 export const ADJUSTMENT_KEY_REUSED_COPY =
   "Your earlier adjustment was saved. Check the stock before you save again.";
 
-/** True for the 409 IDEMPOTENCY_KEY_REUSED of POST /inventory/movements/adjustment: the key's first call landed. */
+/**
+ * True for the 409 of POST /inventory/movements/adjustment when its Idempotency-Key already recorded a DIFFERENT
+ * adjustment (the key's first call landed): `IDEMPOTENCY_KEY_CONFLICT` with reason `ADJUSTMENT_MISMATCH`. The reason
+ * keeps an order-scoped CONFLICT from ever being read as an adjustment. The code string is the existing literal the
+ * clients already match (`isPaymentKeyConflict`, buyer-order-conflict); it is not a registered API_ERROR_CODES entry.
+ */
 export function isAdjustmentKeyReused(err: unknown): boolean {
-  const res = (err as ApiErrorLike)?.response;
-  return res?.status === 409 && res.data?.code === API_ERROR_CODES.IDEMPOTENCY_KEY_REUSED;
+  const res = (
+    err as { response?: { status?: unknown; data?: { code?: unknown; reason?: unknown } } }
+  )?.response;
+  return (
+    res?.status === 409 &&
+    res.data?.code === "IDEMPOTENCY_KEY_CONFLICT" &&
+    res.data?.reason === "ADJUSTMENT_MISMATCH"
+  );
 }
 
 /**
@@ -102,10 +113,10 @@ export function isAdjustmentKeyReused(err: unknown): boolean {
  * mobile sheet). Mirrors `createSaleKeyHolder`, minus the committed-record bookkeeping.
  *  - `keyFor(fingerprint)`: the held key while the body is unchanged (two taps, a retry), and, while the outcome is
  *    UNKNOWN (network, timeout, 5xx: the call may have landed), whatever the body: an edit sends the old key and the
- *    server refuses it (409 IDEMPOTENCY_KEY_REUSED) instead of applying a second, different adjustment. A new key
+ *    server refuses it (409 IDEMPOTENCY_KEY_CONFLICT, reason ADJUSTMENT_MISMATCH) instead of applying a second, different adjustment. A new key
  *    otherwise (a changed body after a known outcome, or after a settled attempt).
  *  - `settle(key, outcome)`: only for the key still held (a slow older call cannot clear a newer attempt). A success
- *    clears the key; so does the key-reuse 409 (it proves the first call landed) and, when the outcome was known, a
+ *    clears the key; so does the key-conflict 409 (it proves the first call landed) and, when the outcome was known, a
  *    definitive refusal. After an unknown outcome a refusal proves nothing, so the key stays; any other failure marks
  *    the outcome unknown.
  */

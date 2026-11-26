@@ -9,6 +9,7 @@ import { InventoryMovementsExportService } from "./inventory-movements-export.se
 import { PrismaService } from "../prisma/prisma.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { wireStockHelper, type StockHelperMock } from "./testing/stock-helper-mock";
@@ -153,13 +154,16 @@ describe("InventoryService.recordAdjustment: Idempotency-Key (B1415 M1b)", () =>
     expect(prisma.product.update).toHaveBeenCalledTimes(1);
   });
 
-  it("R4: the same key with a different body is 409 IDEMPOTENCY_KEY_REUSED and writes nothing", async () => {
+  it("R4: the same key with a different body is 409 IDEMPOTENCY_KEY_CONFLICT (ADJUSTMENT_MISMATCH) and writes nothing", async () => {
     await service.recordAdjustment(body, "user-1", "key-1");
     const err = await service
       .recordAdjustment({ ...body, quantity: 6 }, "user-1", "key-1")
       .catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
-    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.IDEMPOTENCY_KEY_REUSED });
+    expect(err.getResponse()).toMatchObject({
+      code: IDEMPOTENCY_KEY_CONFLICT,
+      reason: "ADJUSTMENT_MISMATCH",
+    });
     expect(stock.written()).toHaveLength(1);
   });
 

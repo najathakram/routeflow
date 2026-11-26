@@ -5,7 +5,7 @@
  *  (1) the same key twice in series: ONE ADJUSTMENT movement, ONE stock move, an identical response;
  *  (2) two concurrent requests with the same key: ONE movement (the key lock serializes them);
  *  (3) the same key on a second tenant: applies (the key is per tenant);
- *  (4) the same key with a different body: 409 IDEMPOTENCY_KEY_REUSED, nothing more written;
+ *  (4) the same key with a different body: 409 IDEMPOTENCY_KEY_CONFLICT (ADJUSTMENT_MISMATCH), nothing more written;
  *  (5) no key: applies as today (and again on a repeat, the legacy door);
  *  (6) a replay after its period was filed returns the stored result (the date gate runs after the read);
  *  (7) a forced 40P01 mid-transaction: the retry re-runs lock, check and apply, and ONE movement commits.
@@ -22,6 +22,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -168,13 +169,16 @@ describeDb("Adjustment Idempotency-Key: real Postgres (B1415 M1b)", () => {
     expect(await stockOf(b)).toBe(105);
   }, 60_000);
 
-  it("(4) the same key with a different body: 409 IDEMPOTENCY_KEY_REUSED and nothing more is written", async () => {
+  it("(4) the same key with a different body: 409 IDEMPOTENCY_KEY_CONFLICT (ADJUSTMENT_MISMATCH) and nothing more is written", async () => {
     const w = await seedWorld("c4");
     const key = `c4-${randomUUID()}`;
     await adjust(w, {}, key);
     const err: any = await adjust(w, { quantity: 6 }, key).catch((e) => e);
     expect(err?.getStatus?.()).toBe(409);
-    expect(err?.getResponse?.()).toMatchObject({ code: API_ERROR_CODES.IDEMPOTENCY_KEY_REUSED });
+    expect(err?.getResponse?.()).toMatchObject({
+      code: IDEMPOTENCY_KEY_CONFLICT,
+      reason: "ADJUSTMENT_MISMATCH",
+    });
     expect(await movements(w)).toHaveLength(1);
     expect(await stockOf(w)).toBe(105);
     expect(await prisma.stockLot.count({ where: { tenantId: w.tenantId } })).toBe(1);

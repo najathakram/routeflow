@@ -132,7 +132,11 @@ describe("REG-B1415 useRecordAdjustment: one Idempotency-Key per attempt", () =>
         Object.assign(new Error("Request failed"), {
           response: {
             status: 409,
-            data: { code: "IDEMPOTENCY_KEY_REUSED", message: "server text" },
+            data: {
+              code: "IDEMPOTENCY_KEY_CONFLICT",
+              reason: "ADJUSTMENT_MISMATCH",
+              message: "server text",
+            },
           },
         }),
       )

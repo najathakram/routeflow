@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
 import { createHash } from "crypto";
-import { API_ERROR_CODES } from "../common/api-error-codes";
+import { IDEMPOTENCY_KEY_CONFLICT } from "../orders/merge-idempotency";
 
 /**
  * B1415 M1b (SA-1404 / SA-1504): the server-side replay key of POST /inventory/movements/adjustment.
@@ -12,12 +12,14 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
  *       `save` in the SAME tx. A 40P01 retry re-runs all of it.
  *  - R2 per tenant (`SCOPE`), the service's 24h window, a client UUID of at most `MAX_KEY_LENGTH` characters.
  *  - R3 a replay returns the stored response (same body), writes no movement. The date gate runs after the read.
- *  - R4 the same key with a different body is 409 IDEMPOTENCY_KEY_REUSED and writes nothing. The table stores no
+ *  - R4 the same key with a different body is 409 IDEMPOTENCY_KEY_CONFLICT (reason ADJUSTMENT_MISMATCH) and writes nothing. The table stores no
  *       request, so the saved response carries a sha256 of the canonical body.
  *  - R5 no header: applies as before, with a warn line (legacy builds).
  */
 export const ADJUSTMENT_KEY_SCOPE = "stock.adjustment";
 export const ADJUSTMENT_KEY_MAX_LENGTH = 200;
+/** The `reason` of the 409 IDEMPOTENCY_KEY_CONFLICT body (the payments precedent): clients tell an adjustment from an order. */
+export const ADJUSTMENT_MISMATCH_REASON = "ADJUSTMENT_MISMATCH";
 
 const logger = new Logger("AdjustmentIdempotency");
 
@@ -76,7 +78,8 @@ export function adjustmentBodyHash(dto: AdjustmentBody): string {
 export function replayOf<T>(hit: StoredAdjustment, bodyHash: string): T {
   if (hit.bodyHash !== bodyHash) {
     throw new ConflictException({
-      code: API_ERROR_CODES.IDEMPOTENCY_KEY_REUSED,
+      code: IDEMPOTENCY_KEY_CONFLICT,
+      reason: ADJUSTMENT_MISMATCH_REASON,
       message: "That Idempotency-Key was used for a different stock adjustment.",
     });
   }

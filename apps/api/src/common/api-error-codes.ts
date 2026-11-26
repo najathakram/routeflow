@@ -928,8 +928,6 @@ export const API_ERROR_CODES = {
   DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
   /** 409 from PATCH /users/:id: the person is a driver with an open run, so their role cannot move off Driver yet. Nothing was written (B862, SA-1171 K4). */
   DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
-  /** 409 from POST /inventory/movements/adjustment: the Idempotency-Key was already used for a different adjustment (another product, quantity, reason or date). Nothing was written (B1415 M1b). */
-  IDEMPOTENCY_KEY_REUSED: "IDEMPOTENCY_KEY_REUSED",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

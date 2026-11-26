@@ -20,7 +20,12 @@ const args = (h: ReturnType<typeof holder>, body: typeof dto) => ({
   ...body,
   idempotencyKey: h.keyFor(adjustmentFingerprint(body)),
 });
-const reused = { response: { status: 409, data: { code: "IDEMPOTENCY_KEY_REUSED" } } };
+const reused = {
+  response: {
+    status: 409,
+    data: { code: "IDEMPOTENCY_KEY_CONFLICT", reason: "ADJUSTMENT_MISMATCH" },
+  },
+};
 
 describe("the adjustment key lifecycle (one sheet open)", () => {
   it("two taps carry identical args", () => {
@@ -103,6 +108,20 @@ describe("the adjustment key lifecycle (one sheet open)", () => {
     h.settle(first, { ok: false, error: new Error("Network Error") });
     expect(isAdjustmentKeyReused(reused)).toBe(true);
     expect(isAdjustmentKeyReused(apiError(409))).toBe(false);
+    // an order-scoped CONFLICT (or a payment one) is never an adjustment
+    expect(
+      isAdjustmentKeyReused({
+        response: {
+          status: 409,
+          data: { code: "IDEMPOTENCY_KEY_CONFLICT", reason: "CART_MISMATCH" },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isAdjustmentKeyReused({
+        response: { status: 409, data: { code: "IDEMPOTENCY_KEY_CONFLICT" } },
+      }),
+    ).toBe(false);
     h.settle(first, { ok: false, error: reused });
     expect(h.peek()).toBeNull();
     expect(args(h, { ...dto, quantity: 6 }).idempotencyKey).not.toBe(first);
