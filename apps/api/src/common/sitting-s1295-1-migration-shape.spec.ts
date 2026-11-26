@@ -192,12 +192,12 @@ export function stage1Problems(raw: string): string[] {
 
   // the function: header, body fragments in order, nothing that widens it
   const header =
-    /CREATE FUNCTION "legacy_import_tenant_guard"\(\) RETURNS trigger\s+LANGUAGE plpgsql AS \$\$/.test(
+    /CREATE FUNCTION "legacy_import_tenant_guard"\(\) RETURNS trigger\s+LANGUAGE plpgsql SET search_path = public, pg_temp AS \$\$/.test(
       sql,
     );
   if (!header)
     problems.push(
-      "function header is not RETURNS trigger LANGUAGE plpgsql with no SECURITY clause",
+      "function header is not RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp with no SECURITY clause",
     );
   const body = guardBody(raw);
   if (body === null) problems.push("function body not found");
@@ -386,8 +386,17 @@ describe("stage-1 migration shape (SA-1295 sitting 1, SA-1507)", () => {
       ],
       [
         "SECURITY DEFINER added",
-        (s) => s.replace("LANGUAGE plpgsql AS $$", "LANGUAGE plpgsql SECURITY DEFINER AS $$"),
+        (s) =>
+          s.replace(
+            "LANGUAGE plpgsql SET search_path = public, pg_temp AS $",
+            "LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $",
+          ),
         /SECURITY/,
+      ],
+      [
+        "the function search path dropped",
+        (s) => s.replace(" SET search_path = public, pg_temp", ""),
+        /search_path/,
       ],
       [
         "a foreign key with the default action",

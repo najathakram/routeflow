@@ -8,8 +8,8 @@
  * A and B are throwaway `qa-sa1507-<run>-*` tenants (`assertTestTenant`, which `withTenantTx` also calls); every row
  * is synthetic (`acme`); `afterAll` deletes exactly what this file made. Collected only by `jest.db.config.js`.
  *
- * Each case's "red without its rule" value is observed by the builder against a mutated function and written in the PR
- * body (the mutation driver is not part of the repo).
+ * Each case's "red without its rule" value is observed by the builder against a mutated function and written in the hand-off
+ * note (the mutation driver is not part of the repo).
  */
 import { randomUUID } from "crypto";
 import { PrismaClient } from "@prisma/client";
@@ -24,7 +24,7 @@ import { withTenantTx } from "./testing/with-tenant-tx";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
 
-/** The SQLSTATE of a pg error, however Prisma's raw-query path wrapped it (observed and reported in the PR body). */
+/** The SQLSTATE of a pg error, however Prisma's raw-query path wrapped it (observed and reported in the hand-off note). */
 const sqlState = (err: any): string | undefined =>
   err?.meta?.driverAdapterError?.cause?.originalCode ??
   err?.cause?.originalCode ??
@@ -161,7 +161,7 @@ describeDb("SA-1507 tenant guard: DB-1 to DB-11 (real Postgres)", () => {
     expect(sqlState(err)).toBe("42501");
     expect(
       pgText(err)
-        .replace(/[s`'".]+$/, "")
+        .replace(/[\s`'".]+$/, "")
         .endsWith(`legacy_import_tenant_guard: ${table}`),
     ).toBe(true);
   };

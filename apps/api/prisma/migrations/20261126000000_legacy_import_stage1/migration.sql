@@ -210,7 +210,7 @@ CREATE TABLE "SourceItemAlias" (
 -- The tenant guard (SA-1507 rule 1; step 2 as narrowed by Amendment 2 A2-3, which withdraws the DELETE exemption of Amendment 1 A1-2). One function, six triggers. The text of a refusal names
 -- the table only. The steps run in order and the first hit wins.
 CREATE FUNCTION "legacy_import_tenant_guard"() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 DECLARE
   s text;
   v text;

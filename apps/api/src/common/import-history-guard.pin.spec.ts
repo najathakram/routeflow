@@ -314,6 +314,43 @@ describe("SA-1507 P6: tenant guard presence and the FK set of the guarded tables
     expect(Object.isFrozen(IMPORT_HISTORY_MODELS)).toBe(true);
   });
 
+  it("R-253 LOW-1: the sitting check script lists the same guarded tables and the same nine foreign keys (read by AST)", () => {
+    const file = path.join(API_DIR, "scripts", "sitting-s1295-1-check.mjs");
+    const sf = ts.createSourceFile(
+      file,
+      fs.readFileSync(file, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const strings = (name: string): string[] | null => {
+      let found: string[] | null = null;
+      sf.forEachChild((n) => {
+        if (!ts.isVariableStatement(n)) return;
+        for (const d of n.declarationList.declarations) {
+          if (!ts.isIdentifier(d.name) || d.name.text !== name || !d.initializer) continue;
+          let init: ts.Expression = d.initializer;
+          while (ts.isCallExpression(init) || ts.isPropertyAccessExpression(init)) {
+            init = ts.isCallExpression(init) ? init.expression : init.expression;
+          }
+          if (ts.isArrayLiteralExpression(init)) {
+            found = init.elements.filter(ts.isStringLiteralLike).map((e) => e.text);
+          }
+        }
+      });
+      return found;
+    };
+    const guarded = strings("GUARDED");
+    const fks = strings("EXPECTED_FKS");
+    expect(guarded).not.toBeNull();
+    expect(fks).not.toBeNull();
+    expect([...guarded!].sort()).toEqual([...IMPORT_HISTORY_MODELS].sort());
+    const code = { CASCADE: "c", "SET NULL": "n", RESTRICT: "r" } as Record<string, string>;
+    const want = EXPECTED_FKS.map(
+      (f) => `${f.table}(${f.cols}) -> ${f.refTable}(${f.refCols}) del=${code[f.onDelete]} upd=a`,
+    ).sort();
+    expect([...fks!].sort()).toEqual(want);
+  });
+
   it("the tree has no problem: six guard triggers, the nine A1-1 FKs, no other body naming a guarded table", () => {
     expect(guardProblems(files, keys)).toEqual([]);
   });

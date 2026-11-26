@@ -14,6 +14,11 @@ const { assertTestTenant } = require("../../../../../scripts/lib/test-tenants.cj
   assertTestTenant: (slug: string, context?: string) => string;
 };
 
+/** The one method of the transaction client this helper itself calls (a tagged raw statement). */
+interface TenantTx {
+  $executeRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown>;
+}
+
 /** The slice of a Prisma client this helper needs, so a spec passes its own PrismaClient or PrismaService. */
 export interface TenantTxClient {
   tenant: {
@@ -33,7 +38,7 @@ export async function withTenantTx<T>(
 ): Promise<T> {
   const row = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { slug: true } });
   assertTestTenant(row?.slug as string, "withTenantTx");
-  return prisma.$transaction(async (tx: any) => {
+  return prisma.$transaction(async (tx: TenantTx) => {
     await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
     return fn(tx);
   });
