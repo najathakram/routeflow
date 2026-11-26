@@ -2100,6 +2100,9 @@ export class SubscriptionMutationService {
         select: { status: true, readOnlyReason: true },
       });
       if (tenant?.status === "ACTIVE") {
+        // W-1464 R-305 m2: resuming turns renewal charges back on, so it is walled (a request path: the coded 409).
+        // Cancelling (cancel_at_period_end: true) only reduces what is charged and stays unwalled.
+        await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
         try {
           await this.stripe.updateSubscription(sub.stripeSubId, { cancel_at_period_end: false });
         } catch (err) {

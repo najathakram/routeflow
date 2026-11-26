@@ -3311,6 +3311,28 @@ describe("STRIPE-CANCEL-1 — self-serve cancel/resume propagate to Stripe", () 
     expect(emitted(events)).toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
   });
 
+  // W-1464 R-305 m2: resuming turns renewal charges back on, so it is walled; cancelling is not.
+  it.each([["TEST"], ["DEMO"], ["INTERNAL"], [null]])(
+    "resume() for a %s business is refused with the coded 409 before any Stripe call or write",
+    async (cls) => {
+      const { svc, prisma, tx, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeSub({ stripeSubId: "sub_x", cancelAtPeriodEnd: true }),
+      });
+      prisma.tenant.findUnique.mockResolvedValue({
+        status: "ACTIVE",
+        class: cls,
+        readOnlyReason: null,
+      });
+      await expect(svc.resume("t1", "admin")).rejects.toMatchObject({
+        status: 409,
+        response: { code: "LIVE_PAYMENTS_OFF" },
+      });
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      expect(tx.tenantSubscription.update).not.toHaveBeenCalled();
+    },
+  );
+
   it("resume() rejects ServiceUnavailableException on a generic Stripe failure — no write, no emit", async () => {
     const { svc, tx, events, stripe } = make({
       tenantStatus: "ACTIVE",

@@ -93,7 +93,7 @@ export interface PlanChangeDeps {
  * reads the business class through it. `revertPlanChange` keeps the looser `PlanChangeDeps`: it only restores a prior
  * price after a push the wall already passed.
  */
-export type PlanChangePushDeps = PlanChangeDeps & { prisma: ReconcilePrisma };
+export type PlanChangePushDeps = PlanChangeDeps & { prisma: ReconcilePrisma & TenantClassReader };
 
 /** An add-on's Stripe item that the new plan makes redundant, with the local row that owns it. */
 export interface DeletableAddonItem {
@@ -355,7 +355,7 @@ export async function pushPlanChange(
   // after this wall passed, so it carries none.
   // Required by type; if anything still reaches here without it the wall fails closed (the coded 409).
   if (!deps.prisma) assertLivePaymentsAllowed(null);
-  await assertTenantLivePaymentsAllowed(deps.prisma as unknown as TenantClassReader, a.tenantId);
+  await assertTenantLivePaymentsAllowed(deps.prisma, a.tenantId);
   // N4: the flag and the attempt's audit row (key + nonce) are COMMITTED before Stripe is touched. Unwritable =>
   // nothing was sent, so the caller's row and Stripe still agree.
   let reconcile: Armed | undefined;

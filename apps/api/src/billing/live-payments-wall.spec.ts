@@ -1,6 +1,10 @@
 import { ConflictException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { assertLivePaymentsAllowed, assertTenantLivePaymentsAllowed } from "./live-payments-wall";
+import {
+  assertLivePaymentsAllowed,
+  assertTenantLivePaymentsAllowed,
+  recordLivePaymentsHeld,
+} from "./live-payments-wall";
 
 /**
  * W-1464 PR-B (SA-1538 R5/R6): the one refusal in front of every Stripe session creator. Only a PRODUCTION business
@@ -55,4 +59,41 @@ describe("assertTenantLivePaymentsAllowed", () => {
       });
     },
   );
+});
+
+describe("recordLivePaymentsHeld", () => {
+  const held = { tenantId: "t1", entityType: "stripe_event", entityId: "evt_1", what: "a change" };
+
+  it("writes one LIVE_PAYMENTS_HELD row and a domain-only warn line", async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const warn = jest.fn();
+    await recordLivePaymentsHeld({ prisma: { auditLog: { create } }, logger: { warn } }, held);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0].data).toMatchObject({
+      tenantId: "t1",
+      action: "LIVE_PAYMENTS_HELD",
+      entityType: "stripe_event",
+      entityId: "evt_1",
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("is best effort: an audit write that fails does not throw (the warn line is the trail)", async () => {
+    const create = jest.fn().mockRejectedValue(new Error("db down"));
+    const warn = jest.fn();
+    await expect(
+      recordLivePaymentsHeld({ prisma: { auditLog: { create } }, logger: { warn } }, held),
+    ).resolves.toBeUndefined();
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts an unknown business (a dispatcher-level hold)", async () => {
+    const create = jest.fn().mockResolvedValue({});
+    await recordLivePaymentsHeld(
+      { prisma: { auditLog: { create } }, logger: { warn: jest.fn() } },
+      { ...held, tenantId: null },
+    );
+    expect(create.mock.calls[0][0].data.tenantId).toBeNull();
+  });
 });

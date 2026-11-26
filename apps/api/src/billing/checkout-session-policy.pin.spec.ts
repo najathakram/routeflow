@@ -324,7 +324,7 @@ describe("W-1464 PR-B - every Stripe session creator sits behind the live-paymen
  * `products.create` / `products.update` (stripe-product.ts) and prices make no charge and stay unwalled.
  */
 const STRIPE_CHARGE_CHANGE =
-  /\b(?:subscriptionItems\s*\.\s*(?:create|update)|invoices\s*\.\s*create|invoiceItems\s*\.\s*create|subscriptions\s*\.\s*update)\s*\(|\.\s*updateSubscription\s*\(/g;
+  /\b(?:subscriptionItems\s*\.\s*(?:create|update)|invoices\s*\.\s*(?:create|pay|finalizeInvoice|update)|invoiceItems\s*\.\s*(?:create|update)|subscriptions\s*\.\s*(?:create|update)|subscriptionSchedules\s*\.\s*\w+|paymentIntents\s*\.\s*create)\s*\(|\.\s*updateSubscription\s*\(/g;
 
 /** file -> how many such calls it makes, the least number of wall calls in that same file, and why any are unwalled. */
 const CHARGE_CHANGERS: Record<string, { calls: number; walls: number; exempt?: string }> = {
@@ -332,9 +332,9 @@ const CHARGE_CHANGERS: Record<string, { calls: number; walls: number; exempt?: s
   // adoptCheckoutSku (update), adoptOrCreateAddonItem (create + the orphan update behind it), enableAddonLocked (update)
   "billing/subscription-mutation.service.ts": {
     calls: 6,
-    walls: 3,
+    walls: 4,
     exempt:
-      "two updateSubscription calls only set cancel_at_period_end; the orphan update sits behind the create wall",
+      "the updateSubscription calls that set cancel_at_period_end: true only reduce what is charged; resume (cancel_at_period_end: false) is walled (R-305 m2); the orphan update sits behind the create wall",
   },
   // the stub invoice and its one item
   "billing/catchup-claim.service.ts": { calls: 2, walls: 2 },
@@ -348,8 +348,9 @@ const CHARGE_CHANGERS: Record<string, { calls: number; walls: number; exempt?: s
   "billing/scheduled-price-change.ts": { calls: 2, walls: 2 },
   "billing/dunning-pause.ts": {
     calls: 3,
-    walls: 0,
-    exempt: "pause_collection and its removal only; no item or price changes",
+    walls: 2,
+    exempt:
+      "setting a pause only reduces what is charged; both removals (clearPauseCollection and the reconciler's unpause arm) turn renewal charges back on and are walled (R-305 m2)",
   },
   "billing/stripe.service.ts": {
     calls: 2,
@@ -402,6 +403,21 @@ describe("W-1464 R-282 M2 - every call that changes what a subscription charges 
     expect(countOf(STRIPE_CHARGE_CHANGE, "await this.stripe.updateSubscription(s, p)")).toBe(1);
     expect(countOf(STRIPE_CHARGE_CHANGE, "c.invoices.create(a); c.invoiceItems.create(b)")).toBe(2);
     expect(countOf(STRIPE_CHARGE_CHANGE, "async updateSubscription(subId, params) {")).toBe(0);
+    // R-305 m5: the other creators of a charge are in the net too
+    expect(
+      countOf(STRIPE_CHARGE_CHANGE, "c.subscriptions.create(p); c.subscriptionSchedules.create(p)"),
+    ).toBe(2);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "c.subscriptionSchedules\n .release(id)")).toBe(1);
+    expect(
+      countOf(
+        STRIPE_CHARGE_CHANGE,
+        "c.invoices.pay(i); c.invoices.finalizeInvoice(i); c.invoices.update(i, p)",
+      ),
+    ).toBe(3);
+    expect(
+      countOf(STRIPE_CHARGE_CHANGE, "c.invoiceItems.update(i, p); c.paymentIntents.create(p)"),
+    ).toBe(2);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "c.invoices.retrieve(i); c.invoices.list(p)")).toBe(0);
     expect(
       countOf(STRIPE_CHARGE_CHANGE, "client.products.create({}); client.products.update(i, p)"),
     ).toBe(0);

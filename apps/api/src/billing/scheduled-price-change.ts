@@ -23,7 +23,11 @@ import {
   stripeSubscriptionPeriod,
 } from "./stripe-period";
 import { StripeService } from "./stripe.service";
-import { assertTenantLivePaymentsAllowed } from "./live-payments-wall";
+import {
+  assertTenantLivePaymentsAllowed,
+  isLivePaymentsRefusal,
+  recordLivePaymentsHeld,
+} from "./live-payments-wall";
 
 /**
  * SA-733 D8, lead ruling R1 (option B): a scheduled downgrade reaches Stripe BEFORE the renewal invoice is cut,
@@ -109,9 +113,10 @@ export class ScheduledPriceChangeService {
         if (out.applied) pushed++;
       } catch (err) {
         held++;
-        this.logger.error(
-          `Scheduled price change held back for tenant=${tenantId}: ${(err as Error).message}`,
-        );
+        // W-1464 R-305 m4: a business the wall holds is expected, not a fault: warn, not error.
+        const line = `Scheduled price change held back for tenant=${tenantId}: ${(err as Error).message}`;
+        if (isLivePaymentsRefusal(err)) this.logger.warn(line);
+        else this.logger.error(line);
       }
     }
     return { pushed, held };
@@ -190,6 +195,19 @@ export class ScheduledPriceChangeService {
         this.restoreIfPushedLocked(tenantId, clearedTargetPlanKey, { mustBeCleared: true }),
       );
     } catch (err) {
+      // W-1464 R-305 m3: a wall refusal is a hold, not a drift to reconcile.
+      if (isLivePaymentsRefusal(err)) {
+        await recordLivePaymentsHeld(
+          { prisma: this.prisma, logger: this.logger },
+          {
+            tenantId,
+            entityType: "tenant_subscription",
+            entityId: tenantId,
+            what: "restore of the kept plan price",
+          },
+        );
+        return;
+      }
       await markNeedsReconcile(
         { prisma: this.prisma, logger: this.logger },
         {

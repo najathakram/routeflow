@@ -69,7 +69,7 @@ function make(
   const tx: any = {
     $queryRaw: jest.fn().mockResolvedValue([]),
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE" }),
+      findUnique: jest.fn().mockResolvedValue({ status: "ACTIVE", class: "PRODUCTION" }),
       updateMany: jest.fn().mockResolvedValue({ count: o.transitionCount ?? 1 }),
       findUniqueOrThrow: jest.fn().mockResolvedValue({ deletedAt: null, class: "PRODUCTION" }),
     },
@@ -82,7 +82,12 @@ function make(
   const prisma: any = {
     getTenantId: () => null,
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme", status: "ACTIVE" }),
+      // the live-payments wall (W-1464) reads only { class }; every other read keeps its old shape
+      findUnique: jest.fn(async (args?: any) =>
+        args?.select?.class === true && Object.keys(args.select).length === 1
+          ? { class: "PRODUCTION" }
+          : { id: "t1", slug: "acme", status: "ACTIVE" },
+      ),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
