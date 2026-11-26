@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { Modal, Button } from "@routeflow/ui/web";
+import { Modal, Button, badgeStatusLabel } from "@routeflow/ui/web";
 import { AlertTriangle, ArrowUpRight, Loader2 } from "lucide-react";
 import { isTerminalOrderStatus } from "@routeflow/types";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { useOrder } from "@/lib/api/orders";
+import { useOrderStatusLabel } from "@/lib/fulfilment-caps";
 import { orderLineName } from "@/lib/product-display";
 import { useInvoice } from "@/lib/api/invoices";
 import { useInvoiceTaxSplit, useOrderCharges } from "@/lib/use-invoice-tax-split";
@@ -177,6 +178,8 @@ export function OrderPreviewModal({
   orderId: string;
 }) {
   const { data: order, isLoading, isError } = useOrder(open ? orderId : "");
+  // R-227 MEDIUM-2: the house word for the status, per order, as the order badge says it (never the raw code)
+  const statusLabel = useOrderStatusLabel();
   const focusReturn = useFocusReturn();
   const liveLines = React.useMemo(
     // a CANCELLED order keeps its header total (levy included) while every line is cancelled: name the levy from them
@@ -253,7 +256,7 @@ export function OrderPreviewModal({
         <ModalState>
           <p className="text-xs text-navy/70">
             {[
-              order.status,
+              statusLabel(order.status, badgeStatusLabel(order.status), order.fulfillPath),
               fmtCalendarDate(order.orderDate ?? order.createdAt),
               order.customer?.businessName,
             ]
