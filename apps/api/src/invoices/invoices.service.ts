@@ -116,7 +116,6 @@ import {
   invoiceFingerprintOf,
   recordInvoiceEmailed,
   assertOrderInvoiceUnlockedFor,
-  sendFieldsFor,
   changedSinceSentNumbers,
   type SendEmailArgs,
 } from "./invoice-send-state";
@@ -291,6 +290,7 @@ import {
 } from "./invoice-send-guard";
 import { writeOffInvoice } from "./invoice-write-off";
 import { updateInvoiceTerms } from "./invoice-terms-edit";
+import { invoiceStaffDetailFields } from "./invoice-edit-policy";
 import {
   reopenInvoiceFlow,
   revertInvoiceToDraftFlow,
@@ -3012,7 +3012,7 @@ export class InvoicesService {
       // #2088: the tracked send state ("emailed, modified since") and the pre-delivery lock, staff only.
       ...(user?.role === UserRole.CUSTOMER
         ? {}
-        : await sendFieldsFor(this.prisma, this.featureConfig, inv, inv.order)),
+        : await invoiceStaffDetailFields(this.prisma, this.featureConfig, user, inv)), // + SA-1508 editAction / editBlocked
     });
   }
 
