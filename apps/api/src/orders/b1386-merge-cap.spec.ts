@@ -78,7 +78,10 @@ const boxLine = (id: string, productId: string, boxes: number, pack = 12) => ({
   priceType: "STANDARD",
 });
 
-async function boot(lineItems: object[]) {
+async function boot(
+  lineItems: object[],
+  reads: { packs?: typeof PACKS; firstRead?: typeof PACKS } = {},
+) {
   const svc = {
     findActiveOrder: jest
       .fn()
@@ -94,7 +97,9 @@ async function boot(lineItems: object[]) {
     findOne: jest.fn().mockResolvedValue({ id: "ord-open", customerId: "cust-1", lineItems: [] }),
   };
   const prisma = createMockPrisma();
-  prisma.forTenant().product.findMany.mockResolvedValue(PACKS);
+  prisma.forTenant().product.findMany.mockResolvedValue(reads.packs ?? PACKS);
+  // the FIRST product read of createOrder is the pre-lock cap read; the in-lock read follows
+  if (reads.firstRead) prisma.forTenant().product.findMany.mockResolvedValueOnce(reads.firstRead);
   const module = await Test.createTestingModule({
     controllers: [BuyerController],
     providers: [
@@ -209,6 +214,42 @@ describe("BuyerController.createOrder: the fold into an open order is capped (RE
     const h = await boot([plainLine("L1", "single", 90_000)]);
     await h.merge([{ productId: "other", qty: 20_000 }]);
     expect(h.svc.updateOrderItems).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the fold's packs (L1-d, L2-d)", () => {
+  it("L1-d: a repack: a split item is counted at the pack the fold resolved (the line's own 12), not today's live 6", () => {
+    // Through the controller a bare add into a repacked line is refused by the fold itself (MERGE_PACK_MISMATCH, 409), so the
+    // two packs only meet in the helper: the line holds 8,400 boxes of 12 = 100,800 pieces, which a live pack of 6 would
+    // read as 50,400.
+    const stored = [boxLine("L1", "boxed", 8_000, 12)];
+    const folded = {
+      productId: "boxed",
+      qty: 100_800,
+      boxes: 8_400,
+      pieces: 0,
+      unitsPerBox: 12,
+      sourceLineId: "L1",
+    };
+    expect(() =>
+      assertFoldedBuyerLinesWithinCap([folded], stored, new Map([["boxed", 6]])),
+    ).toThrow(BadRequestException);
+    // an item with no resolved pack falls back to the live one (the fold's own deferral to updateOrderItems)
+    expect(() =>
+      assertFoldedBuyerLinesWithinCap(
+        [{ ...folded, unitsPerBox: undefined, qty: 0 }],
+        stored,
+        new Map([["boxed", 6]]),
+      ),
+    ).not.toThrow();
+  });
+
+  it("L2-d: the in-lock pack read wins over the pre-lock cap read", async () => {
+    // pre-lock read says a pack of 6, the in-lock read (the one the fold uses) says 12: 8,400 packs of 12 = 100,800
+    const h = await boot([plainLine("L1", "boxed", 8_000)], {
+      firstRead: [{ id: "boxed", unitsPerBox: 6 }],
+    });
+    await expectRefusedUnwritten(h, [{ productId: "boxed", qty: 400 }], "boxed");
   });
 });
 

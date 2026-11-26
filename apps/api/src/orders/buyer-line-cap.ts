@@ -20,9 +20,18 @@ export interface BuyerCapLine {
   storedPieces?: number;
 }
 
+/**
+ * The lines that pass the cap AND rise above what they held (`buyerLineOverCap`, rise-only). Never throws: the ONE
+ * "would this exceed the cap" check, shared by the order create / portal fold (`assertBuyerLinesWithinCap`, which
+ * refuses) and the after-create sweep (`merge-fold-cap.ts`, which keeps the order apart because it cannot refuse).
+ */
+export function buyerLinesOverCap(lines: ReadonlyArray<BuyerCapLine>): BuyerCapLine[] {
+  return lines.filter((l) => buyerLineOverCap(l.pieces, l.storedPieces ?? 0));
+}
+
 /** Refuses (400 BUYER_LINE_QTY_OVER_MAX, nothing written) when any line passes the cap and rises. A pure check. */
 export function assertBuyerLinesWithinCap(lines: ReadonlyArray<BuyerCapLine>): void {
-  const over = lines.filter((l) => buyerLineOverCap(l.pieces, l.storedPieces ?? 0));
+  const over = buyerLinesOverCap(lines);
   if (over.length === 0) return;
   throw new BadRequestException({
     code: API_ERROR_CODES.BUYER_LINE_QTY_OVER_MAX,

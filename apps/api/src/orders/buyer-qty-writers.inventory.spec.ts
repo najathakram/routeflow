@@ -20,6 +20,11 @@ import { ROLES_KEY } from "../auth/decorators/roles.decorator";
  * A new CUSTOMER-reachable handler whose body carries `qty` / `boxes` / `pieces` / `newQty`, or whose body is
  * untyped (`dto: any`, an inline object type), fails assertion (a) until it is classified here.
  *
+ * What `service-cap` means here: a LABEL, checked only for the form of its REG id. Removing a cap call leaves this spec
+ * green; the REG tests named by each id are what fail. It also cannot see the writers that are not a route: the
+ * after-create sweep (`mergeAllPendingForCustomer`, run after a CUSTOMER create and a template generate, and hourly) is
+ * covered by REG-B1386 S1-S6 (b1386-sweep-cap.spec.ts), and template generate by that same sweep, not by route discovery.
+ *
  * Discovery is the real Nest runtime metadata of every `*.controller.ts` (never a text scrape: L-205), and a
  * discovery that finds nothing, or a controller that cannot be loaded, FAILS rather than passing (L-202).
  *

@@ -795,10 +795,12 @@ export class BuyerController {
             const mergedItems = foldResult.items.filter((i) => i.productId);
             // B1386 (REG-B1386 M1-M3): the cart's fold into this order is capped, rise-only against the line each
             // item merges into, on the stored lines and packs read above (no second read); before anything is written.
+            // The in-lock pack read (`upbByProduct`) wins over the pre-lock cap read (`capPacks`), which only fills products
+            // the order does not hold.
             assertFoldedBuyerLinesWithinCap(
               mergedItems,
               lineItems,
-              new Map([...upbByProduct, ...capPacks]),
+              new Map([...capPacks, ...upbByProduct]),
             );
             await this.ordersService.updateOrderItems(
               activeOrder.id,
