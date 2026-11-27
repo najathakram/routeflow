@@ -38,6 +38,7 @@ import {
   lockedCopy,
 } from "./delivered-line-copy";
 import { bookedPieces } from "./order-stock";
+import { loadLiveUnitsPerBoxByProduct } from "./live-pack-map";
 import { correctedDeliveredFor, heldDeliveredFor } from "./corrected-delivered";
 import { OFFICE_MARKED_NOTE } from "./office-evidence-completion";
 
@@ -450,10 +451,10 @@ async function applyLineCorrections(
       );
       corrected.set(h.id, nextD);
     }
-    const product = h.productId
-      ? await tx.product.findUnique({ where: { id: h.productId }, select: { unitsPerBox: true } })
-      : null;
-    const pack = product?.unitsPerBox;
+    // The live pack comes through the one map the stock settle reads (R-358), never a second direct product read.
+    const pack = h.productId
+      ? (await loadLiveUnitsPerBoxByProduct(tx, [h.productId])).get(h.productId)
+      : undefined;
     // SA-1533 (w): the booking rule has ONE home (`bookedTerms`, through `bookedPieces`), with the same map the stock settle
     // reads, so the audit row's delta can never drift from what the counter moved.
     const booked = bookedPieces(
