@@ -1,5 +1,10 @@
 import { createHash } from "crypto";
-import { ConflictException, Logger, ServiceUnavailableException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Logger,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import type Stripe from "stripe";
 import type { TenantSubscription } from "@prisma/client";
 import type { CheckoutStart } from "@routeflow/types";
@@ -13,6 +18,7 @@ import {
   TENANT_PRICE_LOCK_WAIT_MS,
 } from "./price-lock";
 import { assertTenantLivePaymentsAllowed } from "./live-payments-wall";
+import { PICK_META } from "./self-checkout-plan-pick";
 import {
   checkoutStartFromSession,
   checkoutUiMode,
@@ -49,6 +55,8 @@ export interface SessionTerms {
   /** The add-on lines as billed (amount and quantity), so a price change under the same SKU is a new term. */
   addonLines: { unitAmount: number; quantity: number }[];
   anchorAt: Date;
+  /** SA-1547 PR-5: a plan pick's catalog version. In the hash, so a re-pick of another plan or version is new terms. */
+  planVersionId?: string;
 }
 export interface OpenLink {
   kind: "card" | "catch_up";
@@ -190,6 +198,7 @@ const termsHash = (terms: SessionTerms, surface: CheckoutSurface) =>
       terms.addonLines.map((l) => [l.unitAmount, l.quantity]).sort(),
       terms.anchorAt.getTime(),
       checkoutUiMode(surface),
+      ...(terms.planVersionId ? [terms.planVersionId] : []),
     ]),
   ).slice(0, 32);
 
@@ -212,6 +221,14 @@ export async function openCheckoutSessionHeld(d: SlotDeps, a: SlotArgs): Promise
   const sessions = await tenantSessions(d, a.tenantId, a.customerId);
   if (hasUnapplied(sessions, await readRow(d, a.tenantId))) throw inProgress();
   const { terms, params } = await a.readOffer(); // the ONLY term read, under the lock
+  // SA-1547 PR-5: a pick session must carry the terms completion applies; refused BEFORE anything is expired or created.
+  const meta = params.metadata ?? {};
+  if (meta[PICK_META.selfPick] && !(meta.planKey && meta[PICK_META.planVersionId])) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED,
+      message: "A plan pick must name its plan and catalog version.",
+    });
+  }
   const hash = termsHash(terms, a.surface);
   const live = sessions.find(
     (s) =>

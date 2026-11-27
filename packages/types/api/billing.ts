@@ -295,15 +295,6 @@ export type CheckoutStart =
     };
 
 /**
- * SA-1547 card-first: what `POST /billing/subscription/checkout` answers when the request names a `planKey`. A client
- * branches on `kind`: a session to pay (the {@link CheckoutStart} fields, unchanged), or a trial business that picked
- * a plan and stays on its trial (nothing to pay yet; it pays when the trial ends on `trialEndsAt`).
- */
-export type CheckoutPickResult =
-  | (CheckoutStart & { kind: "SESSION" })
-  | { kind: "TRIAL_PLAN_SET"; planKey: string; planName: string; trialEndsAt: string | null };
-
-/**
  * SA-1154: the one allowlist of billing return addresses (a tenant lands on its billing page): a plan checkout, a
  * payment, and a card add (nothing was charged, so it must never land on the payment path). The web refuses an
  * embedded start whose `returnPath` is not an exact member.

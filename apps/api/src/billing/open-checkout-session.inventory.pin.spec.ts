@@ -15,10 +15,9 @@ const OPEN: Record<string, number> = {
 };
 /** SA-1547 PR-5: the slot body for a caller that already holds the lock (a plan pick re-pins, then opens, in ONE hold). */
 const HELD: Record<string, number> = {
-  "billing/billing.service.ts": 1, // BillingService.pickAndOpen (never inside `openCheckoutSession`'s own lock)
+  "billing/billing.service.ts": 1, // BillingService.pickAndOpen (never inside `openCheckoutSession`'s own lock; a pick writes nothing)
 };
 const EXPIRE_FIRST: Record<string, number> = {
-  "billing/billing.service.ts": 1, // pickAndOpen: before the re-pin (completion prices from the pin)
   "billing/subscription-mutation.service.ts": 3, // subscribe, upgradeLocked, downgrade
   "platform-admin/platform-admin.service.ts": 2, // updatePlanLocked (plan edit), updateTenantPriceOverrideLocked (fee save)
 };

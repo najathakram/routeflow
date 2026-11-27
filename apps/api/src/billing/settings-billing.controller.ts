@@ -40,7 +40,6 @@ import {
 import { selfPayForViewer } from "./self-checkout-eligibility";
 import { CardFirstFlagService } from "./card-first-flag.service";
 import { planGateRefusal } from "./self-serve-plan-gate";
-import type { CheckoutGateVerdict } from "./self-checkout-plan-pin";
 
 import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
@@ -265,7 +264,7 @@ export class SettingsBillingController {
    * ACTIVE, or a trial-expired READ_ONLY one. A TRIAL with days left is refused (B1). The body is optional and takes a
    * plan KEY only (card-first chunk 2): the business re-pins onto a published self-serve plan under the checkout's one
    * hold, and the price, interval and add-ons are always the server's. With card-first ON a TRIAL business that picks
-   * stays TRIAL (the answer is `TRIAL_PLAN_SET`). Switching plans for a card payer still goes through subscribe/upgrade/downgrade.
+   * pays now, like any other pick (nothing is written before payment). Switching plans for a card payer still goes through subscribe/upgrade/downgrade.
    */
   @Post("subscription/checkout")
   @HttpCode(HttpStatus.OK)
@@ -289,14 +288,12 @@ export class SettingsBillingController {
   }
 
   /** The server's verdict on this checkout: a session to pay, or (card-first ON, a plan picked) a trial business choosing its plan. */
-  private async checkoutGate(
-    tenantId: string,
-    planKey: string | undefined,
-  ): Promise<CheckoutGateVerdict> {
+  private async checkoutGate(tenantId: string, planKey: string | undefined): Promise<void> {
     const { selfPay } = await this.subscription.getSubscription(tenantId);
-    if (selfPay?.eligible) return "SESSION";
+    if (selfPay?.eligible) return;
     if (await this.cardFirst?.isEnabled()) {
-      if (planKey && selfPay?.reason === "trial_active") return "TRIAL_PICK";
+      // card-first: a TRIAL business that picks a plan pays now (a bodyless TRIAL request is still refused)
+      if (planKey && selfPay?.reason === "trial_active") return;
       if (selfPay?.reason === "active_no_card") {
         throw planGateRefusal(API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK);
       }

@@ -52,8 +52,6 @@ const EXEMPT: Record<string, string> = {
     "register(): creates the tenant + subscription at STARTER — no prior plan to snapshot",
   "customers/customers.service.ts":
     "grace-window stub upsert: planKey stays null and no rank moves",
-  "billing/self-checkout-plan-pin.ts":
-    "SA-1547 card-first re-pin before payment: the business is not activated and no feature entitlement is granted or removed until the paid completion",
 };
 
 const hookCalls = (text: string) => (text.match(/\.onPlanChange\(/g) ?? []).length;

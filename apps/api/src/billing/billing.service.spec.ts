@@ -21,6 +21,7 @@ import { isPricePushFailure } from "./price-override";
 import { toCents } from "@routeflow/pricing";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
+import { PlanCatalogService } from "./plan-catalog.service";
 import { BillingService } from "./billing.service";
 import { paymentReinstatableWhere } from "./dunning-config";
 import {
@@ -99,6 +100,7 @@ function make(
   };
   const tx = {
     tenant: {
+      update: jest.fn().mockResolvedValue({}), // SA-1547 PR-5: a PAID pick session writes the tenant's plan
       updateMany: jest.fn().mockResolvedValue({ count: overrides.transitionCount ?? 1 }),
       // SA-140: transitionAndEmit reads deletedAt/class post-CAS for emitPayingDelta's
       // isPayingRow gate — every existing test's tenant is PRODUCTION/non-deleted by default,
@@ -2215,6 +2217,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BillingService,
+        { provide: PlanCatalogService, useValue: {} }, // required since SA-1547 PR-5 (plan picks)
         { provide: PrismaService, useValue: prisma },
         { provide: StripeService, useValue: stripe },
         { provide: EmailService, useValue: { send: jest.fn() } },
@@ -3754,6 +3757,114 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
 
 // SA-1547 PR-3 (R3): a checkout that converts a business that was NEVER activated stamps `trialConvertedAt` and emits
 // TRIAL_CONVERTED, like subscribe() does. Today a checkout-converted trial drops out of the billing export.
+// SA-1547 PR-5 (SA-1319 R1 / R1a): a card-first PICK session carries the plan, catalog version and quoted price the customer
+// paid; the completion applies them once, in the apply transaction. Nothing was written when the pick was made.
+describe("onCheckoutCompleted: a PAID pick session applies its own terms (SA-1319 R1 2/5, R1a 8)", () => {
+  const pickSession = (over: Record<string, unknown> = {}) => ({
+    id: "cs_pick",
+    metadata: {
+      tenantId: "t1",
+      planKey: "CORE",
+      selfPick: "1",
+      planVersionId: "v14",
+      quotedMonthly: "199",
+    },
+    subscription: "sub_1",
+    customer: "cus_1",
+    payment_status: "paid",
+    ...over,
+  });
+  const subOf = (planKey: string, status: string, readOnlyReason: string | null) => ({
+    tenantId: "t1",
+    planKey,
+    basePriceSnapshot: 349,
+    discount: 0,
+    stripeSubId: null,
+    stripeCustomerId: "cus_1",
+    trialConvertedAt: null,
+    tenant: { status, readOnlyReason },
+  });
+  function setup(sub: any, tenantPlan = "ALL_IN") {
+    const h = make({ transitionCount: 1, sub });
+    h.prisma.tenant.findUnique.mockResolvedValue({
+      id: "t1",
+      class: "PRODUCTION",
+      status: sub.tenant.status,
+      plan: tenantPlan,
+      planVersionId: "v1",
+    });
+    h.mutations.inclusionCatalog = jest
+      .fn()
+      .mockResolvedValue({ addonSkus: [], planNameOf: (k: string) => k });
+    return h;
+  }
+
+  it.each([
+    ["a Pro TRIAL picks Essentials", subOf("ALL_IN", "TRIAL", null)],
+    [
+      "a trial-expired READ_ONLY business picks Essentials",
+      subOf("ALL_IN", "READ_ONLY", "trial_expired"),
+    ],
+  ])(
+    "%s: the session's plan, version, price and the tenant's plan are written, once",
+    async (_n, sub) => {
+      const h = setup(sub);
+      await (h.svc as any).onCheckoutCompleted(pickSession());
+      const upsert = h.prisma.tenantSubscription.upsert.mock.calls[0][0];
+      expect(upsert.update).toMatchObject({
+        planKey: "CORE",
+        currentPlan: "CORE",
+        basePriceSnapshot: 199, // the session's quoted price, never the old plan's catalog price
+      });
+      expect(h.pricing.resolveCatalogPricing).not.toHaveBeenCalled();
+      // both catalog pins through the one pin writer, and the tenant's own plan
+      expect(h.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: "t1" },
+        data: { planVersionId: "v14" },
+      });
+      expect(h.tx.tenant.updateMany).toHaveBeenCalledWith({
+        where: { id: "t1" },
+        data: { planVersionId: "v14" },
+      });
+      expect(h.tx.tenant.update).toHaveBeenCalledWith({
+        where: { id: "t1" },
+        data: { plan: "CORE" },
+      });
+      // onPlanChange exactly once, from the plan the business is LEAVING to the session's, judged on the session's version
+      expect(h.planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+      expect(h.planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({
+        fromPlanKey: "ALL_IN",
+        toPlanKey: "CORE",
+        toPlanVersionId: "v14",
+      });
+      expect(h.mutations.inclusionCatalog).toHaveBeenCalledWith("t1", "v14");
+    },
+  );
+
+  it("R5: a paid session completes on its OWN terms even when its version is no longer the published one", async () => {
+    const h = setup(subOf("ALL_IN", "TRIAL", null));
+    // BillingService holds no catalog here: any read of the published catalog would throw
+    await expect((h.svc as any).onCheckoutCompleted(pickSession())).resolves.toBeUndefined();
+    expect(h.billingNotification.notifyCheckoutPlanNotApplied).not.toHaveBeenCalled();
+    expect(h.prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("a bodyless session (no pick metadata) completes exactly as before: catalog price, no pin, no tenant plan write", async () => {
+    const h = setup(subOf("ALL_IN", "TRIAL", null));
+    await (h.svc as any).onCheckoutCompleted(
+      pickSession({ metadata: { tenantId: "t1", planKey: "GROWTH" } }),
+    );
+    expect(h.pricing.resolveCatalogPricing).toHaveBeenCalled();
+    expect(h.tx.tenant.update).not.toHaveBeenCalled();
+    expect(h.prisma.tenantSubscription.upsert.mock.calls[0][0].update).not.toHaveProperty(
+      "currentPlan",
+    );
+    expect(h.tx.tenantSubscription.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { planVersionId: expect.anything() } }),
+    );
+  });
+});
+
 describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
   const session = (over: Record<string, unknown> = {}) => ({
     id: "cs_conv",

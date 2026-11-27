@@ -125,7 +125,7 @@ import {
   OFF_LADDER_PLAN_MESSAGE,
   assertSelfServePlanDef,
   inviteOnlyRefusal,
-} from "./self-checkout-plan-pin";
+} from "./self-checkout-plan-pick";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { CardFirstFlagService } from "./card-first-flag.service";
@@ -1316,7 +1316,11 @@ export class SubscriptionMutationService {
    * SA-787 C3: the tenant's catalog add-on SKUs and plan names (SA-815a: its pinned version, else the published one),
    * for the checkout-completed handler's inclusion step (BillingService holds no catalog of its own).
    */
-  async inclusionCatalog(tenantId: string): Promise<{
+  async inclusionCatalog(
+    tenantId: string,
+    /** SA-1547 PR-5: a pick session's own catalog version, so what it includes is judged on the terms that were paid. */
+    planVersionId?: string | null,
+  ): Promise<{
     addonSkus: readonly AddonSkuDef[];
     planNameOf(planKey: string): string;
   }> {
@@ -1329,7 +1333,12 @@ export class SubscriptionMutationService {
       }),
       this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { planVersionId: true } }),
     ]);
-    const pinned = await inclusionCatalogFor(this.catalog, sub, tenant);
+    // a pick session's own version wins (still through the ONE resolver: a sub pin, else the tenant's, else published)
+    const pinned = await inclusionCatalogFor(
+      this.catalog,
+      planVersionId ? { planVersionId } : sub,
+      tenant,
+    );
     return {
       addonSkus: pinned.addonSkus,
       planNameOf: (planKey) =>
@@ -2457,7 +2466,8 @@ export class SubscriptionMutationService {
     tenantId: string,
     interval: "month" | "year",
     // SA-733 D7: the catch-up DRY-RUN reads the same lines but writes nothing (no platform notice).
-    opts: { quiet?: boolean; readOnly?: boolean } = {},
+    // SA-1547 PR-5: `asPlanKey` judges inclusion on a plan the business is only PICKING (its published version), not the one it is on.
+    opts: { quiet?: boolean; readOnly?: boolean; asPlanKey?: string } = {},
   ): Promise<{
     lineItems: ReturnType<typeof checkoutAddonLineItem>[];
     skus: string[];
@@ -2492,7 +2502,12 @@ export class SubscriptionMutationService {
       }
       // A plan-bundled SKU is never sold again: no line, nothing to announce. SA-815e: the line is priced at the
       // SKU of the tenant's own pinned version (the version its rows were written and will be billed at).
-      const { refusal: included, def } = await this.judgeAddon(tenantId, publishedDef, version);
+      const { refusal: included, def } = await this.judgeAddon(
+        tenantId,
+        publishedDef,
+        version,
+        opts.asPlanKey,
+      );
       if (included) {
         if (included.reason !== "CATALOG_INVALID") continue;
         // B1102: an unparseable includedAtPlan fails closed — a user's checkout is refused (409); the quiet

@@ -153,6 +153,22 @@ export class PlatformPricingService {
   }
 
   /**
+   * SA-1547 PR-5: the `price_data` line for a plan the business is only PICKING (its published price, no tenant read): the
+   * paid completion applies this very price. Integer cents via `toCents`, like {@link checkoutPriceData}.
+   */
+  async checkoutPriceDataForPlan(
+    plan: { planKey: string; planName: string; monthly: number },
+    interval: "month" | "year",
+  ): Promise<CheckoutPriceData> {
+    return {
+      currency: "usd",
+      product: await ensurePlanProduct(this.stripe.client, plan.planKey, plan.planName),
+      unit_amount: toCents(plan.monthly),
+      recurring: { interval },
+    };
+  }
+
+  /**
    * Build the Stripe Checkout `price_data` line item for a tenant + billing interval.
    * Integer cents via the shared `toCents` (rounded to cents first, so float drift never moves a cent).
    */

@@ -168,17 +168,17 @@ describe("SA-1547 PR-5: the gate that decides a plan pick (R13, R14, ACTIVE with
   const gateOf = async (selfPay: unknown, flag?: boolean) => {
     const { controller, billing } = make(selfPay, "STARTER", flag);
     await controller.createCheckout({ tenantId: "t1" } as any, { planKey: "CORE" });
-    return billing.createCheckoutSession.mock.calls[0][1].pick.gate as () => Promise<string>;
+    return billing.createCheckoutSession.mock.calls[0][1].pick.gate as () => Promise<void>;
   };
   const ACTIVE_NO_CARD = { ...SELF_PAY_OK, eligible: false, reason: "active_no_card" };
 
-  it("R14: a trial-expired business that is eligible gets a SESSION", async () => {
-    expect(await (await gateOf(SELF_PAY_OK, true))()).toBe("SESSION");
-    expect(await (await gateOf(SELF_PAY_OK))()).toBe("SESSION");
+  it("R14: a trial-expired business that is eligible passes the gate, flag on or off", async () => {
+    await expect((await gateOf(SELF_PAY_OK, true))()).resolves.toBeUndefined();
+    await expect((await gateOf(SELF_PAY_OK))()).resolves.toBeUndefined();
   });
 
-  it("R13: a TRIAL business picking a plan, flag ON, is a TRIAL_PICK (stays on its trial)", async () => {
-    expect(await (await gateOf(SELF_PAY_TRIAL, true))()).toBe("TRIAL_PICK");
+  it("R13: a TRIAL business picking a plan, flag ON, passes the gate (it pays now, to convert early)", async () => {
+    await expect((await gateOf(SELF_PAY_TRIAL, true))()).resolves.toBeUndefined();
   });
 
   it("R13: flag OFF or absent, the same TRIAL pick is the 403 it is today", async () => {

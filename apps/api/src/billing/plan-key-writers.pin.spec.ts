@@ -103,13 +103,6 @@ export const PLAN_KEY_WRITERS: readonly {
     calls: 1,
     reason: "creation as STARTER",
   },
-  {
-    id: "billing/self-checkout-plan-pin.ts#repinForSelfCheckoutTx",
-    kind: "EXEMPT",
-    calls: 1,
-    reason:
-      "SA-1547 card-first re-pin before payment: writes no add-on row; checkoutAddonLines drops what the pinned plan includes, and the completion's own write runs the inclusion helpers",
-  },
 ];
 
 const siteId = (s: Pick<CallSite, "file" | "fn">) => `${s.file}#${s.fn}`;
@@ -196,8 +189,6 @@ const SA774_CLASS: Record<string, "GATED" | "ACTIVATION" | "SANCTIONED"> = {
   "platform-admin/platform-admin.service.ts#updateStatus": "SANCTIONED",
   "platform-admin/platform-admin.service.ts#createTenant": "SANCTIONED",
   "tenants/tenants.service.ts#register": "SANCTIONED",
-  // SA-1547: the pre-payment pin of the card-first checkout; the eligibility gate and the wall run before it, in one hold
-  "billing/self-checkout-plan-pin.ts#repinForSelfCheckoutTx": "ACTIVATION",
 };
 
 describe("SA-774 - every planKey writer is GATED, ACTIVATION or SANCTIONED", () => {
@@ -230,11 +221,9 @@ describe("SA-774 - every planKey writer is GATED, ACTIVATION or SANCTIONED", () 
  *   EXPIRE_FIRST  its own function calls `expireOpenCheckoutSessions(` (after its refusals, under the tenant-price lock);
  *   COMPLETION    the session itself;
  *   NO_SESSION    no session can exist for the row it writes (creation, or a null-only fill with no plan move);
- *   CALLER_EXPIRES  a lock-free helper; its one caller (`BillingService.pickAndOpen`) calls `expireOpenCheckoutSessions(` before it;
  *   FOLLOW_UP:<item>  not yet hooked, with the work item that owns it.
  */
-type SlotClass =
-  "EXPIRE_FIRST" | "COMPLETION" | "NO_SESSION" | "CALLER_EXPIRES" | `FOLLOW_UP:W-${number}`;
+type SlotClass = "EXPIRE_FIRST" | "COMPLETION" | "NO_SESSION" | `FOLLOW_UP:W-${number}`;
 const SLOT_CLASS: Record<string, SlotClass> = {
   "billing/subscription-mutation.service.ts#subscribeLocked": "EXPIRE_FIRST",
   "billing/subscription-mutation.service.ts#upgradeLocked": "EXPIRE_FIRST",
@@ -243,7 +232,6 @@ const SLOT_CLASS: Record<string, SlotClass> = {
   "platform-admin/platform-admin.service.ts#createTenant": "NO_SESSION",
   "tenants/tenants.service.ts#register": "NO_SESSION",
   "platform-admin/platform-admin.service.ts#updateStatus": "NO_SESSION",
-  "billing/self-checkout-plan-pin.ts#repinForSelfCheckoutTx": "CALLER_EXPIRES",
   // holds billing add-on locks and no tenant-price lock: hooking it is a lock-order change (SA read first)
   "platform-admin/platform-admin.service.ts#activateManualSubscription": "FOLLOW_UP:W-1354",
   // a scheduled downgrade can be armed on a row with no live Stripe subscription, so "checkout is refused" is not provable
@@ -269,15 +257,6 @@ function slotViolations(
           !/\bexpireOpenCheckoutSessions\(/.test(bodyOf(...(id.split("#") as [string, string]))),
       )
       .map(([id]) => `no expire call in ${id}`),
-    ...Object.entries(classes)
-      .filter(
-        ([, k]) =>
-          k === "CALLER_EXPIRES" &&
-          !/\bexpireOpenCheckoutSessions\([\s\S]*\brepinForSelfCheckoutTx\(/.test(
-            bodyOf("billing/billing.service.ts", "pickAndOpen"),
-          ),
-      )
-      .map(([id]) => `its caller does not expire the open sessions first: ${id}`),
   ];
 }
 

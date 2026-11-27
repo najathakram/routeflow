@@ -19,7 +19,6 @@ import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   cancelOpenLink,
-  expireOpenCheckoutSessions,
   openCheckoutSession,
   openCheckoutSessionHeld,
   readOpenLink,
@@ -27,10 +26,12 @@ import {
   type SlotOffer,
 } from "./open-checkout-session";
 import {
-  repinForSelfCheckoutTx,
-  type CheckoutGateVerdict,
+  PICK_META,
+  pickSessionTerms,
+  readPickTerms,
   type CheckoutPick,
-} from "./self-checkout-plan-pin";
+  type PickTerms,
+} from "./self-checkout-plan-pick";
 import { EmailService } from "../email/email.service";
 import { routeflowNotice } from "../email/routeflow-mail";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
@@ -64,6 +65,7 @@ import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { PlanCatalogService } from "./plan-catalog.service";
+import { pinPlanVersionTx } from "./plan-version-pin";
 import { isPayingRow } from "./mrr.service";
 import {
   applyCouponStateTx,
@@ -115,7 +117,7 @@ import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-ac
 import { retryOnTxConflict } from "../common/tx-retry";
 import { NO_LIVE_SUBSCRIPTION, stopBillingIncludedAddonsTx } from "./addon-inclusion";
 import { assertCheckoutSurface, type CheckoutSurface } from "./checkout-session-params";
-import type { CheckoutPickResult, CheckoutStart } from "@routeflow/types";
+import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
 import {
   assertLivePaymentsAllowed,
@@ -304,7 +306,8 @@ export class BillingService {
     @Optional() private readonly dunning?: DunningService,
     // SA-775: the rollout pause on AUTOMATIC locks (reconcileCanceledSubscriptions, the Stripe-cancel webhook).
     @Optional() private readonly autoLocks?: AutoLockSwitchService,
-    @Optional() private readonly catalog?: PlanCatalogService,
+    // SA-1547 PR-5: reads the catalog for a plan pick. A required provider (no @Optional): a module without it fails at boot, not at the first pick.
+    private readonly catalog?: PlanCatalogService,
   ) {
     // MRR has ONE writer: dunning's pause and resume book their delta through this class's transitionAndEmit.
     this.dunning?.bindTransition((...args) => this.transitionAndEmit(...args));
@@ -577,20 +580,12 @@ export class BillingService {
    * Returns the {@link CheckoutStart}: a url to visit (hosted) or, when BILLING_CHECKOUT_UI=embedded and the
    * surface is TENANT_SELF, a client secret that mounts the card form on our page (SA-1139).
    */
-  createCheckoutSession(
-    tenantId: string,
-    // SA-1139: `surface` is REQUIRED and never defaulted (the admin link is hosted, a tenant's own checkout follows the switch).
-    opts: { interval?: "month" | "year"; surface: CheckoutSurface },
-  ): Promise<CheckoutStart>;
-  /** SA-1547 card-first: the same checkout with a plan pick (`pick`); answers a session or a TRIAL_PLAN_SET. */
-  createCheckoutSession(
-    tenantId: string,
-    opts: { interval?: "month" | "year"; surface: CheckoutSurface; pick: CheckoutPick },
-  ): Promise<CheckoutPickResult>;
   async createCheckoutSession(
     tenantId: string,
+    // SA-1139: `surface` is REQUIRED and never defaulted (the admin link is hosted, a tenant's own checkout follows the switch).
+    // SA-1547 card-first: `pick` is a plan the business chose (nothing is written for it: the session carries the terms).
     opts: { interval?: "month" | "year"; surface: CheckoutSurface; pick?: CheckoutPick },
-  ): Promise<CheckoutStart | CheckoutPickResult> {
+  ): Promise<CheckoutStart> {
     assertCheckoutSurface(opts?.surface); // before anything is read, claimed or created
 
     const tenant = await this.prisma.tenant.findUnique({
@@ -617,8 +612,15 @@ export class BillingService {
     const interval: "month" | "year" = opts?.interval === "year" ? "year" : "month";
 
     // SA-1547: a plan pick refuses early too (a cheap 4xx; no Stripe customer for a business that cannot pay): the wall,
-    // then the caller's eligibility gate. Both run AGAIN under the hold in `pickAndOpen`, before the re-pin.
-    const early = opts.pick ? await this.pickGate(tenantId, opts.pick) : null;
+    // the caller's eligibility gate, then the whitelist and quoted-fee reads. All run AGAIN under the hold in `pickAndOpen`.
+    if (opts.pick) {
+      await this.pickRefusals(tenantId, opts.pick);
+      await readPickTerms(
+        { prisma: this.prisma, catalog: this.catalog! },
+        tenantId,
+        opts.pick.planKey,
+      );
+    }
 
     // The refusals that read the subscription, a catch-up claim, an overdue invoice and Stripe (also re-run under a pick's hold).
     await this.assertCheckoutAllowed(tenantId);
@@ -645,7 +647,7 @@ export class BillingService {
     // W-1338 (W9): an unpriceable business never gets a Stripe customer (throws BadRequest). Gate only: no Stripe call,
     // value unbound; the price billed is read under the slot's lock. The customer id is identity, not a term.
     await this.pricing.checkoutPriceData(tenantId, interval, undefined, { readOnly: true });
-    if (opts.pick) return this.pickAndOpen(tenantId, tenant.slug, opts.surface, opts.pick, early!);
+    if (opts.pick) return this.pickAndOpen(tenantId, tenant.slug, opts.surface, opts.pick);
     const customerId = await this.ensureStripeCustomer(tenantId);
 
     // W-1338: ONE slot for the admin link and Pay now; it reads the terms (checkoutOffer) only while it holds the lock.
@@ -727,75 +729,47 @@ export class BillingService {
     }
   }
 
-  private async pickGate(tenantId: string, pick: CheckoutPick): Promise<CheckoutGateVerdict> {
+  /** The wall first, then the caller's eligibility gate. Writes nothing. */
+  private async pickRefusals(tenantId: string, pick: CheckoutPick): Promise<void> {
     await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
-    return pick.gate();
+    await pick.gate();
   }
 
   /**
-   * SA-1547 card-first: a plan pick in ONE `underSlotLock` hold (never nested): every refusal first (the wall, the
-   * eligibility gate, the subscription / overdue / live-subscription checks, then the whitelist and custom-fee checks in the
-   * helper), then the re-pin WITHOUT activation, then the session under the same hold. A TRIAL business that picked stays
-   * TRIAL: the answer is the plan, and no session is opened.
+   * SA-1547 card-first (SA-1319 R1 / R1a): a plan pick is ONE `underSlotLock` hold (never nested) and writes NOTHING. Under it:
+   * the wall, the eligibility gate, the subscription / overdue / live-subscription checks, the whitelist and quoted-fee reads
+   * (all before any Stripe write), then the slot opens or reuses the one session, built from the REQUESTED plan. The plan,
+   * its catalog version and its price ride on that session; the paid completion applies them once.
    */
   private async pickAndOpen(
     tenantId: string,
     slug: string,
     surface: CheckoutSurface,
     pick: CheckoutPick,
-    early: CheckoutGateVerdict,
-  ): Promise<CheckoutPickResult> {
-    if (!this.catalog) throw new Error("BillingService: the plan catalog is not wired");
-    const catalog = this.catalog;
-    // no Stripe customer for a trial business that is only choosing its plan
-    let customerId = early === "TRIAL_PICK" ? null : await this.ensureStripeCustomer(tenantId);
+  ): Promise<CheckoutStart> {
+    const customerId = await this.ensureStripeCustomer(tenantId);
     return underSlotLock(
       tenantId,
       async () => {
-        const verdict = await this.pickGate(tenantId, pick); // the wall BEFORE any write (R11), then eligibility
+        await this.pickRefusals(tenantId, pick); // the wall first inside the hold, then eligibility
         await this.assertCheckoutAllowed(tenantId);
-        if (verdict === "SESSION") customerId ??= await this.ensureStripeCustomer(tenantId);
-        // Completion writes `planKey` from its session's metadata but prices the snapshot from the pin: a plan move may never
-        // sit beside a paid session the webhook has not applied. Refuses it (409) and closes any open one, as every plan writer does.
-        await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId);
-        const pinned = await repinForSelfCheckoutTx(
-          { prisma: this.prisma, catalog },
-          tenantId,
-          pick.planKey,
-        );
-        if (verdict === "TRIAL_PICK") {
-          const t = await this.prisma.tenant.findUnique({
-            where: { id: tenantId },
-            select: { trialEndsAt: true },
-          });
-          return {
-            kind: "TRIAL_PLAN_SET" as const,
-            planKey: pinned.planKey,
-            planName: pinned.planName,
-            trialEndsAt: t?.trialEndsAt?.toISOString() ?? null,
-          };
-        }
-        const start = await openCheckoutSessionHeld(
+        return openCheckoutSessionHeld(
           { prisma: this.prisma, stripe: this.stripe },
           {
             tenantId,
-            customerId: customerId!,
+            customerId,
             surface,
             readOffer: async () => {
-              const offer = await this.checkoutOffer(tenantId, slug, customerId!, "month");
-              // never a session for the wrong plan: the offer read under the hold must show the pinned plan
-              if (offer.terms.planKey !== pick.planKey) {
-                throw new ConflictException({
-                  code: API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED,
-                  message:
-                    "Your plan changed while we opened checkout. Nothing was charged. Please try again.",
-                });
-              }
-              return offer;
+              // read again UNDER the hold (a fee or plan may have changed while this click waited for the lock)
+              const picked = await readPickTerms(
+                { prisma: this.prisma, catalog: this.catalog! },
+                tenantId,
+                pick.planKey,
+              );
+              return this.checkoutOffer(tenantId, slug, customerId, "month", picked);
             },
           },
         );
-        return { ...start, kind: "SESSION" as const };
       },
       TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
     );
@@ -812,12 +786,32 @@ export class BillingService {
     slug: string,
     customerId: string,
     interval: "month",
+    /** SA-1547 PR-5: the plan the business picked. Absent = today's offer, from the pinned plan, unchanged. */
+    pick?: PickTerms,
   ): Promise<SlotOffer> {
-    const addons = await this.mutations.checkoutAddonLines(tenantId, interval);
+    // A DIFFERENT plan is billed from its PUBLISHED version (price and included add-ons); the plan it is on, from its pin.
+    const moved = pick && !pick.sameAsPinned ? pick : undefined;
+    const addons = await this.mutations.checkoutAddonLines(
+      tenantId,
+      interval,
+      moved ? { asPlanKey: moved.planKey } : {},
+    );
     const anchor = planCheckoutAnchor(new Date());
-    const pricing = await this.pricing.resolveTenantPricing(tenantId);
-    const priceData = await this.pricing.checkoutPriceData(tenantId, interval);
+    const pricing = moved
+      ? { planKey: moved.planKey, planName: moved.planName, monthly: moved.monthly! }
+      : await this.pricing.resolveTenantPricing(tenantId);
+    const priceData = moved
+      ? await this.pricing.checkoutPriceDataForPlan(pricing, interval)
+      : await this.pricing.checkoutPriceData(tenantId, interval);
     const baseUrl = webBaseUrl();
+    // the terms a PAID pick session is completed on; a bodyless session carries none of this
+    const pickMeta: Record<string, string> = pick
+      ? {
+          [PICK_META.selfPick]: "1",
+          [PICK_META.planVersionId]: pick.planVersionId,
+          [PICK_META.quotedMonthly]: String(pricing.monthly),
+        }
+      : {};
     return {
       terms: {
         planKey: pricing.planKey,
@@ -828,6 +822,7 @@ export class BillingService {
           quantity: l.quantity,
         })),
         anchorAt: anchor.anchorAt,
+        ...(pick ? { planVersionId: pick.planVersionId } : {}),
       },
       params: {
         customer: customerId,
@@ -840,6 +835,7 @@ export class BillingService {
           slug,
           planKey: pricing.planKey,
           interval,
+          ...pickMeta,
           ...(addons.skus.length ? { [CHECKOUT_ADDON_SKUS_KEY]: addons.skus.join(",") } : {}),
         },
         expires_at: anchor.expiresAt,
@@ -2140,9 +2136,15 @@ export class BillingService {
     // resolves correctly even before planKey is written below. It can throw BadRequestException
     // (isCustom plan, no price) — a webhook handler must never throw uncaught (Stripe retries
     // forever), so this is best-effort: planKey still gets recorded, basePriceSnapshot left unset.
+    // SA-1547 PR-5 (SA-1319 R1): a card-first PICK session carries the terms the customer paid (plan, catalog version, quoted
+    // monthly price); they are applied as paid, never re-read from a pin that has not moved yet and never refused for a
+    // catalog that changed since. Any other session completes exactly as before.
+    const pick = pickSessionTerms(session.metadata);
     let resolvedBasePrice: number | null = null;
     try {
-      resolvedBasePrice = (await this.pricing.resolveCatalogPricing(tenantId)).monthly;
+      resolvedBasePrice = pick
+        ? pick.monthly
+        : (await this.pricing.resolveCatalogPricing(tenantId)).monthly;
     } catch (err) {
       this.logger.warn(
         `checkout.session.completed: could not resolve catalog price for tenant ${tenantId} (${(err as Error).message}) — planKey recorded, basePriceSnapshot left unset`,
@@ -2399,7 +2401,7 @@ export class BillingService {
             // Canonical key (metadata.plan can be a legacy enum name): the snapshot and audit rows
             // store this string, so it must not differ by cohort.
             toPlanKey: planKeyForCheckout,
-            toPlanVersionId: tenantRow.planVersionId ?? null,
+            toPlanVersionId: pick?.planVersionId ?? tenantRow.planVersionId ?? null,
             actor: { id: null, name: "system: stripe checkout" },
           }
         : null;
@@ -2411,7 +2413,7 @@ export class BillingService {
     // already bills a $0 row whose SKU the new plan does not include).
     const inclusion =
       planKeyForCheckout && !alreadyLinked
-        ? await this.mutations.inclusionCatalog?.(tenantId)
+        ? await this.mutations.inclusionCatalog?.(tenantId, pick?.planVersionId)
         : undefined;
 
     // SA-1547 R3: a SETTLED checkout of a business that was never activated is its trial conversion - stamped (and
@@ -2451,6 +2453,7 @@ export class BillingService {
         // else on this base clears externalPayment on a card checkout.
         ...(isCatchupSession(session) ? { externalPayment: false } : {}),
         ...(planKeyForCheckout ? { planKey: planKeyForCheckout } : {}),
+        ...(pick && planKeyForCheckout ? { currentPlan: planKeyToEnum(planKeyForCheckout) } : {}),
         ...(planKeyForCheckout && resolvedBasePrice != null && !hasNegotiatedOverride
           ? { basePriceSnapshot: resolvedBasePrice }
           : {}),
@@ -2522,6 +2525,7 @@ export class BillingService {
                   existingOverride?.planKey,
                 );
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
+                if (pick && planKeyForCheckout) await this.applyPickedTermsTx(tx, tenantId, pick);
                 await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
                 // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
@@ -2596,6 +2600,7 @@ export class BillingService {
               existingOverride?.planKey,
             );
             const row = await tx.tenantSubscription.upsert(upsertArgs);
+            if (pick && planKeyForCheckout) await this.applyPickedTermsTx(tx, tenantId, pick);
             await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
@@ -2695,6 +2700,23 @@ export class BillingService {
     await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
+  }
+
+  /**
+   * SA-1547 PR-5: the rest of a PAID pick's terms, in the completion's own transaction (the same one that writes the plan key
+   * and the price snapshot): both catalog pins through the ONE pin writer, and the tenant's own plan. `onPlanChange` runs in
+   * that transaction already, once, from the plan the business is leaving.
+   */
+  private async applyPickedTermsTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    pick: { planKey: string; planVersionId: string },
+  ): Promise<void> {
+    await pinPlanVersionTx(tx, tenantId, pick.planVersionId);
+    await tx.tenant.update({
+      where: { id: tenantId },
+      data: { plan: planKeyToEnum(pick.planKey) },
+    });
   }
 
   /**
