@@ -23,6 +23,10 @@ import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { BillingService } from "./billing.service";
 import { paymentReinstatableWhere } from "./dunning-config";
+import {
+  STRIPE_CHECKOUT_APPLIED_ACTION,
+  STRIPE_CHECKOUT_LINKED_ACTION,
+} from "./config-snapshot-audit.constants";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { PrismaService } from "../prisma/prisma.service";
 import { StripeService } from "./stripe.service";
@@ -3745,6 +3749,170 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
     expect(
       emitted(events).filter((t: string) => t === BILLING_EVENTS.SUBSCRIPTION_RESUMED),
     ).toHaveLength(1);
+  });
+});
+
+// SA-1547 PR-3 (R3): a checkout that converts a business that was NEVER activated stamps `trialConvertedAt` and emits
+// TRIAL_CONVERTED, like subscribe() does. Today a checkout-converted trial drops out of the billing export.
+describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
+  const session = (over: Record<string, unknown> = {}) => ({
+    id: "cs_conv",
+    metadata: { tenantId: "t1", planKey: "GROWTH" },
+    subscription: "sub_1",
+    customer: "cus_1",
+    payment_status: "paid",
+    ...over,
+  });
+  /** The subscription row the handler reads (its tenant's status rides the same read). */
+  const subOf = (status: string, readOnlyReason: string | null) => ({
+    tenantId: "t1",
+    planKey: "BUSINESS",
+    basePriceSnapshot: 349,
+    discount: 0,
+    stripeSubId: null,
+    stripeCustomerId: "cus_1",
+    trialConvertedAt: null,
+    tenant: { status, readOnlyReason },
+  });
+  const converted = (events: any) =>
+    events.emit.mock.calls.filter((c: any[]) => c[1] === BILLING_EVENTS.TRIAL_CONVERTED);
+  /** The conditional stamp writes (L4): updateMany calls that carry trialConvertedAt. */
+  const stampWrites = (tx: any): any[] =>
+    tx.tenantSubscription.updateMany.mock.calls
+      .map((c: any[]) => c[0])
+      .filter((a: any) => a?.data && "trialConvertedAt" in a.data);
+
+  it.each([
+    ["the plan-transition hook on", true],
+    ["the plan-transition hook off", false],
+  ])(
+    "R3: a trial-expired READ_ONLY business that pays is stamped and TRIAL_CONVERTED is emitted once (%s)",
+    async (_name, hook) => {
+      const { svc, prisma, tx, events, planTransition } = make({
+        transitionCount: 1,
+        sub: subOf("READ_ONLY", "trial_expired"),
+      });
+      planTransition.isEnabled.mockResolvedValue(hook);
+
+      await (svc as any).onCheckoutCompleted(session());
+
+      // L4: the stamp is its own write, conditional on trialConvertedAt IS NULL (never inside the upsert)
+      expect(stampWrites(tx)).toHaveLength(1);
+      expect(stampWrites(tx)[0].where).toEqual({ tenantId: "t1", trialConvertedAt: null });
+      expect(stampWrites(tx)[0].data.trialConvertedAt).toBeInstanceOf(Date);
+      expect(prisma.tenantSubscription.upsert.mock.calls[0][0].update).not.toHaveProperty(
+        "trialConvertedAt",
+      );
+      expect(converted(events)).toHaveLength(1);
+      expect(converted(events)[0][2]).toEqual({ planKey: "GROWTH" });
+    },
+  );
+
+  it("a TRIAL business that pays is stamped too", async () => {
+    const { svc, tx, events } = make({ transitionCount: 1, sub: subOf("TRIAL", null) });
+    await (svc as any).onCheckoutCompleted(session());
+    expect(stampWrites(tx)).toHaveLength(1);
+    expect(converted(events)).toHaveLength(1);
+  });
+
+  it("an ACTIVE business (a renewal-shaped completion) is never stamped and emits no TRIAL_CONVERTED", async () => {
+    const { svc, tx, events } = make({ transitionCount: 1, sub: subOf("ACTIVE", null) });
+    await (svc as any).onCheckoutCompleted(session());
+    expect(stampWrites(tx)).toHaveLength(0);
+    expect(converted(events)).toHaveLength(0);
+  });
+
+  it("a suspended-and-reinstated business (paid before) is not a trial conversion", async () => {
+    const { svc, events } = make({
+      transitionCount: 1,
+      sub: subOf("SUSPENDED", "overdue_suspended"),
+    });
+    await (svc as any).onCheckoutCompleted(session());
+    expect(converted(events)).toHaveLength(0);
+  });
+
+  it("an UNSETTLED session (a bank debit in flight) links but does not stamp: nothing converted yet", async () => {
+    const { svc, tx, events } = make({
+      transitionCount: 1,
+      sub: subOf("READ_ONLY", "trial_expired"),
+    });
+    await (svc as any).onCheckoutCompleted(session({ payment_status: "unpaid" }));
+    expect(stampWrites(tx)).toHaveLength(0);
+    expect(converted(events)).toHaveLength(0);
+  });
+
+  it("a redelivery of an already-applied session emits nothing (the APPLIED marker is the idempotency key)", async () => {
+    const { svc, prisma, tx, events } = make({
+      transitionCount: 1,
+      sub: subOf("READ_ONLY", "trial_expired"),
+    });
+    const applied = (args: any) =>
+      args?.where?.action === STRIPE_CHECKOUT_APPLIED_ACTION ? { id: "applied" } : null;
+    prisma.auditLog.findFirst.mockImplementation(async (args: any) => applied(args));
+    tx.auditLog.findFirst.mockImplementation(async (args: any) => applied(args));
+    await (svc as any).onCheckoutCompleted(session());
+    expect(converted(events)).toHaveLength(0);
+  });
+  // R-339 H1: the bank-debit settle (async_payment_succeeded) re-enters with the subscription already linked, so
+  // "link pending" reads true. That must never turn an already-activated business into a trial conversion.
+  describe("H1: an async bank-debit settle for a business that was activated before", () => {
+    const linkedSub = (status: string, reason: string | null) => ({
+      ...subOf(status, reason),
+      stripeSubId: "sub_1", // the session's own subscription is already the stored one (alreadyLinked)
+    });
+    const withLinkMarker = (h: ReturnType<typeof make>) => {
+      const read = async (args: any) =>
+        args?.where?.action === STRIPE_CHECKOUT_LINKED_ACTION
+          ? { meta: { sessionId: "cs_conv" }, createdAt: new Date(1) }
+          : null;
+      h.prisma.auditLog.findFirst.mockImplementation(read);
+      h.tx.auditLog.findFirst.mockImplementation(read);
+    };
+
+    it.each([
+      ["SUSPENDED", "overdue_suspended"],
+      ["READ_ONLY", "admin_set"],
+      ["READ_ONLY", "payment_overdue"],
+      ["CANCELLED", "stripe_cancelled"],
+    ])("%s (%s): no stamp and no TRIAL_CONVERTED", async (status, reason) => {
+      const h = make({ transitionCount: 1, sub: linkedSub(status, reason) });
+      withLinkMarker(h);
+      await (h.svc as any).onCheckoutCompleted(session());
+      expect(stampWrites(h.tx)).toHaveLength(0);
+      expect(converted(h.events)).toHaveLength(0);
+    });
+
+    it("a real trial conversion settled the same way still stamps once", async () => {
+      const h = make({ transitionCount: 1, sub: linkedSub("READ_ONLY", "trial_expired") });
+      withLinkMarker(h);
+      await (h.svc as any).onCheckoutCompleted(session());
+      expect(stampWrites(h.tx)).toHaveLength(1);
+      expect(converted(h.events)).toHaveLength(1);
+    });
+  });
+
+  // R-340 F2: a business whose conversion is already stamped (by subscribe(), or an earlier completion) is never
+  // stamped or announced again, even if its status still reads as a trial.
+  it("F2: a second completion for an already-stamped business writes no stamp and emits no TRIAL_CONVERTED", async () => {
+    const { svc, tx, events } = make({
+      transitionCount: 1,
+      sub: { ...subOf("READ_ONLY", "trial_expired"), trialConvertedAt: new Date("2026-11-01") },
+    });
+    await (svc as any).onCheckoutCompleted(session());
+    expect(stampWrites(tx)).toHaveLength(0);
+    expect(converted(events)).toHaveLength(0);
+  });
+
+  // R-339 L4: a concurrent subscribe() may have stamped first; the conditional write then matches no row.
+  it("L4: when the conditional stamp matches no row (already stamped), no TRIAL_CONVERTED is emitted", async () => {
+    const { svc, tx, events } = make({ transitionCount: 1, sub: subOf("TRIAL", null) });
+    // only the stamp loses (the plan CAS above it, on the same mock, still wins)
+    tx.tenantSubscription.updateMany.mockImplementation(async (args: any) => ({
+      count: args?.data && "trialConvertedAt" in args.data ? 0 : 1,
+    }));
+    await (svc as any).onCheckoutCompleted(session());
+    expect(stampWrites(tx)).toHaveLength(1);
+    expect(converted(events)).toHaveLength(0);
   });
 });
 

@@ -8,7 +8,7 @@
  * Precedence, highest first (each is one state of SA-1146 section 1):
  *   processing   a payment is settling and nothing else is payable (B1256: never shown as failed or received)
  *   read_only    locked for an unpaid amount          -> Pay $X, the hosted invoice
- *   trial_ended  trial expired (status TRIAL past its end, or locked for `trial_expired`) -> Choose a plan
+ *   trial_ended  trial expired (status TRIAL past its end, or locked for `trial_expired`) -> Pay now (selfPay.eligible), else Choose a plan
  *   failed       inside dunning (`pastDueInvoiceId`)  -> Pay $X, the hosted invoice (`invoice.paid` is the ONLY resume)
  *   due          an open Stripe amount, or the catch-up bill, or a card the catch-up needs
  *   trial        trial ends within TRIAL_NOTICE_DAYS  -> Choose a plan
@@ -71,6 +71,7 @@ export type BillingStatusSubscription = Pick<
   | "payNowAmount"
   | "openInvoiceAmount"
   | "openInvoiceDueAt"
+  | "selfPay"
 >;
 
 export interface BillingStatusInput {
@@ -89,6 +90,8 @@ const PAY_CHECKOUT: BillingStatusAction = { kind: "pay", target: "checkout" };
 // primary action: it is a secondary link the web owns.
 const ADD_CARD: BillingStatusAction = { kind: "add_card", target: "checkout" };
 const CHOOSE_PLAN: BillingStatusAction = { kind: "choose_plan", target: "choose_plan" };
+// SA-1547: the trial-ended primary action of a business the server says may pay itself (self-checkout-eligibility.ts).
+const PAY_NOW: BillingStatusAction = { kind: "pay_now", target: "self_checkout" };
 
 /** A calendar day, "YYYY-MM-DD", on the tenant's clock (en-CA formats year-month-day, which sorts as a string). */
 function dayIn(iso: string | Date, timeZone: string): string {
@@ -188,7 +191,9 @@ function decide(i: BillingStatusInput): Decision {
   const trialReason = reason === "trial_expired" || reason === "trial_cancelled";
   const trialEnd = s.trialEndsAt ? new Date(s.trialEndsAt) : null;
 
-  if (locked && trialReason) return make("trial_ended", { action: CHOOSE_PLAN });
+  // trial_ended: Pay now when the server's own verdict allows it, else the plan choice. Never in the trial notice (B1).
+  const trialEndedAction = s.selfPay?.eligible ? PAY_NOW : CHOOSE_PLAN;
+  if (locked && trialReason) return make("trial_ended", { action: trialEndedAction });
   if (
     locked &&
     reason !== "subscription_cancelled" &&
@@ -200,7 +205,7 @@ function decide(i: BillingStatusInput): Decision {
     return make("read_only", { amount: payAmount, action: payWith(PAY_INVOICE, payAmount) });
   }
   if (s.status === TRIAL && trialEnd && trialEnd.getTime() <= now.getTime()) {
-    return make("trial_ended", { action: CHOOSE_PLAN });
+    return make("trial_ended", { action: trialEndedAction });
   }
 
   // A marker that lags `invoice.paid` while Stripe already says current is NOT dunning (S11): say nothing (not failed, and not paid_up while a marker is set).

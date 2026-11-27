@@ -889,7 +889,6 @@ export class SubscriptionMutationService {
           periodStart: now,
           periodEnd,
           basePriceSnapshot: newBase,
-          trialConvertedAt: wasTrial ? now : null,
         },
         update: {
           planKey: input.planKey,
@@ -901,9 +900,18 @@ export class SubscriptionMutationService {
           cancelAtPeriodEnd: false,
           downgradeToPlanKey: null,
           downgradeEffectiveAt: null,
-          trialConvertedAt: wasTrial ? now : undefined,
         },
       });
+      // SA-1547 round 3 (same shape as the checkout completion's stamp): the conversion is a CONDITIONAL write, so a
+      // webhook that stamped first leaves this one matching no row, and only the winner emits TRIAL_CONVERTED.
+      let converted = false;
+      if (wasTrial) {
+        const stamped = await tx.tenantSubscription.updateMany({
+          where: { tenantId, trialConvertedAt: null },
+          data: { trialConvertedAt: now },
+        });
+        converted = stamped.count === 1;
+      }
       // The ONE path to ACTIVE (SA-733r2 N5): it nulls the stale "trial_cancelled"/"trial_expired" reason (RO-1 ships
       // it to the client) and clears the dunning clock + pause in this tx.
       const toActive = await transitionToActiveTx(tx, tenantId, {
@@ -953,7 +961,7 @@ export class SubscriptionMutationService {
       }
 
       // ── Events (MRR = signed CHANGE) inside the same transaction ──
-      if (wasTrial) {
+      if (converted) {
         await this.events.emit(
           tenantId,
           BILLING_EVENTS.TRIAL_CONVERTED,
