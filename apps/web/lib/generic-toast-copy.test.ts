@@ -1106,11 +1106,6 @@ describe("genericToastCopy: SA-1547 PR-5a plan-pick refusals (SA-C)", () => {
       API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
       "To pay for a new plan, ask us for a payment link.",
     ],
-    [
-      409,
-      API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS,
-      "A payment for your plan is still going through. Try again in a few minutes.",
-    ],
   ])("%i %s maps to its sentence, never the server message", (status, code, sentence) => {
     const copy = genericToastCopy(err(status, { code }));
     expect(copy).toBe(sentence);

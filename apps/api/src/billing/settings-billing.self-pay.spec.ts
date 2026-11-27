@@ -4,6 +4,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { NO_IMPERSONATION_KEY } from "../auth/guards/no-impersonation.guard";
 import { SettingsBillingController } from "./settings-billing.controller";
+import { SELF_PAY_REASONS } from "./self-checkout-eligibility";
 
 /**
  * SA-1547 PR-3 (ruling 2026-11-26, section 2): the checkout route is driven by the eligibility the server already
@@ -145,7 +146,8 @@ describe("SA-1547 PR-5a: the checkout route says ask-for-a-link for an ACTIVE bu
   });
 
   it("every other ineligible reason keeps its 403 and reason, flag ON or OFF", async () => {
-    for (const reason of ["trial_active", "live_subscription", "unavailable"]) {
+    // in-lane MINOR: every reason but active_no_card, so a new reason cannot silently change its 403
+    for (const reason of SELF_PAY_REASONS.filter((r) => r !== "active_no_card")) {
       for (const flag of [true, false]) {
         const e = await rejects(call({ ...SELF_PAY_OK, eligible: false, reason }, flag).run());
         expect(e).toBeInstanceOf(ForbiddenException);

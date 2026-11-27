@@ -4,5 +4,3 @@
  * client shows the sentence chosen by `body.code`, never the server's message.
  */
 export const PLAN_PICK_ASK_FOR_LINK_SENTENCE = "To pay for a new plan, ask us for a payment link.";
-export const CHECKOUT_PAYMENT_IN_PROGRESS_SENTENCE =
-  "A payment for your plan is still going through. Try again in a few minutes.";

@@ -9,10 +9,6 @@ const err = (code: string) => ({
 describe("planPickCopy", () => {
   it.each([
     [API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK, "To pay for a new plan, ask us for a payment link."],
-    [
-      API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS,
-      "A payment for your plan is still going through. Try again in a few minutes.",
-    ],
   ])("%s maps to its sentence, never the server text", (code, sentence) => {
     expect(planPickCopy(err(code))).toBe(sentence);
     expect(planPickCopy(err(code))).not.toContain("raw server text");
