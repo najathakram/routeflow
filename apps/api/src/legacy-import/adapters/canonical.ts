@@ -1,6 +1,8 @@
 // Canonical rows an adapter produces from one source record (SA-1295 A1). Money is a number of
 // dollars in whole cents, read strictly; a line total is the FILE's total, never quantity x price.
 
+import type { LegacySalesLineKindValue } from "@routeflow/types";
+
 export type LineDefectCode = "BAD_MONEY" | "BAD_QUANTITY" | "BAD_DATE" | "MISSING_TOTAL";
 
 export interface LineDefect {
@@ -32,4 +34,5 @@ export interface CanonicalLine {
   defects: LineDefect[];
 }
 
-export type LineKind = "PRODUCT" | "SHIPPING" | "DISCOUNT" | "NOTE" | "OTHER";
+/** The staged line kinds are the Prisma enum LegacySalesLineKind; one shared list, never a second copy (L-072). */
+export type LineKind = LegacySalesLineKindValue;

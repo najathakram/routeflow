@@ -67,6 +67,7 @@ apps/api/src/invoices/invoice-line-override.ts | PriceType | 1 | pending:B6 | un
 apps/api/src/invoices/invoice-send-guard.ts | InvoiceStatus | 1 | pending:B7 | array {SENT,VIEWED,PARTIAL,OVERDUE}
 apps/api/src/invoices/payment-idempotency.ts | PaymentIdempotencyState | 1 | pending:B7 | union {CLAIMED,COMPLETED,TOMBSTONED}
 apps/api/src/invoices/payment-ref-dedupe.ts | UserRole | 1 | pending:B7 | array {SUPER_ADMIN,TENANT_ADMIN,OPERATOR}
+apps/api/src/legacy-import/match/types.ts | LegacyItemMatchMethod | 1 | derived | the matcher RESULT kind {ALIAS,EXACT,NORMALISED,AMBIGUOUS,SUGGESTED,UNMATCHED}: a result set that shares three names with the stored method enum (which has MANUAL and NONE instead), not the Prisma enum
 apps/api/src/messaging/staff-order-email.ts | NotificationEvent | 2 | pending:B4 | object+union {STAFF_NEW_ORDER,BUYER_ORDER_EDITED,BUYER_ORDER…
 apps/api/src/onboarding/dto/onboarding.dto.ts | OnboardingCaseStatus | 2 | pending:B7 | array+union {OPEN,ON_HOLD,LOST}
 apps/api/src/onboarding/onboarding-catalog.ts | OnboardingStage | 1 | pending:B7 | array {FOLLOW_UP,AGREE,ACTIVATE,COLLECT,CONFIGURE,VER…
