@@ -414,7 +414,7 @@ export class RegulatedFilingService {
 
     // B297 PR5: a LOCKED filing is closed. It is never regenerated: the stored artifact and totals ARE the
     // filing (re-running the ledger read could only differ by what the lock exists to keep out).
-    const locked = await findLockedFiling(this.prisma.forTenant(), {
+    const locked = await findLockedFiling(this.prisma.forTenant(), tenantId, {
       trackedCategoryId: params.trackedCategoryId,
       periodKey,
     });

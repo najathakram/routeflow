@@ -41,11 +41,15 @@ const db = (filings: any[], sales: any[] = []) => ({
 
 describe("lockedFilingsCovering", () => {
   it("returns the LOCKED filing whose period covers the bucket, per category", async () => {
-    const r = await lockedFilingsCovering(db([filing()]), [
-      { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
-      { trackedCategoryId: "cat-1", periodBucket: "2026-10" }, // after the period
-      { trackedCategoryId: "cat-2", periodBucket: "2026-09" }, // another category
-    ]);
+    const r = await lockedFilingsCovering(
+      db([filing()]),
+      [
+        { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
+        { trackedCategoryId: "cat-1", periodBucket: "2026-10" }, // after the period
+        { trackedCategoryId: "cat-2", periodBucket: "2026-09" }, // another category
+      ],
+      "t1",
+    );
     expect(r.map((x) => [x.filing.id, x.periodBucket])).toEqual([["f-1", "2026-09"]]);
   });
 
@@ -55,19 +59,27 @@ describe("lockedFilingsCovering", () => {
       periodStart: new Date("2026-07-01T00:00:00Z"),
       periodEnd: new Date("2026-10-01T00:00:00Z"),
     });
-    const r = await lockedFilingsCovering(db([q]), [
-      { trackedCategoryId: "cat-1", periodBucket: "2026-07" },
-      { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
-    ]);
+    const r = await lockedFilingsCovering(
+      db([q]),
+      [
+        { trackedCategoryId: "cat-1", periodBucket: "2026-07" },
+        { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
+      ],
+      "t1",
+    );
     expect(r).toHaveLength(2);
   });
 
   it("asks the database nothing when there are no rows, and when the client has no filings model (a stub)", async () => {
     const d = db([filing()]);
-    expect(await lockedFilingsCovering(d, [])).toEqual([]);
+    expect(await lockedFilingsCovering(d, [], "t1")).toEqual([]);
     expect(d.regulatedFiling.findMany).not.toHaveBeenCalled();
     expect(
-      await lockedFilingsCovering({} as any, [{ trackedCategoryId: "c", periodBucket: "2026-09" }]),
+      await lockedFilingsCovering(
+        {} as any,
+        [{ trackedCategoryId: "c", periodBucket: "2026-09" }],
+        "t1",
+      ),
     ).toEqual([]);
   });
 });
@@ -76,14 +88,29 @@ describe("assertLedgerRowsNotLocked", () => {
   it("throws LEDGER_PERIOD_LOCKED for a row bucketed into a locked period", async () => {
     await expect(
       assertLedgerRowsNotLocked(db([filing()]), [
-        { trackedCategoryId: "cat-1", periodBucket: "2026-09" },
+        { tenantId: "t1", trackedCategoryId: "cat-1", periodBucket: "2026-09" },
       ]),
     ).rejects.toMatchObject({ response: { code: "LEDGER_PERIOD_LOCKED" } });
+  });
+  it("fails closed on mixed tenants and on a missing tenant", async () => {
+    const row = { trackedCategoryId: "cat-1", periodBucket: "2026-10" };
+    await expect(
+      assertLedgerRowsNotLocked(db([filing()]), [
+        { ...row, tenantId: "t1" },
+        { ...row, tenantId: "t2" },
+      ]),
+    ).rejects.toMatchObject({ status: 500 });
+    await expect(assertLedgerRowsNotLocked(db([filing()]), [row as any])).rejects.toMatchObject({
+      status: 500,
+    });
+    await expect(
+      assertLedgerRowsNotLocked(db([filing()]), [{ ...row, tenantId: "" }]),
+    ).rejects.toMatchObject({ status: 500 });
   });
   it("passes a row outside every locked period", async () => {
     await expect(
       assertLedgerRowsNotLocked(db([filing()]), [
-        { trackedCategoryId: "cat-1", periodBucket: "2026-10" },
+        { tenantId: "t1", trackedCategoryId: "cat-1", periodBucket: "2026-10" },
       ]),
     ).resolves.toBeUndefined();
   });
@@ -322,5 +349,34 @@ describe("an undo of a document in a locked period is allowed and books a counte
     const [row] = createMany.mock.calls[0][0].data;
     expect(row).toMatchObject({ correctsEntryId: "rev-1", netSales: 10, qty: 1 });
     expect(row.periodBucket).not.toBe("2026-09"); // the current period, never the locked one
+  });
+});
+
+describe("assertOrderEditNotLocked: a request with no business", () => {
+  const noBusiness = { tenantId: undefined as unknown as string, role: "ADMIN" };
+
+  it("a money-bearing edit with no business id is a 403, before any read", async () => {
+    const d = db([filing()]);
+    await expect(
+      assertOrderEditNotLocked(d, "ord-1", { replaceAll: true, items: [] }, noBusiness),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(d.regulatedFiling.findMany).not.toHaveBeenCalled();
+  });
+
+  it("an edit that is not money-bearing still proceeds with no business id", async () => {
+    await expect(
+      assertOrderEditNotLocked(
+        db([filing()]),
+        "ord-1",
+        { items: [{ id: "l1", notes: "n" }] },
+        noBusiness,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("an internal caller handing the filing guard an empty business id gets the logged internal fault (500)", async () => {
+    await expect(
+      assertSalesNotLockedForEdit(db([filing()]), { tenantId: "", invoiceId: "i1" }),
+    ).rejects.toMatchObject({ status: 500 });
   });
 });

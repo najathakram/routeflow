@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { InternalServerErrorException } from "@nestjs/common";
 import { assertSalesNotLockedForEdit } from "./filing-lock";
 import * as fs from "fs";
 import * as path from "path";
@@ -10,6 +10,7 @@ import {
   findGeneratedTobaccoReport,
   findLockedFiling,
   lockedFilingsCovering,
+  lockFilingRowsCovering,
   updateFilingUnlessLocked,
   type FiledCache,
 } from "./filed-periods";
@@ -23,11 +24,13 @@ import {
 describe("tier 1 - lockedFilingsCovering: LOCKED only, per bucket", () => {
   it("asks for status LOCKED and nothing else", async () => {
     const findMany = jest.fn().mockResolvedValue([]);
-    await lockedFilingsCovering({ regulatedFiling: { findMany } }, [
-      { trackedCategoryId: "c1", periodBucket: "2026-08" },
-    ]);
+    await lockedFilingsCovering(
+      { regulatedFiling: { findMany } },
+      [{ trackedCategoryId: "c1", periodBucket: "2026-08" }],
+      "t1",
+    );
     expect(findMany).toHaveBeenCalledWith({
-      where: { trackedCategoryId: { in: ["c1"] }, status: "LOCKED" },
+      where: { tenantId: "t1", trackedCategoryId: { in: ["c1"] }, status: "LOCKED" },
     });
   });
 
@@ -42,7 +45,7 @@ describe("tier 1 - lockedFilingsCovering: LOCKED only, per bucket", () => {
     };
     const db = { regulatedFiling: { findMany: jest.fn().mockResolvedValue([filing]) } };
     const hit = (b: string, c = "c1") =>
-      lockedFilingsCovering(db, [{ trackedCategoryId: c, periodBucket: b }]);
+      lockedFilingsCovering(db, [{ trackedCategoryId: c, periodBucket: b }], "t1");
     expect(await hit("2026-08")).toHaveLength(1);
     expect(await hit("2026-09")).toHaveLength(0);
     expect(await hit("2026-07")).toHaveLength(0);
@@ -54,12 +57,12 @@ describe("tier 1 - lockedFilingsCovering: LOCKED only, per bucket", () => {
     await anyLockedFiling({ regulatedFiling: { findMany } }, "t1");
     expect(findMany).toHaveBeenCalledWith({ where: { tenantId: "t1", status: "LOCKED" }, take: 1 });
     const findFirst = jest.fn().mockResolvedValue(null);
-    await findLockedFiling(
-      { regulatedFiling: { findFirst } },
-      { trackedCategoryId: "c", periodKey: "k" },
-    );
+    await findLockedFiling({ regulatedFiling: { findFirst } }, "t1", {
+      trackedCategoryId: "c",
+      periodKey: "k",
+    });
     expect(findFirst).toHaveBeenCalledWith({
-      where: { trackedCategoryId: "c", periodKey: "k", status: "LOCKED" },
+      where: { tenantId: "t1", trackedCategoryId: "c", periodKey: "k", status: "LOCKED" },
     });
   });
 
@@ -133,8 +136,9 @@ describe("tier 3 - findFiledPeriod: GENERATED | LOCKED, per bucket (a label, nev
       status: "GENERATED",
       trackedCategoryId: "c1",
     });
-    const r = await findFiledPeriod({ regulatedFiling: { findFirst } }, ["c1"], "2026-08");
+    const r = await findFiledPeriod({ regulatedFiling: { findFirst } }, "t1", ["c1"], "2026-08");
     expect(findFirst.mock.calls[0][0].where).toEqual({
+      tenantId: "t1",
       trackedCategoryId: { in: ["c1"] },
       periodStart: { lte: new Date("2026-08-01T00:00:00.000Z") },
       periodEnd: { gt: new Date("2026-08-01T00:00:00.000Z") },
@@ -145,7 +149,9 @@ describe("tier 3 - findFiledPeriod: GENERATED | LOCKED, per bucket (a label, nev
 
   it("reads nothing for no categories", async () => {
     const findFirst = jest.fn();
-    expect(await findFiledPeriod({ regulatedFiling: { findFirst } }, [], "2026-08")).toBeNull();
+    expect(
+      await findFiledPeriod({ regulatedFiling: { findFirst } }, "t1", [], "2026-08"),
+    ).toBeNull();
     expect(findFirst).not.toHaveBeenCalled();
   });
 });
@@ -174,12 +180,35 @@ describe("the legacy tobacco cron probe", () => {
     });
     expect(findMany.mock.calls[0][0].where.tenantId).toBe("t-a");
     expect(findFirst.mock.calls[0][0].where.tenantId).toBe("t-b");
-    await expect(anyLockedFiling({ regulatedFiling: { findMany } }, "")).rejects.toThrow(
-      /tenantId/,
+    await expect(anyLockedFiling({ regulatedFiling: { findMany } }, "")).rejects.toBeInstanceOf(
+      InternalServerErrorException,
     );
     await expect(
       findGeneratedTobaccoReport({ tobaccoReport: { findFirst } }, "", { year: 2026, month: 1 }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).rejects.toBeInstanceOf(InternalServerErrorException);
+  });
+
+  it("every filing read refuses an empty tenant as an internal fault (never a 403), and reads nothing", async () => {
+    const regulatedFiling = {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+    };
+    const tobaccoReport = { findFirst: jest.fn().mockResolvedValue(null) };
+    const ref = [{ trackedCategoryId: "c1", periodBucket: "2026-08" }];
+    const product = { id: "p", isTobacco: true, trackedCategoryId: "c1" };
+    const calls = [
+      () => lockedFilingsCovering({ regulatedFiling }, ref, ""),
+      () => lockFilingRowsCovering({ regulatedFiling }, ref, ""),
+      () => findLockedFiling({ regulatedFiling }, "", { trackedCategoryId: "c1", periodKey: "k" }),
+      () => findFiledPeriod({ regulatedFiling }, "", ["c1"], "2026-08"),
+      () => filedThroughOf({ regulatedFiling, tobaccoReport }, "", product, new Map()),
+    ];
+    for (const call of calls) {
+      await expect(call()).rejects.toBeInstanceOf(InternalServerErrorException);
+    }
+    expect(regulatedFiling.findMany).not.toHaveBeenCalled();
+    expect(regulatedFiling.findFirst).not.toHaveBeenCalled();
+    expect(tobaccoReport.findFirst).not.toHaveBeenCalled();
   });
 
   it("the edit guard sends its tenant to the filings probe and to the ledger read", async () => {

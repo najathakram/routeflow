@@ -95,6 +95,7 @@ export function AddTargetsDialog({
 
   return (
     <Modal
+      scroll={false} // B1444: CLIP
       open={open}
       onClose={onClose}
       title="Add products"

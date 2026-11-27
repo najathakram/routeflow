@@ -134,6 +134,8 @@ describe("PaymentRequestsService", () => {
   beforeEach(async () => {
     prisma = createMockPrisma();
     buyerPaymentRequest = graftBuyerPaymentRequest(prisma);
+    // W-1464 PR-B: a business that is not PRODUCTION never reaches Stripe; every case below is a PRODUCTION one
+    prisma.tenant.findUnique.mockResolvedValue({ name: null, class: "PRODUCTION" });
 
     mockInvoices.recordStandalonePayment.mockReset();
     mockConnect.chargeableAccount.mockReset();
@@ -1124,6 +1126,40 @@ describe("PaymentRequestsService", () => {
       ).rejects.toThrow(BadRequestException);
       expect(mockGateway.emitBuyerPaymentRequest).not.toHaveBeenCalled();
     });
+
+    it.each(["TEST", "DEMO", "INTERNAL", null])(
+      "W-1464: createCardRequest for class %p is the coded 409 with no request row and no Stripe session",
+      async (cls) => {
+        buyerPaymentRequest.findFirst.mockResolvedValue(null);
+        mockConnect.chargeableAccount.mockResolvedValue("acct_1");
+        prisma.invoice.findMany.mockResolvedValue([
+          invoiceRow({
+            id: "inv-1",
+            invoiceNumber: "INV-0001",
+            issueDate: new Date("2026-01-01"),
+            total: 40,
+          }),
+        ]);
+        prisma.customer.findFirst.mockResolvedValue({ businessName: "Acme Retail", email: null });
+        prisma.tenant.findUnique.mockResolvedValue({ name: "Acme", class: cls });
+        buyerPaymentRequest.create.mockResolvedValue({ id: "req-1" });
+        mockProvider.createHostedCheckout.mockResolvedValue({
+          sessionId: "cs_1",
+          url: "https://x",
+        });
+        await expect(
+          service.createCardRequest({
+            tenantId: "tenant-1",
+            tenantSlug: "acme",
+            customerId: "cust-1",
+            buyerAccountId: "buyer-1",
+            amount: 10,
+          }),
+        ).rejects.toMatchObject({ status: 409, response: { code: "LIVE_PAYMENTS_OFF" } });
+        expect(buyerPaymentRequest.create).not.toHaveBeenCalled();
+        expect(mockProvider.createHostedCheckout).not.toHaveBeenCalled();
+      },
+    );
 
     it("createCardRequest turns a unique-violation race into a friendly BadRequest", async () => {
       buyerPaymentRequest.findFirst.mockResolvedValue(null);

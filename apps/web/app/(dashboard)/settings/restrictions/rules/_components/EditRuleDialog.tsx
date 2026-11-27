@@ -165,6 +165,7 @@ export function EditRuleDialog({
 
   return (
     <Modal
+      scroll={false} // B1444: OWN-SCROLL
       open={open}
       onClose={onClose}
       title="Edit rule settings"

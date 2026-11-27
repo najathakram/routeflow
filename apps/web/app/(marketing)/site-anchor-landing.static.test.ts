@@ -220,8 +220,9 @@ describe("every home anchor the site links to exists on the home page", () => {
   it("the sections people are sent to keep room for the sticky header", () => {
     const css = fs.readFileSync(path.join(SITE, "css/home.css"), "utf8");
     const up = fs.readFileSync(path.join(SITE, "css/home-up.css"), "utf8");
-    expect(css).toMatch(/\.inc\{[^}]*scroll-margin-top:68px/);
-    expect(up).toMatch(/#stores,#founder,#faq\{scroll-margin-top:68px/);
+    // SA-1199 A1: the room is the header's own height token, never a typed copy of it.
+    expect(css).toMatch(/\.inc\{[^}]*scroll-margin-top:var\(--rf-header-h\)/);
+    expect(up).toMatch(/#stores,#founder,#faq\{scroll-margin-top:var\(--rf-header-h\)/);
   });
 });
 

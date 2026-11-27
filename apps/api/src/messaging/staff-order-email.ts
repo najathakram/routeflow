@@ -204,7 +204,12 @@ export class StaffOrderEmailService {
           } else if (!content) {
             await this.deliveries.record({ ...delivery, toAddress: r.email, status: "WOULD_SEND" });
           } else {
-            await this.email.send({ to: r.email, ...content, delivery });
+            await this.email.send({
+              to: r.email,
+              ...content,
+              delivery,
+              tenantId: delivery.tenantId,
+            });
           }
         } catch (err) {
           this.logger.warn(`Staff order email step failed: ${(err as Error)?.message}`);

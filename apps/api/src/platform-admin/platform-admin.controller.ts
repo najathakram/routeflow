@@ -33,6 +33,7 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateAiConfigDto } from "./dto/update-ai-config.dto";
 import { SetTenantAiCapDto } from "./dto/set-tenant-ai-cap.dto";
+import { SetMailWallDto } from "./dto/set-mail-wall.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
@@ -228,6 +229,22 @@ export class PlatformAdminController {
   ) {
     await this.svc.setTenantAiCap(id, dto.aiMonthlyCapUsd, admin.sub);
     return this.platformConfig.getTenantAiCap(id);
+  }
+
+  @Get("tenants/:id/mail-wall")
+  @ApiOperation({ summary: "A business's allowed mail addresses (enforced for a Test business)" })
+  getMailWall(@Param("id") id: string) {
+    return this.svc.getMailWall(id);
+  }
+
+  @Put("tenants/:id/mail-wall")
+  @ApiOperation({ summary: "Replace a business's allowed mail addresses (empty clears the list)" })
+  setMailWall(
+    @Param("id") id: string,
+    @Body() dto: SetMailWallDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.setMailWall(id, dto.addresses, admin.sub);
   }
 
   @Delete("tenants/:id")

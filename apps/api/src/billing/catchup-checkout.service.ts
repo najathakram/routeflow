@@ -44,6 +44,7 @@ import type { CheckoutStart } from "@routeflow/types";
 import { StripeService } from "./stripe.service";
 import { webBaseUrl } from "../config/web-base-url";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { assertTenantLivePaymentsAllowed } from "./live-payments-wall";
 
 /**
  * SA-733 D7: plan and open an existing (manually invoiced) tenant's October catch-up. `plan()` is READ-ONLY (the
@@ -426,6 +427,8 @@ export class CatchupCheckoutService {
       });
     if (opts.expectedStubCents !== plan.stub.totalCents) throw changed();
 
+    // W-1464: a business that is not PRODUCTION is refused before a claim is written or a Stripe call is made
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
     await this.claim.openClaim(tenantId); // under the Tenant lock, BEFORE any Stripe call
     let session: Parameters<typeof checkoutStartFromSession>[0];
     let start: CheckoutStart;

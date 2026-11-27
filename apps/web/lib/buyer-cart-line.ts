@@ -139,10 +139,8 @@ export function lineLimit(l: CartLineShape): { max: number; maxWord?: string } {
     : { max: lineMaxCount(l) };
 }
 
-/** The one limit sentence (shop stepper, cart row, Add): "The most you can order at once is 8,333 cases." */
-export function limitLine(max: number, word?: string): string {
-  return `The most you can order at once is ${max.toLocaleString("en-US")}${word ? ` ${word}` : ""}.`;
-}
+/** The one limit sentence (shop stepper, cart row, Add, edit grid): lives in @routeflow/pricing since B1395. */
+export { limitLine } from "@routeflow/pricing";
 
 /** Set the count in the line's CURRENT unit (what the stepper and its typed field mean). */
 export function setLineCount<T extends CartLineShape>(l: T, count: number): T {

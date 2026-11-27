@@ -264,6 +264,7 @@ export function StandingOrderModal({
 
   return (
     <Modal
+      scroll={false} // B1444: CLIP
       open={isOpen}
       onClose={onClose}
       title={isEditing ? "Edit Standing Order" : "Add Standing Order"}

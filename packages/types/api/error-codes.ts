@@ -621,6 +621,7 @@ export const API_ERROR_CODES = {
   CHECKOUT_SLOT_UNAVAILABLE: "CHECKOUT_SLOT_UNAVAILABLE",
   CHECKOUT_PAYMENT_IN_PROGRESS: "CHECKOUT_PAYMENT_IN_PROGRESS",
   CHECKOUT_LINK_NOT_EXPIRED: "CHECKOUT_LINK_NOT_EXPIRED",
+  LIVE_PAYMENTS_OFF: "LIVE_PAYMENTS_OFF",
   CHOOSE_PLAN_AT_CHECKOUT: "CHOOSE_PLAN_AT_CHECKOUT",
   PAYMENT_OVERDUE: "PAYMENT_OVERDUE",
   PAYMENT_STATE_UNKNOWN: "PAYMENT_STATE_UNKNOWN",
@@ -636,6 +637,8 @@ export const API_ERROR_CODES = {
   ADVANCE_NOT_AVAILABLE: "ADVANCE_NOT_AVAILABLE",
   /** B1385: a DRAFT payment cannot carry a leftover; it would become spendable credit (invoices). 400. */
   DRAFT_PAYMENT_HAS_EXCESS: "DRAFT_PAYMENT_HAS_EXCESS",
+  /** SA-1299 P4 (B1396): money lands only on an issued invoice; 400 from the invoices.service writers and advance apply; the ledger writer (bookkeeping) still takes a DRAFT, B1454, body carries `reason` (DRAFT, VOID or WRITTEN_OFF). Nothing was written (invoices). */
+  INVOICE_NOT_PAYABLE: "INVOICE_NOT_PAYABLE",
   PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
   UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
   INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",
@@ -1156,6 +1159,8 @@ export const API_ERROR_CODES = {
   DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
   /** 409 from PATCH /users/:id: the person is a driver with an open run, so their role cannot move off Driver yet. Nothing was written (B862, SA-1171 K4). */
   DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
+  /** 400 from a buyer's order edit, a CUSTOMER change request or a CUSTOMER order template: a line's piece total would pass BUYER_LINE_QTY_MAX (rise-only: a line already above it may stay). Body carries `productIds`. Nothing was written (B1386, SA-1285). */
+  BUYER_LINE_QTY_OVER_MAX: "BUYER_LINE_QTY_OVER_MAX",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

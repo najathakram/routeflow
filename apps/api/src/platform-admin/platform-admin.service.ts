@@ -152,6 +152,7 @@ import { activationClaimRefusal } from "../billing/catchup-claim";
 import { API_BILLING_PORTAL_RETURN_PATH } from "../billing/billing-return-paths";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+import { normalizeMailWallEntry, readMailWall, writeMailWall } from "../email/recipient-wall";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
 import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
 
@@ -562,6 +563,7 @@ export class PlatformAdminService {
         ? `${webBase}/login?redirect=${encodeURIComponent(API_BILLING_PORTAL_RETURN_PATH)}`
         : null;
     const welcomeEmail = await this.sendWelcomeEmail({
+      tenantId: result.tenant.id,
       userId: result.user.id,
       to: adminEmail,
       username: adminUsername,
@@ -610,6 +612,7 @@ export class PlatformAdminService {
 
   /** #2439: never throws — tenant creation must not fail over email; the outcome is returned. */
   private async sendWelcomeEmail(p: {
+    tenantId: string;
     userId: string;
     to: string;
     username: string;
@@ -632,6 +635,7 @@ export class PlatformAdminService {
     try {
       const link = await issueSetPasswordLink(this.prisma, p.userId, p.webBase);
       const r = await this.emailService.sendTenantWelcomeEmail({
+        tenantId: p.tenantId,
         to: p.to,
         username: p.username,
         businessName: p.businessName,
@@ -3171,6 +3175,36 @@ export class PlatformAdminService {
     });
   }
 
+  /** W-1464: a business's mail-wall list. `state` is none (dark for a Test business), list, or unreadable (holds everything). */
+  async getMailWall(tenantId: string) {
+    await this._findOrThrow(tenantId);
+    const [tenant, read] = await Promise.all([
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { class: true } }),
+      readMailWall(this.prisma, tenantId),
+    ]);
+    return {
+      class: tenant?.class ?? null,
+      state: read.kind === "list" ? "list" : read.kind === "absent" ? "none" : "unreadable",
+      addresses: read.kind === "list" ? read.entries : [],
+    };
+  }
+
+  /** W-1464: replace the whole list. A bad entry is a 400 that names its position; an empty list clears the row. */
+  async setMailWall(tenantId: string, addresses: string[], actorId: string | null) {
+    await this._findOrThrow(tenantId);
+    const bad = addresses.findIndex((a) => normalizeMailWallEntry(a) === null);
+    if (bad >= 0) {
+      throw new BadRequestException(
+        `Entry ${bad + 1} is not allowed: use name@domain or name+*@domain (a whole mail domain is never allowed).`,
+      );
+    }
+    const stored = await writeMailWall(this.prisma, tenantId, addresses);
+    await this.recordAdminAction(tenantId, actorId, AdminAuditAction.MAIL_WALL_CHANGED, {
+      count: stored.length,
+    });
+    return this.getMailWall(tenantId);
+  }
+
   // ─── Tenant admin management ──────────────────────────────────────────────────
 
   async getTenantAdmin(tenantId: string) {
@@ -3242,6 +3276,7 @@ export class PlatformAdminService {
     let emailSent = false;
     try {
       const sendResult = await this.emailService.send({
+        tenantId: tenantId,
         to: dto.email,
         ...routeflowNotice({
           subject: `Your RouteFlow admin account for ${tenant?.name ?? tenantId}`,

@@ -1,7 +1,8 @@
+import { BRAND } from "../common/brand";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 
 /**
- * Brand tokens from `marketing/RouteFlow_Brand_Guide.pdf`: Navy header/heading, Teal for the one
+ * Brand tokens from the brand guide: Navy header/heading, Teal for the one
  * CTA, Cloud footer band, Steel footer text. Signal Mint is unused (fails contrast on white).
  */
 export const BRAND_NAVY = "#1D2A3D";
@@ -10,9 +11,9 @@ export const BRAND_CLOUD = "#F3F7F8";
 export const BRAND_STEEL = "#536579";
 export const BRAND_WHITE = "#FFFFFF";
 
-/** Absolute https URL (mail clients load neither `data:` nor relative paths): the mark in `apps/web/public/brand/`. */
-export const BRAND_LOGO_URL = "https://www.routeflow.info/brand/routeflow-mark-192.png";
-const BRAND_SITE_URL = "https://www.routeflow.info";
+/** Absolute https URL (mail clients load neither `data:` nor relative paths): the mail logo under the brand's site. */
+export const BRAND_LOGO_URL = `${BRAND.origin}${BRAND.emailLogo}`;
+const BRAND_SITE_URL = BRAND.origin;
 
 /**
  * Stamped on the `<body>` of every email this file renders. `EmailService` refuses to send html
@@ -22,10 +23,10 @@ const BRAND_SITE_URL = "https://www.routeflow.info";
 export const EMAIL_LAYOUT_MARKER = 'data-rf-layout="v1"';
 
 /**
- * Whose look an email wears. `routeflow`: RouteFlow's own mail (verify, reset, invites, billing,
+ * Whose look an email wears. The platform's own look: its mail (verify, reset, invites, billing,
  * platform alerts). `tenant`: mail a tenant sends its own people — the tenant's name, logo and
- * colour, plus a small "Sent with RouteFlow" line. `neutral`: no brand at all, for mail whose
- * sender is unknown — the layout never guesses RouteFlow for a tenant's mail.
+ * colour, plus a small "Sent with <platform>" line. `neutral`: no brand at all, for mail whose
+ * sender is unknown — the layout never guesses the platform for a tenant's mail.
  */
 export type EmailLook =
   | { kind: "routeflow" }
@@ -73,17 +74,17 @@ export function resolveBarColors(color?: string | null): {
   };
 }
 
-/** RouteFlow's own logo + wordmark header row. */
+/** The platform's own logo + wordmark header row, both read from the brand. */
 export function brandHeaderHtml(): string {
-  // The only mark asset is the dark-navy "R": a white chip keeps it visible on the Navy bar.
+  // The mark asset is dark: a white chip keeps it visible on the Navy bar.
   return `<table cellpadding="0" cellspacing="0" role="presentation"><tr>
     <td style="vertical-align:middle;padding-right:10px;">
       <table cellpadding="0" cellspacing="0" role="presentation"><tr><td style="background:${BRAND_WHITE};border-radius:6px;padding:4px;" bgcolor="${BRAND_WHITE}">
-        <img src="${BRAND_LOGO_URL}" width="24" height="24" alt="RouteFlow" style="display:block;border:0;outline:none;">
+        <img src="${escapeHtml(BRAND_LOGO_URL)}" width="${escapeHtml(String(BRAND.emailLogoWidth))}" height="${escapeHtml(String(BRAND.emailLogoHeight))}" alt="${escapeHtml(BRAND.name)}" style="display:block;border:0;outline:none;">
       </td></tr></table>
     </td>
     <td style="vertical-align:middle;">
-      <span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};letter-spacing:-0.3px;">routeflow.</span>
+      <span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};letter-spacing:-0.3px;">${escapeHtml(BRAND.name.toLowerCase())}.</span>
     </td>
   </tr></table>`;
 }
@@ -199,6 +200,17 @@ ${preheader}
 </html>`;
 }
 
+/**
+ * The platform's own footer names the previous name after a rename, so a person who knew it still
+ * recognises the sender. Empty when the brand has no former name (both names equal).
+ */
+const hasFormerName = () => BRAND.name !== BRAND.formerly;
+const formerlyHtml = () =>
+  hasFormerName()
+    ? `<p style="margin:8px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;color:${BRAND_STEEL};text-align:center;">${escapeHtml(BRAND.name)}, formerly ${escapeHtml(BRAND.formerly)}</p>`
+    : "";
+const formerlyText = () => (hasFormerName() ? `\n${BRAND.name}, formerly ${BRAND.formerly}` : "");
+
 const footerLine = (text: string) =>
   `<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:18px;color:${BRAND_STEEL};text-align:center;">${escapeHtml(text)}</p>`;
 
@@ -208,6 +220,8 @@ function lookParts(look: EmailLook): {
   barBg: string;
   buttonColor: string;
   sentWith: string;
+  /** The plain-text twin of `sentWith`, with its own leading line break. */
+  sentWithText: string;
 } {
   if (look.kind === "tenant") {
     const c = resolveBarColors(look.color);
@@ -215,7 +229,8 @@ function lookParts(look: EmailLook): {
       headerHtml: tenantLookHeaderHtml(look.name, look.logoUrl, c.fg),
       barBg: c.bg,
       buttonColor: c.button,
-      sentWith: `<p style="margin:8px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;color:${BRAND_STEEL};text-align:center;">Sent with <a href="${BRAND_SITE_URL}" style="color:${BRAND_STEEL};">RouteFlow</a></p>`,
+      sentWith: `<p style="margin:8px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;color:${BRAND_STEEL};text-align:center;">Sent with <a href="${escapeHtml(BRAND_SITE_URL)}" style="color:${BRAND_STEEL};">${escapeHtml(BRAND.name)}</a></p>`,
+      sentWithText: `\nSent with ${BRAND.name}`,
     };
   }
   return {
@@ -225,7 +240,8 @@ function lookParts(look: EmailLook): {
         : `<span style="font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:700;color:${BRAND_WHITE};">&nbsp;</span>`,
     barBg: BRAND_NAVY,
     buttonColor: BRAND_TEAL,
-    sentWith: "",
+    sentWith: look.kind === "routeflow" ? formerlyHtml() : "",
+    sentWithText: look.kind === "routeflow" ? formerlyText() : "",
   };
 }
 
@@ -253,7 +269,7 @@ export function renderBrandedEmail(params: {
     bodyHtml: params.bodyHtml,
     footerHtml: `${footerLine(params.footerNote)}${parts.sentWith}`,
   });
-  const sent = parts.sentWith ? "\nSent with RouteFlow" : "";
+  const sent = parts.sentWithText;
   const text = `${params.heading}\n\n${params.bodyText.join("\n\n")}\n\n--\n${params.footerNote}${sent}`;
   return { html, text };
 }
@@ -279,7 +295,7 @@ export function renderEmailLayout(params: {
   footerNote: string;
 }): { html: string; text: string } {
   const { look } = params;
-  const { headerHtml, barBg, buttonColor, sentWith } = lookParts(look);
+  const { headerHtml, barBg, buttonColor, sentWith, sentWithText } = lookParts(look);
   const cta = params.cta
     ? `<div style="margin:24px 0 0;">${renderBrandButton(params.cta.label, params.cta.url, buttonColor)}</div>${fallbackLinkHtml(params.cta.url)}`
     : "";
@@ -293,7 +309,7 @@ export function renderEmailLayout(params: {
   });
   const textParts = [params.heading, ...params.bodyText];
   if (params.cta) textParts.push(`${params.cta.label}: ${params.cta.url}`);
-  const text = `${textParts.join("\n\n")}\n\n--\n${params.footerNote}${look.kind === "tenant" ? "\nSent with RouteFlow" : ""}`;
+  const text = `${textParts.join("\n\n")}\n\n--\n${params.footerNote}${sentWithText}`;
   return { html, text };
 }
 
@@ -310,7 +326,7 @@ export function emailParagraph(innerHtml: string): string {
 /**
  * The safety net behind the send path: html that did not come out of this file is put inside the
  * layout so no bare mail leaves. It wears the tenant's look when the send belongs to a tenant and
- * a neutral look otherwise — never RouteFlow's, which would be a false sender on a tenant's mail.
+ * a neutral look otherwise — never the platform's, which would be a false sender on a tenant's mail.
  * A full document is unwrapped to its `<body>` first. The text part is the caller's, untouched.
  */
 export function wrapUnbrandedHtml(p: {
