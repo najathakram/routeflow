@@ -22,7 +22,6 @@ import { toCents } from "@routeflow/pricing";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { PlanCatalogService } from "./plan-catalog.service";
-import { STRIPE_CHECKOUT_APPLIED_ACTION } from "./config-snapshot-audit.constants";
 import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { BillingService } from "./billing.service";
 import { paymentReinstatableWhere } from "./dunning-config";
