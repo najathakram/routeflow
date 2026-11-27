@@ -110,6 +110,8 @@ export const EXPORT_EXCLUDED_EVENT_TYPES: readonly string[] = [
   "coupon.billed",
   // SA-788: the per-change audit record of a TenantAddon row (actor + before/after); internal, amountDelta null.
   "addon.state_changed",
+  // R-2: an internal staff record of a refund, carrying a provider reference and a staff note.
+  "refund.staff",
 ];
 
 export function projectInvoiceForExport(row: Record<string, unknown>) {

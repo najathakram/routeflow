@@ -159,6 +159,7 @@ describe("billing export projection (B1187)", () => {
       "coupon.unbilled",
       "coupon.billed",
       "addon.state_changed",
+      "refund.staff",
     ]);
   });
 

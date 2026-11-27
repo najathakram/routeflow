@@ -1165,6 +1165,12 @@ export const API_ERROR_CODES = {
   DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
   /** 409 from PATCH /users/:id: the person is a driver with an open run, so their role cannot move off Driver yet. Nothing was written (B862, SA-1171 K4). */
   DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
+  /** 404 from the staff-refund routes (R-2, SA-1297): the business has no yearly payment on record to refund. Nothing was written. */
+  STAFF_REFUND_NO_YEARLY_PAYMENT: "STAFF_REFUND_NO_YEARLY_PAYMENT",
+  /** 409 from POST /platform-admin/tenants/:id/staff-refunds: the refund date is more than 14 days after the yearly payment (R-2, SA-1297). Nothing was written. */
+  STAFF_REFUND_WINDOW_PASSED: "STAFF_REFUND_WINDOW_PASSED",
+  /** 409 from POST /platform-admin/tenants/:id/staff-refunds: a staff refund is already recorded for this yearly payment; body carries the existing row's `createdAt`, `providerRef`, `actorName` and `refundDate` (R-2, SA-1297). */
+  STAFF_REFUND_ALREADY_RECORDED: "STAFF_REFUND_ALREADY_RECORDED",
   /** 400 from a buyer's order edit, a CUSTOMER change request or a CUSTOMER order template: a line's piece total would pass BUYER_LINE_QTY_MAX (rise-only: a line already above it may stay). Body carries `productIds`. Nothing was written (B1386, SA-1285). */
   BUYER_LINE_QTY_OVER_MAX: "BUYER_LINE_QTY_OVER_MAX",
 } as const;
