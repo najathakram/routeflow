@@ -1,5 +1,6 @@
 import {
   INVOICE_STATUS_BUYER_LABEL,
+  INVOICE_STATUS_BUYER_TONE,
   INVOICE_STATUS_LABEL,
   INVOICE_STATUS_LEGEND,
   INVOICE_STATUS_TONE,
@@ -81,5 +82,20 @@ describe("invoice status table (W-1470, S-4)", () => {
     // @ts-expect-error a tone that is not in the vocabulary
     const bad: InvoiceStatusTone = "purple";
     expect(bad).toBe("purple");
+  });
+});
+
+describe("INVOICE_STATUS_BUYER_TONE: the buyer tones live in the shared table (brief criterion 6)", () => {
+  it("is the B1122 buyer tone per status, one row per enum value", () => {
+    expect(INVOICE_STATUS_BUYER_TONE).toEqual({
+      DRAFT: "neutral",
+      SENT: "warning",
+      VIEWED: "info",
+      PARTIAL: "warning",
+      PAID: "success",
+      OVERDUE: "danger",
+      VOID: "danger",
+      WRITTEN_OFF: "danger",
+    });
   });
 });

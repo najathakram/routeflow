@@ -56,6 +56,21 @@ export const INVOICE_STATUS_BUYER_LABEL: Record<InvoiceStatus, string> = {
   WRITTEN_OFF: "Written Off",
 };
 
+/**
+ * The buyer screens' tone per status (B1122, unchanged by W-1470): a sent invoice is amber there (it is money owed), void
+ * and written off are red. Shared so the mobile buyer screens (PR-2) read the same table.
+ */
+export const INVOICE_STATUS_BUYER_TONE: Record<InvoiceStatus, InvoiceStatusTone> = {
+  DRAFT: "neutral",
+  SENT: "warning",
+  VIEWED: "info",
+  PARTIAL: "warning",
+  PAID: "success",
+  OVERDUE: "danger",
+  VOID: "danger",
+  WRITTEN_OFF: "danger",
+};
+
 /** The tone for a status string; a status this build does not know yet is neutral. */
 export function invoiceStatusTone(status: string): InvoiceStatusTone {
   return (

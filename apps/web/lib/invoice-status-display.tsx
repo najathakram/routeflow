@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  INVOICE_STATUS_BUYER_TONE,
   INVOICE_STATUS_LABEL,
   INVOICE_STATUS_LEGEND,
   invoiceStatusTone,
@@ -53,22 +54,10 @@ export const INVOICE_STATUS_BADGE_VARIANT: Record<InvoiceStatusTone, BadgeVarian
   stone: "neutral",
 };
 
-/**
- * The buyer portal's tone per status (B1122, unchanged by W-1470): a sent invoice is amber there (it is money owed),
- * void and written off are red. Keyed on the shared enum; a status this build does not know is neutral.
- */
-const BUYER_VARIANT: Record<InvoiceStatus, BadgeVariant> = {
-  DRAFT: "neutral",
-  SENT: "warning",
-  VIEWED: "info",
-  PARTIAL: "warning",
-  PAID: "success",
-  OVERDUE: "danger",
-  VOID: "danger",
-  WRITTEN_OFF: "danger",
-};
+/** The buyer portal's Badge variant per status, from the shared buyer tone table (B1122, unchanged by W-1470). */
 export function invoiceStatusBuyerVariant(status: InvoiceStatus): BadgeVariant {
-  return BUYER_VARIANT[status] ?? "neutral";
+  const tone = (INVOICE_STATUS_BUYER_TONE as Record<string, InvoiceStatusTone | undefined>)[status];
+  return tone ? INVOICE_STATUS_BADGE_VARIANT[tone] : "neutral";
 }
 
 export interface InvoiceStatusView {

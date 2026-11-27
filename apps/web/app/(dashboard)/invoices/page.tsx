@@ -357,7 +357,8 @@ export default function InvoicesPage() {
   const { user } = useAuth();
   const isCustomer = user?.role === "CUSTOMER";
   // W-1470: the status word counts days on the TENANT's day (undefined while the zone loads: no count claimed).
-  const tenantDay = useTenantToday();
+  // GET /settings is staff-only: a CUSTOMER on this list never asks for the tenant day (no 403 per visit).
+  const tenantDay = useTenantToday(!isCustomer);
   const [statusKeyOpen, setStatusKeyOpen] = React.useState(false);
   React.useEffect(() => {
     setTitle("Invoices");
@@ -910,7 +911,7 @@ export default function InvoicesPage() {
                   <InvoiceStatusText
                     status={inv.status}
                     dueDate={inv.dueDate}
-                    isOverdue={inv.isOverdue}
+                    isOverdue={isCustomer ? undefined : inv.isOverdue}
                     tenantDay={tenantDay}
                   />
                   {!isCustomer && <ToCollectChip state={inv.toCollect} />}
@@ -1083,7 +1084,7 @@ export default function InvoicesPage() {
                           <InvoiceStatusText
                             status={inv.status}
                             dueDate={inv.dueDate}
-                            isOverdue={inv.isOverdue}
+                            isOverdue={isCustomer ? undefined : inv.isOverdue}
                             tenantDay={tenantDay}
                           />
                           {!isCustomer && <ToCollectChip state={inv.toCollect} />}

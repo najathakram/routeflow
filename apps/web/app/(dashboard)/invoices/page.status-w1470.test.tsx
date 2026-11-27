@@ -9,11 +9,16 @@ import InvoicesPage from "./page";
  * and while the tenant day is unknown no count is claimed.
  */
 let mockTenantDay: string | undefined;
+let mockRole = "ADMIN";
+const mockTenantEnabled: (boolean | undefined)[] = [];
 const mockUseInvoices = jest.fn();
 
 jest.mock("@/lib/tenant-timezone", () => ({
   ...jest.requireActual("@/lib/tenant-timezone"),
-  useTenantToday: () => mockTenantDay,
+  useTenantToday: (enabled?: boolean) => {
+    mockTenantEnabled.push(enabled);
+    return enabled === false ? undefined : mockTenantDay;
+  },
 }));
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
@@ -25,7 +30,7 @@ jest.mock("@/lib/page-title-context", () => ({
 }));
 jest.mock("@/lib/auth-context", () => ({
   ...jest.requireActual("@/lib/auth-context"),
-  useAuth: () => ({ user: { id: "u1", role: "ADMIN" } }),
+  useAuth: () => ({ user: { id: "u1", role: mockRole } }),
 }));
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
@@ -95,7 +100,26 @@ const cardOf = (container: HTMLElement) => {
 describe("InvoicesPage status word (W-1470)", () => {
   beforeEach(() => {
     mockTenantDay = "2026-11-26";
+    mockRole = "ADMIN";
+    mockTenantEnabled.length = 0;
     mockUseInvoices.mockReset();
+  });
+
+  it("R-in-lane M2: a CUSTOMER on this list never asks for the tenant day and keeps the stored word", () => {
+    mockRole = "CUSTOMER";
+    setRows([
+      row({
+        id: "inv-1",
+        invoiceNumber: "INV-1",
+        status: "SENT",
+        dueDate: "2026-11-16T00:00:00.000Z",
+        isOverdue: true,
+      }),
+    ]);
+    const { container } = renderWithProviders(<InvoicesPage />);
+    expect(mockTenantEnabled.length).toBeGreaterThan(0);
+    expect(mockTenantEnabled.every((e) => e === false)).toBe(true);
+    expect(within(cardOf(container)).getByText("Sent")).toBeInTheDocument();
   });
   afterEach(() => jest.useRealTimers());
 
