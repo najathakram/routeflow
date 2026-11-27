@@ -89,7 +89,7 @@
 - **Symptom:** pushes from the Windows PC died with exit 127 or 0xC0000374 and no output from the leak check, only on master-merge pushes with piped refs. The laptop passed the same pushes, so the first guesses were a missing command and a hook-shell problem.
 - **Root cause:** on Node 24.20 for Windows, `Buffer.toString("utf16le")` on an odd-length view corrupts the heap. The scan decoded a slice cut at an odd byte, and the hook ran the script with no branch for an exit code it did not know, so a crash looked like silence.
 - **Lesson:** **Drop the odd trailing byte before any utf16le decode. A guard hook prints a refusal and exits non-zero for every exit code that is not 0 or its own refusal code, so a runtime crash reads as a blocked push with a reason. Run the hook self-test under `sh -e`, the way git runs it, not under a forgiving shell.**
-- **Guard:** #4563 (open at filing) carries the odd-byte drop, the hook refusal on an unexpected exit code and the `sh -e` self-test; until it merges the crash is PC-only and a retry changes nothing.
+- **Guard:** #4563 (merged 2026-11-26, `8e183d480a`) carries the odd-byte drop, the hook refusal on an unexpected exit code and the `sh -e` self-test; the crash was PC-only and a retry changed nothing.
 
 ### L-402 · 2026-11-22 · tooling · a gate that kills a long child on a time cap reports the timeout as a timeout, never as a genuine failure; the cap is overridable and sized for a loaded host (#4427)
 
@@ -128,14 +128,14 @@
 - **Lesson:** **Before the read, list the specs that copy or run `.husky/*` (grep the hook name in `apps/api/src/common/*-script.spec.ts`) and run them with the hook change. A fixture that copies a hook must copy everything the hook calls, and a missing file refuses with a plain message, not a node stack.**
 - **Guard:** the fixtures in `pre-push-trunk-script.spec.ts` and `skip-verify-audit-script.spec.ts` copy the checker and its lib, and each spec has a missing-checker case; `scripts/registry-root.self-test.mjs` lists the fixture. Cf. [[L-322]], [[L-323]].
 
-### L-387 · 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
+· 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
 
 - **Symptom:** a web PR went red in CI on `react-hooks/rules-of-hooks`: a plain helper in a test file was called from a callback and its name began with `use`.
 - **Root cause:** the lint rule keys on the name, not on what the function does; the lane's gate had not run web lint.
 - **Lesson:** **Name test helpers for what they return (`makeX`, `renderX`, `withX`), never `useX`, unless the function really is a hook called at a component's top level. Web lint is part of every web PR gate.**
 - **Guard:** the web ESLint `react-hooks/rules-of-hooks` rule in `npm run lint`. Cf. [[L-386]].
 
-### L-389 · 2026-11-15 · testing · a source scan's file-walk predicate is pinned by a row that names edge files, and a label type error shows only under the spec ratchet (#4344)
+· 2026-11-15 · testing · a source scan's file-walk predicate is pinned by a row that names edge files, and a label type error shows only under the spec ratchet (#4344)
 
 - **Symptom:** a return-address scan walked the API sources with `/.(spec|test).tsx?$/` as its skip filter; the unescaped dot also dropped `common/testing/db-spec.ts` and `smtp-spec.ts`, so the scan read green while skipping both. A reader found it, not the scan.
 - **Root cause:** the predicate was never itself tested, and a scan that finds nothing in a skipped file looks identical to a clean file. Separately, a row label written with two quoted pieces was a type error that plain `tsc` never reports, because it skips specs.
@@ -336,6 +336,20 @@
 - **Guard:** none yet; propose a lint/review checklist item flagging `token`/`code`/`secret`-named query params on any new route. Restored 2026-11-01 (it was archived on 2026-10-31 for room): this is a rule about RouteFlow's own routes, and the agent privacy rules cover what an agent does with URLs, not what the app puts in them.
 
 ## web
+
+### L-415 · 2026-11-27 · web · a rename that deletes CSS custom properties leaves every `var()` that named them invalid, and an invalid background computes to transparent while the text stays white; a static test resolves every `var()` of a shared shell (#4566)
+
+- **Symptom:** on `/signup` and every auth-shell page the submit button rendered white text on a white card. It was in the accessibility tree, so every role-based test passed, and no new trial could start.
+- **Root cause:** `auth-shell.css` styled `.rf-auth .rf-btn` with `background: var(--b700)`. The site rename (#4531) removed the `--b700`, `--b800`, `--b500`, `--ink-2`, `--ink-3` and `--tint` aliases, and two more tokens had never been defined. An unresolved `var()` makes the declaration invalid at computed time, so the background became `rgba(0,0,0,0)`; the build and the type check do not read CSS.
+- **Lesson:** **A change that renames or removes a design token greps every stylesheet for the old names, and a shared shell has a static test that every `var()` in it resolves against the token files and that a button's background resolves to a colour different from its text. A screenshot or a visibility check at the end of the sign-up path, not an accessibility-tree check, is what shows a button nobody can see.**
+- **Guard:** `apps/web/components/auth/auth-shell-tokens.static.test.ts` (red on the old CSS, listing the eight dead tokens) and `signup/page.submit-visible.test.tsx`, both from #4566. Cf. [[L-400]].
+
+### L-416 · 2026-11-27 · web · a popup its page keeps mounted while closed runs its data hook on every page load; the hook takes `enabled: isOpen`, and a census pins the whole-catalog readers (#4565)
+
+- **Symptom:** the staff New order draft and invoice pages were stuck for a long time after New product was opened on a tablet. Measured on a seeded test business, the page load read the whole catalog once (about 2.9 MB at 2,534 products, one signed thumbnail each) before anyone opened a popup.
+- **Root cause:** four popups (New product, Product create, Group as variants, Assign products) each called `useProducts({ limit: 0 })` above their `if (!isOpen) return null`. `limit: 0` is the fetch-all sentinel, and a mounted query is active, so it also refetched on every product save while closed.
+- **Lesson:** **A component that renders `null` when closed still runs its hooks. Any query inside a popup the page keeps mounted passes `enabled: isOpen`, through one helper (`useCatalogWhenOpen`), and a count-pinned census lists the files that may read the whole catalog. A fix says what it measured and what it could not reproduce.**
+- **Guard:** `apps/web/components/popup-catalog-reads.test.tsx` (per popup: no read while closed, none after an invalidation, one once opened; an inventory pin forbids a direct `limit: 0` read in an `isOpen` popup file) and `apps/web/lib/whole-catalog-census.test.ts`, from #4565.
 
 ### L-413 · 2026-11-25 · web · a navigation guard marks the history step it pushes itself and ignores it; otherwise its own `history.back()` reads as the person pressing Back (#4516)
 

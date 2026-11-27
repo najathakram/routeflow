@@ -506,3 +506,4 @@ Catch-up (2026-11-24, window 46): [packages/landing-2026-11-24-w46.md](packages/
 Catch-up (2026-11-25, window 47): [packages/landing-2026-11-25-w47.md](packages/landing-2026-11-25-w47.md): `planDisplayName`, `ESTIMATE_MOVES`, `canMoveEstimate`.
 Catch-up (2026-11-25, window 48): [packages/landing-2026-11-25-w48.md](packages/landing-2026-11-25-w48.md): `parseQuantityExpression`, `BUYER_LINE_QTY_MAX`, `maxLineCount`, `pricedPerLabel`, `deliveryStepsAbsentReason`.
 Catch-up (2026-11-26, window 49): [packages/landing-2026-11-26-w49.md](packages/landing-2026-11-26-w49.md): `buyer-edit-line.ts`, `term-copy.ts`, `BILLING_CYCLE_VALUES`.
+Catch-up (2026-11-27, window 50): [packages/landing-2026-11-27-w50.md](packages/landing-2026-11-27-w50.md): `landed-cost.ts` (allocatePoCharge, splitLandedShare), `unitsLabel` single bracket, `payment-refusal-copy.ts`, `selfPay` types, `surface-access.ts` (PAGE_SURFACES, mayUse).

@@ -234,6 +234,7 @@ export * from "./api/tenant-zone";
 export * from "./api/permissions";
 export * from "./api/staff-capabilities";
 export * from "./payment-terms";
+export * from "./api/surface-access";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 
