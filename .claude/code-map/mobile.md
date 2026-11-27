@@ -64,3 +64,4 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-11-25-w47.md](mobile/landing-2026-11-25-w47.md) | Window 47: estimate screens on the moves table (Back to draft, Rev tag), dead skeleton and layout components removed |
 | [mobile/landing-2026-11-25-w48.md](mobile/landing-2026-11-25-w48.md) | Window 48: resume only on a plan-gate 403, buyer quantity box and cart clamp, estimate box counts and stored order total, delivery steps note, draft save disabled |
 | [mobile/landing-2026-11-26-w49.md](mobile/landing-2026-11-26-w49.md) | Window 49: edit-items and cart step by the box with Undo, box price labels, linked order from invoice and return |
+| [mobile/landing-2026-11-27-w50.md](mobile/landing-2026-11-27-w50.md) | Window 50: Adjust stock single-flight, payment refusal words |
