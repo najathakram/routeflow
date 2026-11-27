@@ -146,6 +146,10 @@ export async function openForWalk(
   if (SIGN_IN_ROUTES.includes(route))
     await page.locator("h1").first().waitFor({ state: "visible", timeout: 120_000 });
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  // Test-only: the site eases scrolls (html{scroll-behavior:smooth}, kept on for visitors). A focus stop would be
+  // read while that scroll is still starting or moving, so the walk turns the easing off for itself and reads the
+  // end state of every scroll. The site's own CSS is untouched; !important beats the inline value its script writes.
+  await page.addStyleTag({ content: "html{scroll-behavior:auto !important}" });
   await frames(page, 2);
   await hooks.afterLoad?.(page);
 }

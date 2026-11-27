@@ -358,28 +358,28 @@
     "row": "a|/|Return to {{brand:name}}",
     "kind": "removed",
     "req": "W-1265",
-    "why": "the legal pages' back link prints the previous name while the brand name stays on the old text (the pattern edit is the owner's); no page change here"
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
   },
   {
     "key": "/privacy|desktop",
     "row": "a|/|Return to {{brand:formerly}}",
     "kind": "added",
     "req": "W-1265",
-    "why": "the legal pages' back link prints the previous name while the brand name stays on the old text (the pattern edit is the owner's); no page change here"
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
   },
   {
     "key": "/terms|desktop",
     "row": "a|/|Return to {{brand:name}}",
     "kind": "removed",
     "req": "W-1265",
-    "why": "the legal pages' back link prints the previous name while the brand name stays on the old text (the pattern edit is the owner's); no page change here"
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
   },
   {
     "key": "/terms|desktop",
     "row": "a|/|Return to {{brand:formerly}}",
     "kind": "added",
     "req": "W-1265",
-    "why": "the legal pages' back link prints the previous name while the brand name stays on the old text (the pattern edit is the owner's); no page change here"
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
   },
   {
     "key": "/|phone",
@@ -673,27 +673,27 @@
     "row": "a|/|Return to {{brand:name}}",
     "kind": "removed",
     "req": "W-1265",
-    "why": "the legal pages' back link prints the previous name while the brand name stays on the old text (the pattern edit is the owner's); no page change here"
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
   },
   {
     "key": "/privacy|phone",
     "row": "a|/|Return to {{brand:formerly}}",
     "kind": "added",
     "req": "W-1265",
-    "why": "the legal pages' back link prints the previous name while the brand name stays on the old text (the pattern edit is the owner's); no page change here"
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
   },
   {
     "key": "/terms|phone",
     "row": "a|/|Return to {{brand:name}}",
     "kind": "removed",
     "req": "W-1265",
-    "why": "the legal pages' back link prints the previous name while the brand name stays on the old text (the pattern edit is the owner's); no page change here"
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
   },
   {
     "key": "/terms|phone",
     "row": "a|/|Return to {{brand:formerly}}",
     "kind": "added",
     "req": "W-1265",
-    "why": "the legal pages' back link prints the previous name while the brand name stays on the old text (the pattern edit is the owner's); no page change here"
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
   }
 ]
