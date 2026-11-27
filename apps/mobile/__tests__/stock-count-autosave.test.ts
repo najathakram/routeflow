@@ -303,3 +303,70 @@ describe("stock-count-autosave", () => {
     });
   });
 });
+
+describe("stock-count-autosave: a scan after a pending edit (R-276 M1)", () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("keeps the edit AND the scan: the absolute edit goes first, then the +delta", async () => {
+    const upsertLine = jest.fn().mockResolvedValue(undefined);
+    const engine = createStockCountAutosave({ upsertLine, removeLine: jest.fn() });
+
+    engine.queueEdit("p1", { countedQty: 10 }, "ADD"); // operator typed 10, row is Add
+    engine.queueScan("p1", 2, "ADD"); // then scanned twice before the debounce fired
+    await engine.flush();
+
+    expect(upsertLine.mock.calls.map((c) => c[0])).toEqual([
+      { productId: "p1", mode: "ADD", countedQty: 10 },
+      { productId: "p1", countedQty: 2, increment: true, mode: "ADD" },
+    ]);
+  });
+});
+
+describe("stock-count-autosave: a failed edit with carried scans (R-285 M-1)", () => {
+  it("keeps the failed edit and its scanDelta when a newer scan is queued mid-flight", async () => {
+    let failFirst = true;
+    const upsertLine = jest.fn().mockImplementation(async () => {
+      if (failFirst) {
+        failFirst = false;
+        throw new Error("offline");
+      }
+    });
+    const engine = createStockCountAutosave({ upsertLine, removeLine: jest.fn() });
+
+    engine.queueEdit("p1", { countedQty: 10 }, "ADD");
+    engine.queueScan("p1", 2, "ADD"); // carried on the edit: scanDelta 2
+    const flushing = engine.flush(); // edit in flight, about to fail
+    engine.queueScan("p1", 3, "ADD"); // newer scan arrives meanwhile
+    await flushing;
+    upsertLine.mockClear();
+    await engine.flush();
+
+    // 10 absolute, then 2 + 3 = 5 scanned pieces on top: nothing lost.
+    expect(upsertLine.mock.calls.map((c) => c[0])).toEqual([
+      { productId: "p1", mode: "ADD", countedQty: 10 },
+      { productId: "p1", countedQty: 5, increment: true, mode: "ADD" },
+    ]);
+  });
+
+  it("a newer edit still wins outright over a failed edit", async () => {
+    let failFirst = true;
+    const upsertLine = jest.fn().mockImplementation(async () => {
+      if (failFirst) {
+        failFirst = false;
+        throw new Error("offline");
+      }
+    });
+    const engine = createStockCountAutosave({ upsertLine, removeLine: jest.fn() });
+    engine.queueEdit("p1", { countedQty: 10 }, "ADD");
+    const flushing = engine.flush();
+    engine.queueEdit("p1", { countedQty: 7 }, "ADD");
+    await flushing;
+    upsertLine.mockClear();
+    await engine.flush();
+    expect(upsertLine.mock.calls.map((c) => c[0])).toEqual([
+      { productId: "p1", mode: "ADD", countedQty: 7 },
+    ]);
+  });
+});

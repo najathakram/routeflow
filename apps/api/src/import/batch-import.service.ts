@@ -13,6 +13,7 @@ import { DuplicateMatchService, formatSupplierInvoiceNote } from "./duplicate-ma
 import { matchSupplier } from "./supplier-match";
 import type { UpdateBatchItemDto } from "./dto/update-batch-item.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { requireTenantContext } from "../messaging/require-tenant-context";
 
 /** The actual shape vendor-bills.scanInvoice returns (see its prompt schema + line matcher). */
 type ScanConfidence = "high" | "medium" | "low" | "none";
@@ -104,7 +105,7 @@ export class BatchImportService {
 
   /** Open a new batch. */
   async createBatch(dto: { kind?: string; createdById?: string }) {
-    const tenantId = this.requireTenant();
+    const tenantId = requireTenantContext(this.prisma);
     return this.prisma.forTenant().importBatch.create({
       data: {
         tenantId,
@@ -125,8 +126,8 @@ export class BatchImportService {
     files: Array<{ buffer: Buffer; mimeType: string }>,
     filename?: string,
   ) {
-    const tenantId = this.requireTenant();
-    await this.getBatchOrThrow(batchId);
+    const tenantId = requireTenantContext(this.prisma);
+    await this.getBatchOrThrow(batchId, tenantId);
     const item = await this.prisma.forTenant().importQueueItem.create({
       data: {
         tenantId,
@@ -257,9 +258,10 @@ export class BatchImportService {
 
   /** Batch + its queue items (for the review UI). */
   async getBatch(id: string) {
-    const batch = await this.getBatchOrThrow(id);
+    const tenantId = requireTenantContext(this.prisma);
+    const batch = await this.getBatchOrThrow(id, tenantId);
     const items = await this.prisma.forTenant().importQueueItem.findMany({
-      where: { batchId: id },
+      where: { batchId: id, tenantId },
       orderBy: { createdAt: "asc" },
     });
     return { batch, items: items.map((item) => this.annotateItem(item)) };
@@ -267,7 +269,7 @@ export class BatchImportService {
 
   /** Recent batches, most-active first (restores the operator's place after a page refresh). */
   async listBatches() {
-    const tenantId = this.requireTenant();
+    const tenantId = requireTenantContext(this.prisma);
     return this.prisma.forTenant().importBatch.findMany({
       where: { tenantId },
       orderBy: { createdAt: "desc" },
@@ -283,10 +285,8 @@ export class BatchImportService {
    * replacing the old blind "flip to CLEAN" resolve.
    */
   async updateItemLines(itemId: string, dto: UpdateBatchItemDto) {
-    const item = await this.prisma
-      .forTenant()
-      .importQueueItem.findUnique({ where: { id: itemId } });
-    if (!item) throw new NotFoundException("Queue item not found");
+    const tenantId = requireTenantContext(this.prisma);
+    const item = await this.getItemOrThrow(itemId, tenantId);
     if (item.status === "POSTED") throw new BadRequestException("Item already posted.");
 
     const payload = (item.extractedPayload ?? {}) as ExtractedInvoice;
@@ -296,7 +296,7 @@ export class BatchImportService {
       const productIds = dto.lines.map((l) => l.productId).filter((id): id is string => !!id);
       const products = productIds.length
         ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: productIds } },
+            where: { id: { in: productIds }, tenantId },
             select: { id: true, name: true },
           })
         : [];
@@ -337,7 +337,7 @@ export class BatchImportService {
       if (dto.supplierId) {
         const supplier = await this.prisma
           .forTenant()
-          .supplier.findUnique({ where: { id: dto.supplierId } });
+          .supplier.findFirst({ where: { id: dto.supplierId, tenantId } });
         if (!supplier) throw new BadRequestException("Supplier not found");
         supplierMatchId = dto.supplierId;
       } else {
@@ -377,10 +377,8 @@ export class BatchImportService {
    * silently skipping stock/cost updates).
    */
   async resolveItem(itemId: string) {
-    const item = await this.prisma
-      .forTenant()
-      .importQueueItem.findUnique({ where: { id: itemId } });
-    if (!item) throw new NotFoundException("Queue item not found");
+    const tenantId = requireTenantContext(this.prisma);
+    const item = await this.getItemOrThrow(itemId, tenantId);
     if (item.status === "POSTED") throw new BadRequestException("Item already posted.");
     if (item.status === "DUPLICATE") {
       throw new BadRequestException(
@@ -420,9 +418,10 @@ export class BatchImportService {
    * client never claims to have posted a bill it did not write.
    */
   async postBatch(id: string, performedById?: string) {
-    await this.getBatchOrThrow(id);
+    const tenantId = requireTenantContext(this.prisma);
+    await this.getBatchOrThrow(id, tenantId);
     const clean = await this.prisma.forTenant().importQueueItem.findMany({
-      where: { batchId: id, status: "CLEAN" },
+      where: { batchId: id, tenantId, status: "CLEAN" },
     });
 
     let posted = 0;
@@ -563,15 +562,18 @@ export class BatchImportService {
     });
   }
 
-  private async getBatchOrThrow(id: string) {
-    const batch = await this.prisma.forTenant().importBatch.findUnique({ where: { id } });
+  /** B1420: loaded by (id, tenantId); another tenant's id is the same 404 as a random id. */
+  private async getBatchOrThrow(id: string, tenantId: string) {
+    const batch = await this.prisma.forTenant().importBatch.findFirst({ where: { id, tenantId } });
     if (!batch) throw new NotFoundException("Import batch not found");
     return batch;
   }
 
-  private requireTenant(): string {
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId) throw new BadRequestException("A tenant context is required.");
-    return tenantId;
+  private async getItemOrThrow(itemId: string, tenantId: string) {
+    const item = await this.prisma
+      .forTenant()
+      .importQueueItem.findFirst({ where: { id: itemId, tenantId } });
+    if (!item) throw new NotFoundException("Queue item not found");
+    return item;
   }
 }

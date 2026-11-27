@@ -49,6 +49,8 @@ function make(
   };
   const prisma = {
     getTenantId: () => "t1",
+    // W-1464: the mail wall reads the business class; these specs are not about a test business.
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
     forTenant: () => ({
       systemConfig: {
         findMany: jest.fn().mockResolvedValue(opts.tenantSmtp ? TENANT_SMTP_ROWS : []),
@@ -97,7 +99,7 @@ const REAL_TIMERS = [
   "clearTimeout",
 ] as const;
 const ctx = { tenantId: "t1", kind: "INVOICE_SENT" as const };
-const mail = { to: "buyer@example.com", subject: "s", html: "<p>x</p>" };
+const mail = { to: "buyer@example.com", subject: "s", html: "<p>x</p>", tenantId: null };
 const row = (d: { record: jest.Mock }) => d.record.mock.calls[0][0];
 
 beforeEach(() => jest.clearAllMocks());

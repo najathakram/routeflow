@@ -2544,6 +2544,7 @@ export function CreateOrderModal({
 
   const dialog = (
     <Modal
+      scroll={false} // B1444: CLIP
       open={isOpen && !scanScreenActive}
       onClose={handleDismiss}
       onEscapeKeyDown={handleEscape}

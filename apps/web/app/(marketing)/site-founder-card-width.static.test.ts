@@ -53,8 +53,12 @@ describe("founder card width", () => {
 });
 
 describe("no-JS hero width", () => {
+  // the page opens with the story now; its plain (no-JS) list of parts holds the content width
   const hero =
-    css.split("\n").find((l) => l.includes("html:not(.js-motion) .hx-up{display:grid")) ?? "";
+    fs
+      .readFileSync(path.resolve(__dirname, "../../public/site/css/home-scenes.css"), "utf8")
+      .split("\n")
+      .find((l) => l.startsWith(".stx-parts{")) ?? "";
 
   it("is capped at the content width, with fixed padding", () => {
     expect(hero).toContain("width:min(1200px,100% - 48px)");

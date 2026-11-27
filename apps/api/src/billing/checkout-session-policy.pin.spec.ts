@@ -240,3 +240,271 @@ describe("SA-1154 O11 - an embedded CheckoutStart is built only by checkoutStart
     ).toEqual({ "billing/x.ts": 1 });
   });
 });
+
+/**
+ * W-1464 PR-B (SA-1538 R5, T7): every file that makes a Stripe call that opens a session, a portal, a customer or a
+ * Connect grant sits behind the live-payments wall (`billing/live-payments-wall.ts`). Walks the tree like F1 above:
+ * a NEW creator anywhere fails here until it is listed with the file that holds its wall call. Zero creators found is
+ * a failure, not a pass. Detection is textual (whitespace tolerant); an aliased client is not detected.
+ */
+const STRIPE_CREATE =
+  /\b(?:checkout\s*\.\s*sessions|billingPortal\s*\.\s*sessions|customers)\s*\.\s*create\s*\(|\boauth\s*\.\s*token\s*\(/g;
+const WALL_CALL = /\bassert(?:Tenant)?LivePaymentsAllowed\s*\(/g;
+
+/** creator file -> the file holding the wall call(s) in front of it, and the least number of wall calls there. */
+const BEHIND_WALL: Record<string, { wall: string; atLeast: number; creates: number }> = {
+  "billing/open-checkout-session.ts": {
+    wall: "billing/open-checkout-session.ts",
+    atLeast: 1,
+    creates: 1,
+  },
+  "billing/catchup-checkout.service.ts": {
+    wall: "billing/catchup-checkout.service.ts",
+    atLeast: 1,
+    creates: 1,
+  },
+  // the customer create and the portal create: BillingService is the only caller of each
+  "billing/stripe.service.ts": { wall: "billing/billing.service.ts", atLeast: 2, creates: 2 },
+  "payment-requests/provider/stripe-payment-provider.ts": {
+    wall: "payment-requests/payment-requests.service.ts",
+    atLeast: 1,
+    creates: 1,
+  },
+  // the code exchange (callback) and the link start both sit in StripeConnectService
+  "stripe-connect/provider/stripe-connect-oauth.provider.ts": {
+    wall: "stripe-connect/stripe-connect.service.ts",
+    atLeast: 2,
+    creates: 1,
+  },
+};
+
+const countOf = (re: RegExp, text: string) => (text.match(re) ?? []).length;
+const WALL_SCAN = collect(SRC_ROOT)
+  .filter((f) => !rel(f).startsWith("testing/"))
+  .map((f) => {
+    // comments and doc blocks name the calls without making them
+    const text = fs
+      .readFileSync(f, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    return { file: rel(f), creates: countOf(STRIPE_CREATE, text), walls: countOf(WALL_CALL, text) };
+  });
+
+describe("W-1464 PR-B - every Stripe session creator sits behind the live-payments wall", () => {
+  it("the creators found are exactly the named ones, with the named counts (zero found is a failure)", () => {
+    const found = Object.fromEntries(
+      WALL_SCAN.filter((s) => s.creates > 0).map((s) => [s.file, s.creates]),
+    );
+    expect(Object.keys(found).length).toBeGreaterThan(0);
+    expect(found).toEqual(
+      Object.fromEntries(Object.entries(BEHIND_WALL).map(([f, v]) => [f, v.creates])),
+    );
+  });
+
+  it.each(Object.entries(BEHIND_WALL))(
+    "%s: its wall file holds enough wall calls",
+    (_creator, { wall, atLeast }) => {
+      expect(WALL_SCAN.find((s) => s.file === wall)?.walls ?? 0).toBeGreaterThanOrEqual(atLeast);
+    },
+  );
+
+  it("self-control: the scanner counts an injected creator and a wall call", () => {
+    expect(countOf(STRIPE_CREATE, "x.billingPortal\n .sessions\n .create({})")).toBe(1);
+    expect(countOf(STRIPE_CREATE, "c.oauth.token({}); c.customers.create(p)")).toBe(2);
+    expect(countOf(STRIPE_CREATE, "c.checkout.sessions.expire(id)")).toBe(0);
+    expect(countOf(WALL_CALL, "await assertTenantLivePaymentsAllowed(p, t);")).toBe(1);
+  });
+});
+
+/**
+ * W-1464 R-282 M2 (lead ruling): anything that changes what an EXISTING subscription charges is walled too, by the
+ * same helper and before the first Stripe call: subscription item create/update, a subscription update that moves
+ * items or prices, and invoice items or invoices. A NEW such call anywhere in `apps/api/src` fails here until it is
+ * listed with the wall in front of it, or listed as exempt with the reason. Zero found is a failure.
+ * `products.create` / `products.update` (stripe-product.ts) and prices make no charge and stay unwalled.
+ */
+const STRIPE_CHARGE_CHANGE =
+  /\b(?:subscriptionItems\s*\.\s*(?:create|update)|invoices\s*\.\s*(?:create|pay|finalizeInvoice|update)|invoiceItems\s*\.\s*(?:create|update)|subscriptions\s*\.\s*(?:create|update)|subscriptionSchedules\s*\.\s*\w+|paymentIntents\s*\.\s*create)\s*\(|\.\s*updateSubscription\s*\(/g;
+
+/** file -> how many such calls it makes, the least number of wall calls in that same file, and why any are unwalled. */
+const CHARGE_CHANGERS: Record<string, { calls: number; walls: number; exempt?: string }> = {
+  "billing/addon.service.ts": { calls: 1, walls: 1 },
+  // adoptCheckoutSku (update), adoptOrCreateAddonItem (create + the orphan update behind it), enableAddonLocked (update)
+  "billing/subscription-mutation.service.ts": {
+    calls: 6,
+    walls: 4,
+    exempt:
+      "the updateSubscription calls that set cancel_at_period_end: true only reduce what is charged; resume (cancel_at_period_end: false) is walled (R-305 m2); the orphan update sits behind the create wall",
+  },
+  // the stub invoice and its one item
+  "billing/catchup-claim.service.ts": { calls: 2, walls: 2 },
+  // the price push (pushResolvedPriceToStripe); the portal and customer walls are the other two
+  "billing/billing.service.ts": { calls: 1, walls: 3 },
+  "billing/plan-change-stripe.ts": {
+    calls: 2,
+    walls: 1,
+    exempt: "the revert restores the prior price and is reachable only after pushPlanChange's wall",
+  },
+  "billing/scheduled-price-change.ts": { calls: 2, walls: 2 },
+  "billing/dunning-pause.ts": {
+    calls: 3,
+    walls: 2,
+    exempt:
+      "setting a pause only reduces what is charged; both removals (clearPauseCollection and the reconciler's unpause arm) turn renewal charges back on and are walled (R-305 m2)",
+  },
+  "billing/stripe.service.ts": {
+    calls: 2,
+    walls: 0,
+    exempt: "the generic subscriptions.update wrapper; every caller above is listed",
+  },
+};
+
+const CHARGE_SCAN = collect(SRC_ROOT)
+  .filter((f) => !rel(f).startsWith("testing/"))
+  .map((f) => {
+    const text = fs
+      .readFileSync(f, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    return {
+      file: rel(f),
+      calls: countOf(STRIPE_CHARGE_CHANGE, text),
+      walls: countOf(WALL_CALL, text),
+    };
+  });
+
+describe("W-1464 R-282 M2 - every call that changes what a subscription charges sits behind the wall", () => {
+  it("the charge-changing calls found are exactly the named ones, with the named counts (zero found is a failure)", () => {
+    const found = Object.fromEntries(
+      CHARGE_SCAN.filter((s) => s.calls > 0).map((s) => [s.file, s.calls]),
+    );
+    expect(Object.keys(found).length).toBeGreaterThan(0);
+    expect(found).toEqual(
+      Object.fromEntries(Object.entries(CHARGE_CHANGERS).map(([f, v]) => [f, v.calls])),
+    );
+  });
+
+  it.each(Object.entries(CHARGE_CHANGERS))(
+    "%s: holds enough wall calls in front of its charge-changing calls",
+    (file, { walls }) => {
+      expect(CHARGE_SCAN.find((s) => s.file === file)?.walls ?? 0).toBeGreaterThanOrEqual(walls);
+    },
+  );
+
+  it("every file with no wall of its own says why", () => {
+    for (const [file, v] of Object.entries(CHARGE_CHANGERS)) {
+      if (v.walls === 0 || v.exempt) expect(v.exempt ?? "").not.toBe("");
+      else expect(file).toBeTruthy();
+    }
+  });
+
+  it("self-control: the scanner counts charge changers and ignores the catalog-only calls", () => {
+    expect(countOf(STRIPE_CHARGE_CHANGE, "c.subscriptionItems\n .update(id, p)")).toBe(1);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "await this.stripe.updateSubscription(s, p)")).toBe(1);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "c.invoices.create(a); c.invoiceItems.create(b)")).toBe(2);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "async updateSubscription(subId, params) {")).toBe(0);
+    // R-305 m5: the other creators of a charge are in the net too
+    expect(
+      countOf(STRIPE_CHARGE_CHANGE, "c.subscriptions.create(p); c.subscriptionSchedules.create(p)"),
+    ).toBe(2);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "c.subscriptionSchedules\n .release(id)")).toBe(1);
+    expect(
+      countOf(
+        STRIPE_CHARGE_CHANGE,
+        "c.invoices.pay(i); c.invoices.finalizeInvoice(i); c.invoices.update(i, p)",
+      ),
+    ).toBe(3);
+    expect(
+      countOf(STRIPE_CHARGE_CHANGE, "c.invoiceItems.update(i, p); c.paymentIntents.create(p)"),
+    ).toBe(2);
+    expect(countOf(STRIPE_CHARGE_CHANGE, "c.invoices.retrieve(i); c.invoices.list(p)")).toBe(0);
+    expect(
+      countOf(STRIPE_CHARGE_CHANGE, "client.products.create({}); client.products.update(i, p)"),
+    ).toBe(0);
+  });
+});
+
+/**
+ * W-1464 lead ruling: item deletes and subscription cancels are NOT walled. They only reduce what a subscription
+ * charges, and a test business must always be able to stop its billing. Listed so a new one is a conscious choice.
+ */
+const STRIPE_REDUCE_ONLY = /\b(?:subscriptionItems\s*\.\s*del|subscriptions\s*\.\s*cancel)\s*\(/g;
+const REDUCE_ONLY: Record<string, { calls: number; exempt: string }> = {
+  "billing/addon.service.ts": { calls: 3, exempt: "removes an add-on item; only reduces charges" },
+  "billing/subscription-mutation.service.ts": {
+    calls: 3,
+    exempt: "removes an add-on item; only reduces charges",
+  },
+  "billing/stripe.service.ts": {
+    calls: 2,
+    exempt: "the cancel wrapper; a test business must be able to stop billing",
+  },
+};
+
+describe("W-1464 - calls that only reduce charges stay unwalled and are listed", () => {
+  it("the reduce-only calls found are exactly the listed ones", () => {
+    const found: Record<string, number> = {};
+    for (const f of collect(SRC_ROOT)) {
+      if (rel(f).startsWith("testing/")) continue;
+      const text = fs
+        .readFileSync(f, "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      const n = countOf(STRIPE_REDUCE_ONLY, text);
+      if (n > 0) found[rel(f)] = n;
+    }
+    expect(found).toEqual(
+      Object.fromEntries(Object.entries(REDUCE_ONLY).map(([f, v]) => [f, v.calls])),
+    );
+    for (const v of Object.values(REDUCE_ONLY)) expect(v.exempt).not.toBe("");
+  });
+});
+
+/**
+ * SA-1547 S1 (W-1464): the live-payments wall's caller pin. `StripeService.createCustomer` and
+ * `StripeService.createBillingPortalSession` are called from exactly the files named here, each of which also
+ * carries a wall call (`assertLivePaymentsAllowed(` / `assertTenantLivePaymentsAllowed(`). A NEW calling file fails
+ * until it is named with its wall call; a vanished caller (zero) fails too, so the pin cannot go stale (G4, L-202).
+ * The final form (a required `tenantId` on each wrapper, wall inside) is a later change.
+ */
+const STRIPE_WRAPPER_CALL =
+  /\bstripe(?:Service)?\s*\.\s*(createCustomer|createBillingPortalSession)\s*\(/g;
+const WRAPPER_WALL_CALL = /\bassert(?:Tenant)?LivePaymentsAllowed\s*\(/;
+
+/** file -> wrapper -> exact call count. */
+const WRAPPER_CALLERS: Record<string, Record<string, number>> = {
+  "billing/billing.service.ts": { createCustomer: 1, createBillingPortalSession: 1 },
+};
+
+function wrapperCalls(text: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const m of text.matchAll(STRIPE_WRAPPER_CALL)) out[m[1]] = (out[m[1]] ?? 0) + 1;
+  return out;
+}
+
+describe("SA-1547 S1 - Stripe customer / portal wrapper callers are pinned per file", () => {
+  const actual = Object.fromEntries(
+    collect(SRC_ROOT)
+      .filter((f) => rel(f) !== "billing/stripe.service.ts")
+      .map((f) => [rel(f), wrapperCalls(fs.readFileSync(f, "utf8"))] as const)
+      .filter(([, c]) => Object.keys(c).length > 0),
+  );
+
+  it("the calling files and counts are exactly the named ones (a new caller fails here)", () => {
+    expect(actual).toEqual(WRAPPER_CALLERS);
+  });
+
+  it("every named caller file carries a wall call", () => {
+    for (const file of Object.keys(WRAPPER_CALLERS)) {
+      expect(WRAPPER_WALL_CALL.test(fs.readFileSync(path.join(SRC_ROOT, file), "utf8"))).toBe(true);
+    }
+  });
+
+  it("self-control: the scanner counts an injected caller and ignores BillingService's own method", () => {
+    expect(wrapperCalls("await this.stripe.createCustomer({});")).toEqual({ createCustomer: 1 });
+    expect(wrapperCalls("this.stripeService\n .createBillingPortalSession(a)")).toEqual({
+      createBillingPortalSession: 1,
+    });
+    expect(wrapperCalls("this.billing.createBillingPortalSession(t)")).toEqual({});
+  });
+});

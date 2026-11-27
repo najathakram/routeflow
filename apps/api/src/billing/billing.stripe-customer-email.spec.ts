@@ -96,6 +96,7 @@ function make(rows: U[]) {
       findUnique: jest.fn(async () => ({
         id: "t1",
         slug: "acme",
+        class: "PRODUCTION",
         name: "Acme",
         plan: "STARTER",
         subscription: null,

@@ -21,7 +21,7 @@
  *   W11 600 ms fade, fail to pass; a twin that fails      green, settleFrames > 3; the twin is red
  *   W12 a faked 400 px snap (drift detector only)         drift > 0; the final position or obscured
  *   B1  no plant, header light                            green, no band red
- *   SNAP-real  no plant, the wheel control reached by Tab scrollY, drift and the DOM label recorded
+ *   SNAP-real  no plant, the story Skip link reached by Tab scrollY, drift and the DOM label recorded
  *   W13 (the length pin on T16_SIZE_ONLY) is a Jest case in site-colour-walk.static.test.ts
  */
 import { test, expect, type Page } from "@playwright/test";
@@ -403,6 +403,39 @@ if (process.env.T16_PLANTS === "1") {
     expect.soft(textContrast(textOf(r.planted, "W9"), "W9"), "W9: text contrast").toBeLessThan(3);
   });
 
+  test("T16 plant W13 a low-contrast kicker in a caption that is not up at rest is red", async () => {
+    test.setTimeout(PLANTS_TEST_HARD_MS);
+    const r = await threeRuns({
+      route: "/",
+      size: DESKTOP,
+      tag: async (p) => {
+        const ok = await p.evaluate(() => {
+          const caps = [
+            ...document.querySelectorAll<HTMLElement>("[data-pinned-story] [data-story-caption]"),
+          ];
+          const el = caps[caps.length - 2]?.querySelector<HTMLElement>(".kick");
+          el?.setAttribute("data-t16-plant", "W13");
+          return (
+            Boolean(el) &&
+            getComputedStyle(el!.closest("[data-story-caption]")!).visibility === "hidden"
+          );
+        });
+        expect(ok, "W13 setup: a kicker in a caption that is hidden at rest").toBe(true);
+      },
+      defect: async (p) => {
+        await p.evaluate(() => {
+          const el = document.querySelector<HTMLElement>('[data-t16-plant="W13"]');
+          el?.style.setProperty("color", "#cfcfcf", "important");
+        });
+      },
+    });
+    expectStable(`/ ${sizeName(DESKTOP)}`, r);
+    // the walk reads each caption in its own state: the keyed kicker row exists and is below the threshold
+    expect
+      .soft(textContrast(textOf(r.planted, "W13"), "W13"), "W13: text contrast")
+      .toBeLessThan(3);
+  });
+
   test("T16 plant W12 a faked 400 px snap shows as drift", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
     const r = await threeRuns({
@@ -458,17 +491,17 @@ if (process.env.T16_PLANTS === "1") {
       .toEqual([]);
   });
 
-  test("T16 SNAP-real the wheel control reached by Tab records its scroll and label", async () => {
+  test("T16 SNAP-real the story's Skip link reached by Tab records its scroll and label", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
     const w = await walkPageSize("/", DESKTOP, { hardMs: WALK_HARD_MS });
-    const row = w.rows.find((x) => x.sel.startsWith("button.rfw-b"));
-    expect(row, "SNAP-real: a wheel control was reached by Tab").toBeDefined();
+    const row = w.rows.find((x) => x.sel.startsWith("a.stx-skip"));
+    expect(row, "SNAP-real: the story Skip link was reached by Tab").toBeDefined();
     if (!row) return;
     // SA-1203 A12 SNAP-real: the browser's own Tab scroll and the site's own snap, both read after settle.
     test.info().annotations.push({
       type: "snap-real",
       description: `scrollY ${row.scrollY0} -> ${row.scrollY1}, drift ${row.scrollY1 - row.scrollY0}, label "${row.info.name}", state ${row.state}`,
     });
-    expect(row.state, "SNAP-real: red only if the control is obscured").not.toBe("obscured");
+    expect(row.state, "SNAP-real: red only if the link is obscured").not.toBe("obscured");
   });
 }

@@ -39,6 +39,7 @@ describe("StripeConnectService state key and audience", () => {
     prisma.user.findFirst.mockResolvedValue({ email: "a@acme.example", role: "TENANT_ADMIN" });
     prisma.tenant.findUnique.mockResolvedValue({
       id: "tenant-1",
+      class: "PRODUCTION",
       slug: "acme",
       name: "Acme",
       status: "ACTIVE",

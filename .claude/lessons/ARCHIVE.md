@@ -4975,3 +4975,18 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** GSAP's `matchMedia` treats a condition named `all` as match-everything and never reads its value. `site.js` declared `{ all: "all", desk: "(min-width: 900px)" }`, so the context was live in print.
 - **Lesson:** **Never name a `matchMedia` condition key `all`; name it for what it means (`screen`) and give it the media query. Prove a print branch by emulating print media and reading that the context reverted, not by reading the condition text.**
 - **Guard:** `site-motion-always.static.test.ts` computes the condition from the source and requires it screen-only (ledger row B1324/T1 in `site-pin-ledger.json`); spec 85 T1 asserts no `js-motion` in print.
+
+## Archived 2026-11-26 (bookkeeping for the 2026-11-26 merges) — no automatic guard, but no code or test cites it (three finished pipeline packs only); oldest uncited entry; headroom for L-414
+
+### L-300 · 2026-10-12 · domain · an edit screen freezes its diff baseline at edit-open and re-bases only on an explicit reload
+
+- **Symptom:** an edit screen sent every line on save after a background refetch, re-writing untouched lines and reverting another writer's change made in between.
+- **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
+- **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
+- **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. archived L-167.
+
+## Archived 2026-11-27 (bookkeeping for the 2026-11-26 merges) — real test or lint guards, no code or entry cites them; headroom for L-415, L-416
+
+### L-387
+
+### L-389

@@ -261,6 +261,8 @@ h2+.lede,.section-head h2+.lede{margin-top:18px}
 
 @media (max-width:899.98px){
   .pgrid--4{display:none}
+  /* the home page has no second table: its plan cards stay on a phone, one column */
+  .home #pricing .pgrid--4{display:grid;grid-template-columns:1fr;gap:14px}
   .pg-notes{text-align:left;margin-top:18px;font-size:17px;line-height:1.4;letter-spacing:-.01em}
   .faq summary{min-height:56px;padding:12px 0;font-size:18px;letter-spacing:-.01em}
   .faq summary .ico{width:20px;height:20px}

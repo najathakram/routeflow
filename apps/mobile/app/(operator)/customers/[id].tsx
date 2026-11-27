@@ -38,6 +38,7 @@ import {
 import { roundMoney } from "@routeflow/pricing";
 import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
+import { paymentRefusalCopy } from "../../../lib/payment-refusal-copy";
 import { confirm } from "../../../lib/confirm";
 import {
   paymentKeyRefusalCopy,
@@ -552,7 +553,11 @@ function RecordAdvanceModal({
         },
         onError: (e: any) =>
           showToast(
-            paymentKeyRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+            paymentRefusalCopy(e) ??
+              paymentKeyRefusalCopy(e) ??
+              e?.response?.data?.message ??
+              e?.message ??
+              "Try again.",
           ),
       },
     );

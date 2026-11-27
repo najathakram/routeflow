@@ -58,6 +58,7 @@ import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { linkedOrderTarget } from "../../../../lib/linked-order-route";
 import { showToast } from "../../../../lib/toast";
+import { paymentRefusalCopy } from "../../../../lib/payment-refusal-copy";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
 import {
   invoiceLineSubLines,
@@ -1315,7 +1316,9 @@ function ApplyAdvanceSheet({
               onClose();
             },
             onError: (e: any) =>
-              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+              showToast(
+                paymentRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+              ),
           },
         ),
       { confirmText: "Apply" },

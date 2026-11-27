@@ -191,7 +191,7 @@ describe("the first screen on a phone", () => {
     const css2 = read("css/home-up.css");
     const q =
       "@media (max-width:899.98px) and (max-height:599.98px) and (min-aspect-ratio:1/1),(min-width:900px) and (max-height:499.98px){";
-    expect(css2.split(q)).toHaveLength(3);
+    expect(css2.split(q)).toHaveLength(2);
     // no bare height block that would reach a laptop window
     expect(css2).not.toContain("@media (max-height:599.98px) and (min-aspect-ratio:1/1){");
   });

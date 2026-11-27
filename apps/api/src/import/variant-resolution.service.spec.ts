@@ -30,7 +30,7 @@ describe("VariantResolutionService", () => {
 
   describe("createVariant", () => {
     it("creates a variant inheriting the parent family's defaults", async () => {
-      prisma.product.findUnique.mockResolvedValue({
+      prisma.product.findFirst.mockResolvedValue({
         id: "p1",
         unit: "case",
         pricePerUnit: "10.00",
@@ -64,7 +64,7 @@ describe("VariantResolutionService", () => {
     });
 
     it("B990: a LEGACY formula-led parent category is NEUTRALISED (not inherited, not refused): the variant is still created", async () => {
-      prisma.product.findUnique.mockResolvedValue({
+      prisma.product.findFirst.mockResolvedValue({
         id: "p1",
         unit: "case",
         pricePerUnit: "10.00",
@@ -87,7 +87,7 @@ describe("VariantResolutionService", () => {
     });
 
     it("throws when the parent does not exist", async () => {
-      prisma.product.findUnique.mockResolvedValue(null);
+      prisma.product.findFirst.mockResolvedValue(null);
       await expect(
         service.createVariant({ parentProductId: "nope", variantName: "X" }),
       ).rejects.toBeInstanceOf(NotFoundException);

@@ -430,14 +430,14 @@ describe("reprint after a return (SA-838a): the paper", () => {
     expect(get("Balance due")).toBe(1250 - get("Paid") - get("Returned"));
   });
 
-  it("(g) an old server prints master's wording, byte for byte (literal text taken from master's behaviour)", () => {
+  it("(g) an old server prints master's wording, byte for byte (literal text taken from master's behaviour), except the balance row, which W-1459 words On account", () => {
     expect(
       paper({
         paid: 6.25,
         balanceDue: 6.25,
         methods: [{ method: "STORE_CREDIT", amount: 6.25 }],
       }),
-    ).toEqual(["Payment method Credit", "Paid $6.25", "Balance due $6.25"]);
+    ).toEqual(["Payment method Credit", "Paid $6.25", "On account $6.25"]);
     document.body.innerHTML = "";
     expect(
       paper({
