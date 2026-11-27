@@ -1148,3 +1148,13 @@ describe("genericToastCopy: B1415 M1b reused adjustment key", () => {
     }
   });
 });
+
+describe("genericToastCopy: CHECKOUT_PAYMENT_IN_PROGRESS is unchanged (SA-1547 PR-5b)", () => {
+  // the platform-admin price override raises this code too, and the backoffice pricing card shows the generic toast: the
+  // plan-pick sentence is mapped only by the plan-pick surface's own mapper, never here
+  it("is the neutral 409, byte for byte", () => {
+    expect(genericToastCopy(err(409, { code: API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS }))).toBe(
+      NEUTRAL_409,
+    );
+  });
+});

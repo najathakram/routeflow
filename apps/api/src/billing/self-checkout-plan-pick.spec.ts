@@ -3,12 +3,7 @@ import * as path from "path";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { planDisplayName } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import {
-  assertSelfServePlanDef,
-  readPickSession,
-  readPickTerms,
-  validPickMetadata,
-} from "./self-checkout-plan-pick";
+import { assertSelfServePlanDef, readPickSession, readPickTerms } from "./self-checkout-plan-pick";
 
 /**
  * SA-1547 PR-5 (SA-1319 R1 / R1a): the READS a card-first pick makes. R7 (only a self-serve key in the PUBLISHED catalog),
@@ -176,6 +171,40 @@ describe("readPickTerms: what the offer is built from (reads only)", () => {
     });
   });
 
+  it("m-4: an ANNUAL-only quoted fee also keeps the business on its own plan (409), as completion's override rule does", async () => {
+    const annualOnly = {
+      planKey: "STARTER",
+      planVersionId: "v13",
+      priceOverrideMonthly: null,
+      priceOverrideAnnual: "990.00",
+    };
+    const err = await rejection(readPickTerms(make({ sub: annualOnly }).d, "t1", "CORE"));
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: API_ERROR_CODES.CUSTOM_FEE_PLAN_PICK_REFUSED,
+    });
+  });
+
+  it.each([
+    ["a null price", null],
+    ["a non-numeric price", "abc"],
+    ["a zero price", 0],
+  ])(
+    "M-1: a published non-custom plan with %s is never quoted: coded 400 PLAN_PRICE_INVALID",
+    async (_n, price) => {
+      const h = make();
+      h.catalog.getPublishedCatalog.mockResolvedValue({
+        ...PUBLISHED,
+        definitions: [...PUBLISHED.definitions, def("GROWTH_X", price as any)].map((d: any) =>
+          d.planKey === "CORE" ? { ...d, monthlyPrice: price } : d,
+        ),
+      });
+      const err = await rejection(readPickTerms(h.d, "t1", "CORE"));
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.PLAN_PRICE_INVALID });
+    },
+  );
+
   it("a missing business is a 404", async () => {
     expect(await rejection(readPickTerms(make({ tenant: null }).d, "t1", "CORE"))).toBeInstanceOf(
       NotFoundException,
@@ -193,11 +222,9 @@ describe("readPickSession: the ONE validator, at create and at completion (m1, m
     expect(readPickSession({ ...meta, quotedMonthly: "199.005" })).toMatchObject({
       terms: { monthly: 199.01 },
     });
-    expect(validPickMetadata(meta)).toBe(true);
   });
   it("a session with no marker is NONE: it completes as a bodyless one", () => {
     expect(readPickSession({ planKey: "CORE" })).toEqual({ status: "NONE" });
-    expect(validPickMetadata({ planKey: "CORE" })).toBe(false);
   });
   it.each([
     ["no plan key", { ...meta, planKey: undefined }],
@@ -206,9 +233,9 @@ describe("readPickSession: the ONE validator, at create and at completion (m1, m
     ["an empty price", { ...meta, quotedMonthly: "" }],
     ["a bad price", { ...meta, quotedMonthly: "abc" }],
     ["a negative price", { ...meta, quotedMonthly: "-1" }],
+    ["a zero quote", { ...meta, quotedMonthly: "0" }],
     ["a marker that is not 1", { ...meta, selfPick: "yes" }],
   ])("a marked session with %s is INVALID, never bodyless", (_n, m) => {
     expect(readPickSession(m as any)).toEqual({ status: "INVALID" });
-    expect(validPickMetadata(m as any)).toBe(false);
   });
 });

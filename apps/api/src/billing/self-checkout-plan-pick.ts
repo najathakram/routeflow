@@ -5,7 +5,8 @@ import type { PrismaService } from "../prisma/prisma.service";
 import { isInviteOnlyPlanKey, normalizePlanKey } from "./plan-catalog.constants";
 import type { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
 import { resolvePlanVersionId } from "./plan-version-pin";
-import { priceOverrideOf } from "./price-override";
+import { PLAN_PRICE_INVALID_MESSAGE, resolvePlanPrice } from "./plan-price";
+import { hasCustomFee } from "./price-override";
 
 /**
  * SA-1547 PR-5 (SA-1319 R1 + R1a): a card-first plan pick. NOTHING is written before payment: the chosen plan, its catalog
@@ -111,7 +112,12 @@ export async function readPickTerms(
       plan: true,
       planVersionId: true,
       subscription: {
-        select: { planKey: true, planVersionId: true, priceOverrideMonthly: true },
+        select: {
+          planKey: true,
+          planVersionId: true,
+          priceOverrideMonthly: true,
+          priceOverrideAnnual: true,
+        },
       },
     },
   });
@@ -130,10 +136,19 @@ export async function readPickTerms(
     const pinned = await d.catalog.getVersionForTenant(resolvePlanVersionId(sub, tenant));
     return { planKey, planName, planVersionId: pinned.id, sameAsPinned: true, monthly: null };
   }
-  if (priceOverrideOf(sub) != null) {
+  // either fee column counts, the same rule completion uses to keep a negotiated fee
+  if (hasCustomFee(sub)) {
     throw new ConflictException({
       code: API_ERROR_CODES.CUSTOM_FEE_PLAN_PICK_REFUSED,
       message: "Your plan has a quoted price. Ask us to change it.",
+    });
+  }
+  // the ONE price rule (resolvePlanPrice): a plan with no usable positive price is never quoted, so never a $0 session
+  const price = resolvePlanPrice(def, null);
+  if (!price.ok || !(price.monthly > 0)) {
+    throw new BadRequestException({
+      code: API_ERROR_CODES.PLAN_PRICE_INVALID,
+      message: PLAN_PRICE_INVALID_MESSAGE,
     });
   }
   return {
@@ -141,7 +156,7 @@ export async function readPickTerms(
     planName,
     planVersionId: published.id,
     sameAsPinned: false,
-    monthly: roundMoney(Number(def.monthlyPrice)),
+    monthly: roundMoney(price.monthly),
   };
 }
 
@@ -165,10 +180,7 @@ export function readPickSession(metadata: Record<string, unknown> | null | undef
   if (metadata[PICK_META.selfPick] !== "1" || !planKey || !planVersionId) {
     return { status: "INVALID" };
   }
-  if (!Number.isFinite(monthly) || monthly < 0) return { status: "INVALID" };
+  // never a $0 or missing quote
+  if (!Number.isFinite(monthly) || monthly <= 0) return { status: "INVALID" };
   return { status: "PICK", terms: { planKey, planVersionId, monthly: roundMoney(monthly) } };
 }
-
-/** True for a well-formed pick session. */
-export const validPickMetadata = (metadata: Record<string, unknown> | null | undefined): boolean =>
-  readPickSession(metadata).status === "PICK";

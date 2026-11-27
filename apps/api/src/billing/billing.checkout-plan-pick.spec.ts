@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { webBaseUrl } from "../config/web-base-url";
 import { pinWallClock } from "../testing/pin-clock";
@@ -107,6 +107,8 @@ function make(
     lockedMonthly?: number;
     override?: number | null;
     tenantClass?: string;
+    /** The business has no Stripe customer yet (ensureStripeCustomer would create one and write the row). */
+    noCustomer?: boolean;
     status?: string;
     readOnlyReason?: string | null;
     sub?: Record<string, unknown>;
@@ -133,7 +135,7 @@ function make(
             planKey,
             planVersionId: o.pinnedVersionId ?? null,
             priceOverrideMonthly: o.override ?? null,
-            stripeCustomerId: "cus_1",
+            stripeCustomerId: o.noCustomer ? null : "cus_1",
           },
           config: { businessName: "Acme" },
         };
@@ -143,7 +145,7 @@ function make(
     tenantSubscription: {
       upsert: jest.fn(async () => ({})), // ensureStripeCustomer's only write
       findUnique: jest.fn(async () => ({
-        stripeCustomerId: "cus_1",
+        stripeCustomerId: o.noCustomer ? null : "cus_1",
         stripeSubId: null,
         externalPayment: false,
         catchupState: null,
@@ -302,6 +304,54 @@ describe("R1 3 / 4: the one slot", () => {
   });
 });
 
+describe("m-2: a REFUSED pick writes nothing at all, identity included", () => {
+  const noTrace = (h: ReturnType<typeof make>) => {
+    expect(h.stripe.createCustomer).not.toHaveBeenCalled();
+    expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(h.create).not.toHaveBeenCalled();
+  };
+
+  it.each([
+    [
+      "a TRIAL with the flag off (the gate refuses)",
+      () => new ForbiddenException({ reason: "trial_active" }),
+    ],
+    [
+      "an ACTIVE business with no card (PLAN_PICK_ASK_FOR_LINK)",
+      () => new ConflictException({ code: API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK }),
+    ],
+  ])("%s creates no Stripe customer and no subscription row", async (_n, refusal) => {
+    const h = make({ noCustomer: true });
+    const gate = jest.fn(async () => {
+      throw refusal();
+    });
+    const err = await rejection(
+      h.billing.createCheckoutSession("t1", { ...self, pick: { planKey: "GROWTH", gate } }),
+    );
+    expect(err).toBeDefined();
+    noTrace(h);
+  });
+
+  it("an offer check that refuses (LITE key, a plan with no price) creates none either", async () => {
+    const h = make({ noCustomer: true });
+    expect(await rejection(h.billing.createCheckoutSession("t1", pick("LITE").opts))).toBeDefined();
+    noTrace(h);
+  });
+
+  it("the order is: gate, then the customer, then the session", async () => {
+    const h = make({ noCustomer: true });
+    h.stripe.createCustomer.mockImplementation(async () => {
+      log.push("customer");
+      return { id: "cus_1" };
+    });
+    await h.billing.createCheckoutSession("t1", pick("GROWTH").opts);
+    expect(h.stripe.createCustomer).toHaveBeenCalledTimes(1);
+    const inHold = log.slice(log.indexOf("lock") + 1);
+    expect(inHold.indexOf("gate")).toBeLessThan(inHold.indexOf("customer"));
+    expect(inHold.indexOf("customer")).toBeLessThan(inHold.indexOf("session"));
+  });
+});
+
 describe("R1a 9: a business pinned at a locked price picks its own plan", () => {
   it("the quoted price and version are the PINNED ones, not the published ones", async () => {
     const h = make({ planKey: "CORE", pinnedVersionId: "v9", lockedMonthly: 79 });
@@ -325,18 +375,27 @@ describe("R1 trial pick: a TRIAL business that picks pays now", () => {
 });
 
 describe("R6 / R7: what a pick may name", () => {
-  it.each(["LITE", "ENTERPRISE", "NOPE"])(
-    "%s is a coded 400: no session, nothing written",
-    async (k) => {
-      const h = make();
-      const err = await rejection(h.billing.createCheckoutSession("t1", pick(k).opts));
-      expect(err).toBeInstanceOf(BadRequestException);
-      expect(err.getResponse()).toMatchObject({
-        code: API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED,
-      });
-      expect(h.create).not.toHaveBeenCalled();
-    },
-  );
+  it("M-1: a published plan with a null price is refused (400 PLAN_PRICE_INVALID): no $0 session", async () => {
+    const h = make();
+    h.catalog.getPublishedCatalog.mockResolvedValue({
+      ...PUBLISHED,
+      definitions: PUBLISHED.definitions.map((d: any) =>
+        d.planKey === "GROWTH" ? { ...d, monthlyPrice: null } : d,
+      ),
+    });
+    const err = await rejection(h.billing.createCheckoutSession("t1", pick("GROWTH").opts));
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.PLAN_PRICE_INVALID });
+    expect(h.create).not.toHaveBeenCalled();
+  });
+
+  it("the subscription checks run ONCE for a pick (under the hold), not twice", async () => {
+    const h = make({ sub: { stripeSubId: "sub_old" } });
+    h.stripe.getSubscription.mockResolvedValue({ status: "canceled" }); // a stale id: not live, the checkout goes on
+    await h.billing.createCheckoutSession("t1", pick("GROWTH").opts);
+    expect(h.stripe.getSubscription).toHaveBeenCalledTimes(1);
+    expect(h.create).toHaveBeenCalledTimes(1);
+  });
 
   it("R6: an invited LITE business sending {planKey: STARTER} is a coded 400", async () => {
     const h = make({ planKey: "LITE" });

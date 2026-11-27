@@ -27,6 +27,7 @@ import {
   PICK_META,
   readPickSession,
   readPickTerms,
+  type PickTerms,
   type CheckoutPick,
 } from "./self-checkout-plan-pick";
 import { EmailService } from "../email/email.service";
@@ -47,10 +48,11 @@ import {
 } from "./dunning-config";
 import { adminLockedRefusal } from "./admin-lock-refusal";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { fromCents, roundMoney } from "@routeflow/pricing";
+import { fromCents, roundMoney, toCents } from "@routeflow/pricing";
 import {
   type PricePushOptions,
   type PricePushResult,
+  hasCustomFee,
   priceOverrideIdempotencyKey,
   prorationAllowedFor,
   isPermanentPricePushReason,
@@ -609,7 +611,8 @@ export class BillingService {
     const interval: "month" | "year" = opts?.interval === "year" ? "year" : "month";
 
     // The refusals that read the subscription, a catch-up claim, an overdue invoice and Stripe (a plan pick re-runs it under the hold).
-    await this.assertCheckoutAllowed(tenantId);
+    // a plan pick runs it ONCE, under the hold (`beforeOffer`): no second pair of Stripe reads out here
+    if (!opts.pick) await this.assertCheckoutAllowed(tenantId);
 
     // SA-690 option A: every active self-serve add-on that has no Stripe item yet (a trial's, or a
     // pilot's) is billed on THIS checkout as one extra line. The live-subscription guard above runs
@@ -633,22 +636,33 @@ export class BillingService {
     // W-1338 (W9): an unpriceable business never gets a Stripe customer (throws BadRequest). Gate only: no Stripe call,
     // value unbound; the price billed is read under the slot's lock. The customer id is identity, not a term.
     await this.pricing.checkoutPriceData(tenantId, interval, undefined, { readOnly: true });
-    const customerId = await this.ensureStripeCustomer(tenantId);
+    // A bodyless request resolves the customer now (as before). A plan pick resolves it UNDER the hold, after its refusals (m-2):
+    // the gate, then the offer check, then the customer, then the session; a refused pick leaves no customer and no row.
+    const pick = opts.pick;
+    let customerId = "";
+    let picked: PickTerms | undefined;
+    const resolveCustomer = async () => (customerId = await this.ensureStripeCustomer(tenantId));
+    if (!pick) await resolveCustomer();
 
     // W-1338: ONE slot for the admin link and Pay now; it reads the terms (checkoutOffer) only while it holds the lock.
     return openCheckoutSession(
       { prisma: this.prisma, stripe: this.stripe },
       {
         tenantId,
-        customerId,
+        customerId: pick ? resolveCustomer : customerId,
         surface: opts.surface,
-        readOffer: () =>
-          this.checkoutOffer(tenantId, tenant.slug, customerId, interval, opts.pick?.planKey),
-        // SA-1547: a plan pick's eligibility gate (ONCE per click) and the checks above run UNDER the hold, after the wall
-        beforeOffer: opts.pick
+        readOffer: () => this.checkoutOffer(tenantId, tenant.slug, customerId, interval, picked),
+        // SA-1547: a plan pick's eligibility gate (ONCE per click), the subscription checks and the offer check (whitelist, LITE,
+        // quoted fee, the one price rule) run UNDER the hold, after the wall and before any customer, list or session
+        beforeOffer: pick
           ? async () => {
-              await opts.pick!.gate();
+              await pick.gate();
               await this.assertCheckoutAllowed(tenantId);
+              picked = await readPickTerms(
+                { prisma: this.prisma, catalog: this.catalog! },
+                tenantId,
+                pick.planKey,
+              );
             }
           : undefined,
       },
@@ -733,13 +747,9 @@ export class BillingService {
     slug: string,
     customerId: string,
     interval: "month",
-    /** SA-1547 PR-5: the plan the business picked. Absent = today's offer, from the pinned plan, unchanged. */
-    pickPlanKey?: string,
+    /** SA-1547 PR-5: the plan the business picked (read under the hold). Absent = today's offer, from the pinned plan, unchanged. */
+    pick?: PickTerms,
   ): Promise<SlotOffer> {
-    // read UNDER the lock: refuses a pick the business may not make (whitelist, LITE, quoted fee) before anything is closed
-    const pick = pickPlanKey
-      ? await readPickTerms({ prisma: this.prisma, catalog: this.catalog! }, tenantId, pickPlanKey)
-      : undefined;
     // A DIFFERENT plan is billed from its PUBLISHED version (price and included add-ons); the plan it is on, from its pin.
     const moved = pick && !pick.sameAsPinned ? pick : undefined;
     const addons = await this.mutations.checkoutAddonLines(
@@ -2095,20 +2105,16 @@ export class BillingService {
     // bodyless one. Any other session completes exactly as before.
     const pickSession = readPickSession(session.metadata);
     const pick = pickSession.status === "PICK" ? pickSession.terms : null;
-    const applyPick = !!pick && settled;
-    const holdsPlan = (!!pick && !settled) || pickSession.status === "INVALID";
-    if (pickSession.status === "INVALID") {
-      this.logger.error(
-        `checkout.session.completed ${session.id ?? "?"} for tenant ${tenantId}: a pick session with bad terms - plan not applied`,
-      );
-      if (settled && resolvedPlanKey && session.id) {
-        await this.billingNotification.notifyCheckoutPlanNotApplied(
-          tenantId,
-          resolvedPlanKey,
-          session.id,
-        );
-      }
-    }
+    // m-5 (SA-1319 R3): what Stripe actually charges is the truth of what was paid. At the settled apply the quote must equal the
+    // subscription's BASE item (its add-ons are their own items), in cents; any other figure is never applied (picks are monthly).
+    const chargedCents =
+      pick && settled
+        ? (stripeBaseItem(stripeSub, new Set(checkoutAddonItems(stripeSub).map((i) => i.itemId)))
+            ?.price?.unit_amount ?? null)
+        : null;
+    const priceMismatch = !!pick && settled && chargedCents !== toCents(pick.monthly);
+    const applyPick = !!pick && settled && !priceMismatch;
+    const holdsPlan = (!!pick && !settled) || pickSession.status === "INVALID" || priceMismatch;
     let resolvedBasePrice: number | null = null;
     try {
       resolvedBasePrice = applyPick
@@ -2143,9 +2149,7 @@ export class BillingService {
         tenant: { select: { status: true, readOnlyReason: true } },
       },
     });
-    const hasNegotiatedOverride =
-      existingOverride?.priceOverrideMonthly != null ||
-      existingOverride?.priceOverrideAnnual != null;
+    const hasNegotiatedOverride = hasCustomFee(existingOverride);
 
     // SA-690: for every session — flag on or off — the customer must be the tenant's before ANYTHING
     // below is written or read for it: not the plan, not an add-on item, not even the stale-downgrade
@@ -2207,6 +2211,33 @@ export class BillingService {
       // webhook is acked. A still-failing push throws, so Stripe redelivers again.
       await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
       return;
+    }
+    // A PAID pick whose terms are bad, or whose quote is not what Stripe charged, is never applied (nor treated as bodyless):
+    // the paid-but-not-applied trail (one refusal row and the platform notice, once per session). Raised only AFTER the customer
+    // check and the APPLIED early return above, so a foreign or already-handled session raises nothing.
+    if (settled && (pickSession.status === "INVALID" || priceMismatch)) {
+      const reason = priceMismatch ? "pick_price_mismatch" : "pick_terms_invalid";
+      const message =
+        `Paid checkout ${session.id ?? "?"} for tenant ${tenantId} was NOT applied: ` +
+        (priceMismatch
+          ? "the plan price in the session does not match what Stripe charges for its base item."
+          : "the session is marked as a plan pick but its terms are missing or invalid.") +
+        " The customer paid: reconcile it in Stripe (apply the plan by hand, or refund).";
+      this.logger.error(`Tenant ${tenantId}: ${message}`);
+      await this.recordCheckoutRefusal(
+        session,
+        tenantId,
+        { reason, ...this.checkoutCustomerTrail(session, existingOverride, stripeSub) },
+        {
+          alsoWrite: (tx) =>
+            writeAdminNotice(tx, {
+              tenantId,
+              action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
+              message,
+              meta: { reason, checkoutSessionId: session.id ?? null },
+            }),
+        },
+      );
     }
     const storedSubId: string | null = existingOverride?.stripeSubId ?? null;
     // The stored subscription's liveness is read at Stripe HERE, outside any transaction (never a
@@ -2398,7 +2429,10 @@ export class BillingService {
     const convertedAt = (await this.isTrialConversion(tenantId, settled, existingOverride))
       ? new Date()
       : null;
-    const conversionPlanKey = planKeyForCheckout ?? resolvedPlanKey;
+    // a session whose plan was NOT applied (an unpaid pick, a bad one) reports the plan the business actually holds
+    const conversionPlanKey = holdsPlan
+      ? (existingOverride?.planKey ?? null)
+      : (planKeyForCheckout ?? resolvedPlanKey);
 
     const upsertArgs = {
       where: { tenantId },
@@ -2583,7 +2617,7 @@ export class BillingService {
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
               await this.writeAppliedMarker(tx, tenantId, session.id, {
-                toPlanKey: planKeyForCheckout ?? resolvedPlanKey,
+                toPlanKey: conversionPlanKey,
                 subscriptionId,
               });
             }

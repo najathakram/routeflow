@@ -8,6 +8,13 @@
  */
 export const CUSTOM_FEE_UNCHANGED = "custom fee unchanged — adjust it in Pricing";
 
+/** True when the row has ANY negotiated fee: either column counts (an annual-only fee is a real negotiated case). */
+export function hasCustomFee(
+  sub: { priceOverrideMonthly?: unknown; priceOverrideAnnual?: unknown } | null | undefined,
+): boolean {
+  return sub?.priceOverrideMonthly != null || sub?.priceOverrideAnnual != null;
+}
+
 /** The row's negotiated monthly fee, or null when it pays the catalog price. */
 export function priceOverrideOf(
   sub: { priceOverrideMonthly?: unknown } | null | undefined,
