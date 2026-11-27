@@ -56,7 +56,7 @@ async function stopNow(page: Page): Promise<Stop | null> {
       style: s.outlineStyle,
       width: parseFloat(s.outlineWidth) || 0,
       bg,
-      inWheel: !!el.closest(".rfw"),
+      inWheel: !!el.closest("#story .stx-svg"),
     };
   });
 }
@@ -199,19 +199,19 @@ for (const { route, scope } of [
 
 // ─── P04 ────────────────────────────────────────────────────────────────────
 
-test("P04 no gradient under the header on the home hero at 393", async ({ page }) => {
+test("P04 no gradient under the header on the home story at 393", async ({ page }) => {
   await open(page, "/", 393, 844);
   const layers = await page.evaluate(() => {
     const out: { sel: string; image: string }[] = [];
-    for (const sel of [".hx-over", ".hx-up .hx-over", ".hx", ".hx-up", ".hx-lay"]) {
+    for (const sel of ["#story", ".stx", ".stx-pin", ".stx-grid"]) {
       for (const el of Array.from(document.querySelectorAll(sel))) {
         out.push({ sel, image: getComputedStyle(el).backgroundImage });
       }
     }
     return out;
   });
-  nonEmpty(layers, "hero layers");
-  expect(layers.some((l) => l.sel === ".hx-over")).toBe(true);
+  nonEmpty(layers, "story layers");
+  expect(layers.some((l) => l.sel === ".stx-pin")).toBe(true);
   const bad = layers.filter((l) => /gradient\(/.test(l.image));
   expect(bad, `gradient under the header: ${JSON.stringify(bad)}`).toEqual([]);
 });

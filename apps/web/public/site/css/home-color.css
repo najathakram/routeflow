@@ -22,7 +22,7 @@
 .home .sl .sub,.home .jr .sub,.home .ct .sub{color:var(--rf-text-2)}
 
 /* The product pictures keep a white sheet on a line, so a screen always looks like the screen in the app. */
-.home .sl-line,.home .tier,.home .ct-win,.home .st-shop{box-shadow:var(--rf-ring)}
+.home .sl-line,.home .tier{box-shadow:var(--rf-ring)}
 
 /* ---------- use cases: a white card on a line for each of the twelve ---------- */
 .home .inc{position:relative;overflow:hidden;background:var(--rf-white)}
@@ -49,16 +49,15 @@
 }
 
 /* The dot before a use-case example's name is the accent. */
-.home .uc-t h3::before{background:var(--rf-text)}
 
 /* Small grey text on the bands is the steel job colour. */
-.home .sy-list span,.home .sy-eye,.home .uc-t p,.home .hx-cap,.home .hx-note,.home .rfw-keys li span,.home .rfw-keyh,.home .rfw--static .rfw-eye,.home .sl-prod{color:var(--rf-text-2)}
+.home .sy-list span,.home .sy-eye,.home .sl-prod{color:var(--rf-text-2)}
 
 /* ---------- the dark bands stay flat ---------- */
 .home #founder{position:relative}
 .home .end{position:relative;overflow:hidden}
 .home .end>*{position:relative}
-.home .pb-pin,.home .sy{position:relative}
+.home .sy{position:relative}
 
 /* ---------- FAQ: a friendly delivery van, so the page is not only words ---------- */
 .home .fq .fq-art{display:block;width:min(260px,64%);margin:0 auto 18px}

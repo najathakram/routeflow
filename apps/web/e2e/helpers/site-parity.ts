@@ -26,8 +26,10 @@ export type ParityChange = {
   key: string;
   row: string;
   kind: "added" | "removed";
-  /** The requirement that allows this change, e.g. "R22". */
+  /** The requirement that allows this change, e.g. "R22", or the work id of the change, e.g. "W-1265". */
   req: string;
+  /** One line on why, for the reviewer (optional on older rows). */
+  why?: string;
 };
 
 export const parityKey = (route: string, cls: string): string => `${route}|${cls}`;
@@ -143,9 +145,14 @@ export function readParityFile(file: string): ParityFile {
 export function readChanges(): ParityChange[] {
   const list = JSON.parse(fs.readFileSync(PARITY_CHANGES_PATH, "utf8")) as ParityChange[];
   for (const c of list) {
-    if (!/^R\d+$/.test(c.req) || !c.key || !c.row || (c.kind !== "added" && c.kind !== "removed")) {
+    if (
+      !/^(R\d+|W-\d+)$/.test(c.req) ||
+      !c.key ||
+      !c.row ||
+      (c.kind !== "added" && c.kind !== "removed")
+    ) {
       throw new Error(
-        `site-parity.changes.json: bad row ${JSON.stringify(c)} (needs key, row, kind, req "R#")`,
+        `site-parity.changes.json: bad row ${JSON.stringify(c)} (needs key, row, kind, req "R#" or "W-#")`,
       );
     }
   }

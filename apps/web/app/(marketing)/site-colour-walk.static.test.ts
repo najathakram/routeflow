@@ -482,14 +482,14 @@ describe("S1 + S3 + S5 + S13: what the walk's source may do", () => {
     expect(scoped).toHaveLength(calls.length);
   });
 
-  it("S5: settleThenRead writes no scroll; the walk's scroll writes are the sweep (its start and each text), the scroll-through, the state revisits and the top", () => {
+  it("S5: settleThenRead writes no scroll; the walk's scroll writes are the sweep (its start and each text), the story steps (each caption read in its own state), the scroll-through, the state revisits and the top", () => {
     const at = walk.search(/const settleThenRead\s*=/);
     expect(at).toBeGreaterThan(0);
     const body = blockAfter(walk, at);
     expect(body.length).toBeGreaterThan(500);
     expect(body).not.toMatch(/scrollTo|scrollIntoView|scrollBy|\.scroll\(|scrollTop\s*=/);
     const writers = walk.match(/scrollTo\(|scrollIntoView\(|scrollBy\(/g) ?? [];
-    expect(writers).toHaveLength(7);
+    expect(writers).toHaveLength(9);
   });
 
   it("S13: each walk runs in its own browser, closed in a finally and killed by a hard timer; crops go under local-assets", () => {

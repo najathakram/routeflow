@@ -343,7 +343,6 @@ const NON_FEE_SENTENCES: ReadonlyArray<NonFeeEntry> = [
   ["home.html", "Growth"],
   ["home.html", "Scale"],
   ["home.html", "Enterprise"],
-  ["home.html", "Every trial starts on Starter, 14 days free."],
   ["home.html", "Need more than Scale?"],
   ["home.html", "about Enterprise."],
   ["home.html", "Every trial starts on Starter."],
@@ -733,7 +732,7 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
       }
     }
     // exact, as on master: the pricing page keeps its plan cards and table (R-210 M2)
-    expect(seen).toBe(42);
+    expect(seen).toBe(36);
     expect(bad).toEqual([]);
   });
 
