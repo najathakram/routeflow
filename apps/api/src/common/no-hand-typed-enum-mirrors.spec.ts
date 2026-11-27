@@ -59,6 +59,12 @@ const SKIP_DIRS = new Set([
 ]);
 const SKIP_FILE = /\.(test|spec)\.[cm]?[jt]sx?$|\.d\.ts$/;
 const SHARED_MODULE = /^(@routeflow\/types(\/.*)?|@prisma\/client)$/;
+/**
+ * W-1470: inside packages/types the shared enums are reached by a relative path (a package cannot import its own
+ * name), so there `./api/enums` (or `../api/enums`, `./enums`) is the same shared module, guarded by the same compiler.
+ */
+const IN_TYPES_ENUMS = /^\.{1,2}\/(api\/)?enums$/;
+const isInTypesPackage = (fileName: string) => /(^|[\\/])packages[\\/]types[\\/]/.test(fileName);
 const MIN_MEMBERS = 3;
 
 type Kind = "array" | "union" | "object" | "enum" | "chain" | "case";
@@ -126,7 +132,9 @@ function sharedImports(sf: ts.SourceFile): Set<string> {
   const names = new Set<string>();
   for (const s of sf.statements) {
     if (!ts.isImportDeclaration(s) || !ts.isStringLiteral(s.moduleSpecifier)) continue;
-    if (!SHARED_MODULE.test(s.moduleSpecifier.text)) continue;
+    const spec = s.moduleSpecifier.text;
+    const inTypes = isInTypesPackage(sf.fileName) && IN_TYPES_ENUMS.test(spec);
+    if (!SHARED_MODULE.test(spec) && !inTypes) continue;
     const b = s.importClause?.namedBindings;
     if (b && ts.isNamedImports(b)) b.elements.forEach((el) => names.add(el.name.text));
   }
@@ -344,6 +352,19 @@ describe("SA-1049 PR-2 — the detector (G-1, in-memory fixtures)", () => {
     expect(find(satisfied)).toEqual([]);
     expect(find(local).filter((h) => h.kind === "object")).toHaveLength(1);
     expect(find(literal).filter((h) => h.kind === "object")).toHaveLength(1);
+  });
+
+  it("W-1470: inside packages/types a Record keyed by the type from ./api/enums is the shared type; elsewhere it is not", () => {
+    const body = `{ ${v.map((x) => `${x}: 1`).join(", ")} }`;
+    const rel = `import type { ${ENUM_NAME} } from "./api/enums";\nconst R: Record<${ENUM_NAME}, number> = ${body};`;
+    expect(find(rel, "packages/types/some-table.ts")).toEqual([]);
+    expect(find(rel, "apps/web/lib/some-table.ts").filter((h) => h.kind === "object")).toHaveLength(
+      1,
+    );
+    const other = `import type { ${ENUM_NAME} } from "./local-copy";\nconst R: Record<${ENUM_NAME}, number> = ${body};`;
+    expect(
+      find(other, "packages/types/some-table.ts").filter((h) => h.kind === "object"),
+    ).toHaveLength(1);
   });
 
   it("does not exempt Partial<Record<Shared, …>>: SA-1049 A-1 files it as a `subset` row", () => {

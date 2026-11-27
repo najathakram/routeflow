@@ -74,6 +74,18 @@ export interface InvoiceStatusContext {
 
 const days = (n: number) => `${n} day${n === 1 ? "" : "s"}`;
 
+/** Statuses whose word never carries a due count (settled, voided, written off or not yet sent). */
+const NO_DUE_WORDING: Record<InvoiceStatus, boolean> = {
+  DRAFT: true,
+  SENT: false,
+  VIEWED: false,
+  PARTIAL: false,
+  PAID: true,
+  OVERDUE: false,
+  VOID: true,
+  WRITTEN_OFF: true,
+};
+
 /** The word and the tone a staff screen shows for an invoice. */
 export function invoiceStatusView(
   status: string,
@@ -82,9 +94,7 @@ export function invoiceStatusView(
 ): InvoiceStatusView {
   const known = (INVOICE_STATUS_LABEL as Record<string, string | undefined>)[status];
   const plain: InvoiceStatusView = { label: known ?? status, tone: invoiceStatusTone(status) };
-  if (status === "PAID" || status === "VOID" || status === "WRITTEN_OFF" || status === "DRAFT") {
-    return plain;
-  }
+  if ((NO_DUE_WORDING as Record<string, boolean | undefined>)[status]) return plain;
 
   const { tenantDay } = ctx;
   const due = calendarDateFromIso(dueDate);
