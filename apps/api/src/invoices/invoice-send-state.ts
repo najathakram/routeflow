@@ -391,6 +391,11 @@ export interface SendEmailOpts {
   orderId?: string;
   /** The order's OTHER invoices, attached beside this one. */
   withInvoiceIds?: string[];
+  /**
+   * W-1443 (R-239 M1/M4): the person who pressed Send, for the private copy. Set ONLY by the send-email route (null in a
+   * support session). Absent = no copy: automatic sends, the pickup completion email and every other caller.
+   */
+  copyActorId?: string | null;
 }
 
 type PrismaLike = { forTenant(): any; getTenantId(): string | null | undefined };
@@ -434,6 +439,46 @@ export async function recordInvoiceEmailed(
       `invoice ${p.id}: the email went out but its send record could not be written: ${
         err instanceof Error ? err.message : String(err)
       }`,
+    );
+  }
+}
+
+/**
+ * SA-860: verify after the SENT commit. The money truth is the real tx; if the live invoice no longer hashes to what was
+ * emailed (a concurrent credit or edit between the dry run and the commit), append ONE correction record with fp null
+ * (the newest row decides: "emailed, changes can't be checked"). Never refuses and never rolls back: the email has gone.
+ * Best-effort: the email went and the money committed, so a failed re-read is logged, never thrown (it must not turn
+ * the send into a 500 or skip the emit and the notification after it).
+ */
+export async function recheckEmailedFingerprint(
+  prisma: PrismaLike,
+  featureConfig: any,
+  p: {
+    id: string;
+    actorId: string | null;
+    to: string;
+    stage: string;
+    fingerprint: string | null;
+    variant?: string | null;
+    kind?: string | null;
+  },
+): Promise<void> {
+  try {
+    const live = await invoiceFingerprintOf(prisma, featureConfig, p.id, p.stage);
+    if (live !== p.fingerprint) {
+      await recordInvoiceEmailed(prisma, {
+        id: p.id,
+        actorId: p.actorId,
+        to: p.to,
+        fingerprint: null,
+        variant: p.variant,
+        kind: p.kind, // I-120: a completion email's correction keeps its kind
+        note: "the copy emailed may not match the credits applied",
+      });
+    }
+  } catch (err) {
+    logger.warn(
+      `invoice ${p.id}: the post-send fingerprint check failed (${err instanceof Error ? err.message : String(err)})`,
     );
   }
 }
