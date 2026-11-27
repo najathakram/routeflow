@@ -142,6 +142,8 @@ const EXEMPT: Record<string, Reason> = {
   "apps/api/scripts/report-receiving-unit-drift.mjs": "read-only",
   "apps/api/scripts/report-recurring-boxed-template-qty.mjs": "read-only",
   "apps/api/scripts/report-exempt-orders-taxed.mjs": "read-only",
+  "apps/api/scripts/report-b1461-stale-draft-tax.mjs": "read-only",
+  "apps/api/scripts/report-import-orphan-tenant-link.mjs": "read-only",
   "apps/api/scripts/report-plaintext-secrets.mjs": "read-only",
   "apps/api/scripts/report-order-discounts.mjs": "read-only",
   "apps/api/scripts/report-read-only-sellers-with-buyers.mjs": "read-only",
