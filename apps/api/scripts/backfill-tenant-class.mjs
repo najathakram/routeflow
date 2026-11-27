@@ -13,12 +13,16 @@
 //   db spec or a one-tenant prod rehearsal — never let a spec run an unscoped --apply on a shared DB.
 
 import { pathToFileURL } from "node:url";
-import { PrismaClient } from "@prisma/client";
+// @prisma/client is CommonJS: a named import fails under Node 22+/24 ("Named export not found").
+// Take the default export and destructure, so the module imports (and the dry run connects).
+import prismaPkg from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { resolveDatabaseUrl, redactUrl, scrubSecrets } from "./lib/railway-db-url.mjs";
 import guard from "./lib/live-target-guard.cjs";
 import protectedSlugsLib from "./lib/protected-slugs.cjs";
+
+const { PrismaClient } = prismaPkg;
 
 // Row 195: `--apply` never reclassifies a PROTECTED tenant (paying | stripe-linked |
 // PROTECTED_TENANT_SLUGS). The dry-run table still lists everyone.
