@@ -561,6 +561,15 @@ function installReader(cfg: ReaderCfg): void {
 
   const R = {
     start: async () => {
+      // The page is quiet before the first read: fonts are in, images decoded, and the page's own late layout refresh
+      // (queued after both) has run, so nothing moves under a focus stop later (a refresh re-lays a pinned page).
+      await document.fonts.ready;
+      await Promise.all(
+        [...document.images].map((im) =>
+          im.decode ? im.decode().catch(() => undefined) : undefined,
+        ),
+      );
+      for (let i = 0; i < 20; i++) await frame();
       window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
       (document.activeElement as HTMLElement | null)?.blur?.();
       await settle(body, "plain");
