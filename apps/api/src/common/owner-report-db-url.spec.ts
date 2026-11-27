@@ -21,6 +21,8 @@ const SCRIPTS = join(__dirname, "..", "..", "scripts");
 
 /** The owner-run read-only reports B768 moved onto scripts/lib/report-db-url.mjs. */
 const B768_REPORTS = [
+  "report-b1461-stale-draft-tax.mjs",
+  "report-import-orphan-tenant-link.mjs",
   "audit-tenant-entitlements.mjs",
   "check-customer-tenants.js",
   "check-discrepancies.js",
