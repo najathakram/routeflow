@@ -1,5 +1,4 @@
-import { buildGlobalValidationPipe } from "../common/global-validation-pipe";
-import { CheckoutPlanPickDto, SettingsBillingController } from "./settings-billing.controller";
+import { SettingsBillingController } from "./settings-billing.controller";
 import { QuoteDto } from "./dto/quote.dto";
 
 interface AuthUser {
@@ -111,17 +110,10 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     expect(result).toEqual({ checkoutUrl: "https://checkout.stripe.com/x", sessionId: "cs_1" });
   });
 
-  // R2.9, amended by SA-1547 PR-5 (card-first chunk 2): the endpoint takes ONE optional input, a plan KEY. A caller still
-  // cannot direct checkout at a price, an interval or an add-on: the global pipe refuses every other field with a 400,
-  // and which keys may be picked is the published catalog's call (self-checkout-plan-pin.spec.ts).
-  it("R2.9 the only client input is a plan key: any other body field is a 400", async () => {
+  // R2.9, amended by SA-1547 PR-5: the endpoint takes ONE optional input, a plan KEY (the whitelist is pinned in
+  // settings-billing.self-pay.spec.ts); a caller still cannot direct checkout at a price, an interval or an add-on.
+  it("R2.9 the route's only client input is the optional plan-key body", () => {
     expect(SettingsBillingController.prototype.createCheckout.length).toBe(2);
-    const pipe = buildGlobalValidationPipe();
-    const run = (body: object) =>
-      pipe.transform(body, { type: "body", metatype: CheckoutPlanPickDto });
-    await expect(run({ planKey: "CORE" })).resolves.toEqual({ planKey: "CORE" });
-    await expect(run({ planKey: "CORE", price: 1 })).rejects.toThrow();
-    await expect(run({ interval: "year" })).rejects.toThrow();
   });
 
   // SA-1547: the REG-6 kill switch (INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT) now lives in the eligibility helper; its own

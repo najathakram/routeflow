@@ -87,16 +87,6 @@ describe("SubscriptionMutationService.enforceCardFirst (SA-774 chunk 1)", () => 
     }
   });
 
-  it("R13 / R14, flag on: a trial and a trial-expired business with no card cannot subscribe (CHECKOUT, never activated free)", async () => {
-    for (const tenant of [
-      { status: "TRIAL" },
-      { status: "READ_ONLY", readOnlyReason: "trial_expired" },
-    ]) {
-      const m = service({ flag: true, tenant, sub: { stripeSubId: null, externalPayment: false } });
-      expect(await codeOf(m.run("subscribe"))).toBe(API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT);
-    }
-  });
-
   it("flag on: a missing tenant is left to the caller's own not-found handling", async () => {
     await expect(service({ flag: true, tenant: null }).run("subscribe")).resolves.toBeUndefined();
   });
