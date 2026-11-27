@@ -191,7 +191,7 @@ export type CheckStatus = (typeof CHECK_STATUS_VALUES)[number];
 // apps/api/scripts/backfill-2169-nsf-system-kind.mjs) hand-copies the single string as
 // `NSF_FEE_SYSTEM_KIND`, pinned there against the schema source in its own `--self-test`. This
 // array is the shared mirror for web/mobile (and this file's own enum-parity pin).
-export const INVOICE_ITEM_SYSTEM_KIND_VALUES = ["NSF_FEE"] as const;
+export const INVOICE_ITEM_SYSTEM_KIND_VALUES = ["NSF_FEE", "IMPORTED_SUMMARY"] as const;
 export type InvoiceItemSystemKind = (typeof INVOICE_ITEM_SYSTEM_KIND_VALUES)[number];
 
 // SA-436 (#2401): why a (credit note, invoice) pair is never re-applied automatically — the
@@ -793,6 +793,62 @@ export const CUSTOMER_LINK_STATUS_VALUES = [
   "DISCONNECTED",
 ] as const;
 export type CustomerLinkStatusValue = (typeof CUSTOMER_LINK_STATUS_VALUES)[number];
+
+/**
+ * SA-1295 A2 (QuickBooks history import, Sitting 1): the six brand-new Prisma enums the import screen reads. Each mirrors
+ * its Prisma enum (pinned by `enum-parity.spec.ts`, L-072): batch status, file kind, issue severity, document kind, line
+ * kind and item match method.
+ */
+export const LEGACY_IMPORT_BATCH_STATUS_VALUES = [
+  "UPLOADED",
+  "PARSING",
+  "STAGED",
+  "CONFIRMED",
+  "DISCARDED",
+  "FAILED",
+] as const;
+export type LegacyImportBatchStatusValue = (typeof LEGACY_IMPORT_BATCH_STATUS_VALUES)[number];
+
+export const LEGACY_IMPORT_FILE_KIND_VALUES = [
+  "SALES_LINES",
+  "OPEN_ITEMS",
+  "PAYMENTS",
+  "CREDIT_MEMOS",
+  "CUSTOMER_LIST",
+  "ITEM_LIST",
+  "API_PULL",
+] as const;
+export type LegacyImportFileKindValue = (typeof LEGACY_IMPORT_FILE_KIND_VALUES)[number];
+
+export const LEGACY_IMPORT_ISSUE_SEVERITY_VALUES = ["ERROR", "WARNING"] as const;
+export type LegacyImportIssueSeverityValue = (typeof LEGACY_IMPORT_ISSUE_SEVERITY_VALUES)[number];
+
+export const LEGACY_SALES_DOCUMENT_KIND_VALUES = [
+  "INVOICE",
+  "CREDIT_MEMO",
+  "SALES_RECEIPT",
+  "REFUND_RECEIPT",
+  "NEGATIVE_UNKNOWN",
+] as const;
+export type LegacySalesDocumentKindValue = (typeof LEGACY_SALES_DOCUMENT_KIND_VALUES)[number];
+
+export const LEGACY_SALES_LINE_KIND_VALUES = [
+  "PRODUCT",
+  "SHIPPING",
+  "DISCOUNT",
+  "NOTE",
+  "OTHER",
+] as const;
+export type LegacySalesLineKindValue = (typeof LEGACY_SALES_LINE_KIND_VALUES)[number];
+
+export const LEGACY_ITEM_MATCH_METHOD_VALUES = [
+  "EXACT",
+  "NORMALISED",
+  "ALIAS",
+  "MANUAL",
+  "NONE",
+] as const;
+export type LegacyItemMatchMethodValue = (typeof LEGACY_ITEM_MATCH_METHOD_VALUES)[number];
 
 /** SA-1304: TenantSubscription.cycle (Prisma BillingCycle). The one source of every client-side cycle type. */
 export const BILLING_CYCLE_VALUES = ["MONTHLY", "ANNUAL"] as const;

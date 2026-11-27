@@ -79,6 +79,8 @@ enum InvoiceStatus {
 // bounce-fee line); see InvoiceItem.systemKind's doc comment.
 enum InvoiceItemSystemKind {
   NSF_FEE
+  // SA-1295 A2 (migration 20261126000200): one summary line standing for imported history. Nothing writes it before A7.
+  IMPORTED_SUMMARY
 }
 
 enum EstimateStatus {
@@ -1410,4 +1412,114 @@ model BuyerPaymentRequest {
   @@index([customerId])
   @@index([tenantId, createdAt])
   @@index([paymentGroupId])
+}
+
+// ─── SA-1295 A2: QuickBooks history import, Sitting 1 (finance) ───────────────
+// Both models are guarded tables (legacy_import_tenant_guard, SA-1507 rule 1). Writers use the scalar FK columns,
+// never a nested connect: Prisma's checked inputs drop `tenantId` once it sits in a relation's `fields` (SA-1295 N8).
+
+enum LegacySalesDocumentKind {
+  INVOICE
+  CREDIT_MEMO
+  SALES_RECEIPT
+  REFUND_RECEIPT
+  NEGATIVE_UNKNOWN
+}
+
+enum LegacySalesLineKind {
+  PRODUCT
+  SHIPPING
+  DISCOUNT
+  NOTE
+  OTHER
+}
+
+enum LegacyItemMatchMethod {
+  EXACT
+  NORMALISED
+  ALIAS
+  MANUAL
+  NONE
+}
+
+/// One sales document as the source gave it (staged history; Sitting 1 writes no rows). `customerId` is the only SET NULL
+/// FK (a backstop for a Customer hard delete); batch and file are composite (tenantId, id) CASCADE FKs.
+model LegacySalesDocument {
+  id                 String                  @id @default(uuid())
+  tenantId           String
+  batchId            String
+  fileId             String
+  source             MigrationSource
+  kind               LegacySalesDocumentKind
+  sourceNumber       String?
+  sourceTxnId        String?
+  sourceTxnSpace     String?
+  sourceKey          String
+  sourceCustomerKey  String
+  sourceCustomerName String?
+  customerId         String?
+  docDate            DateTime                @db.Date
+  dueDate            DateTime?               @db.Date
+  subtotal           Decimal?                @db.Decimal(12, 2)
+  taxAmount          Decimal?                @db.Decimal(12, 2)
+  shipping           Decimal?                @db.Decimal(12, 2)
+  discount           Decimal?                @db.Decimal(12, 2)
+  total              Decimal?                @db.Decimal(12, 2)
+  linesTotal         Decimal                 @db.Decimal(12, 2)
+  sourceBalance      Decimal?                @db.Decimal(12, 2)
+  overlap            Boolean                 @default(false)
+  contentHash        String
+  createdAt          DateTime                @default(now())
+
+  batch    LegacyImportBatch @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+  file     LegacyImportFile  @relation(fields: [tenantId, fileId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+  customer Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  lines    LegacySalesLine[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, source, sourceKey])
+  // NULLs are distinct: a document with no source transaction id is never blocked by this key.
+  @@unique([tenantId, source, sourceTxnSpace, sourceTxnId])
+  @@index([tenantId, customerId, docDate])
+  @@index([tenantId, batchId])
+  @@index([tenantId, source, sourceCustomerKey])
+  // Serves the composite (tenantId, fileId) CASCADE FK (a File delete); (tenantId, batchId) above serves the batch one.
+  @@index([tenantId, fileId])
+  // FK-leading: the SET NULL action on a Customer delete runs WHERE "customerId" = $1 with no tenantId (Amendment 2 N1).
+  @@index([customerId])
+}
+
+/// One line of a staged document. A line reaches its customer only through its document (SA-1522 Q1); `productId` is a
+/// RESTRICT FK (SA-1507 A1-2). The document FK is composite (tenantId, documentId) CASCADE.
+model LegacySalesLine {
+  id             String                @id @default(uuid())
+  tenantId       String
+  documentId     String
+  lineNo         Int
+  physicalLine   Int
+  kind           LegacySalesLineKind
+  sourceItemText String?
+  sourceItemKey  String?
+  description    String?
+  qty            Decimal?              @db.Decimal(14, 3)
+  unitPrice      Decimal?              @db.Decimal(12, 4)
+  total          Decimal?              @db.Decimal(12, 2)
+  productId      String?
+  matchMethod    LegacyItemMatchMethod @default(NONE)
+  unitKnown      Boolean               @default(false)
+  unitLabel      String?
+  docDate        DateTime              @db.Date
+  createdAt      DateTime              @default(now())
+
+  document LegacySalesDocument @relation(fields: [tenantId, documentId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+  product  Product?            @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  // Surrogate id leads: a uuid is globally unique, and the lead column serves the cascade delete.
+  @@unique([documentId, lineNo])
+  // Customer lookups go through the document join: a document's lines by product (SA-1522 Q1, lead ruling).
+  @@index([tenantId, documentId, productId])
+  @@index([tenantId, productId, docDate])
+  @@index([tenantId, sourceItemKey])
+  // FK-leading: the RESTRICT check on a Product delete runs WHERE "productId" = $1 with no tenantId (Amendment 2 N1).
+  @@index([productId])
 }
