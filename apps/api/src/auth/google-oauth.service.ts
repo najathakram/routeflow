@@ -367,6 +367,7 @@ export class GoogleOAuthService {
     if (user.email) {
       void this.emailService
         .send({
+          tenantId: user.tenantId,
           to: user.email,
           ...signInLinkedMessage({ provider: "Google", address: email, portal: false }),
           // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
@@ -784,6 +785,8 @@ export class GoogleOAuthService {
         if (linked) {
           void this.emailService
             .send({
+              // a buyer account is global: it belongs to no business.
+              tenantId: null,
               to: buyer.email,
               ...signInLinkedMessage({ provider: "Google", address: profile.email, portal: true }),
               // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.

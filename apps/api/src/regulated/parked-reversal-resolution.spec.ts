@@ -461,7 +461,7 @@ describe("ParkedReversalResolutionService", () => {
       ledgerSrc.indexOf("async findFiledPeriod("),
       ledgerSrc.indexOf("async filedPeriodForParked("),
     );
-    expect(finder).toMatch(/findFiledPeriodIn\(db, categoryIds, bucket\)/);
+    expect(finder).toMatch(/findFiledPeriodIn\(db, tenantId, categoryIds, bucket\)/);
     const filedFinder = filedSrc.slice(filedSrc.indexOf("export async function findFiledPeriod("));
     expect(filedFinder).toMatch(/regulatedFiling\.findFirst/);
     expect(filedFinder.match(/regulatedFiling\.(findFirst|findMany|findUnique)/g)).toHaveLength(1);

@@ -259,6 +259,7 @@ export function CounterDatePicker({
 
   return (
     <Modal
+      scroll={false} // B1444: LAYOUT
       open={open}
       onClose={onClose}
       title={words.dialogTitle}

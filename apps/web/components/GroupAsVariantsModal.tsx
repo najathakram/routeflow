@@ -1,10 +1,11 @@
 "use client";
 
+import { useCatalogWhenOpen } from "@/lib/api/catalog-when-open";
 import * as React from "react";
 import { X, GitBranch, AlertCircle, ArrowRight } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { keptLabelsNoteForBulk } from "@/lib/kept-labels-copy";
-import { useProducts, useBulkAssignParent, type BulkAssignParentResult } from "@/lib/api/products";
+import { useBulkAssignParent, type BulkAssignParentResult } from "@/lib/api/products";
 import { SearchableProductPicker } from "./SearchableProductPicker";
 import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
 import { groupAssignErrorCopy } from "@/lib/group-assign-error-copy";
@@ -60,7 +61,7 @@ export function GroupAsVariantsModal({
   onSuccess,
 }: GroupAsVariantsModalProps) {
   const { toast } = useToast();
-  const { data: allProductsData } = useProducts({ limit: 0 });
+  const { data: allProductsData } = useCatalogWhenOpen(isOpen);
   const allProducts: ProductLite[] = allProductsData?.data ?? [];
   const bulkAssign = useBulkAssignParent({ localErrorToast: localToastForSafeTextRefusal });
 

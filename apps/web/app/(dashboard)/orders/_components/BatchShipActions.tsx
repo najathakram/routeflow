@@ -140,7 +140,6 @@ export function BatchShipActions({
       <Modal
         open={open}
         onClose={close}
-        scroll
         title={results ? "Shipping results" : `Mark ${orders.length} shipped`}
         description={
           results

@@ -6,6 +6,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { QtyTextInput } from "../../../../components/QtyStepper";
+import { UndoStrip } from "../../../../components/UndoStrip";
 import {
   useBuyerOrder,
   useBuyerProducts,
@@ -13,18 +14,21 @@ import {
 } from "../../../../lib/api/buyer";
 import { showToast } from "../../../../lib/toast";
 import { buyerEditSaveError } from "../../../../lib/buyer-edit-save-error";
-import { invoiceLineUnitNoun } from "../../../../lib/invoice-line-display";
+import { ENTER_ONE_OR_MORE } from "../../../../lib/qty";
 import {
   addCatalogItem,
+  buyerEditPriceText,
   buyerSavePlan,
   CUSTOM_LINES_NOTE,
   customLineCount,
+  draftCount,
   draftKey,
   hydrateBuyerDraft,
   orderUnitLabel,
   readOnlyNotice,
   readOnlyQtyText,
-  setDraftQty,
+  restoreDraftRow,
+  setDraftCount,
   type BuyerDraftItem,
 } from "../../../../lib/buyer-edit-items";
 
@@ -39,6 +43,9 @@ export default function BuyerEditItemsScreen() {
   const [showCatalog, setShowCatalog] = useState(false);
 
   const [draft, setDraft] = useState<Record<string, DraftItem>>({});
+  // B1395: the row just removed (for Undo) and the one line a row says under itself (the limit, or "Enter 1 or more.").
+  const [removed, setRemoved] = useState<DraftItem | null>(null);
+  const [note, setNote] = useState<{ key: string; text: string } | null>(null);
 
   // #2316 review: the unit status is part of the draft's identity — a unit line cancelled after
   // load flips the order editable, and the draft must be rebuilt then, never carry a stale count.
@@ -56,10 +63,22 @@ export default function BuyerEditItemsScreen() {
   const items = useMemo(() => Object.values(draft).filter((i) => i.qty > 0), [draft]);
 
   // B297 row 352: rows are keyed by their stored line (`draftKey`), so two lines of one product stay two rows.
-  const setQty = (key: string, qty: number) => setDraft((d) => setDraftQty(d, key, qty));
+  // B1395 (SA-1292): every count is in the row's own unit (a box on a box row) and goes through the one helper.
+  const setCount = (key: string, count: number) => {
+    const edit = setDraftCount(draft, key, count);
+    setDraft(edit.draft);
+    setRemoved(edit.removed);
+    setNote(edit.limit ? { key, text: edit.limit } : null);
+  };
+  const undoRemove = () => {
+    if (removed) setDraft((d) => restoreDraftRow(d, removed));
+    setRemoved(null);
+  };
 
   const addFromCatalog = (p: any) => {
     setDraft((d) => addCatalogItem(d, p));
+    setRemoved(null);
+    setNote(null);
     setShowCatalog(false);
   };
 
@@ -118,6 +137,7 @@ export default function BuyerEditItemsScreen() {
         {customLineCount(order.lineItems) > 0 ? (
           <Text style={styles.notice}>{CUSTOM_LINES_NOTE}</Text>
         ) : null}
+        {removed ? <UndoStrip name={removed.name} onUndo={undoRemove} /> : null}
         {items.length === 0 ? (
           <Text style={styles.empty}>No items — add from catalog below.</Text>
         ) : (
@@ -128,15 +148,10 @@ export default function BuyerEditItemsScreen() {
                   <Text style={styles.itemName} numberOfLines={2}>
                     {item.name}
                   </Text>
-                  <Text style={styles.itemPrice}>
-                    ${item.unitPrice.toFixed(2)}
-                    {/* #2222: a units_v1 line's price is per ITS unit, never the live product.unit. */}
-                    {item.unitLabel?.trim()
-                      ? ` / ${invoiceLineUnitNoun(item)}`
-                      : item.unit
-                        ? ` / ${item.unit}`
-                        : ""}
-                  </Text>
+                  <Text style={styles.itemPrice}>{buyerEditPriceText(item)}</Text>
+                  {note?.key === draftKey(item) ? (
+                    <Text style={styles.itemNote}>{note.text}</Text>
+                  ) : null}
                 </View>
                 {readOnly ? (
                   <Text style={styles.qtyText}>{readOnlyQtyText(item)}</Text>
@@ -144,19 +159,24 @@ export default function BuyerEditItemsScreen() {
                   <View style={styles.qtyRow}>
                     <Pressable
                       style={styles.qtyBtn}
-                      onPress={() => setQty(draftKey(item), item.qty - 1)}
+                      onPress={() => setCount(draftKey(item), draftCount(item) - 1)}
                       hitSlop={6}
                     >
                       <Ionicons name="remove" size={16} color={ios.brand} />
                     </Pressable>
                     <QtyTextInput
-                      value={item.qty}
-                      onChangeQty={(n) => setQty(draftKey(item), n)}
+                      value={draftCount(item)}
+                      min={1}
+                      rejectNonDigits
+                      emptyMeansZero={false}
+                      onChangeQty={(n) => setCount(draftKey(item), n)}
+                      onReject={() => setNote({ key: draftKey(item), text: ENTER_ONE_OR_MORE })}
+                      onZero={() => setCount(draftKey(item), 0)}
                       style={styles.qtyInput}
                     />
                     <Pressable
                       style={styles.qtyBtn}
-                      onPress={() => setQty(draftKey(item), item.qty + 1)}
+                      onPress={() => setCount(draftKey(item), draftCount(item) + 1)}
                       hitSlop={6}
                     >
                       <Ionicons name="add" size={16} color={ios.brand} />
@@ -184,8 +204,11 @@ export default function BuyerEditItemsScreen() {
                     {p.name}
                   </Text>
                   <Text style={styles.itemPrice}>
-                    ${p.buyerPrice.toFixed(2)}
-                    {p.unit ? ` / ${p.unit}` : ""}
+                    {buyerEditPriceText({
+                      unitPrice: p.buyerPrice,
+                      unit: p.unit,
+                      unitsPerBox: p.unitsPerBox,
+                    })}
                   </Text>
                 </View>
                 <Ionicons name="add" size={20} color={ios.brand} />
@@ -241,6 +264,7 @@ const styles = StyleSheet.create({
   },
   itemName: { fontSize: 15, color: ios.label, flexShrink: 1 },
   itemPrice: { fontSize: 13, color: ios.label2, marginTop: 2 },
+  itemNote: { fontSize: 12, color: ios.label2, marginTop: 2 },
   qtyRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   qtyBtn: {
     width: 30,

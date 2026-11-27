@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from "@nestjs/common";
+import { HttpException, Injectable, Logger, Optional } from "@nestjs/common";
 import { MeterKey } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
@@ -17,6 +17,11 @@ import { resolvePlanPrice } from "./plan-price";
 import { autoLockAllowed } from "./auto-lock-gate";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
 import { billingPauseMode } from "./dunning-config";
+import { isLinkPending } from "./link-pending";
+import { nextCheckoutAnchor, planCheckoutAnchor, MIN_ANCHOR_LEAD_MS } from "./checkout-anchor";
+import { selfCheckoutEligibility } from "./self-checkout-eligibility";
+import { PlatformPricingService } from "./platform-pricing.service";
+import { roundMoney } from "@routeflow/pricing";
 import { FeatureOverrideService } from "./feature-override.service";
 import {
   EMPTY_BILLING_VIEW_EXTRAS,
@@ -64,6 +69,9 @@ export class SubscriptionService {
     // SA-1099 A-4: the cached resolver the add-on list's "already have" state reads. Optional like the three above;
     // absent = the list offers everything, as before.
     @Optional() private readonly authority?: EntitlementAuthority,
+    // SA-1547 (R-339 L3): the resolver checkout bills from, so Pay now prints the price that is charged. Optional like the
+    // four above; absent = the price this view already worked out (the quoted fee, else the catalog).
+    @Optional() private readonly pricing?: PlatformPricingService,
   ) {}
 
   private readonly logger = new Logger(SubscriptionService.name);
@@ -175,6 +183,20 @@ export class SubscriptionService {
       ? await this.billingExtras.read(tenantId, sub)
       : EMPTY_BILLING_VIEW_EXTRAS;
 
+    const alreadyHaveAddonSkus = await this.alreadyHaveAddonSkus(
+      tenantId,
+      version.addonSkus,
+      addonRows,
+    );
+    const selfPay = await this.selfPayOf(tenantId, {
+      ent,
+      sub,
+      planName: ent.planName,
+      monthly: monthlyPrice,
+      addons,
+      alreadyHaveAddonSkus,
+    });
+
     return {
       planKey: ent.planKey,
       // R1.7/R2.5: the flags this tenant can actually use right now — the union of its own
@@ -217,7 +239,9 @@ export class SubscriptionService {
       trialEndsAt: ent.trialEndsAt,
       addons,
       // SA-1099 A-4: self-serve add-ons the workspace already has the effect of (no price, no button in the list).
-      alreadyHaveAddonSkus: await this.alreadyHaveAddonSkus(tenantId, version.addonSkus, addonRows),
+      alreadyHaveAddonSkus,
+      // SA-1547: who may pay now (the one helper, self-checkout-eligibility.ts) and every figure its confirm prints.
+      selfPay,
       // SA-733r6 (B4): dunning facts + the banner extras. The server decides read-only; the client only renders.
       pastDueSince: sub?.pastDueSince ?? null,
       pastDueInvoiceId: sub?.pastDueInvoiceId ?? null,
@@ -235,6 +259,103 @@ export class SubscriptionService {
       // SA-775 rollout: true when the pause holds the lock a banner would threaten, so it drops that line.
       autoLockHeld: await this.autoLockHeld(tenantId),
     };
+  }
+
+  /**
+   * SA-1547 PR-3: the `selfPay` view. The verdict is the pure helper's; the figures are the SAME ones checkout bills
+   * (the server price, the billable add-on rows, the anchor the slot will use), so the confirm prints what is charged.
+   * A failed read is "unavailable" (never eligible), never a throw: this runs on every billing read.
+   */
+  private async selfPayOf(
+    tenantId: string,
+    i: {
+      ent: { status: string; readOnlyReason?: string | null; planKey: string };
+      sub: {
+        stripeSubId?: string | null;
+        externalPayment?: boolean | null;
+        couponFull?: boolean | null;
+      } | null;
+      planName: string | null;
+      monthly: number | null;
+      addons: Array<{ sku: string | null; name: string; comp: boolean; monthly: number | null }>;
+      alreadyHaveAddonSkus: string[];
+    },
+  ) {
+    const base = {
+      planKey: i.ent.planKey ?? null,
+      planName: i.planName ?? null,
+      monthly: i.monthly == null ? null : roundMoney(i.monthly),
+      addons: [] as Array<{ name: string; monthly: number | null }>,
+      firstFullChargeAt: null as Date | null,
+    };
+    try {
+      // This runs on every billing read: the audit trail and the tenant row are read only when the cheap facts could
+      // still say yes (an ACTIVE or locked-by-admin business is settled by the facts already in hand).
+      const stripeSubId = i.sub?.stripeSubId ?? null;
+      const facts = {
+        status: i.ent.status,
+        readOnlyReason: i.ent.readOnlyReason ?? null,
+        class: "PRODUCTION",
+        deletedAt: null as Date | null,
+        planKey: i.ent.planKey ?? null,
+        stripeSubId,
+        externalPayment: i.sub?.externalPayment === true,
+        couponCoversAll: i.sub?.couponFull === true,
+        linkPending: stripeSubId ? await isLinkPending(this.prisma, tenantId, stripeSubId) : false,
+        monthly: i.monthly,
+      };
+      let verdict = selfCheckoutEligibility(facts);
+      if (verdict.eligible) {
+        const tenant = await this.prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { class: true, deletedAt: true },
+        });
+        if (!tenant) return { ...base, eligible: false, reason: "unavailable" as const };
+        // L3: the ONE resolver checkout bills from (OP-14). A business refusal (an unpriceable plan) is "no price".
+        let monthly = facts.monthly;
+        if (this.pricing) {
+          try {
+            monthly = (await this.pricing.resolveTenantPricing(tenantId)).monthly;
+          } catch (err) {
+            if (!(err instanceof HttpException)) throw err;
+            monthly = null;
+          }
+        }
+        base.monthly = monthly == null ? null : roundMoney(monthly);
+        verdict = selfCheckoutEligibility({
+          ...facts,
+          class: tenant.class,
+          deletedAt: tenant.deletedAt,
+          monthly,
+        });
+      }
+      const now = new Date();
+      // Inside the 91 minutes before a 1st the slot refuses; the anchor it will use once it reopens is the next one.
+      const anchor = (() => {
+        try {
+          return planCheckoutAnchor(now).anchorAt;
+        } catch {
+          return nextCheckoutAnchor(new Date(now.getTime() + MIN_ANCHOR_LEAD_MS));
+        }
+      })();
+      const held = new Set(i.alreadyHaveAddonSkus);
+      return {
+        ...verdict,
+        ...base,
+        addons: i.addons
+          .filter((a) => !a.comp && a.monthly != null && !(a.sku && held.has(a.sku)))
+          .map((a) => ({
+            name: a.name,
+            monthly: a.monthly == null ? null : roundMoney(a.monthly),
+          })),
+        firstFullChargeAt: anchor,
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Tenant ${tenantId}: the Pay now facts could not be read (${(err as Error).message}) - not offered`,
+      );
+      return { ...base, eligible: false, reason: "unavailable" as const };
+    }
   }
 
   /** The hosted-invoice page of the invoice the tenant owes (the admin's Pay link); null when nothing is owed. */

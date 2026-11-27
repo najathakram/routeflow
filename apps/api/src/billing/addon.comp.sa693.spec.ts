@@ -69,7 +69,9 @@ function make(
   const del = jest.fn().mockResolvedValue({});
   const prisma = {
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme", name: "Acme Foods" }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ id: "t1", slug: "acme", name: "Acme Foods", class: "PRODUCTION" }),
       findUniqueOrThrow: jest.fn().mockResolvedValue(PAYING_TENANT),
     },
     tenantAddon: store,

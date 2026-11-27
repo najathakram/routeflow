@@ -174,6 +174,8 @@ describe("EmailService.send — delivery ctx rows", () => {
     const config = { get: (k: string) => envMap[k] } as any;
     const prisma = {
       getTenantId: () => "t1",
+      // W-1464: the mail wall reads the business class; these specs are not about a test business.
+      tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
       forTenant: () => ({
         systemConfig: {
           findMany: jest.fn().mockResolvedValue([]),
@@ -204,6 +206,7 @@ describe("EmailService.send — delivery ctx rows", () => {
       .mockResolvedValue({ delivered: true, transport: "mailbox", id: "gmail-123" });
     const { svc, deliveries } = make(mailbox);
     const res = await svc.send({
+      tenantId: "t1",
       to: "a@example.com",
       subject: "s",
       html: "<p>x</p>",
@@ -232,6 +235,7 @@ describe("EmailService.send — delivery ctx rows", () => {
     });
     const { svc, deliveries } = make(mailbox);
     const res = await svc.send({
+      tenantId: "t1",
       to: "a@example.com",
       subject: "s",
       html: "<p>x</p>",
@@ -250,6 +254,7 @@ describe("EmailService.send — delivery ctx rows", () => {
     const mailbox = jest.fn().mockRejectedValue(new Error("boom for a@example.com"));
     const { svc, deliveries } = make(mailbox);
     const res = await svc.send({
+      tenantId: "t1",
       to: "a@example.com",
       subject: "s",
       html: "<p>x</p>",
@@ -265,7 +270,7 @@ describe("EmailService.send — delivery ctx rows", () => {
   it("no delivery ctx => no row", async () => {
     const mailbox = jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox", id: "x" });
     const { svc, deliveries } = make(mailbox);
-    await svc.send({ to: "a@example.com", subject: "s", html: "<p>x</p>" });
+    await svc.send({ tenantId: null, to: "a@example.com", subject: "s", html: "<p>x</p>" });
     expect(deliveries.record).not.toHaveBeenCalled();
   });
 
@@ -273,6 +278,7 @@ describe("EmailService.send — delivery ctx rows", () => {
     const mailbox = jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox", id: "x" });
     const { svc } = make(mailbox, { record: jest.fn().mockRejectedValue(new Error("audit down")) });
     const res = await svc.send({
+      tenantId: "t1",
       to: "a@example.com",
       subject: "s",
       html: "<p>x</p>",
@@ -291,7 +297,13 @@ describe("EmailService.send — delivery ctx rows", () => {
     async (to, domain) => {
       const mailbox = jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox" });
       const { svc, deliveries } = make(mailbox);
-      const res = await svc.send({ to, subject: "s", html: "<p>x</p>", delivery: ctx } as any);
+      const res = await svc.send({
+        tenantId: "t1",
+        to,
+        subject: "s",
+        html: "<p>x</p>",
+        delivery: ctx,
+      } as any);
       expect(res).toEqual({ delivered: false, transport: "none", error: SENTINEL_ERR });
       expect(mailbox).not.toHaveBeenCalled();
       expect(deliveries.record).toHaveBeenCalledTimes(1);
@@ -325,7 +337,12 @@ describe("EmailService.send — delivery ctx rows", () => {
 
   it("sentinel recipient WITHOUT a delivery ctx writes no row", async () => {
     const { svc, deliveries } = make(jest.fn());
-    const res = await svc.send({ to: "x@placeholder.local", subject: "s", html: "<p>x</p>" });
+    const res = await svc.send({
+      tenantId: null,
+      to: "x@placeholder.local",
+      subject: "s",
+      html: "<p>x</p>",
+    });
     expect(res.delivered).toBe(false);
     expect(deliveries.record).not.toHaveBeenCalled();
   });

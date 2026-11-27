@@ -12,6 +12,27 @@
 
 ## process
 
+### L-412 · 2026-11-25 · process · a post to a shared board runs only inside `if leak-check | grep -q clean`; chaining the two commands with `;` posts anyway
+
+- **Symptom:** a board post went out although the leak check had refused it. The check printed its refusal and exited non-zero, and the post ran next.
+- **Root cause:** the check and the post were one line joined by `;`, which runs the second command whatever the first returned. A refusal that only prints text stops nothing; it was tried as a habit (read the output, then post) and the habit failed once.
+- **Lesson:** **Put the post inside the condition: `if node leak-check.mjs --text-file F | grep -q clean; then post; fi`. Never join a check and its action with `;`, and never rely on reading the output before the action runs.**
+- **Guard:** none automatic, the guard is the `if ... grep -q clean` form in the lead's posting commands; builder rules name the leak check before `gh pr create`.
+
+### L-411 · 2026-11-25 · process · a build that links a host tree resolves `@routeflow/*` to the HOST's packages, so the host sits at current master and is refreshed after every merge that touches `packages/*`
+
+- **Symptom:** a build linked to the host `node_modules` stopped on a missing export that #4509 had just added to `@routeflow/pricing`. Its own source had the export; the resolved package did not.
+- **Root cause:** a junctioned `node_modules` carries the host's workspace links, so `@routeflow/pricing` and `@routeflow/types` point at the host's `packages/*`, not the building tree's. A host behind master hides every new export. Cf. [[L-262]].
+- **Lesson:** **Keep one dedicated host tree at current master and refresh it (`merge --ff-only`, rebuild packages, rewrite the ready line) after each merge that touches `packages/*`. A build that changes `packages/*` runs its own install; read the ready line's sha before linking.**
+- **Guard:** `wt/host-ready.txt` names the host sha and its refresh command (builder rules, link step); no repo check.
+
+### L-410 · 2026-11-25 · process · five parallel `npm ci` runs with no free-space check filled C: to 0 bytes; installs go one at a time behind a lock, with more than 10 GB free, and a build that changes no `packages/*` links to a host tree instead
+
+- **Symptom:** C: reached 0 bytes. Builds failed in unrelated ways, a git write was cut short, and disk cleanup waited on the owner.
+- **Root cause:** each builder ran its own `npm ci` for its own tree at the same time. Each install is several GB and nothing counted free space before it started. One builder also ran `npm ci` in the main checkout instead of its own tree. The first answer, "run installs through the heavy slot", capped memory, not disk.
+- **Lesson:** **One install at a time: take the install lock, check more than 10 GB free and no `-ci` job in the slot, install, release the lock in a `finally`. A build that changes no `packages/*` links to the host tree. Print `pwd` before any install so it runs in the tree you mean.**
+- **Guard:** the install lock directory and log in `wt/install-queue/` and the free-space step in the builder rules; no repo check.
+
 ### L-386 · 2026-11-15 · process · a gate names every touched src directory plus repo-truth, auth/permissions and common, runs the FULL web jest for any PR touching apps/web, and rebuilds the workspace dist first; the verdict states the totals (#4327, #4334)
 
 - **Symptom:** two PRs reached review on a narrower api run (15 suites; one without its touched `src/buyer`). A third reached PASS x2 with web files changed and no full web jest, and CI then caught a source pin in a static test. A review tree with a stale gitignored `packages/pricing/dist` ran web and api jest against the old pricing: tsc red, jest green.
@@ -63,6 +84,13 @@
 
 ## tooling
 
+### L-414 · 2026-11-26 · tooling · a hook that dies with exit 127 or 0xC0000374 and prints nothing is a runtime crash, not a missing command; the hook prints a refusal for every exit code it does not expect (#4563)
+
+- **Symptom:** pushes from the Windows PC died with exit 127 or 0xC0000374 and no output from the leak check, only on master-merge pushes with piped refs. The laptop passed the same pushes, so the first guesses were a missing command and a hook-shell problem.
+- **Root cause:** on Node 24.20 for Windows, `Buffer.toString("utf16le")` on an odd-length view corrupts the heap. The scan decoded a slice cut at an odd byte, and the hook ran the script with no branch for an exit code it did not know, so a crash looked like silence.
+- **Lesson:** **Drop the odd trailing byte before any utf16le decode. A guard hook prints a refusal and exits non-zero for every exit code that is not 0 or its own refusal code, so a runtime crash reads as a blocked push with a reason. Run the hook self-test under `sh -e`, the way git runs it, not under a forgiving shell.**
+- **Guard:** #4563 (merged 2026-11-26, `8e183d480a`) carries the odd-byte drop, the hook refusal on an unexpected exit code and the `sh -e` self-test; the crash was PC-only and a retry changed nothing.
+
 ### L-402 · 2026-11-22 · tooling · a gate that kills a long child on a time cap reports the timeout as a timeout, never as a genuine failure; the cap is overridable and sized for a loaded host (#4427)
 
 - **Symptom:** the forced `turbo run test --force` in `campaign-check` had a fixed 15-minute cap. On a loaded host the api suite ran longer, `spawnSync` returned `ETIMEDOUT`, and the gate printed "genuine failure"; two pushes were refused on 2026-11-22, each after a 40 to 60 minute verify.
@@ -100,14 +128,14 @@
 - **Lesson:** **Before the read, list the specs that copy or run `.husky/*` (grep the hook name in `apps/api/src/common/*-script.spec.ts`) and run them with the hook change. A fixture that copies a hook must copy everything the hook calls, and a missing file refuses with a plain message, not a node stack.**
 - **Guard:** the fixtures in `pre-push-trunk-script.spec.ts` and `skip-verify-audit-script.spec.ts` copy the checker and its lib, and each spec has a missing-checker case; `scripts/registry-root.self-test.mjs` lists the fixture. Cf. [[L-322]], [[L-323]].
 
-### L-387 · 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
+· 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
 
 - **Symptom:** a web PR went red in CI on `react-hooks/rules-of-hooks`: a plain helper in a test file was called from a callback and its name began with `use`.
 - **Root cause:** the lint rule keys on the name, not on what the function does; the lane's gate had not run web lint.
 - **Lesson:** **Name test helpers for what they return (`makeX`, `renderX`, `withX`), never `useX`, unless the function really is a hook called at a component's top level. Web lint is part of every web PR gate.**
 - **Guard:** the web ESLint `react-hooks/rules-of-hooks` rule in `npm run lint`. Cf. [[L-386]].
 
-### L-389 · 2026-11-15 · testing · a source scan's file-walk predicate is pinned by a row that names edge files, and a label type error shows only under the spec ratchet (#4344)
+· 2026-11-15 · testing · a source scan's file-walk predicate is pinned by a row that names edge files, and a label type error shows only under the spec ratchet (#4344)
 
 - **Symptom:** a return-address scan walked the API sources with `/.(spec|test).tsx?$/` as its skip filter; the unescaped dot also dropped `common/testing/db-spec.ts` and `smtp-spec.ts`, so the scan read green while skipping both. A reader found it, not the scan.
 - **Root cause:** the predicate was never itself tested, and a scan that finds nothing in a skipped file looks identical to a clean file. Separately, a row label written with two quoted pieces was a type error that plain `tsc` never reports, because it skips specs.
@@ -235,13 +263,6 @@
 - **Lesson:** **When a gate or notice is delivered by wrapper components, enumerate the surfaces by search (raw buttons that post to write routes, `role="dialog"` markup outside the shared Modal) and pin the list in a spec; state plainly which surfaces are knowingly outside it.**
 - **Guard:** none automatic yet; propose a static scan on the web like the API's route-walk pin. Known gaps recorded: hand-rolled dialogs; the driver banner shows only after a refused write (no driver-readable status). Cf. [[L-225]]. Extended 2026-11-13 (B1): a staff-control gate for the customer role was added as one helper, `seesStaffControls` (`apps/web/lib/default-unit-line.ts`), and applied by sweeping every entry point the bug did not cite: invoice list and detail, dashboard quick-create, command palette, returns list and detail, the orders bulk bar and inline-return dialogs. Each has a `*.customer-role.test.tsx`; no scan lists every staff-control site yet, so a new entry point is covered only if someone sweeps it.
 
-### L-300 · 2026-10-12 · domain · an edit screen freezes its diff baseline at edit-open and re-bases only on an explicit reload
-
-- **Symptom:** an edit screen sent every line on save after a background refetch, re-writing untouched lines and reverting another writer's change made in between.
-- **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
-- **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
-- **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. archived L-167.
-
 ### L-301 · 2026-10-12 · domain · a revision or guard value is written in the same transaction and lock as the check that reads it
 
 - **Symptom:** two concurrent writers both passed a revision check and both committed, because the new revision value was appended after the first transaction committed.
@@ -316,26 +337,33 @@
 
 ## web
 
+### L-415 · 2026-11-27 · web · a rename that deletes CSS custom properties leaves every `var()` that named them invalid, and an invalid background computes to transparent while the text stays white; a static test resolves every `var()` of a shared shell (#4566)
+
+- **Symptom:** on `/signup` and every auth-shell page the submit button rendered white text on a white card. It was in the accessibility tree, so every role-based test passed, and no new trial could start.
+- **Root cause:** `auth-shell.css` styled `.rf-auth .rf-btn` with `background: var(--b700)`. The site rename (#4531) removed the `--b700`, `--b800`, `--b500`, `--ink-2`, `--ink-3` and `--tint` aliases, and two more tokens had never been defined. An unresolved `var()` makes the declaration invalid at computed time, so the background became `rgba(0,0,0,0)`; the build and the type check do not read CSS.
+- **Lesson:** **A change that renames or removes a design token greps every stylesheet for the old names, and a shared shell has a static test that every `var()` in it resolves against the token files and that a button's background resolves to a colour different from its text. A screenshot or a visibility check at the end of the sign-up path, not an accessibility-tree check, is what shows a button nobody can see.**
+- **Guard:** `apps/web/components/auth/auth-shell-tokens.static.test.ts` (red on the old CSS, listing the eight dead tokens) and `signup/page.submit-visible.test.tsx`, both from #4566. Cf. [[L-400]].
+
+### L-416 · 2026-11-27 · web · a popup its page keeps mounted while closed runs its data hook on every page load; the hook takes `enabled: isOpen`, and a census pins the whole-catalog readers (#4565)
+
+- **Symptom:** the staff New order draft and invoice pages were stuck for a long time after New product was opened on a tablet. Measured on a seeded test business, the page load read the whole catalog once (about 2.9 MB at 2,534 products, one signed thumbnail each) before anyone opened a popup.
+- **Root cause:** four popups (New product, Product create, Group as variants, Assign products) each called `useProducts({ limit: 0 })` above their `if (!isOpen) return null`. `limit: 0` is the fetch-all sentinel, and a mounted query is active, so it also refetched on every product save while closed.
+- **Lesson:** **A component that renders `null` when closed still runs its hooks. Any query inside a popup the page keeps mounted passes `enabled: isOpen`, through one helper (`useCatalogWhenOpen`), and a count-pinned census lists the files that may read the whole catalog. A fix says what it measured and what it could not reproduce.**
+- **Guard:** `apps/web/components/popup-catalog-reads.test.tsx` (per popup: no read while closed, none after an invalidation, one once opened; an inventory pin forbids a direct `limit: 0` read in an `isOpen` popup file) and `apps/web/lib/whole-catalog-census.test.ts`, from #4565.
+
+### L-413 · 2026-11-25 · web · a navigation guard marks the history step it pushes itself and ignores it; otherwise its own `history.back()` reads as the person pressing Back (#4516)
+
+- **Symptom:** in a form guarded against leaving with unsaved edits, clearing a field and typing it back with one more letter opened the "Discard your changes?" question by itself, mid-typing. The order page had the same fault when a quantity was typed back to its saved value and on.
+- **Root cause:** the guard pushes a sentinel history entry while dirty and calls `history.back()` when the form goes clean. If the form went dirty again before that step landed, the landing arrived as a `popstate` and was read as a real Back. The first tests only cleaned once.
+- **Lesson:** **A guard that writes to history tags its own steps, ignores their `popstate`, and puts its sentinel back so a real Back is still asked. Test clean-then-dirty-again before the step lands, not only one clean transition.**
+- **Guard:** `apps/web/app/(dashboard)/orders/[id]/edit-leave-guard.redirty.test.tsx` and `products/[id]/page.leave-guard.test.tsx` (#4516).
+
 ### L-408 · 2026-11-24 · web · a quantity box a scanner can type into holds its text until Enter, Tab or blur, then judges the whole text as one number (#4481, W-1336)
 
 - **Symptom:** a 12-digit barcode scanned into a focused counter quantity box left a 4 or 5 digit quantity with no message.
 - **Root cause:** the box committed on every keystroke and a scanner types digits as keys, so each prefix was a valid quantity and the last one accepted stayed.
 - **Lesson:** **Where a scanner can type into a focused box, hold the text and commit once on a boundary through the screen's own commit path, refuse an out-of-range whole with one sentence, and clear the held ref before the commit so the blur after an Enter refocus finds nothing. Make the mode opt-in per screen; the order builder keeps per-keystroke commit. Cf. [[L-385]].**
 - **Guard:** `use-held-qty.ts`; `CounterSaleScreen.qty-hold.test.tsx`, `CounterLineRow.qty-refusal.test.tsx` (a scanned code, Esc, Undo merge).
-
-### L-398 · 2026-11-21 · web · a file input fires no change when the same file is picked again; clear its value after every pick (#4397)
-
-- **Symptom:** an edited CSV re-picked from the same place kept the old File, and the next Preview ran on stale content.
-- **Root cause:** the browser raises `change` only when the selected path differs, and the panel kept the first File in state; the first fix pass tested picking a different file.
-- **Lesson:** **Set `input.value = ""` after reading the file on every pick, and test the second pick of the same file (a test that picks two different files proves nothing here).**
-- **Guard:** `apps/web/components/import/ImportCsvPanel.repick.test.tsx` (#4397).
-
-### L-397 · 2026-11-21 · web · a Next page file exports only page fields; helpers and components used elsewhere live in their own module (#4370)
-
-- **Symptom:** `tsc` failed TS2344 on two pages (estimates and a platform-admin tenant page), and only in a tree that had a local `.next`; a clean checkout passed.
-- **Root cause:** with `.next` present, tsc reads the per-page type guards Next emits, and a guard rejects any export that is not a page field. Two pages exported a date helper and a section component for other files to import.
-- **Lesson:** **Move any non-page export out of a `page.tsx` (or layout, route) file into a sibling module before another file imports it, and read a type-check in a tree that has run `next build` or `next dev`, not only a clean one.**
-- **Guard:** `apps/web/app/page-file-exports.static.test.ts` (fails on a page file with a non-page export; #4370).
 
 ### L-394 · 2026-11-19 · web · a scroll snap with inertia on reads its speed from the scrub's catch-up, not the hand, and throws a stopped scroll to a far beat; keep inertia off and drive the snap with real wheel input (#4367)
 
@@ -350,20 +378,6 @@
 - **Root cause:** each reveal path (per-element reveal, settle, timelines) kept its own memory of what had played, and a trigger reached inside a ScrollTrigger refresh recorded nothing. `once: true` was tried as the record and abandoned: it removes the trigger, which shifts the trigger list under later refreshes and changes the trigger count against a fresh load.
 - **Lesson:** **Keep ONE played-list for every reveal path. A trigger reached at rest (inside a refresh, from an anchor, on the print return) is pushed to it at once and leaves its content as it is; only a callback from a scroll update plays. Never use `once` as the record.**
 - **Guard:** `apps/web/e2e/85-site-proof-pages.spec.ts` T1 (same trigger count as a fresh load after print) and T2 (no heading waits for a scroll), and its replay cell, which asserts the at-rest precondition before it measures. Cf. [[L-377]].
-
-### L-381 · 2026-11-13 · web · after print, restore the scroll place on the first ScrollTrigger refresh, not at `afterprint` and not on a timer (B1324)
-
-- **Symptom:** leaving print (preview closed, or the print media query ending) put the page back at the wrong place: the reading position was lost.
-- **Root cause:** leaving print rebuilds every trigger. Each refresh records the place, scrolls to the top to measure, puts the place back, then reports. The first refresh after the rebuild recorded the place of the print layout (no pins, a shorter page), so a single restore at `afterprint` was overwritten by the refreshes that run after it.
-- **Lesson:** **Save the place when print starts; for the one frame after print ends, put the saved place back on every `refresh` report, with no timer, then stop. Turn off `overflow-anchor` in print so entering it does not shift the page before the place is read.**
-- **Guard:** spec 85 T1 reads `scrollY` and the trigger count before print and after returning, on 12 pages at 1440x900 and 390x844. The mechanism is commented in `public/site/js/home-up.js` and `js/site.js` (the same toggle in both; `site-motion-always.static.test.ts` pins that).
-
-### L-380 · 2026-11-13 · web · a `gsap.matchMedia` condition whose KEY is `all` always matches, whatever its value says (B1324)
-
-- **Symptom:** a print toggle meant to take page motion off for print never reverted: motion stayed on and pages printed blank bands. Changing the condition's value string to screen-only changed nothing.
-- **Root cause:** GSAP's `matchMedia` treats a condition named `all` as match-everything and never reads its value. `site.js` declared `{ all: "all", desk: "(min-width: 900px)" }`, so the context was live in print.
-- **Lesson:** **Never name a `matchMedia` condition key `all`; name it for what it means (`screen`) and give it the media query. Prove a print branch by emulating print media and reading that the context reverted, not by reading the condition text.**
-- **Guard:** `site-motion-always.static.test.ts` computes the condition from the source and requires it screen-only (ledger row B1324/T1 in `site-pin-ledger.json`); spec 85 T1 asserts no `js-motion` in print.
 
 ### L-376 · 2026-11-12 · web · a text field inside a closing dialog is not a typing target; one predicate decides it for every guard that asks "is a person typing" (#4303)
 

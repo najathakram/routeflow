@@ -65,6 +65,8 @@ describe("StripeConnectService", () => {
     stripeConnectEvent = graftModel();
     (prisma as any).tenantStripeConnect = tenantStripeConnect;
     (prisma as any).stripeConnectEvent = stripeConnectEvent;
+    // W-1464 PR-B: a business that is not PRODUCTION never starts or finishes a Stripe link; the default is PRODUCTION
+    prisma.tenant.findUnique.mockResolvedValue({ class: "PRODUCTION" } as any);
 
     mockJwt.signAsync.mockReset().mockResolvedValue("signed-state-token");
     mockJwt.verifyAsync.mockReset();
@@ -96,6 +98,21 @@ describe("StripeConnectService", () => {
   // ─── buildAuthorizeUrl — single-use jti issuance (invariant 12) ────────────
 
   describe("buildAuthorizeUrl", () => {
+    it.each(["TEST", "DEMO", "INTERNAL", null])(
+      "W-1464: class %p is the coded 409 and no pending link is stored",
+      async (cls) => {
+        prisma.tenant.findUnique.mockResolvedValue({ class: cls } as any);
+        await expect(
+          service.buildAuthorizeUrl("tenant-1", "user-1", "alice"),
+        ).rejects.toMatchObject({
+          status: 409,
+          response: { code: "LIVE_PAYMENTS_OFF" },
+        });
+        expect(tenantStripeConnect.upsert).not.toHaveBeenCalled();
+        expect(mockJwt.signAsync).not.toHaveBeenCalled();
+      },
+    );
+
     it("stashes a fresh pendingJti on the row before returning the authorize URL", async () => {
       const url = await service.buildAuthorizeUrl("tenant-1", "user-1", "alice");
 
@@ -137,7 +154,10 @@ describe("StripeConnectService", () => {
         email: "admin@acme.test",
         role: UserRole.TENANT_ADMIN,
       });
-      (prisma as any).tenant.findUnique.mockResolvedValue({ name: "Acme Wholesale" });
+      (prisma as any).tenant.findUnique.mockResolvedValue({
+        name: "Acme Wholesale",
+        class: "PRODUCTION",
+      });
 
       const url = await service.buildAuthorizeUrl("tenant-1", "user-1", "alice");
       const params = new URL(url).searchParams;
@@ -205,7 +225,7 @@ describe("StripeConnectService", () => {
 
     it("REG-2441: omits stripe_user[email]/stripe_user[business_name] entirely when there is no value to prefill", async () => {
       (prisma as any).user.findFirst.mockResolvedValue(null);
-      (prisma as any).tenant.findUnique.mockResolvedValue(null);
+      (prisma as any).tenant.findUnique.mockResolvedValue({ class: "PRODUCTION", name: null });
 
       const url = await service.buildAuthorizeUrl("tenant-1", "user-1", "alice");
       const params = new URL(url).searchParams;
@@ -224,11 +244,29 @@ describe("StripeConnectService", () => {
       jti: "jti-1",
       aud: "stripe-connect-state",
     };
-    const liveTenant = { id: "tenant-1", slug: "acme", status: "ACTIVE" };
+    const liveTenant = { id: "tenant-1", slug: "acme", status: "ACTIVE", class: "PRODUCTION" };
 
     // ── The workspace must accept changes when the callback lands ──────────────
     // The status is read live after the signed state checks out and BEFORE the code
     // exchange, so a refused callback never creates a Stripe grant or binds an account.
+
+    it.each(["TEST", "DEMO", "INTERNAL", null])(
+      "W-1464: class %p is the coded 409 before any Stripe call and stores nothing",
+      async (cls) => {
+        mockJwt.verifyAsync.mockResolvedValue(statePayload);
+        tenantStripeConnect.updateMany.mockResolvedValueOnce({ count: 1 });
+        prisma.tenant.findUnique.mockResolvedValue({ ...liveTenant, class: cls } as any);
+        mockOauth.exchangeCode.mockResolvedValue({ accountRef: "acct_1", livemode: false });
+
+        await expect(service.completeOAuth("code", "state")).rejects.toMatchObject({
+          status: 409,
+          response: { code: "LIVE_PAYMENTS_OFF" },
+        });
+        expect(mockOauth.exchangeCode).not.toHaveBeenCalled();
+        expect(mockOauth.retrievePlatformAccountId).not.toHaveBeenCalled();
+        expect(tenantStripeConnect.upsert).not.toHaveBeenCalled();
+      },
+    );
 
     // Each refused status carries its OWN fixed code, so the callback can show status-specific copy.
     it.each([

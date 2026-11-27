@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { pricedPerLabel } from "@routeflow/pricing";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -624,7 +625,14 @@ export default function BuyerShopPage() {
                                     </div>
                                     <div>
                                       <p className="text-sm font-medium text-navy">{p.name}</p>
-                                      <p className="text-xs text-navy/70">per {p.unit}</p>
+                                      <p className="text-xs text-navy/70">
+                                        {
+                                          pricedPerLabel({
+                                            unit: p.unit,
+                                            unitsPerBox: p.unitsPerBox,
+                                          }).perText
+                                        }
+                                      </p>
                                     </div>
                                   </Link>
                                 </td>

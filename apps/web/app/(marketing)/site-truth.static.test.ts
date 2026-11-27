@@ -5,9 +5,12 @@
 // what the code says, so a wording pass cannot bring the false version back. Evidence is in the comment above each.
 import * as fs from "fs";
 import * as path from "path";
+import { SITE_BRAND as BRAND } from "@routeflow/types/brand";
+import { readServedSitePage } from "@/lib/read-site-page";
+import type { StaticSitePage } from "@/lib/static-site-page";
 
 const SITE = path.resolve(__dirname, "../../public/site");
-const page = (name: string) => fs.readFileSync(path.join(SITE, `${name}.html`), "utf8");
+const page = (name: string) => readServedSitePage(name as StaticSitePage, { websiteId: undefined });
 // The wheel on the home page paints its own copy at run time from this file, so the .html pins above cannot see it.
 const wheel = () => fs.readFileSync(path.join(SITE, "graphics/rf-wheel-up.js"), "utf8");
 
@@ -32,10 +35,13 @@ describe("public site sentences the code backs", () => {
   // change requests always block. The counter shows the overage for information only.
   it("product: credit limits stop a change to an order, not a new order", () => {
     const html = page("product");
-    expect(html).toContain("RouteFlow stops a change to an order that takes the store over it.");
+    expect(html).toContain(
+      `${BRAND.name} stops a change to an order that takes the store over it.`,
+    );
     expect(html).not.toMatch(/stop the order/i);
   });
 
+  // SA-1080 (js/prices.js:5): plans differ by price and number of customers; seats are not enforced.
   // B1371 (SA-1175 R1 K7): no plan limits logins (entitlements caps.seats is null) and a downgrade never turns one off.
   it("home, pricing, product: plans differ by customers only, never by logins", () => {
     for (const name of ["home", "pricing", "product"]) {
@@ -45,12 +51,22 @@ describe("public site sentences the code backs", () => {
     }
   });
 
+  // Owner ruling 2026-11-19: a smaller plan turns off every staff and driver login and nobody can choose
+  // who stays, so the note saying "logins over its limit can be turned off" is not true. It stays out
+  // until the downgrade chooser is fixed.
+  it("product: no note about turning off logins on a smaller plan", () => {
+    const text = page("product");
+    expect(text).not.toMatch(/Smaller plan/i);
+    expect(text).not.toMatch(/logins over its limit/i);
+    expect(text).not.toMatch(/Admin logins stay on/i);
+  });
+
   // /login offers "Continue with Google" (auth.controller.ts); only company single sign-on is absent (feature-registry.ts).
   it("does-and-doesnt: names Google sign-in and rules out only company single sign-on", () => {
     const html = page("does-and-doesnt");
     expect(html).toMatch(/You sign in with a password or a Google account/);
     expect(html).toContain("company single sign-on");
-    expect(html).not.toMatch(/None of these are in RouteFlow\.<\/td>/);
+    expect(html).not.toMatch(new RegExp(`None of these are in ${BRAND.name}\\.</td>`));
   });
 
   // inventory.service.ts: weighted average by default; settings offers Last cost. The screen label is not "Give back as".

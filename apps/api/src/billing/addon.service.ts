@@ -39,6 +39,7 @@ import { EntitlementAuthority } from "./entitlement-authority.service";
 import { BillingEventService } from "./billing-event.service";
 import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
 import { addonCodeOf, findAddonRow } from "./addon-row";
+import { assertLivePaymentsAllowed } from "./live-payments-wall";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { roundMoney } from "@routeflow/pricing";
@@ -316,7 +317,7 @@ export class AddonService {
     // outside the lock.
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true, plan: true, planVersionId: true },
+      select: { id: true, slug: true, plan: true, planVersionId: true, class: true },
     });
     if (!tenant) throw new NotFoundException(`Tenant ${tenantId} not found`);
 
@@ -456,6 +457,9 @@ export class AddonService {
                   `"${addonKey}"; subscribe the tenant to a paid plan first`,
               );
             }
+            // W-1464 R-282 M2: a new subscription item changes what the subscription charges. Not a test business,
+            // before the first Stripe call and outside the try below (which turns any error into a 503).
+            assertLivePaymentsAllowed(tenant.class);
             try {
               const item = await this.stripe.client.subscriptionItems.create({
                 subscription: sub.stripeSubId,

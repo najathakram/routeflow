@@ -11,6 +11,7 @@ import { EMAIL_CHANGE_REFUSAL_COPY } from "@/lib/email-change-copy";
 
 let mockSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
   useSearchParams: () => mockSearchParams,
 }));
 

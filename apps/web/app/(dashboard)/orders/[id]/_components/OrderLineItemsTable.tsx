@@ -218,6 +218,7 @@ function TableBody({
                           boxes: li.boxes,
                           unitsPerBox: lineDisplayPack(li) ?? undefined,
                           unitLabel: li.unitLabel,
+                          unit: li.product?.unit,
                         }}
                       />
                     )}

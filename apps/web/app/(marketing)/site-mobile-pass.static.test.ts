@@ -127,7 +127,7 @@ describe("mobile.css is arrangement, colour and life, not a claim", () => {
     expect(html).toContain(
       '<p class="risk-h">14 days free. <span class="nb">No card needed.</span></p>',
     );
-    expect(css).toContain(".nb{white-space:nowrap}");
+    expect(read("css/site.css")).toContain(".nb{white-space:nowrap}");
   });
 });
 
@@ -168,8 +168,9 @@ describe("the first screen on a phone", () => {
 
   it("three thin brand rings sit in the hero's right margin, no repeat, behind the text", () => {
     expect(css).toContain("background-repeat:no-repeat");
-    expect(css).toContain("background-size:76px 76px,auto,auto");
-    for (const hex of ["%234caed9", "%236261af", "%23ffc933"]) expect(css).toContain(hex);
+    expect(css).toContain("background-size:76px 76px;");
+    // The three colours are palette values (site-brand-tokens T35d checks which); here: three rings, three colours.
+    expect(css.match(/%23[0-9a-f]{6}/gi)).toHaveLength(3);
   });
 
   it("the trial sentence breaks between its two sentences, or is balanced", () => {
@@ -190,7 +191,7 @@ describe("the first screen on a phone", () => {
     const css2 = read("css/home-up.css");
     const q =
       "@media (max-width:899.98px) and (max-height:599.98px) and (min-aspect-ratio:1/1),(min-width:900px) and (max-height:499.98px){";
-    expect(css2.split(q)).toHaveLength(3);
+    expect(css2.split(q)).toHaveLength(2);
     // no bare height block that would reach a laptop window
     expect(css2).not.toContain("@media (max-height:599.98px) and (min-aspect-ratio:1/1){");
   });

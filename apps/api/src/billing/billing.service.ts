@@ -1,4 +1,5 @@
 import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
+import { BRAND } from "../common/brand";
 import { sellerDisplayName } from "../common/seller-display-name";
 import {
   HttpException,
@@ -35,6 +36,8 @@ import {
   paymentReinstatable,
   paymentReinstatableWhere,
   STRIPE_CANCELLED_REASON,
+  READ_ONLY_STATUS,
+  TRIAL_REASON_PREFIX,
 } from "./dunning-config";
 import { adminLockedRefusal } from "./admin-lock-refusal";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
@@ -105,6 +108,12 @@ import { NO_LIVE_SUBSCRIPTION, stopBillingIncludedAddonsTx } from "./addon-inclu
 import { assertCheckoutSurface, type CheckoutSurface } from "./checkout-session-params";
 import type { CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
+import {
+  assertLivePaymentsAllowed,
+  assertTenantLivePaymentsAllowed,
+  isLivePaymentsRefusal,
+  recordLivePaymentsHeld,
+} from "./live-payments-wall";
 import {
   API_BILLING_CANCEL_PATH,
   API_BILLING_PORTAL_RETURN_PATH,
@@ -488,6 +497,8 @@ export class BillingService {
     if (tenant.subscription?.stripeCustomerId) {
       return tenant.subscription.stripeCustomerId;
     }
+
+    assertLivePaymentsAllowed(tenant.class); // W-1464: no Stripe customer is created for a non-PRODUCTION business
 
     // Two concurrent checkouts for a tenant with no customer yet would each create one, and the second
     // upsert would orphan the first in Stripe. Serialize the create-and-store per tenant on the shared
@@ -907,6 +918,10 @@ export class BillingService {
       product: priceData.product,
     };
 
+    // W-1464 R-282 M2: a price push changes what the subscription charges. Not a test business, before the flag is
+    // armed and before the Stripe write (the reads above change nothing).
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
+
     // SA-733r3 N4: `needsReconcile` (+ the key/nonce audit row) is COMMITTED before Stripe is touched; the flow
     // clears it after its local write (syncStripeSubscriptionPrice / the override flow). Unwritable => nothing sent.
     const reconcileDeps = { prisma: this.prisma, logger: this.logger };
@@ -1074,6 +1089,7 @@ export class BillingService {
     tenantId: string,
     request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ portalUrl: string }> {
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId); // W-1464: no portal session for a non-PRODUCTION business
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
     });
@@ -1104,6 +1120,26 @@ export class BillingService {
    * Called by the webhook controller after signature verification.
    */
   async handleWebhookEvent(event: any): Promise<void> {
+    try {
+      await this.dispatchWebhookEvent(event);
+    } catch (err) {
+      // W-1464 R-305 M1: a live-payments refusal that escapes ANY handler must not reach Stripe as a 500 (a retry
+      // storm for an event that can never succeed). The handlers that know their tenant record the hold themselves;
+      // this is the catch-all so a future handler cannot reintroduce the storm: held row, then acknowledged.
+      if (!isLivePaymentsRefusal(err)) throw err;
+      await recordLivePaymentsHeld(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId: null,
+          entityType: "stripe_event",
+          entityId: event?.id ?? null,
+          what: `${event?.type ?? "unknown"} event`,
+        },
+      );
+    }
+  }
+
+  private async dispatchWebhookEvent(event: any): Promise<void> {
     this.logger.log(`Processing Stripe event: ${event.type} (${event.id})`);
 
     switch (event.type) {
@@ -1147,7 +1183,7 @@ export class BillingService {
         break;
 
       case "invoice.upcoming":
-        await this.onInvoiceUpcoming(event.data.object);
+        await this.onInvoiceUpcoming(event.data.object, event.id);
         break;
 
       case "invoice.payment_failed":
@@ -2024,6 +2060,10 @@ export class BillingService {
         // X1: the stale/duplicate-checkout guard judges from these (and re-reads them under the lock).
         stripeSubId: true,
         externalPayment: true,
+        // SA-1547 R3: a conversion already stamped is never stamped (or emitted) twice; the tenant's status rides the
+        // SAME read (no extra query) for the conversion judgement below.
+        trialConvertedAt: true,
+        tenant: { select: { status: true, readOnlyReason: true } },
       },
     });
     const hasNegotiatedOverride =
@@ -2270,6 +2310,16 @@ export class BillingService {
         ? await this.mutations.inclusionCatalog?.(tenantId)
         : undefined;
 
+    // SA-1547 R3: a SETTLED checkout of a business that was never activated is its trial conversion - stamped (and
+    // announced) exactly as subscribe() does, so the billing export and the MRR ledger see it. Judged by the one
+    // status alone (a TRIAL, or a READ_ONLY locked for a `trial_*` reason); never "link pending", which a bank-debit
+    // settle re-entering with the subscription already linked would read true for an activated business (R-339 H1).
+    // An unsettled bank debit converts nothing yet, and a redelivery is stopped by the APPLIED marker.
+    const convertedAt = (await this.isTrialConversion(tenantId, settled, existingOverride))
+      ? new Date()
+      : null;
+    const conversionPlanKey = planKeyForCheckout ?? resolvedPlanKey;
+
     const upsertArgs = {
       where: { tenantId },
       create: {
@@ -2368,6 +2418,7 @@ export class BillingService {
                   existingOverride?.planKey,
                 );
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
+                await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
                 // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
                 if (session.id && settled) {
@@ -2441,6 +2492,7 @@ export class BillingService {
               existingOverride?.planKey,
             );
             const row = await tx.tenantSubscription.upsert(upsertArgs);
+            await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
               await this.writeAppliedMarker(tx, tenantId, session.id, {
@@ -2539,6 +2591,56 @@ export class BillingService {
     await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
+  }
+
+  /**
+   * SA-1547 R3: is this completion a trial's conversion (status TRIAL, or READ_ONLY with a `trial_*` reason)? Only a
+   * settled session converts, and never a row already stamped. It does NOT read "link pending" (R-339 H1).
+   */
+  private async isTrialConversion(
+    tenantId: string,
+    settled: boolean,
+    row: {
+      trialConvertedAt?: Date | null;
+      tenant?: { status: string; readOnlyReason: string | null } | null;
+    } | null,
+  ): Promise<boolean> {
+    if (!settled || row?.trialConvertedAt) return false;
+    // The status rides the subscription read the handler already made. A tenant with no row yet (the legacy create
+    // branch) reads it here; no other path pays for this.
+    const tenant =
+      row?.tenant ??
+      (row
+        ? null
+        : await this.prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { status: true, readOnlyReason: true },
+          }));
+    if (!tenant) return false;
+    return (
+      tenant.status === "TRIAL" ||
+      (tenant.status === READ_ONLY_STATUS &&
+        (tenant.readOnlyReason ?? "").startsWith(TRIAL_REASON_PREFIX))
+    );
+  }
+
+  /**
+   * SA-1547 R3 + R-339 L4: the stamp is a CONDITIONAL write (`trialConvertedAt IS NULL`), so a concurrent subscribe() that
+   * stamped first matches no row; the event is emitted only by the writer that won, in the SAME transaction.
+   */
+  private async emitTrialConvertedTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    convertedAt: Date | null,
+    planKey: string | null,
+  ): Promise<void> {
+    if (!convertedAt) return;
+    const won = await tx.tenantSubscription.updateMany({
+      where: { tenantId, trialConvertedAt: null },
+      data: { trialConvertedAt: convertedAt },
+    });
+    if (won.count !== 1) return;
+    await this.events.emit(tenantId, BILLING_EVENTS.TRIAL_CONVERTED, { planKey }, { tx });
   }
 
   /**
@@ -2719,6 +2821,19 @@ export class BillingService {
         { waitMs: TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS },
       );
     } catch (err) {
+      // W-1464 R-305 M1: the wall holds the re-sync for a business that is not PRODUCTION; acknowledged, not retried.
+      if (isLivePaymentsRefusal(err)) {
+        await recordLivePaymentsHeld(
+          { prisma: this.prisma, logger: this.logger },
+          {
+            tenantId,
+            entityType: "stripe_checkout_session",
+            entityId: session?.id ?? null,
+            what: "checkout price re-sync",
+          },
+        );
+        return;
+      }
       this.logger.error(
         `F2: checkout ${session?.id ?? "?"} for tenant ${tenantId}: the price re-sync threw`,
         err as Error,
@@ -3043,7 +3158,7 @@ export class BillingService {
    * never a double push. A REFUSAL (an annual item, an unresolvable price) is alerted and acknowledged - a
    * redelivery could never succeed.
    */
-  private async onInvoiceUpcoming(invoice: any): Promise<void> {
+  private async onInvoiceUpcoming(invoice: any, eventId?: string): Promise<void> {
     if (!this.scheduledPrice) return;
     const sub = await this.matchStripeSubscription(
       stripeInvoiceSubscriptionId(invoice),
@@ -3059,6 +3174,20 @@ export class BillingService {
         );
       }
     } catch (err) {
+      // W-1464 R-305 M1: the wall holds the push for a business that is not PRODUCTION; acknowledged, not retried.
+      if (isLivePaymentsRefusal(err)) {
+        await recordLivePaymentsHeld(
+          { prisma: this.prisma, logger: this.logger },
+          {
+            tenantId: sub.tenantId,
+            entityType: "stripe_event",
+            entityId: eventId ?? null,
+            what: "scheduled downgrade price push",
+            meta: { stripeSubId: (sub as any).stripeSubId ?? null },
+          },
+        );
+        return;
+      }
       if (!(err instanceof BadRequestException)) throw err;
       this.logger.error(
         `invoice.upcoming: the scheduled downgrade price for tenant ${sub.tenantId} cannot be applied - fix it in Stripe before the renewal: ${err.message}`,
@@ -3193,9 +3322,10 @@ export class BillingService {
             ]),
       ],
       cta: href ? { label: "Update payment method", url: href } : undefined,
-      why: "You are getting this because you manage this RouteFlow account’s billing.",
+      why: `You are getting this because you manage this ${BRAND.name} account’s billing.`,
     });
     await this.email.send({
+      tenantId: sub.tenantId,
       to: adminUser.email,
       ...mail,
       delivery: {

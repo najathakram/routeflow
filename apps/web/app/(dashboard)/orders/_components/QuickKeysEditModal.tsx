@@ -168,7 +168,6 @@ function QuickKeysEditor({ keys, cap, onClose, saved }: Props & { saved: QuickKe
       onClose={onClose}
       title="Edit quick keys"
       description="Pin the products you ring up most. Ranked best sellers fill the rest."
-      scroll
       closeClassName="min-h-[44px] min-w-[44px]"
       footer={
         <>
