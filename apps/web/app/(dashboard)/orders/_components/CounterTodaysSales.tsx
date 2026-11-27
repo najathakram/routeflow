@@ -9,6 +9,8 @@ import { cashierNameOf, counterMethodParts, roundMoney } from "@routeflow/pricin
 import { Button, Modal, cn } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 import { useOrder } from "@/lib/api/orders";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import type { TodaysSaleRow, TodaysSalesSummary } from "@routeflow/types";
 import {
   COUNTER_SALE_TODAY_KEY,
@@ -529,6 +531,9 @@ function SaleRow({
 
 export function CounterTodaysSales() {
   const [open, setOpen] = React.useState(false);
+  // B1466: the counter's Return door opens this same list, to take a return from one of its sales
+  const [forReturn, setForReturn] = React.useState(false);
+  const hasReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
   const [reprint, setReprint] = React.useState<TodaysSaleRow | null>(null);
   // SA-762r: the sale being voided. The dialog sits here (not on the row) so it outlives the row turning Voided.
   const [voidRow, setVoidRow] = React.useState<TodaysSaleRow | null>(null);
@@ -555,14 +560,35 @@ export function CounterTodaysSales() {
         ref={openerRef}
         className="min-h-[44px]"
         variant="secondary"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setForReturn(false);
+          setOpen(true);
+        }}
       >
         Today&apos;s sales
       </Button>
+      {hasReturns ? (
+        <Button
+          className="min-h-[44px]"
+          variant="secondary"
+          onClick={() => {
+            setForReturn(true);
+            setOpen(true);
+          }}
+        >
+          Return
+        </Button>
+      ) : null}
       <Modal
         open={open}
+        description={
+          forReturn && !reprint
+            ? "Find the sale to take back, then choose Return items."
+            : undefined
+        }
         onClose={() => {
           setOpen(false);
+          setForReturn(false);
           setReprint(null);
           setView("today");
         }}

@@ -313,9 +313,29 @@ describeDb(
       amount: number,
       legacy: boolean,
     ) {
-      await tenantCtx.run(tenantId, () =>
-        invoices.recordPayment(invoiceId, { amount, method: "CHECK" } as any),
-      );
+      // B1396: recordPayment now refuses a DRAFT, but a CHECK booked on a draft before the guard is still real
+      // legacy data, so a DRAFT gets the payment row written directly and stays DRAFT (setCheckStatus has no guard).
+      const before = await prisma.invoice.findUniqueOrThrow({
+        where: { id: invoiceId },
+        select: { status: true },
+      });
+      if (before.status === "DRAFT") {
+        await prisma.invoicePayment.create({
+          data: {
+            tenantId,
+            invoiceId,
+            amount,
+            method: "CHECK",
+            status: "PAID",
+            checkStatus: "RECORDED",
+            paidAt: new Date(),
+          },
+        });
+      } else {
+        await tenantCtx.run(tenantId, () =>
+          invoices.recordPayment(invoiceId, { amount, method: "CHECK" } as any),
+        );
+      }
       const check = await prisma.invoicePayment.findFirstOrThrow({
         where: { invoiceId, method: "CHECK" },
       });

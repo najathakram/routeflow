@@ -39,7 +39,11 @@ function world(initial: Partial<State> = {}) {
   const tx: any = {
     $queryRaw: async () => [],
     tenant: {
-      findUnique: async () => ({ status: st.status, readOnlyReason: st.reason }),
+      findUnique: async () => ({
+        status: st.status,
+        readOnlyReason: st.reason,
+        class: "PRODUCTION",
+      }),
     },
     tenantSubscription: {
       findUnique: async () => ({
@@ -86,6 +90,7 @@ function world(initial: Partial<State> = {}) {
       findUnique: async () => ({ pausedAt: st.pausedAt }),
     },
     tenantConfig: { findUnique: async () => ({ timezone: "UTC" }) },
+    tenant: { findUnique: async () => ({ class: "PRODUCTION" }) },
     $transaction: async (fn: any) => {
       txCount++;
       if (txCount === 1 && hooks.beforeFirstTx && !inHook) {

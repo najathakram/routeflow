@@ -101,6 +101,8 @@ function plant(name, { over = null, dropSpec = false } = {}) {
     GATE,
     "apps/api/package.json",
     "apps/api/jest.repo-truth.config.js",
+    // package.json's jest.setupFiles (SA-1547 F1) must exist in the planted tree
+    "apps/api/jest.setup-stripe-key.cjs",
     // the lane config derives its spec list from this (cross-workspace-lane.spec.ts)
     "scripts/lib/cross-workspace-specs.cjs",
     "apps/api/tsconfig.json",

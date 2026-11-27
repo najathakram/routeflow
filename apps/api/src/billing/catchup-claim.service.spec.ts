@@ -253,6 +253,35 @@ describe("checkout.session.completed (the claim advances; nothing is voided yet)
     );
   });
 
+  // W-1464 R-282 M2: the stub invoice and its item are charge creators; the wall runs before either Stripe call.
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "W-1464: class %p never gets a stub invoice or stub item: held, recorded, and the webhook still resolves",
+    async (tenantClass) => {
+      const h = make(
+        { stripeSubId: SUB, catchupState: "SESSION_OPEN", catchupSessionId: SESSION },
+        [octPaid],
+      );
+      h.db.prisma.tenant.findUnique.mockResolvedValue({ class: tenantClass });
+      await expect(
+        h.svc.onSessionCompleted(
+          sessionOf({
+            metadata: {
+              tenantId: "t1",
+              catchup: "prepaid",
+              catchup_shape: "trial",
+              catchup_stub_cents: "17000",
+              catchup_stub_label: "November 2026 (from Nov 14) subscription",
+              catchup_finalize_at: String(Math.floor(Date.parse("2026-11-14T12:00:00Z") / 1000)),
+            },
+          }),
+        ),
+      ).resolves.toBeUndefined();
+      expect(h.db.audits.map((a: any) => a.action)).toContain("LIVE_PAYMENTS_HELD");
+      expect(h.stripe.client.invoices.create).not.toHaveBeenCalled();
+      expect(h.stripe.client.invoiceItems.create).not.toHaveBeenCalled();
+    },
+  );
+
   it("a $0 trial invoice is never the settling one: with no stub the claim waits for the first invoice with money", async () => {
     const h = make(
       { stripeSubId: SUB, catchupState: "SESSION_OPEN", catchupSessionId: SESSION },

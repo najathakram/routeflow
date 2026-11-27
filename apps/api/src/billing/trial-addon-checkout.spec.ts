@@ -1003,6 +1003,27 @@ describe("SA-690 completion — adopt each checkout item onto its row, once", ()
     expect(h.client.subscriptionItems.update).not.toHaveBeenCalled();
   });
 
+  // W-1464 R-282 M2: the webhook-side quantity update changes what the subscription charges - walled like the rest.
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "class %p: the item is NOT brought up to the row quantity; the change is held, recorded, and the webhook resolves",
+    async (tenantClass) => {
+      const h = make({
+        rows: [addonRow("CUSTOMER_PACK_100", { qty: 3 })],
+        items: [baseItem(), checkoutItem("si_pack", "CUSTOMER_PACK_100", 4500, 1)],
+      });
+      h.tenant.class = tenantClass;
+      await h.completed(); // resolves: the event is acknowledged
+      expect(
+        h.prisma.auditLog.create.mock.calls.filter(
+          (c: any[]) => c[0]?.data?.action === "LIVE_PAYMENTS_HELD",
+        ),
+      ).toHaveLength(1);
+      expect(h.rows[0].quantity).toBe(3);
+      expect(h.client.subscriptionItems.update).not.toHaveBeenCalled();
+      expect(h.client.subscriptionItems.create).not.toHaveBeenCalled();
+    },
+  );
+
   describe("the ROW's quantity wins: Stripe is brought to it through the billed quantity-change path", () => {
     const events = (h: ReturnType<typeof make>) =>
       h.ledger().filter((e: any) => e.sku === "CUSTOMER_PACK_100");
@@ -1890,7 +1911,12 @@ describe("SA-690 all three callers of createCheckoutSession bill the add-ons", (
     // the tenant's own checkout (settings→billing): always monthly, takes no interval
     settings: () =>
       new SettingsBillingController(
-        { getSubscription: jest.fn().mockResolvedValue({ planKey: "STARTER" }) } as any,
+        {
+          getSubscription: jest.fn().mockResolvedValue({
+            planKey: "STARTER",
+            selfPay: { eligible: true, reason: "trial_expired" },
+          }),
+        } as any,
         {} as any,
         {} as any,
         h.billing,

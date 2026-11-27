@@ -43,6 +43,23 @@ describe("CounterCustomerMatches keyboard", () => {
     expect(onPick).toHaveBeenCalledWith(MATCHES[0]);
   });
 
+  it("Enter with nothing highlighted picks the first match, as the hint says (B1469)", () => {
+    const onPick = jest.fn();
+    render(<Harness onPick={onPick} />);
+    fireEvent.keyDown(screen.getByLabelText("Find customer"), { key: "Enter" });
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(onPick).toHaveBeenCalledWith(MATCHES[0]);
+  });
+
+  it("Enter after Escape closed the list picks nothing", () => {
+    const onPick = jest.fn();
+    render(<Harness onPick={onPick} />);
+    const input = screen.getByLabelText("Find customer");
+    fireEvent.keyDown(input, { key: "Escape" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
   it("ArrowDown twice then ArrowUp lands on the first; Escape closes the list", () => {
     render(<Harness onPick={jest.fn()} />);
     const input = screen.getByLabelText("Find customer");

@@ -1,11 +1,3 @@
-// Hoisted, file-wide: safe for every OTHER test here (they all use a non-invite-only planKey —
-// STARTER/BUSINESS — which inviteOnlyCheckoutAllowed permits regardless of this lever). Only the
-// REG-6 test below relies on the lever being off.
-jest.mock("./plan-catalog.constants", () => ({
-  ...jest.requireActual("./plan-catalog.constants"),
-  INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT: false,
-}));
-
 import { SettingsBillingController } from "./settings-billing.controller";
 import { QuoteDto } from "./dto/quote.dto";
 
@@ -21,6 +13,8 @@ function make(
     change?: any;
     checkoutResult?: any;
     planKey?: string;
+    /** SA-1547: the server's Pay now verdict the checkout route reads (default: eligible). */
+    selfPay?: { eligible: boolean; reason: string } | undefined;
     billing?: string;
     refusal?: { code: string; message: string } | null;
     /** SA-690: the tenant's status is TRIAL. */
@@ -28,11 +22,10 @@ function make(
   } = {},
 ) {
   const subscription = {
-    getSubscription: jest
-      .fn()
-      .mockResolvedValue(
-        opts.planKey !== undefined ? { planKey: opts.planKey } : { planKey: "STARTER" },
-      ),
+    getSubscription: jest.fn().mockResolvedValue({
+      planKey: opts.planKey ?? "STARTER",
+      selfPay: "selfPay" in opts ? opts.selfPay : { eligible: true, reason: "trial_expired" },
+    }),
   } as any;
   const proration = {
     quote: jest.fn().mockResolvedValue({ subtotalMonthly: 173, lines: [] }),
@@ -125,11 +118,16 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     expect(SettingsBillingController.prototype.createCheckout.length).toBe(1);
   });
 
-  it("REG-6 refuses checkout when the self-serve-checkout kill switch is off, even called directly", async () => {
-    const { controller, billing } = make({ planKey: "LITE" });
+  // SA-1547: the REG-6 kill switch (INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT) now lives in the eligibility helper; its own
+  // spec pins "LITE with the lever off is not eligible". Here: a refused verdict is a refusal, even called directly.
+  it("REG-6 refuses checkout when the server's verdict is not eligible, even called directly", async () => {
+    const { controller, billing } = make({
+      planKey: "LITE",
+      selfPay: { eligible: false, reason: "not_self_pay_state" },
+    });
     const user: AuthUser = { tenantId: "t1", sub: "u1" };
 
-    await expect(controller.createCheckout(user as any)).rejects.toThrow(/disabled/i);
+    await expect(controller.createCheckout(user as any)).rejects.toThrow(/not available/i);
     expect(billing.createCheckoutSession).not.toHaveBeenCalled();
   });
 });

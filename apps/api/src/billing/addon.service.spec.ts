@@ -59,6 +59,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { AddonService } from "./addon.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { registryKeyForAddonKey } from "./feature-registry";
 import { fakeTenantAddonStore } from "../testing/fake-tenant-addon-store";
 import { mrrEmits } from "../testing/mrr-emits";
@@ -102,6 +103,8 @@ interface Opts {
    *  `isPayingRow` shape). Defaults to a paying (ACTIVE/PRODUCTION) row so the pre-existing
    *  priced-enable pins (T8/T9/T15, B342) keep booking unless a test overrides it. */
   tenantRow?: any;
+  /** W-1464 R-282 M2: the business class `enableAddon` reads before it creates a Stripe item (PRODUCTION unless set). */
+  tenantClass?: string | null;
   /** SA-815a: the version the subscription is pinned to, and that pinned catalog's `includedAtPlan` per SKU. */
   pinnedVersionId?: string;
   pinnedIncludedAtPlan?: Record<string, string>;
@@ -112,7 +115,11 @@ interface Opts {
 function make(opts: Opts = {}) {
   const prisma = {
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme" }),
+      findUnique: jest.fn().mockResolvedValue({
+        id: "t1",
+        slug: "acme",
+        class: opts.tenantClass === undefined ? "PRODUCTION" : opts.tenantClass,
+      }),
       // B865 / SA-277 (D2 lock shape): the ledger helper's paying-set read, under the tx lock.
       findUniqueOrThrow: jest.fn().mockResolvedValue(
         opts.tenantRow ?? {
@@ -391,6 +398,28 @@ describe("AddonService.enableAddon Stripe refusal", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  // R-282 M2: a priced add-on creates a Stripe subscription item, which changes what the subscription charges.
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "W-1464: class %p is refused with the coded 409 before any Stripe item is created",
+    async (tenantClass) => {
+      const create = jest.fn();
+      const { svc, prisma, entitlements } = make({
+        stripe: { isConfigured: true, client: { subscriptionItems: { create } } },
+        subscription: { stripeSubId: "sub_1" },
+        publishedSkus: ["MSRP"],
+        tenantClass,
+      });
+
+      await expect(svc.enableAddon("t1", "msrp", "price_1")).rejects.toMatchObject({
+        status: 409,
+        response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
+      });
+      expect(create).not.toHaveBeenCalled();
+      expect(prisma.tenantAddon.upsert).not.toHaveBeenCalled();
+      expect(entitlements.invalidate).not.toHaveBeenCalled();
+    },
+  );
+
   it("PIN T12: no stripePriceId (free-grant) resolves without touching Stripe, even when Stripe is configured", async () => {
     const create = jest.fn();
     const { svc, prisma } = make({
@@ -640,7 +669,7 @@ describe("AddonService.enableAddon — B342 concurrency lock", () => {
     };
     const prisma: any = {
       tenant: {
-        findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme" }),
+        findUnique: jest.fn().mockResolvedValue({ id: "t1", slug: "acme", class: "PRODUCTION" }),
         // B865 / SA-277: the ledger helper's paying-set read under the tx lock (harness note).
         findUniqueOrThrow: jest.fn().mockResolvedValue({
           status: "ACTIVE",

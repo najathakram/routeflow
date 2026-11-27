@@ -144,6 +144,7 @@ describe("B807 — each tenant/buyer field is HTML-escaped in its email (REG-B80
     const svc = makeService();
     const htmls = captureHtml(svc);
     await svc.sendMailboxRevokedNotice({
+      tenantId: "t-acme",
       to: "owner@example.com",
       username: XSS,
       accountEmail: XSS,
@@ -173,6 +174,7 @@ describe("B809 — the CTA button refuses a non-http(s) link, and the email stil
     const svc = makeService();
     const htmls = capturePlatformHtml(svc);
     await svc.sendSetPasswordEmail({
+      tenantId: null,
       to: "new.user@example.com",
       username: "newuser",
       setPasswordUrl: "javascript:alert(1)",
@@ -191,6 +193,7 @@ describe("B809 — the CTA button refuses a non-http(s) link, and the email stil
     const svc = makeService();
     const htmls = capturePlatformHtml(svc);
     await svc.sendSetPasswordEmail({
+      tenantId: null,
       to: "new.user@example.com",
       username: "newuser",
       setPasswordUrl: "https://app.example.com/reset-password?token=ab12",

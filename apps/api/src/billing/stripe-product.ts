@@ -44,6 +44,7 @@ export async function ensureStripeProduct(
   const found = await retrieveOrNull(client, id);
   if (found) return reconcile(client, id, found);
   try {
+    // W-1464 R-282 M2: catalog only - a product carries no price or charge, so it stays outside the live-payments wall.
     await client.products.create({
       id,
       name: opts.name,
@@ -76,6 +77,7 @@ async function reconcile(
 ): Promise<string> {
   const patch: Record<string, unknown> = {};
   if (found.active === false) patch.active = true;
+  // W-1464 R-282 M2: catalog only - editing a product's name or flags charges nothing, so it stays unwalled.
   if (Object.keys(patch).length) await client.products.update(id, patch);
   return id;
 }

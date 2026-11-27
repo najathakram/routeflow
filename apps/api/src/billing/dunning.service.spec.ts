@@ -74,7 +74,9 @@ function make(
     tenant: {
       findUnique: jest
         .fn()
-        .mockResolvedValue(opts.txTenant ?? { status: "ACTIVE", readOnlyReason: null }),
+        .mockResolvedValue(
+          opts.txTenant ?? { status: "ACTIVE", readOnlyReason: null, class: "PRODUCTION" },
+        ),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     tenantSubscription: {
@@ -88,6 +90,9 @@ function make(
   };
   const prisma: any = {
     getTenantId: () => null,
+    // W-1464 R-305 m2: the unpause wall reads the business class (PRODUCTION unless a case says otherwise)
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: "PRODUCTION" }) },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
     tenantSubscription: {
       findFirst: jest.fn().mockResolvedValue(opts.row === undefined ? row() : opts.row),
       // a keyset-aware fake: the reconciler pages with { tenantId: { gt | lte }, take, skip }; the sweep passes none
