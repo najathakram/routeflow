@@ -1,7 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
 import { apiClient } from "../api-client";
-import { singleFlight } from "./single-flight";
 import type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 export type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 
@@ -18,13 +16,6 @@ export interface StockItem {
   averageCost: number | null;
   totalValue: number | null;
   costingMethod?: string;
-}
-
-export interface StockAdjustmentDto {
-  productId: string;
-  quantity: number; // positive = add, negative = remove
-  notes?: string;
-  reference?: string;
 }
 
 export interface StockPurchaseDto {
@@ -131,20 +122,6 @@ export function useRecomputeCosts() {
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
-
-export function useRecordAdjustment() {
-  const qc = useQueryClient();
-  // B1415: the same stock-ledger write as useAdjustProductStock, so the same guard (one per mounted form).
-  const [post] = useState(() =>
-    singleFlight((dto: StockAdjustmentDto) =>
-      apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data as unknown),
-    ),
-  );
-  return useMutation<unknown, Error, StockAdjustmentDto>({
-    mutationFn: post,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory"] }),
-  });
-}
 
 export function useRecordPurchase() {
   const qc = useQueryClient();

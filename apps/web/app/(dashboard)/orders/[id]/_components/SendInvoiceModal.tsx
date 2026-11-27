@@ -19,6 +19,7 @@ import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { formatMoney } from "@/lib/format";
 import { markSentErrorText, sendEmailErrorText } from "@/lib/order-error-text";
 import { useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
+import { withCopyNote } from "@/lib/invoice-email-copy";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ export function SendInvoiceModal({
           setSent(true);
           toast({
             title: "Invoice emailed",
-            description: `Sent to ${res.sentTo}`,
+            description: withCopyNote(`Sent to ${res.sentTo}`, res.copiedTo),
             variant: "success",
           });
         },

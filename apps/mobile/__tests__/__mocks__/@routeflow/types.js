@@ -70,6 +70,7 @@ module.exports = {
     pushEnabled: "pushEnabled",
     staffOrderEmail: "staffOrderEmail",
     staffBuyerChangeEmail: "staffBuyerChangeEmail",
+    invoiceEmailCopy: "invoiceEmailCopy",
     locale: "locale",
     billLastSupplierId: "bill.lastSupplierId",
     paymentLastMethod: "payment.lastMethod",
@@ -494,6 +495,7 @@ module.exports = {
     PAYMENT_KEY_RESOLVED: "PAYMENT_KEY_RESOLVED",
     PAYMENT_KEY_IN_FLIGHT: "PAYMENT_KEY_IN_FLIGHT",
     PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
+    ADJUSTMENT_MISMATCH: "ADJUSTMENT_MISMATCH",
     COUNTER_SALE_INCOMPLETE: "COUNTER_SALE_INCOMPLETE",
     COUNTER_SALE_VOIDED: "COUNTER_SALE_VOIDED",
     COUNTER_SALE_VOID_BUSY: "COUNTER_SALE_VOID_BUSY",
@@ -561,6 +563,7 @@ module.exports = {
     ACCOUNT_IDENTIFIER_IN_USE: "ACCOUNT_IDENTIFIER_IN_USE",
     /** Create Tenant (platform-admin): startMode "trial" was sent without trialLengthDays (400). Nothing was written. */
     TENANT_TRIAL_DAYS_REQUIRED: "TENANT_TRIAL_DAYS_REQUIRED",
+    TENANT_BUCKET_SCAN_CAP_EXCEEDED: "TENANT_BUCKET_SCAN_CAP_EXCEEDED",
     RF_INVOICE_PAID_AT_TOO_OLD: "RF_INVOICE_PAID_AT_TOO_OLD",
     RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
     TENANT_TRIAL_EXTEND_NOT_ALLOWED: "TENANT_TRIAL_EXTEND_NOT_ALLOWED",

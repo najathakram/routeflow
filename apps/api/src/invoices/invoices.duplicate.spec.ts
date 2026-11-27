@@ -241,6 +241,17 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
       expect(created().dueDate).toEqual(new Date("2026-11-20T00:00:00.000Z"));
     });
 
+    it.each([
+      ["Net 7", "2026-09-28"],
+      ["Net 90", "2026-12-20"],
+      ["Net 21", "2026-10-12"],
+    ])("W-1487: %s runs from the copy's issue date to %s, label kept", async (label, due) => {
+      prisma.invoice.findUnique.mockResolvedValue(source({ paymentTermsLabel: label }));
+      await service.duplicate("inv-1");
+      expect(created().dueDate).toEqual(new Date(due + "T00:00:00.000Z"));
+      expect(created().paymentTermsLabel).toBe(label);
+    });
+
     it("Due on Receipt is due on the issue date itself", async () => {
       prisma.invoice.findUnique.mockResolvedValue(source({ paymentTermsLabel: "Due on Receipt" }));
       await service.duplicate("inv-1");
@@ -251,7 +262,7 @@ describe("InvoicesService.duplicate — what the Duplicate button now depends on
     it.each([
       ["no label", null],
       ["a blank label", "   "],
-      ["a label with no day count (Net 21)", "Net 21"],
+      ["a label with no day count (Net 21 days)", "Net 21 days"],
       ["an inherited object key that is not a term", "constructor"],
     ])("%s: dueDate AND label are both null, so they always agree", async (_n, label) => {
       prisma.invoice.findUnique.mockResolvedValue(source({ paymentTermsLabel: label }));

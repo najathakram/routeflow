@@ -793,6 +793,12 @@ export const API_ERROR_CODES = {
    */
   PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
   /**
+   * The `reason` of the 409 IDEMPOTENCY_KEY_CONFLICT that POST /inventory/movements/adjustment sends when its
+   * Idempotency-Key already recorded a DIFFERENT stock adjustment (B1415 M1b, SA-1504 R4): the key's first call landed.
+   * Thrown by the server and matched by the clients (`isAdjustmentKeyReused`) through this ONE constant.
+   */
+  ADJUSTMENT_MISMATCH: "ADJUSTMENT_MISMATCH",
+  /**
    * 409 from every InvoicePayment writer that carries a typed reference (row 498, SA-837): a non-VOID payment of the
    * same customer, method, NORMALISED reference (trim, uppercase, no spaces or dashes) and amount already exists, with
    * no time window. The body names it (`existingPayment`: date, amount, invoice number). A staff caller may resend with
@@ -1000,6 +1006,8 @@ export const API_ERROR_CODES = {
   ACCOUNT_IDENTIFIER_IN_USE: "ACCOUNT_IDENTIFIER_IN_USE",
   /** Create Tenant (platform-admin): startMode "trial" was sent without trialLengthDays (400). Nothing was written. */
   TENANT_TRIAL_DAYS_REQUIRED: "TENANT_TRIAL_DAYS_REQUIRED",
+  // SA-1535: the tenant list has more businesses than the bucket scan can classify; a bucket or attention filter is refused, never a partial page.
+  TENANT_BUCKET_SCAN_CAP_EXCEEDED: "TENANT_BUCKET_SCAN_CAP_EXCEEDED",
   RF_INVOICE_PAID_AT_TOO_OLD: "RF_INVOICE_PAID_AT_TOO_OLD",
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */

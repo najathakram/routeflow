@@ -1098,3 +1098,29 @@ describe("genericToastCopy: SA-1547 M1 live-payments wall", () => {
     expect(copy).not.toBe(NEUTRAL_409);
   });
 });
+
+describe("genericToastCopy: B1415 M1b reused adjustment key", () => {
+  const conflict = (reason?: string) =>
+    Object.assign(new Error("Request failed"), {
+      response: {
+        status: 409,
+        data: { code: "IDEMPOTENCY_KEY_CONFLICT", reason, message: "server text" },
+      },
+    });
+
+  it("an adjustment key reused for a different adjustment says the first one was saved", () => {
+    expect(genericToastCopy(conflict("ADJUSTMENT_MISMATCH"))).toBe(
+      "Your earlier adjustment was saved. Check the stock before you save again.",
+    );
+  });
+
+  it("another key conflict never reads as an adjustment, and the server text is never shown", () => {
+    for (const reason of ["CART_MISMATCH", undefined]) {
+      const copy = genericToastCopy(conflict(reason));
+      expect(copy).not.toBe(
+        "Your earlier adjustment was saved. Check the stock before you save again.",
+      );
+      expect(copy).not.toBe("server text");
+    }
+  });
+});

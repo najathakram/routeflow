@@ -155,6 +155,7 @@ export * from "./api/payment-receipt"; // SA-1208 D1: the read-only receipt view
 export * from "./api/product-count";
 export * from "./api/billing";
 export * from "./api/billing-status";
+export * from "./api/tenant-bucket";
 export * from "./api/platform-admin-activation";
 export * from "./api/orders";
 export * from "./api/payment-key";
@@ -233,6 +234,7 @@ export * from "./api/rf-invoices";
 export * from "./api/tenant-zone";
 export * from "./api/permissions";
 export * from "./api/staff-capabilities";
+export * from "./payment-terms";
 export * from "./api/surface-access";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────

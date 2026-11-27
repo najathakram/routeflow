@@ -239,7 +239,11 @@ export class InvoicesController {
   ) {
     const variant =
       body?.variant === "draft" || body?.variant === "final" ? body.variant : undefined;
-    return this.invoicesService.sendEmail(id, body?.email, variant, user?.sub ?? null);
+    // W-1443 (R-239 M1): the private copy goes to the person who pressed Send, never in a support session.
+    const copyActorId = user?.impersonatedBy ? null : (user?.sub ?? null);
+    return this.invoicesService.sendEmail(id, body?.email, variant, user?.sub ?? null, {
+      copyActorId,
+    });
   }
 
   /** Send a payment reminder email (does not change invoice status). */

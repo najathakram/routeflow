@@ -16,6 +16,8 @@ export const EMAIL_KINDS = [
   "RECEIPT",
   "PAYMENT_FAILED",
   "CUSTOMER_STATEMENT",
+  // W-1443 (SA-1516): the private copy of an invoice email, to the staff member who sent it (its own row, never the customer's).
+  "INVOICE_STAFF_COPY",
 ] as const;
 
 export type EmailKind = (typeof EMAIL_KINDS)[number];
@@ -41,6 +43,7 @@ export const EMAIL_KIND_AUDIENCE: Record<EmailKind, EmailAudience> = {
   RECEIPT: "tenant",
   PAYMENT_FAILED: "platform",
   CUSTOMER_STATEMENT: "tenant",
+  INVOICE_STAFF_COPY: "tenant",
 };
 export const PLATFORM_AUDIENCE_KINDS: readonly EmailKind[] = EMAIL_KINDS.filter(
   (k) => EMAIL_KIND_AUDIENCE[k] === "platform",

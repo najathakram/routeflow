@@ -96,8 +96,13 @@ export class InventoryController {
   }
 
   @Post("movements/adjustment")
-  recordAdjustment(@Body() dto: RecordAdjustmentDto, @CurrentUser() user: { id: string }) {
-    return this.inventoryService.recordAdjustment(dto, user.id);
+  recordAdjustment(
+    @Body() dto: RecordAdjustmentDto,
+    @CurrentUser() user: { id: string },
+    @Headers("idempotency-key") idempotencyKey?: string,
+  ) {
+    // B1415 M1b: a retried adjustment with the same key applies once (see adjustment-idempotency.ts).
+    return this.inventoryService.recordAdjustment(dto, user.id, idempotencyKey);
   }
 
   // SA-828 (row 657): set a product's stock to a count, or adjust it, in one of its units.

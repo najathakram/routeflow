@@ -12,6 +12,7 @@
  */
 import { PREF } from "@routeflow/types";
 import { apiClient } from "./api-client";
+import { invoiceCopyFromPrefs, invoiceCopyPatch } from "./invoice-copy-pref";
 
 const PUSH_ENABLED_KEY = PREF.pushEnabled;
 
@@ -25,4 +26,14 @@ export async function setPushEnabled(enabled: boolean): Promise<void> {
   await apiClient.patch("/users/me/preferences", {
     [PUSH_ENABLED_KEY]: enabled ? "true" : "false",
   });
+}
+
+/** W-1443: "send me a copy of invoices I email". OPT-IN (a missing row is OFF); see invoice-copy-pref.ts. */
+export async function getInvoiceCopyEnabled(): Promise<boolean> {
+  const { data } = await apiClient.get<Record<string, string>>("/users/me/preferences");
+  return invoiceCopyFromPrefs(data);
+}
+
+export async function setInvoiceCopyEnabled(enabled: boolean): Promise<void> {
+  await apiClient.patch("/users/me/preferences", invoiceCopyPatch(enabled));
 }
