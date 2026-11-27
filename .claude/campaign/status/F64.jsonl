@@ -186,7 +186,7 @@
 {"id":"B1324","batch":"F64","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"SA-1169 C1 class A': spec apps/web/app/(marketing)/site-motion-always.static.test.ts:184 pins the fix (fixed in 9239618968df5a9675363df79ac8ccfbf5a0b73f)","sha":"9239618968df5a9675363df79ac8ccfbf5a0b73f"}
 {"id":"B1329","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1327","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4312: the date-scan spec pins the system date (Wed 2026-06-17 12:00Z) beside useFakeTimers; 48/48 on a real Friday, independent review PASS, Verify green at head 76a08e6ac (fixed in 13fb12fd73c3107d98ca154f6363070fddeb3c9e)","sha":"13fb12fd73c3107d98ca154f6363070fddeb3c9e"}
-{"id":"B1330","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1330","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4335 (W-946r, SA-1149 D2): assertQtyNotBelowDelivered floors every per-line qty write at the delivered count; delivered-line-lock.qty-floor specs (fixed in f932dabcc804cc414d4aa876a73d3c0b2788521f)","sha":"f932dabcc804cc414d4aa876a73d3c0b2788521f"}
 {"id":"B1331","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1332","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1333","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
@@ -194,7 +194,7 @@
 {"id":"B1335","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1336","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1337","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1338","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1338","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4321 (W-871): pre-delivery edits of a paid invoice's order refused via EDIT_BLOCKING_INVOICE_WHERE, shared with the merge-candidate filter; order-edit-revert-set.refusal specs (fixed in ccecd1bf3b7ebdf5ea8c96824af345f71d2eb2b6)","sha":"ccecd1bf3b7ebdf5ea8c96824af345f71d2eb2b6"}
 {"id":"B1339","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1340","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1341","batch":"F64","tier":"T3","state":"queued","pr":null,"proof":null,"evidence":null}
@@ -226,3 +226,4 @@
 {"id":"B1367","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1368","batch":"F64","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1369","batch":"F64","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B907","batch":"F64","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #2875: dev-pipeline engine scope guard uses --untracked-files=all, blocked-dependency tasks are skipped, Haiku steps get a read-only MECHANICAL_GUARD; dry-run BF1 BF1b BF2 BF3a BF3c (fixed in 3b91f898826b5ef2597a1d80ec9c7716f9929e6a)","sha":"3b91f898826b5ef2597a1d80ec9c7716f9929e6a"}

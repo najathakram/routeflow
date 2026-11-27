@@ -161,7 +161,7 @@
 {"id":"B1420","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4538: batch import and variant resolution refuse a no-tenant caller and load by id and tenant; R1-R5 specs (fixed in 21d4d0f0a3f77569adf3e93be6d130bdffba45cf)","sha":"21d4d0f0a3f77569adf3e93be6d130bdffba45cf"}
 {"id":"B1444","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4547: web Modal scrolls by default, 15 opt-outs pinned by a census test (fixed in bc45193911fc5a815766b1a47a2475e5ce17945d)","sha":"bc45193911fc5a815766b1a47a2475e5ce17945d"}
 {"id":"B1461","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4546: followPartialPrices re-syncs the draft partial ledger in the same transaction; real-Postgres repro (fixed in 58388e66214c2836f1b24968793b56c937c703bc)","sha":"58388e66214c2836f1b24968793b56c937c703bc"}
-{"id":"B1474","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1474","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4548: a shelf count replaces stock by default on the stock count tab, matching the server and the phone app (fixed in a6de82212c7fde4967578d1fdb94afed6b1f8ece)","sha":"a6de82212c7fde4967578d1fdb94afed6b1f8ece"}
 {"id":"B1475","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4554 (W-1466): six new web suites red on master then green, pricing units-label spec row (fixed in 0f91b0bd5141f21a779e2622489dd052dfb52fef)","sha":"0f91b0bd5141f21a779e2622489dd052dfb52fef"}
 {"id":"B1476","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1477","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4554 (W-1466): six new web suites red on master then green, pricing units-label spec row (fixed in 0f91b0bd5141f21a779e2622489dd052dfb52fef)","sha":"0f91b0bd5141f21a779e2622489dd052dfb52fef"}
@@ -194,3 +194,11 @@
 {"id":"B1515","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1516","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1517","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B730","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed earlier (SA-1167 R5); proved by REG spec in #4376 (B730), red on the bug's own wrong value with the fix reverted (fixed in f38034d760268212ac5f24c81572c577d8ad3a5a)","sha":"f38034d760268212ac5f24c81572c577d8ad3a5a"}
+{"id":"B738","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed earlier (SA-1167 R5); proved by REG spec in #4376 (B738), red on the bug's own wrong value with the fix reverted (fixed in f38034d760268212ac5f24c81572c577d8ad3a5a)","sha":"f38034d760268212ac5f24c81572c577d8ad3a5a"}
+{"id":"B741","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed earlier (SA-1167 R5); proved by REG spec in #4376 (B741), red on the bug's own wrong value with the fix reverted (fixed in f38034d760268212ac5f24c81572c577d8ad3a5a)","sha":"f38034d760268212ac5f24c81572c577d8ad3a5a"}
+{"id":"B1518","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1520","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1521","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1522","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1523","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
