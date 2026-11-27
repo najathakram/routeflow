@@ -545,14 +545,14 @@ describe("resolveParkedReversal — resume the live walk (SA-167)", () => {
     it("findFiledPeriod is deterministic (orderBy) and names the MATCHED category", async () => {
       const findFirst = jest.fn().mockResolvedValue(filing("cat-B", "2026-08", "LOCKED"));
       (prisma as any).regulatedFiling.findFirst = findFirst;
-      const hit = await service.findFiledPeriod(prisma, ["cat-A", "cat-B"], "2026-08");
+      const hit = await service.findFiledPeriod(prisma, "t1", ["cat-A", "cat-B"], "2026-08");
       expect(hit).toEqual({ periodKey: "2026-08", status: "LOCKED", trackedCategoryId: "cat-B" });
       const args = findFirst.mock.calls[0][0];
       expect(args.orderBy).toEqual([{ trackedCategoryId: "asc" }, { periodKey: "asc" }]);
       expect(args.select).toMatchObject({ trackedCategoryId: true });
       // no categories means nothing to look up
       findFirst.mockClear();
-      expect(await service.findFiledPeriod(prisma, [], "2026-08")).toBeNull();
+      expect(await service.findFiledPeriod(prisma, "t1", [], "2026-08")).toBeNull();
       expect(findFirst).not.toHaveBeenCalled();
     });
 

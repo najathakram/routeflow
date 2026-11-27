@@ -124,3 +124,18 @@ describe("T10: the bridge line", () => {
     }
   });
 });
+
+describe("home pricing on a phone", () => {
+  // R-336: under 900px the plan cards were hidden and the table they were swapped for is gone, so a phone
+  // saw no plan rows. The home page keeps its cards at every width.
+  it("shows the four plan cards below 900px (no hidden cards, no table to fall back on)", () => {
+    const html = page("home");
+    expect(html.match(/class="pcard\b/g)).toHaveLength(4);
+    expect(html).not.toContain('<table class="pl"');
+    const css = fs.readFileSync(path.join(REPO, "apps/web/public/site/css/site.css"), "utf8");
+    const phone = css.slice(css.indexOf("@media (max-width:899.98px){"));
+    expect(phone).toMatch(/\.home #pricing \.pgrid--4\{display:grid[^}]*\}/);
+    const home = fs.readFileSync(path.join(REPO, "apps/web/public/site/css/home.css"), "utf8");
+    expect(home).not.toMatch(/#pricing[^{}]*\.pgrid--4[^{}]*\{[^}]*display:none/);
+  });
+});

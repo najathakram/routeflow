@@ -1,4 +1,5 @@
 import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
+import { BRAND } from "../common/brand";
 import { sellerDisplayName } from "../common/seller-display-name";
 import {
   HttpException,
@@ -3321,7 +3322,7 @@ export class BillingService {
             ]),
       ],
       cta: href ? { label: "Update payment method", url: href } : undefined,
-      why: "You are getting this because you manage this RouteFlow account’s billing.",
+      why: `You are getting this because you manage this ${BRAND.name} account’s billing.`,
     });
     await this.email.send({
       tenantId: sub.tenantId,

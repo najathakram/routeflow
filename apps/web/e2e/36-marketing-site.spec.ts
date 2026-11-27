@@ -21,7 +21,6 @@
  */
 import { test, expect, devices, type BrowserContext, type Page, webkit } from "@playwright/test";
 import brandFile from "../../../packages/types/brand/brand.json";
-import { wheelBox } from "./helpers/site-proof";
 
 // The everyday name and the title separator come from the brand file, never typed here.
 const BRAND_FILE = brandFile as { name: string; titleSeparator: string };
@@ -1211,7 +1210,7 @@ test.describe("T20 — a home anchor is reached as soon as the page paints", () 
     await page.goto("/", { waitUntil: "load" });
     await page.waitForFunction(
       () =>
-        !!document.querySelector(".rfw-live") &&
+        !!document.querySelector("#story .ringO") &&
         !!(window as unknown as { ScrollTrigger?: unknown }).ScrollTrigger,
       null,
       { timeout: 30_000 },
@@ -1402,7 +1401,7 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
       triggers: (
         window as unknown as { ScrollTrigger?: { getAll(): unknown[] } }
       ).ScrollTrigger?.getAll().length,
-      live: !!document.querySelector(".rfw-live"),
+      live: !!document.querySelector("#story .ringO"),
       still: !!document.querySelector(".rfw--static"),
       js: document.documentElement.className,
       reduce: matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -1423,7 +1422,7 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
     page.on("pageerror", (e) => errors.push(e.message));
     if (seed) await page.addInitScript(seed);
     await page.goto("/", { waitUntil: "load" });
-    await page.waitForFunction(() => !!document.querySelector(".rfw-live, .rfw--static"), null, {
+    await page.waitForFunction(() => !!document.querySelector("#story .ringO"), null, {
       timeout: 30_000,
     });
     await page.waitForTimeout(2500);
@@ -1442,9 +1441,9 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
       const b = await measure(reduced.page);
       expect(b.reduce, "the browser really reports reduced motion").toBe(true);
       expect(b.still, "no still dial").toBe(false);
-      expect(b.live, "the live wheel").toBe(true);
+      expect(b.live, "the live story ring").toBe(true);
       expect(b.triggers, "ScrollTriggers").toBe(a.triggers);
-      expect(b.triggers ?? 0).toBeGreaterThan(20);
+      expect(b.triggers ?? 0).toBeGreaterThan(5);
       expect(Math.abs(b.height - a.height), "page height").toBeLessThanOrEqual(4);
       expect(b.js).toContain("js-motion");
       expect(b.js).not.toMatch(/\brm\b|motion-on/);
@@ -1452,32 +1451,15 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
       await reduced.context.close();
     });
 
-    test(`T21 — reduce at ${view.name}: the wheel pieces move apart on scroll`, async ({
-      browser,
-    }) => {
+    test(`T21 — reduce at ${view.name}: the ring turns on scroll`, async ({ browser }) => {
       test.setTimeout(120_000);
       const { context, page, errors } = await load(browser, view, "reduce");
       const box = await page.evaluate(() => {
-        const r = document.querySelector(".rfw")!.getBoundingClientRect();
+        const r = document.getElementById("story")!.getBoundingClientRect();
         return { top: Math.round(r.top + scrollY), height: Math.round(r.height) };
       });
-      expect(box.height, "the wheel section is tall (it pins)").toBeGreaterThan(view.height * 1.5);
-      // A coarse picture of the canvas: where it is not white/grey, on a 4-px grid.
-      const snap = () =>
-        page.evaluate(() => {
-          const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
-          const c = cv.getContext("2d")!;
-          const { width: W, height: H } = cv;
-          const d = c.getImageData(0, 0, W, H).data;
-          const cells: number[] = [];
-          for (let y = 0; y < H; y += 8)
-            for (let x = 0; x < W; x += 8) {
-              const i = (y * W + x) * 4;
-              cells.push(d[i]! + d[i + 1]! + d[i + 2]!);
-            }
-          return cells;
-        });
-      const at = async (f: number) => {
+      expect(box.height, "the story section is tall (it pins)").toBeGreaterThan(view.height * 1.5);
+      const rot = async (f: number) => {
         await page.evaluate(
           (y) => {
             document.documentElement.style.scrollBehavior = "auto";
@@ -1486,138 +1468,42 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
           box.top + f * (box.height - view.height),
         );
         await page.waitForTimeout(1500);
-        return snap();
+        return page.evaluate(() =>
+          Number(
+            (
+              window as unknown as { gsap: { getProperty(e: Element, p: string): number } }
+            ).gsap.getProperty(document.querySelector("#story .ringO")!, "rotation"),
+          ),
+        );
       };
-      const rest = await at(0);
-      let moved = 0;
-      for (const f of [0.2, 0.4, 0.6, 0.8]) {
-        const now = await at(f);
-        const changed = now.filter((v, i) => Math.abs(v - rest[i]!) > 60).length / now.length;
-        moved = Math.max(moved, changed);
-      }
-      expect(
-        moved,
-        "share of the canvas that changed while scrolling through the wheel",
-      ).toBeGreaterThan(0.05);
+      const seen = new Set<number>();
+      for (const f of [0, 0.3, 0.6, 0.9]) seen.add(Math.round(await rot(f)));
+      expect(seen.size, "the ring turns while scrolling through the story").toBeGreaterThan(1);
       expect(errors).toEqual([]);
       await context.close();
     });
   }
 
-  // The hub is found by its own navy (the biggest connected blob of its two navies); the logo is the white in the
-  // middle of it. `maxR` is the brightest red value there: 255 is full strength, a faded mark reads far less.
-  const hubLogo = (page: import("@playwright/test").Page) =>
-    page.evaluate(() => {
-      const cv = document.querySelector<HTMLCanvasElement>(".rfw-cv")!;
-      const { width: W, height: H } = cv;
-      const d = cv.getContext("2d")!.getImageData(0, 0, W, H).data;
-      const near = (i: number, t: number[]) =>
-        Math.abs(d[i]! - t[0]!) < 7 &&
-        Math.abs(d[i + 1]! - t[1]!) < 7 &&
-        Math.abs(d[i + 2]! - t[2]!) < 7;
-      // the biggest connected blob of the hub's two navies
-      const m = new Uint8Array(W * H);
-      for (let i = 0; i < W * H; i++) {
-        const p = i * 4;
-        if (d[p + 3]! > 250 && (near(p, [16, 38, 77]) || near(p, [10, 26, 56]))) m[i] = 1;
-      }
-      const seen = new Uint8Array(W * H);
-      let best: { n: number; x0: number; y0: number; x1: number; y1: number } | null = null;
-      for (let s = 0; s < W * H; s++) {
-        if (!m[s] || seen[s]) continue;
-        const st = [s];
-        seen[s] = 1;
-        const b = { n: 0, x0: W, y0: H, x1: -1, y1: -1 };
-        while (st.length) {
-          const q = st.pop()!;
-          const x = q % W;
-          const y = (q / W) | 0;
-          b.n++;
-          b.x0 = Math.min(b.x0, x);
-          b.x1 = Math.max(b.x1, x);
-          b.y0 = Math.min(b.y0, y);
-          b.y1 = Math.max(b.y1, y);
-          for (const k of [q - 1, q + 1, q - W, q + W])
-            if (k >= 0 && k < W * H && m[k] && !seen[k]) {
-              seen[k] = 1;
-              st.push(k);
-            }
-        }
-        if (!best || b.n > best.n) best = b;
-      }
-      if (!best) return { found: false, white: 0, maxR: 0, w: 0 };
-      const w = best.x1 - best.x0;
-      const h = best.y1 - best.y0;
-      // bright pixels with dark navy (lid or wall) close on all four sides, on the hub or just under its lid: the
-      // logo, never the page around the hub
-      const R = 14;
-      const navyNear = (x: number, y: number, dx: number, dy: number) => {
-        for (let k = 1; k <= R; k++) {
-          const xx = x + dx * k;
-          const yy = y + dy * k;
-          if (xx < 0 || yy < 0 || xx >= W || yy >= H) return false;
-          const q = (yy * W + xx) * 4;
-          if (d[q]! < 70 && d[q + 1]! < 90 && d[q + 2]! < 140 && d[q + 3]! > 250) return true;
-        }
-        return false;
-      };
-      let white = 0;
-      let maxR = 0;
-      for (let y = best.y0; y <= Math.min(H - 1, best.y1 + Math.round(0.5 * h)); y++)
-        for (let x = best.x0; x <= best.x1; x++) {
-          const p = (y * W + x) * 4;
-          if (d[p]! < 100) continue;
-          if (!(navyNear(x, y, -1, 0) && navyNear(x, y, 1, 0))) continue;
-          if (!(navyNear(x, y, 0, -1) && navyNear(x, y, 0, 1))) continue;
-          if (d[p]! > maxR) maxR = d[p]!;
-          if (d[p]! > 200 && d[p + 1]! > 200 && d[p + 2]! > 200) white++;
-        }
-      return { found: true, white, maxR, w };
-    });
-
-  // review-a, #4153: below 900 px the closed wheel, as loaded and never scrolled, drew a plain navy hub. Looking
-  // straight down the puck's base sits inside its lid, so the "stand the mark upright" blend clamped to 1 and drew
-  // it at almost no size. The hub is found by its own navy; the logo is white pixels in the middle of it.
+  // The hub carries the logo as an image at rest, at tablet and phone widths too.
   for (const view of [
     { name: "768", width: 768, height: 1024 },
     { name: "390", width: 390, height: 844 },
   ]) {
-    test(`T21 — the hub shows the logo at rest at ${view.name}`, async ({ browser }) => {
+    test(`T21 — the ring's hub shows the logo at rest at ${view.name}`, async ({ browser }) => {
       test.setTimeout(120_000);
       const { context, page, errors } = await load(browser, view, "no-preference");
-      const hub = await hubLogo(page);
-      expect(hub.found, "a navy hub on the canvas").toBe(true);
-      expect(hub.w, "the hub is a real size").toBeGreaterThan(60);
-      expect(hub.white, "white logo pixels in the middle of the hub").toBeGreaterThan(40);
-      expect(errors).toEqual([]);
-      await context.close();
-    });
-  }
-
-  // review-a, #4153 note 1: on 360x740, 393x760 and 412x780 the page rests for hundreds of pixels with the puck's
-  // geometry still, and the mark's opacity followed that geometry, so it stayed at half strength (a grey logo).
-  // The fade now runs on the clock, so wherever the page rests the logo is at full strength.
-  for (const view of [
-    { name: "360x740", width: 360, height: 740 },
-    { name: "393x760", width: 393, height: 760 },
-    { name: "412x780", width: 412, height: 780 },
-  ]) {
-    test(`T21 — the hub logo is at full strength wherever the page rests at ${view.name}`, async ({
-      browser,
-    }) => {
-      test.setTimeout(180_000);
-      const { context, page, errors } = await load(browser, view, "no-preference");
-      const weak: string[] = [];
-      for (let y = 900; y <= 1700; y += 100) {
-        await page.evaluate((to) => {
-          document.documentElement.style.scrollBehavior = "auto";
-          scrollTo(0, to);
-        }, y);
-        await page.waitForTimeout(1200);
-        const hub = await hubLogo(page);
-        if (hub.maxR < 230) weak.push(`y ${y}: brightest ${hub.maxR}`);
-      }
-      expect(weak, "scroll positions where the logo is faded").toEqual([]);
+      const hub = await page.evaluate(() => {
+        const img = document.querySelector("#story .hub image") as SVGImageElement | null;
+        const r = img?.getBoundingClientRect();
+        return {
+          href: img?.getAttribute("href") || "",
+          w: r ? r.width : 0,
+          opacity: img ? Number(getComputedStyle(img).opacity) : 0,
+        };
+      });
+      expect(hub.href, "the hub draws the logo").not.toBe("");
+      expect(hub.w, "the logo is a real size").toBeGreaterThan(10);
+      expect(hub.opacity, "the logo is at full strength").toBe(1);
       expect(errors).toEqual([]);
       await context.close();
     });
@@ -1636,7 +1522,7 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
     });
     const m = await measure(page);
     expect(m.live).toBe(true);
-    expect(m.triggers ?? 0).toBeGreaterThan(20);
+    expect(m.triggers ?? 0).toBeGreaterThan(5);
     expect(m.js).not.toMatch(/\brm\b/);
     await context.close();
   });
@@ -1697,11 +1583,11 @@ test.describe("T21 — the motion does not depend on the visitor's motion settin
   });
 });
 
-// ─── T22 — the wheel runs on a short screen, a phone held sideways included ──
-// Owner, iPhone in desktop mode turned to landscape: no wheel graphics. The wheel used to give way to the still under
-// 500 px tall. It now runs on every height; below 900 px, short and wider than tall, it takes the wide layout (the words
-// beside the wheel). A turn of the phone builds it again for the new shape and puts the visitor at the same place.
-test.describe("T22 — the wheel runs on a short screen", () => {
+// ─── T22 — the story runs on a short screen, a phone held sideways included ──
+// The opening is one pinned ring (#story). It runs on every height; a turn of the phone must leave the ring
+// in place and the page never wider than the window. (The canvas wheel, its sample screens and its shrinking
+// headline are gone with the wheel.)
+test.describe("T22 — the story runs on a short screen", () => {
   const SIZES = [
     { w: 667, h: 375 },
     { w: 844, h: 390 },
@@ -1712,21 +1598,12 @@ test.describe("T22 — the wheel runs on a short screen", () => {
 
   const state = (page: import("@playwright/test").Page) =>
     page.evaluate(() => {
-      const el = document.querySelector(".rfw") as
-        (HTMLElement & { _rfw?: { trig?: { progress: number } } }) | null;
-      const r = el ? el.getBoundingClientRect() : null;
-      const copy = document.querySelector(".hx-copy") as HTMLElement | null;
-      const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement | null;
-      const c = cv ? cv.getBoundingClientRect() : null;
+      const ring = document.querySelector("#story .ringO");
+      const g = (window as unknown as { gsap?: { getProperty(e: Element, p: string): number } })
+        .gsap;
       return {
-        live: !!document.querySelector(".rfw-live"),
-        still: !!document.querySelector(".rfw--static"),
-        canvas: !!cv,
-        progress: el?._rfw?.trig?.progress ?? null,
-        top: r ? r.top + window.scrollY : 0,
-        height: r ? r.height : 0,
-        copyRight: copy ? copy.getBoundingClientRect().right : null,
-        canvasLeft: c ? c.left : null,
+        ring: !!ring,
+        rotation: ring && g ? Number(g.getProperty(ring, "rotation")) : null,
         docW: document.documentElement.scrollWidth,
         winW: window.innerWidth,
       };
@@ -1738,151 +1615,52 @@ test.describe("T22 — the wheel runs on a short screen", () => {
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto("/", { waitUntil: "load" });
-    await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
+    await page.waitForSelector("#story .ringO", { state: "attached", timeout: 30_000 });
     await page.waitForTimeout(2500);
     return { context, page, errors };
   };
 
   for (const s of SIZES) {
-    test(`T22 — ${s.w}x${s.h}: a live wheel with the words beside it, no sideways scroll`, async ({
+    test(`T22 — ${s.w}x${s.h}: the ring turns on scroll and the page never grows sideways`, async ({
       browser,
     }) => {
       test.setTimeout(120_000);
       const { context, page, errors } = await load(browser, s.w, s.h);
       const a = await state(page);
-      expect(a.live, "live wheel").toBe(true);
-      expect(a.still, "not the still").toBe(false);
-      expect(a.canvas, "a canvas").toBe(true);
-      expect(a.copyRight, "words sit left of the wheel").toBeLessThanOrEqual(
-        (a.canvasLeft ?? 0) + s.w * 0.62,
-      );
-      // real scroll: the story plays and the page never grows sideways
-      const before = a.progress ?? 0;
-      for (let i = 0; i < 6; i++) {
+      expect(a.ring, "the ring").toBe(true);
+      for (let i = 0; i < 30; i++) {
         await page.mouse.wheel(0, 160);
-        await page.waitForTimeout(250);
+        await page.waitForTimeout(150);
       }
       await page.waitForTimeout(1500);
       const b = await state(page);
-      expect(b.progress ?? 0, "scroll plays the story").toBeGreaterThan(before + 0.02);
+      expect(b.rotation, "scroll turns the ring").not.toBe(a.rotation);
       expect(b.docW, "no sideways scroll").toBeLessThanOrEqual(b.winW);
       expect(errors).toEqual([]);
       await context.close();
     });
   }
 
-  test("T22 — pieces move when scrolled: the canvas changes between two places in the story", async ({
-    browser,
-  }) => {
-    test.setTimeout(120_000);
-    const { context, page } = await load(browser, 844, 390);
-    const grab = async (f: number) => {
-      const { top, height } = await state(page);
-      await page.evaluate(
-        ([t, h, f2]) => {
-          document.documentElement.style.scrollBehavior = "auto";
-          window.scrollTo(0, (t as number) + (f2 as number) * ((h as number) - 390));
-        },
-        [top, height, f],
-      );
-      await page.waitForTimeout(1800);
-      return page.evaluate(() => {
-        const cv = document.querySelector(".rfw-cv") as HTMLCanvasElement;
-        const g = cv.getContext("2d")!;
-        const d = g.getImageData(0, 0, cv.width, cv.height).data;
-        let sum = 0;
-        for (let i = 0; i < d.length; i += 97) sum = (sum * 31 + d[i]) % 1000003;
-        return sum;
-      });
-    };
-    const rest = await grab(0.02);
-    const apart = await grab(0.3);
-    expect(apart, "the pieces have moved").not.toBe(rest);
-    await context.close();
-  });
-
-  test("T22 — turning the phone builds the wheel again and keeps the place", async ({
-    browser,
-  }) => {
+  test("T22 — turning the phone keeps the ring and the page width", async ({ browser }) => {
     test.setTimeout(120_000);
     const { context, page, errors } = await load(browser, 390, 844);
-    const { top, height } = await state(page);
-    await page.evaluate(
-      ([t, h]) => {
-        document.documentElement.style.scrollBehavior = "auto";
-        window.scrollTo(0, (t as number) + 0.5 * ((h as number) - 844));
-      },
-      [top, height],
-    );
-    await page.waitForTimeout(2200);
-    const p1 = (await state(page)).progress ?? 0;
-    expect(p1).toBeGreaterThan(0.2);
     await page.setViewportSize({ width: 844, height: 390 });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(2500);
     const land = await state(page);
-    expect(land.live && land.canvas, "live wheel after the turn").toBe(true);
-    expect(Math.abs((land.progress ?? 0) - p1), "same place in the story").toBeLessThan(0.04);
+    expect(land.ring, "ring after the turn").toBe(true);
     expect(land.docW).toBeLessThanOrEqual(land.winW);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(2500);
     const back = await state(page);
-    expect(back.live && back.canvas).toBe(true);
-    expect(Math.abs((back.progress ?? 0) - p1)).toBeLessThan(0.04);
+    expect(back.ring).toBe(true);
+    expect(back.docW).toBeLessThanOrEqual(back.winW);
     expect(errors).toEqual([]);
     await context.close();
   });
-
-  // What the sample screens and the headline do: a laptop window 500 px or taller keeps the page as it was
-  // (screens shown, headline full size); a phone held sideways and a wide window under 500 px give them up.
-  const cardsAndHeadline = (page: import("@playwright/test").Page) =>
-    page.evaluate(() => {
-      const card = document.querySelector(".rfw-card");
-      const h1 = document.querySelector(".hx-up h1");
-      return {
-        cards: card ? getComputedStyle(card).display : "none",
-        h1: h1 ? parseFloat(getComputedStyle(h1).fontSize) : 0,
-      };
-    });
-
-  for (const s of [
-    { w: 1280, h: 577 },
-    { w: 1366, h: 590 },
-    { w: 1024, h: 560 },
-  ]) {
-    test(`T22 — ${s.w}x${s.h}: a laptop window keeps its sample screens and its headline`, async ({
-      browser,
-    }) => {
-      test.setTimeout(120_000);
-      const { context, page, errors } = await load(browser, s.w, s.h);
-      const r = await cardsAndHeadline(page);
-      expect(r.cards, "the sample screens are shown").not.toBe("none");
-      expect(r.h1, "the headline is not shrunk for height").toBeGreaterThanOrEqual(50);
-      expect(errors).toEqual([]);
-      await context.close();
-    });
-  }
-
-  for (const s of [
-    { w: 667, h: 375 },
-    { w: 844, h: 390 },
-    { w: 1100, h: 450 },
-  ]) {
-    test(`T22 — ${s.w}x${s.h}: the sample screens give way and the headline fits the height`, async ({
-      browser,
-    }) => {
-      test.setTimeout(120_000);
-      const { context, page, errors } = await load(browser, s.w, s.h);
-      const r = await cardsAndHeadline(page);
-      expect(r.cards).toBe("none");
-      expect(r.h1).toBeLessThanOrEqual(48);
-      expect(errors).toEqual([]);
-      await context.close();
-    });
-  }
 });
 
 // ─── T23 — on a phone, headings rise into place and are never hidden ─────────
-// The rise is movement only (a scroll timeline, behind @supports). With real scroll, every heading on screen (outside the wheel, which
+// The rise is movement only (a scroll timeline, behind @supports). With real scroll, every heading on screen (outside the story, which
 // has its own beats) is fully opaque and visible once the page has settled at each step.
 test.describe("T23 — the phone's rising headings", () => {
   for (const route of ["/", "/pricing", "/product"]) {
@@ -1904,7 +1682,7 @@ test.describe("T23 — the phone's rising headings", () => {
         const seen = await page.evaluate(() =>
           [...document.querySelectorAll("h2")]
             .filter((h) => {
-              if (h.closest(".rfw")) return false;
+              if (h.closest("#story")) return false;
               const r = h.getBoundingClientRect();
               return r.top > 70 && r.bottom < innerHeight && r.height > 0;
             })
@@ -1918,91 +1696,6 @@ test.describe("T23 — the phone's rising headings", () => {
       }
       await context.close();
       expect(bad, "headings hidden on screen").toEqual([]);
-    });
-  }
-});
-
-// ─── T24 — the hover label shows on every piece ────────────────────────────
-// Names are no longer painted on the wheel (they are in the legend and the keyboard list), so the hover/focus label (.rfw-tip)
-// shows on every piece: a desktop tile, an inner piece and a phone tile alike.
-test.describe("T24 — the hover label shows on every piece", () => {
-  const OUTER = 8; // Customers
-  const INNER = 11; // an inner piece: icon only at rest on a desktop
-
-  const open = async (browser: import("@playwright/test").Browser, w: number, h: number) => {
-    const context = await browser.newContext({ viewport: { width: w, height: h } });
-    const page = await context.newPage();
-    const errors: string[] = [];
-    page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto("/", { waitUntil: "load" });
-    await page.waitForSelector(".rfw-live", { state: "attached", timeout: 30_000 });
-    await page.waitForTimeout(3500);
-    return { context, page, errors };
-  };
-  const tip = (page: import("@playwright/test").Page) =>
-    page.evaluate(() => {
-      const t = document.querySelector(".rfw-tip") as HTMLElement;
-      return { on: t.classList.contains("on"), text: t.textContent || "" };
-    });
-  const focusPiece = async (page: import("@playwright/test").Page, i: number) => {
-    await page.locator(`.rfw-b[data-i="${i}"]`).focus();
-    await page.waitForTimeout(700);
-    return tip(page);
-  };
-
-  // The names are in the legend and the keyboard list now, never painted on the tile, so the label shows on every piece.
-  // The .rfw-b buttons are 1x1 px at the tile centre, so the pointer cannot aim at them: scan the wheel's own pixels with the mouse
-  // until the label reads the wanted name. A scan that never finds it throws (L-202).
-  const hoverPiece = async (page: import("@playwright/test").Page, name: string) => {
-    const box = await wheelBox(page);
-    const N = 24;
-    for (let r = 0; r < N; r++) {
-      for (let c = 0; c < N; c++) {
-        await page.mouse.move(
-          box.l + ((box.r - box.l) * (c + 0.5)) / N,
-          box.t + ((box.b - box.t) * (r + 0.5)) / N,
-        );
-        const t = await tip(page);
-        if (t.on && t.text === name) return t;
-      }
-    }
-    throw new Error(`T24: no point on the wheel made the label read "${name}"`);
-  };
-
-  test("T24 — 1440x900: the label shows on every piece, on a tile that once named itself too", async ({
-    browser,
-  }) => {
-    test.setTimeout(120_000);
-    const { context, page, errors } = await open(browser, 1440, 900);
-    const hovered = await hoverPiece(page, "Customers");
-    expect(hovered.on, "hover on the Customers tile shows its label").toBe(true);
-    const innerHover = await hoverPiece(page, "Box or piece");
-    expect(innerHover.on, "hover on an inner piece shows its label").toBe(true);
-    // keyboard focus
-    const outer = await focusPiece(page, OUTER);
-    expect(outer.on, "Customers tile shows its label on focus").toBe(true);
-    expect(outer.text).toBe("Customers");
-    const inner = await focusPiece(page, INNER);
-    expect(inner.on, "an inner piece shows its label on focus").toBe(true);
-    expect(inner.text.length).toBeGreaterThan(0);
-    expect(errors).toEqual([]);
-    await context.close();
-  });
-
-  for (const s of [
-    { w: 768, h: 1024 },
-    { w: 390, h: 844 },
-  ]) {
-    test(`T24 — ${s.w}x${s.h}: a tile with no name drawn still gets its label`, async ({
-      browser,
-    }) => {
-      test.setTimeout(120_000);
-      const { context, page, errors } = await open(browser, s.w, s.h);
-      const t = await focusPiece(page, OUTER);
-      expect(t.on, "label shows when the tile has no name of its own").toBe(true);
-      expect(t.text).toBe("Customers");
-      expect(errors).toEqual([]);
-      await context.close();
     });
   }
 });

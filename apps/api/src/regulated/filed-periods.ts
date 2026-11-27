@@ -1,4 +1,4 @@
-import { ForbiddenException } from "@nestjs/common";
+import { InternalServerErrorException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { monthRange } from "./period";
 
@@ -28,7 +28,11 @@ export type FilingsDb = {
 
 /** Fail closed: an empty tenant id would match no row (`tenantId: null`) and so read as "nothing is locked". */
 function requireTenant(tenantId: string): void {
-  if (!tenantId) throw new ForbiddenException("A filed-period read needs an explicit tenantId");
+  if (!tenantId) {
+    // A caller bug, not a client error: generic to the client, the detail is logged (house pattern).
+    new Logger("FiledPeriods").error("A filed-period read needs an explicit tenantId");
+    throw new InternalServerErrorException();
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -59,9 +63,10 @@ export interface BucketRef {
 export async function lockedFilingsCovering(
   db: FilingsDb,
   refs: BucketRef[],
-  /** When given it is applied to the where, whatever client `db` is (the ledger writers run on a tenant tx). */
-  tenantId?: string,
+  /** Required: applied to the where, whatever client `db` is (the ledger writers run on a tenant tx). */
+  tenantId: string,
 ): Promise<Array<{ filing: LockedFilingRow; trackedCategoryId: string; periodBucket: string }>> {
+  requireTenant(tenantId);
   const withCategory = refs.filter((r): r is BucketRef & { trackedCategoryId: string } =>
     Boolean(r.trackedCategoryId),
   );
@@ -69,7 +74,7 @@ export async function lockedFilingsCovering(
   const categoryIds = [...new Set(withCategory.map((r) => r.trackedCategoryId))];
   const filings = (await db.regulatedFiling.findMany({
     where: {
-      ...(tenantId ? { tenantId } : {}),
+      tenantId,
       trackedCategoryId: { in: categoryIds },
       status: "LOCKED",
     },
@@ -119,8 +124,9 @@ export const isLockedFiling = (f: { status: string }): boolean => f.status === "
 export async function lockFilingRowsCovering(
   db: FilingsDb & { $queryRaw?: (...args: any[]) => Promise<any> },
   refs: BucketRef[],
-  tenantId?: string,
+  tenantId: string,
 ): Promise<CoverMatch[]> {
+  requireTenant(tenantId);
   const withCategory = refs.filter((r): r is BucketRef & { trackedCategoryId: string } =>
     Boolean(r.trackedCategoryId),
   );
@@ -141,7 +147,7 @@ export async function lockFilingRowsCovering(
     Prisma.sql`SELECT f."id", f."trackedCategoryId", f."periodKey", f."periodStart", f."periodEnd", f."status"
       FROM "RegulatedFiling" f
       WHERE f."trackedCategoryId" = ANY(${categoryIds}::text[])
-        AND (${tenantId ?? null}::text IS NULL OR f."tenantId" = ${tenantId ?? null}::text)
+        AND f."tenantId" = ${tenantId}::text
         AND EXISTS (
           SELECT 1 FROM unnest(${monthStarts}::timestamp[]) AS m(month_start)
           WHERE f."periodStart" <= m.month_start AND m.month_start < f."periodEnd"
@@ -173,9 +179,14 @@ export async function anyLockedFiling(db: FilingsDb, tenantId: string): Promise<
 /** The LOCKED filing for one (category, periodKey), or null (`prepareFiling` never regenerates it). */
 export async function findLockedFiling(
   db: { regulatedFiling: { findFirst(args: any): Promise<any> } },
+  tenantId: string,
   where: { trackedCategoryId: string; periodKey: string },
 ): Promise<any> {
-  return (await db.regulatedFiling.findFirst({ where: { ...where, status: "LOCKED" } })) ?? null;
+  requireTenant(tenantId);
+  return (
+    (await db.regulatedFiling.findFirst({ where: { tenantId, ...where, status: "LOCKED" } })) ??
+    null
+  );
 }
 
 /**
@@ -186,6 +197,7 @@ export async function claimFilingLock(
   db: { regulatedFiling: { updateMany(args: any): Promise<{ count: number }> } },
   params: { id: string; lockedById: string | null; reason: string },
 ): Promise<{ count: number }> {
+  // By-id writer, pin exception 1 of 2: the id was read through `forTenant()` by the caller.
   return db.regulatedFiling.updateMany({
     where: { id: params.id, status: "GENERATED" },
     data: {
@@ -206,6 +218,7 @@ export async function updateFilingUnlessLocked(
   id: string,
   data: Record<string, unknown>,
 ): Promise<any> {
+  // By-id writer, pin exception 2 of 2: the id was read through `forTenant()` by the caller.
   return db.regulatedFiling.update({ where: { id, status: { not: "LOCKED" } }, data });
 }
 
@@ -326,6 +339,7 @@ export async function filedThroughOf(
   product: FiledProduct,
   cache: FiledCache,
 ): Promise<FiledThrough | null> {
+  requireTenant(tenantId);
   let best: FiledThrough | null = null;
   if (product.isTobacco) best = await tobaccoFiled(db, tenantId, cache);
   if (product.trackedCategoryId) {
@@ -356,13 +370,16 @@ export interface FiledPeriod {
  */
 export async function findFiledPeriod(
   db: any,
+  tenantId: string,
   categoryIds: string[],
   bucket: string,
 ): Promise<FiledPeriod | null> {
+  requireTenant(tenantId);
   if (categoryIds.length === 0) return null;
   const bucketStart = new Date(`${bucket}-01T00:00:00.000Z`);
   const filing = await db.regulatedFiling.findFirst({
     where: {
+      tenantId,
       trackedCategoryId: { in: categoryIds },
       periodStart: { lte: bucketStart },
       periodEnd: { gt: bucketStart },

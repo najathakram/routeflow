@@ -255,7 +255,7 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
     );
     fake.table.get("prod_checkout_born")!.active = false;
     await revertPlanChange({ stripe, logger, resolveName: names }, push);
-    expect(fake.table.get("rf_plan_starter")!.name).toBe("RouteFlow Starter");
+    expect(fake.table.get("rf_plan_starter")!.name).toBe("Starter");
   });
 
   it("no display name for the plan: fail closed, create nothing, send nothing (no code-as-name fallback)", async () => {
@@ -367,7 +367,7 @@ describe("revertPlanChange - W-832 a prior product that went inactive cannot str
         active: true,
         metadata: { addonSku: "SMS_PACK" },
       });
-      expect(fake.table.get("rf_addon_sms_pack")!.name).toBe("RouteFlow add-on — SMS Pack");
+      expect(fake.table.get("rf_addon_sms_pack")!.name).toBe("SMS Pack add-on");
       expect(item.quantity).toBe(2);
     });
 
