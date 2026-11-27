@@ -11,36 +11,7 @@ import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { fmtDate } from "@/lib/formatting";
 import { shipmentListShippedAt } from "@/lib/shipment-display";
 import { carrierLabel, getTrackingUrl } from "@/lib/shipping";
-
-// ─── Contextual status display (mirrors the invoices list) ────────────────────
-
-function renderStatus(status: Invoice["status"]): React.ReactNode {
-  const labels: Record<string, string> = {
-    DRAFT: "Draft",
-    SENT: "Sent",
-    VIEWED: "Viewed",
-    PARTIAL: "Partial",
-    OVERDUE: "Overdue",
-    PAID: "Paid",
-    VOID: "Void",
-    WRITTEN_OFF: "Written Off",
-  };
-  const colors: Record<string, string> = {
-    DRAFT: "text-navy/50",
-    SENT: "text-brand-600",
-    VIEWED: "text-brand-700",
-    PARTIAL: "text-warning",
-    OVERDUE: "text-danger",
-    PAID: "text-success",
-    VOID: "text-navy/40",
-    WRITTEN_OFF: "text-navy/50",
-  };
-  return (
-    <span className={cn("text-xs font-semibold", colors[status] ?? "text-navy/50")}>
-      {labels[status] ?? status}
-    </span>
-  );
-}
+import { InvoiceStatusText } from "@/lib/invoice-status-display";
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -202,7 +173,9 @@ export default function ShipmentsPage() {
                     <td className="px-4 py-3 text-sm text-navy">
                       {shippedOn ? fmtDate(shippedOn) : "—"}
                     </td>
-                    <td className="px-4 py-3">{renderStatus(inv.status)}</td>
+                    <td className="px-4 py-3">
+                      <InvoiceStatusText status={inv.status} />
+                    </td>
                     <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                       <button
                         title="View invoice"

@@ -278,6 +278,8 @@ model Customer {
   agentAssignments     AgentAssignment[]
   commissionRates      CustomerCommissionRate[]
   commissionAccruals   CommissionAccrual[]
+  // SA-1295 A2: imported history that names this customer (back-relation only; SET NULL is a backstop for a hard delete).
+  legacySalesDocuments LegacySalesDocument[]
 
   @@index([zohoContactId])
   @@index([businessName])

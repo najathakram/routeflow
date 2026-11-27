@@ -112,9 +112,9 @@ check(
 );
 // Moves only with the db/smtp spec set: update it in the same PR that adds or removes one of those specs.
 check(
-  "ND3 count pin: 561 spec files are outside Verify by the db/smtp configs",
+  "ND3 count pin: 564 spec files are outside Verify by the db/smtp configs",
   excludedCount,
-  561,
+  564,
 );
 
 // -- ci.yml wiring: a parity job BESIDE today's single Verify, nothing else moved ------------------

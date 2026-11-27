@@ -56,7 +56,8 @@ import {
   Printer,
 } from "lucide-react";
 import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
-import type { ToCollectState } from "@routeflow/types";
+import { INVOICE_STATUS_VALUES, type ToCollectState } from "@routeflow/types";
+import { InvoiceStatusPill } from "@/lib/invoice-status-display";
 import { depositOverdueLine, groupArAgingByCustomer, toCollectLookup } from "@/lib/ar-aging-rows";
 import { ToCollectChip } from "@/components/ToCollectChip";
 import {
@@ -1982,13 +1983,9 @@ function SkeletonRows({ cols, rows = 5 }: { cols: number; rows?: number }) {
   );
 }
 
-const STATUS_BADGE_CLASSES: Record<string, string> = {
-  DRAFT: "bg-gray-100   text-gray-600",
-  SENT: "bg-blue-100   text-blue-700",
-  PAID: "bg-green-100  text-green-700",
-  OVERDUE: "bg-red-100    text-red-700",
-  PARTIAL: "bg-amber-100  text-amber-700",
-  VOID: "bg-gray-100   text-gray-400",
+// W-1470: invoice statuses (DRAFT ... WRITTEN_OFF) come from the shared invoice status table; only the estimate and
+// transaction keys below are this page's own.
+const OTHER_STATUS_BADGE_CLASSES: Record<string, string> = {
   ACCEPTED: "bg-green-100  text-green-700",
   DECLINED: "bg-red-100    text-red-700",
   EXPIRED: "bg-orange-100 text-orange-700",
@@ -1997,7 +1994,10 @@ const STATUS_BADGE_CLASSES: Record<string, string> = {
   CREDIT_NOTE: "bg-purple-50  text-purple-600",
 };
 function StatusBadge({ status }: { status: string }) {
-  const cls = STATUS_BADGE_CLASSES[status] ?? "bg-gray-100 text-gray-600";
+  if ((INVOICE_STATUS_VALUES as readonly string[]).includes(status)) {
+    return <InvoiceStatusPill status={status} />;
+  }
+  const cls = OTHER_STATUS_BADGE_CLASSES[status] ?? "bg-gray-100 text-gray-600";
   return (
     <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", cls)}>
       {status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ")}

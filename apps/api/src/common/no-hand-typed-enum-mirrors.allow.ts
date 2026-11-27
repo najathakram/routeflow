@@ -67,6 +67,7 @@ apps/api/src/invoices/invoice-line-override.ts | PriceType | 1 | pending:B6 | un
 apps/api/src/invoices/invoice-send-guard.ts | InvoiceStatus | 1 | pending:B7 | array {SENT,VIEWED,PARTIAL,OVERDUE}
 apps/api/src/invoices/payment-idempotency.ts | PaymentIdempotencyState | 1 | pending:B7 | union {CLAIMED,COMPLETED,TOMBSTONED}
 apps/api/src/invoices/payment-ref-dedupe.ts | UserRole | 1 | pending:B7 | array {SUPER_ADMIN,TENANT_ADMIN,OPERATOR}
+apps/api/src/legacy-import/match/types.ts | LegacyItemMatchMethod | 1 | derived | the matcher RESULT kind {ALIAS,EXACT,NORMALISED,AMBIGUOUS,SUGGESTED,UNMATCHED}: a result set that shares three names with the stored method enum (which has MANUAL and NONE instead), not the Prisma enum
 apps/api/src/messaging/staff-order-email.ts | NotificationEvent | 2 | pending:B4 | object+union {STAFF_NEW_ORDER,BUYER_ORDER_EDITED,BUYER_ORDER…
 apps/api/src/onboarding/dto/onboarding.dto.ts | OnboardingCaseStatus | 2 | pending:B7 | array+union {OPEN,ON_HOLD,LOST}
 apps/api/src/onboarding/onboarding-catalog.ts | OnboardingStage | 1 | pending:B7 | array {FOLLOW_UP,AGREE,ACTIVATE,COLLECT,CONFIGURE,VER…
@@ -111,7 +112,6 @@ apps/api/src/vendor-bills/vendor-bills.service.ts | VendorBillStatus | 2 | pendi
 apps/web/app/(dashboard)/invoices/[id]/InvoiceLinePrice.tsx | PriceType | 1 | pending:B6 | object {SPECIAL,DISCOUNTED,PROMO,MANUAL}
 apps/web/app/(dashboard)/settings/billing/page.tsx | TenantStatus | 1 | pending:B5 | object {TRIAL,ACTIVE,READ_ONLY,SUSPENDED,CANCELLED}
 apps/web/app/(dashboard)/settings/import/page.tsx | DocumentNumberType | 1 | pending:B5 | object {INVOICE,ESTIMATE,CREDIT_NOTE}
-apps/web/app/(dashboard)/shipments/page.tsx | InvoiceStatus | 2 | pending:B5 | object {DRAFT,SENT,VIEWED,PARTIAL,OVERDUE,PAID,VOID,WRITTEN_OFF}
 apps/web/app/(dashboard)/suppliers/[id]/page.tsx | VendorBillStatus | 2 | pending:B5 | object {DRAFT,RECEIVED,PARTIAL,PAID,OVERDUE,VOID}
 apps/web/app/(platform-admin)/admin/buyers/merge-requests/[id]/page.tsx | BuyerMergeRequestStatus | 1 | pending:B5 | object {PENDING_VERIFICATION,PENDING_REVIEW,COMPLETED,REJECTED}
 apps/web/app/(platform-admin)/_components/AdminBadge.tsx | TenantStatus | 2 | pending:B5 | object {ACTIVE,TRIAL,PENDING_SELLER_APPROVAL,READ_ONLY,SUSPENDED,INVITED,CANCELLED,INACTIVE,DELETED,DISCONNECTED}
@@ -174,7 +174,6 @@ apps/api/src/common/barcode-bcid.ts | BarcodeSymbology | 2 | pending:B7 | object
 apps/api/src/messaging/messaging-config.service.ts | MessageChannel | 1 | pending:B4 | object {EMAIL,WHATSAPP,SMS,PORTAL}
 apps/api/src/orders/counter-sale/counter-sale-void-handback.ts | PaymentMethod | 1 | pending:B7 | object {CASH,CREDIT_CARD,CHECK}
 apps/api/src/settings-fulfilment/settings-fulfilment.service.ts | FulfillPath | 1 | pending:B7 | object {ROUTE,SHIP,PICKUP}
-apps/web/app/(dashboard)/customers/[id]/invoice-status-badge.tsx | InvoiceStatus | 2 | pending:B5 | object {SENT,VIEWED,PARTIAL,OVERDUE}
 apps/web/app/(dashboard)/customers/[id]/page.tsx | CustomerLinkStatus | 1 | pending:B5 | chain {ACTIVE,INVITED,PENDING_SELLER_APPROVAL}
 apps/web/app/(dashboard)/customers/_components/walk-in-protection.tsx | UserStatus | 1 | pending:B5 | array {ACTIVE,INACTIVE,SUSPENDED}
 apps/web/app/(dashboard)/dashboard/page.tsx | OrderStatus | 2 | pending:B5 | object {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…
@@ -183,8 +182,9 @@ apps/web/app/(dashboard)/dispatch/page.tsx | RouteRunStatus | 1 | pending:B5 | u
 apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx | CommissionAdjustmentKind | 1 | pending:B5 | object {CLAWBACK,RATE_CHANGE,REASSIGNMENT,MANUAL}
 apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx | CommissionStatementLineKind | 1 | pending:B5 | object {CLAIM,ADJUSTMENT,CARRYFORWARD}
 apps/web/app/(dashboard)/finance/payments/[id]/page.tsx | PaymentStatus | 1 | pending:B5 | union {PAID,DRAFT,VOID}
+apps/web/app/(dashboard)/finance/reports/page.tsx | DocumentNumberType | 1 | pending:B5 | object {ACCEPTED,DECLINED,EXPIRED,INVOICE,PAYMENT,CREDIT_NOTE} (W-1470: the old InvoiceStatus object; its invoice keys now read from the shared table)
 apps/web/app/(dashboard)/finance/reports/page.tsx | EstimateStatus | 1 | pending:B5 | array {,DRAFT,SENT,ACCEPTED,DECLINED}
-apps/web/app/(dashboard)/finance/reports/page.tsx | InvoiceStatus | 2 | pending:B5 | array+object {,DRAFT,SENT,PAID,OVERDUE,PARTIAL,VOID}
+apps/web/app/(dashboard)/finance/reports/page.tsx | InvoiceStatus | 1 | pending:B5 | array {,DRAFT,SENT,PAID,OVERDUE,PARTIAL,VOID}
 apps/web/app/(dashboard)/finance/reports/page.tsx | TxnStatus | 1 | pending:B5 | object {PAID,PARTIAL,UNPAID}
 apps/web/app/(dashboard)/inventory/_components/PurchaseOrdersTab.tsx | PurchaseOrderStatus | 3 | pending:B5 | array+chain+object {DRAFT,SENT,PARTIAL,RECEIVED,CLOSED}
 apps/web/app/(dashboard)/inventory/_components/purchase-orders-shared.ts | PurchaseOrderStatus | 1 | pending:B5 | union {DRAFT,SENT,PARTIAL,RECEIVED,CLOSED}
@@ -192,7 +192,6 @@ apps/web/app/(dashboard)/inventory/stock-counts/[id]/page.tsx | StockCountStatus
 apps/web/app/(dashboard)/inventory/stock-counts/page.tsx | StockCountStatus | 1 | pending:B5 | object {OPEN,REVIEW,COMMITTED,DISCARDED}
 apps/web/app/(dashboard)/invoices/[id]/page.tsx | CheckStatus | 1 | pending:B5 | object {RECORDED,DEPOSITED,CLEARED,BOUNCED}
 apps/web/app/(dashboard)/invoices/[id]/page.tsx | InvoiceStatus | 2 | pending:B5 | chain+object {SENT,VIEWED,PARTIAL,PAID,VOID,OVERDUE,WRITTEN_…
-apps/web/app/(dashboard)/invoices/page.tsx | InvoiceStatus | 2 | pending:B5 | object {SENT,VIEWED,PARTIAL,OVERDUE}
 apps/web/app/(dashboard)/invoices/recurring/_components/RecurringInvoiceForm.tsx | RecurringFrequency | 1 | pending:B5 | union {WEEKLY,BIWEEKLY,MONTHLY}
 apps/web/app/(dashboard)/orders/[id]/_components/OrderLineItemCards.tsx | OrderStatus | 1 | pending:B5 | array {OUT_FOR_DELIVERY,PARTIALLY_DELIVERED,DELIVERED}
 apps/web/app/(dashboard)/orders/[id]/_components/OrderLineItemsTable.tsx | PriceType | 1 | pending:B6 | chain {DISCOUNTED,MANUAL,PROMO}
@@ -281,7 +280,6 @@ apps/web/lib/api/vendor-bills.ts | InvoiceScanStatus | 1 | pending:B5 | union {S
 apps/web/lib/auth.ts | UserRole | 1 | pending:B5 | union {OPERATOR,DRIVER,CUSTOMER,SUPER_ADMIN,TENANT_AD…
 apps/web/lib/auth.ts | UserStatus | 1 | pending:B5 | union {ACTIVE,INACTIVE,SUSPENDED}
 apps/web/lib/buyer-fulfilment.ts | OrderStatus | 1 | pending:B5 | object {OUT_FOR_DELIVERY,PARTIALLY_DELIVERED,DELIVERED}
-apps/web/lib/buyer-invoice-status.ts | InvoiceStatus | 1 | pending:B5 | case {OVERDUE,VOID,WRITTEN_OFF}
 apps/web/lib/check-badge.ts | CheckStatus | 1 | pending:B5 | union {RECORDED,DEPOSITED,CLEARED,BOUNCED}
 apps/web/lib/drafts.ts | PriceType | 1 | pending:B6 | union {STANDARD,SPECIAL,DISCOUNTED,MANUAL}
 apps/web/lib/fulfil-path-options.ts | FulfillPath | 2 | pending:B5 | object+union {ROUTE,SHIP,PICKUP}
@@ -299,7 +297,6 @@ apps/mobile/app/(operator)/expenses/new.tsx | PaymentMethod | 1 | old-native | o
 apps/mobile/app/(operator)/products/stock-count/[id].tsx | StockCountStatus | 1 | old-native | object {OPEN,REVIEW,COMMITTED,DISCARDED}
 apps/mobile/lib/filing-status.ts | RegulatedFilingStatus | 1 | old-native | object {GENERATED,LOCKED,FAILED}
 packages/types/api/buyer.ts | AuthorizationStatus | 1 | pending:B3 | union {NONE,PENDING_REVIEW,EXPIRED,REJECTED}
-packages/types/api/checks.ts | CheckStatus | 1 | pending:B3 | object {RECORDED,DEPOSITED,CLEARED,BOUNCED}
 packages/types/api/counter-sale.ts | PaymentMethod | 1 | pending:B3 | array {ADVANCE,CASH,CARD,CHECK,OTHER,STORE_CREDIT}
 packages/types/api/fulfilment-methods.ts | FulfillPath | 1 | pending:B3 | object {ROUTE,SHIP,PICKUP}
 packages/types/api/fulfilment-methods.ts | ItemStatus | 3 | pending:B3 | array {PENDING,CONFIRMED,DELIVERED}: order-status lists that SA-1101 REFUSED in OrderStatus re-scored against ItemStatus
@@ -309,7 +306,6 @@ apps/api/src/estimates/estimate-moves.ts | EstimateStatus | 4 | subset | array {
 packages/types/api/estimate-moves.ts | EstimateStatus | 4 | subset | array {DRAFT,SENT,ACCEPTED}: the estimate allowed-moves TABLE (SA-1263), each list is one action's from-states, not the status set
 packages/types/api/messaging-delivery.ts | NotificationEvent | 1 | subset | array {STAFF_NEW_ORDER,BUYER_ORDER_EDITED,BUYER_ORDER_CANCELLED}: the three emails the office gets about a customer order (SA-1063), the one list the rules card and EMAIL_KIND_VALUES share
 packages/types/api/messaging-matrix.ts | MessageChannel | 1 | pending:B3 | array {EMAIL,WHATSAPP,SMS,PORTAL}
-packages/types/api/permissions.ts | OperatorPermissionGroup | 1 | pending:B3 | object {ORDERS,DISPATCH,CUSTOMERS,CATALOG,PRICING,REGU…
 packages/types/api/permissions.ts | UserRole | 1 | pending:B3 | union {SUPER_ADMIN,TENANT_ADMIN,OPERATOR,DRIVER,CUSTO…
 packages/types/api/products.ts | OrderStatus | 1 | pending:B3 | union {PENDING,CONFIRMED,OUT_FOR_DELIVERY,PARTIALLY_D…
 packages/types/api/ready-for-pickup.ts | EmailDeliveryStatus | 1 | derived | ready-for-pickup notice outcome {SENT,NO_EMAIL,OPTED_OUT,OFF,FAILED}; API outcome list, not the Prisma enum
