@@ -89,6 +89,26 @@ describe("GET /billing/status: the role rule", () => {
     expect(paymentDueSvc.get).toHaveBeenCalledWith("t9", expect.any(Date));
   });
 
+  it("F1: the support-session flag (the token's impersonatedBy) reaches the status", async () => {
+    const { controller, subscriptionSvc } = await make();
+    subscriptionSvc.getSubscription.mockResolvedValue({
+      ...(await subscriptionSvc.getSubscription()),
+      status: "READ_ONLY",
+      readOnlyReason: "trial_expired",
+      billingState: undefined,
+      pastDueInvoiceId: null,
+      selfPay: { eligible: true, reason: "trial_expired" },
+    });
+    const own = await controller.get({ tenantId: "t1", role: UserRole.TENANT_ADMIN });
+    const support = await controller.get({
+      tenantId: "t1",
+      role: UserRole.TENANT_ADMIN,
+      impersonatedBy: "sa1",
+    });
+    expect(own.action?.kind).toBe("pay_now");
+    expect(support.action?.kind).toBe("choose_plan");
+  });
+
   it("a user with no tenant context is refused", async () => {
     const { controller } = await make();
     await expect(controller.get({ tenantId: null, role: UserRole.SUPER_ADMIN })).rejects.toThrow(

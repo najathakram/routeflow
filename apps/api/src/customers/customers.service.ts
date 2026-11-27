@@ -56,6 +56,7 @@ import {
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
 import { CREDIT_NOT_APPLICABLE } from "../invoices/invoice-status-sets";
+import { assertPayable } from "../invoices/invoice-send-guard";
 import { statusFromPayments } from "../invoices/invoice-status";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import { openBalancesByCustomer } from "./open-balances";
@@ -1211,7 +1212,8 @@ export class CustomersService {
           message: "An advance payment can only be applied to an invoice of the same customer.",
         });
       }
-      if (inv.status === "DRAFT" || CREDIT_NOT_APPLICABLE.includes(inv.status)) {
+      assertPayable(inv.status); // B1396: DRAFT / VOID / WRITTEN_OFF get the coded INVOICE_NOT_PAYABLE (mobile shows its words)
+      if (CREDIT_NOT_APPLICABLE.includes(inv.status)) {
         throw new BadRequestException(
           `Cannot apply advance payment to invoice with status ${inv.status}`,
         );

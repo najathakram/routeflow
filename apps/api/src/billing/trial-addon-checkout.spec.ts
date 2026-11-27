@@ -1911,7 +1911,12 @@ describe("SA-690 all three callers of createCheckoutSession bill the add-ons", (
     // the tenant's own checkout (settings→billing): always monthly, takes no interval
     settings: () =>
       new SettingsBillingController(
-        { getSubscription: jest.fn().mockResolvedValue({ planKey: "STARTER" }) } as any,
+        {
+          getSubscription: jest.fn().mockResolvedValue({
+            planKey: "STARTER",
+            selfPay: { eligible: true, reason: "trial_expired" },
+          }),
+        } as any,
         {} as any,
         {} as any,
         h.billing,

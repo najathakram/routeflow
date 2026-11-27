@@ -35,6 +35,8 @@ import {
   paymentReinstatable,
   paymentReinstatableWhere,
   STRIPE_CANCELLED_REASON,
+  READ_ONLY_STATUS,
+  TRIAL_REASON_PREFIX,
 } from "./dunning-config";
 import { adminLockedRefusal } from "./admin-lock-refusal";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
@@ -2057,6 +2059,10 @@ export class BillingService {
         // X1: the stale/duplicate-checkout guard judges from these (and re-reads them under the lock).
         stripeSubId: true,
         externalPayment: true,
+        // SA-1547 R3: a conversion already stamped is never stamped (or emitted) twice; the tenant's status rides the
+        // SAME read (no extra query) for the conversion judgement below.
+        trialConvertedAt: true,
+        tenant: { select: { status: true, readOnlyReason: true } },
       },
     });
     const hasNegotiatedOverride =
@@ -2303,6 +2309,16 @@ export class BillingService {
         ? await this.mutations.inclusionCatalog?.(tenantId)
         : undefined;
 
+    // SA-1547 R3: a SETTLED checkout of a business that was never activated is its trial conversion - stamped (and
+    // announced) exactly as subscribe() does, so the billing export and the MRR ledger see it. Judged by the one
+    // status alone (a TRIAL, or a READ_ONLY locked for a `trial_*` reason); never "link pending", which a bank-debit
+    // settle re-entering with the subscription already linked would read true for an activated business (R-339 H1).
+    // An unsettled bank debit converts nothing yet, and a redelivery is stopped by the APPLIED marker.
+    const convertedAt = (await this.isTrialConversion(tenantId, settled, existingOverride))
+      ? new Date()
+      : null;
+    const conversionPlanKey = planKeyForCheckout ?? resolvedPlanKey;
+
     const upsertArgs = {
       where: { tenantId },
       create: {
@@ -2401,6 +2417,7 @@ export class BillingService {
                   existingOverride?.planKey,
                 );
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
+                await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
                 // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
                 if (session.id && settled) {
@@ -2474,6 +2491,7 @@ export class BillingService {
               existingOverride?.planKey,
             );
             const row = await tx.tenantSubscription.upsert(upsertArgs);
+            await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
               await this.writeAppliedMarker(tx, tenantId, session.id, {
@@ -2572,6 +2590,56 @@ export class BillingService {
     await this.resyncPriceAfterCheckout(tenantId, session, subscriptionId);
 
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
+  }
+
+  /**
+   * SA-1547 R3: is this completion a trial's conversion (status TRIAL, or READ_ONLY with a `trial_*` reason)? Only a
+   * settled session converts, and never a row already stamped. It does NOT read "link pending" (R-339 H1).
+   */
+  private async isTrialConversion(
+    tenantId: string,
+    settled: boolean,
+    row: {
+      trialConvertedAt?: Date | null;
+      tenant?: { status: string; readOnlyReason: string | null } | null;
+    } | null,
+  ): Promise<boolean> {
+    if (!settled || row?.trialConvertedAt) return false;
+    // The status rides the subscription read the handler already made. A tenant with no row yet (the legacy create
+    // branch) reads it here; no other path pays for this.
+    const tenant =
+      row?.tenant ??
+      (row
+        ? null
+        : await this.prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { status: true, readOnlyReason: true },
+          }));
+    if (!tenant) return false;
+    return (
+      tenant.status === "TRIAL" ||
+      (tenant.status === READ_ONLY_STATUS &&
+        (tenant.readOnlyReason ?? "").startsWith(TRIAL_REASON_PREFIX))
+    );
+  }
+
+  /**
+   * SA-1547 R3 + R-339 L4: the stamp is a CONDITIONAL write (`trialConvertedAt IS NULL`), so a concurrent subscribe() that
+   * stamped first matches no row; the event is emitted only by the writer that won, in the SAME transaction.
+   */
+  private async emitTrialConvertedTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    convertedAt: Date | null,
+    planKey: string | null,
+  ): Promise<void> {
+    if (!convertedAt) return;
+    const won = await tx.tenantSubscription.updateMany({
+      where: { tenantId, trialConvertedAt: null },
+      data: { trialConvertedAt: convertedAt },
+    });
+    if (won.count !== 1) return;
+    await this.events.emit(tenantId, BILLING_EVENTS.TRIAL_CONVERTED, { planKey }, { tx });
   }
 
   /**

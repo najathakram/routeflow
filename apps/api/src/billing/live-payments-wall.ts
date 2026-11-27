@@ -29,6 +29,14 @@ function configuredKeyMode(): StripeKeyMode {
   return stripeKeyModeOf(process.env.STRIPE_SECRET_KEY);
 }
 
+/** The wall's predicate, without the throw: a PRODUCTION business, or any class on a Stripe TEST key. */
+export function livePaymentsAllowed(
+  cls: string | null | undefined,
+  keyMode: StripeKeyMode = configuredKeyMode(),
+): boolean {
+  return cls === LIVE_PAYMENTS_CLASS || keyMode === "test";
+}
+
 /**
  * Throws the coded 409 unless `cls` is exactly PRODUCTION, or the Stripe key is a TEST key (SA-1547 S5: a test key
  * moves no real money, so every class may exercise checkout, portal and Connect on a test stack). With a live key
@@ -38,7 +46,7 @@ export function assertLivePaymentsAllowed(
   cls: string | null | undefined,
   keyMode: StripeKeyMode = configuredKeyMode(),
 ): void {
-  if (cls === LIVE_PAYMENTS_CLASS || keyMode === "test") return;
+  if (livePaymentsAllowed(cls, keyMode)) return;
   throw new ConflictException({
     code: API_ERROR_CODES.LIVE_PAYMENTS_OFF,
     message: "This is a test business. Payments are switched off.",
