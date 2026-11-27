@@ -2,7 +2,11 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 import { planDisplayName, roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import type { PrismaService } from "../prisma/prisma.service";
-import { isInviteOnlyPlanKey, normalizePlanKey } from "./plan-catalog.constants";
+import {
+  findPlanDefinition,
+  isInviteOnlyPlanKey,
+  normalizePlanKey,
+} from "./plan-catalog.constants";
 import type { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
 import { resolvePlanVersionId } from "./plan-version-pin";
 import { PLAN_PRICE_INVALID_MESSAGE, resolvePlanPrice } from "./plan-price";
@@ -76,6 +80,12 @@ export function assertSelfServePlanDef(
   return def;
 }
 
+const planPriceInvalid = () =>
+  new BadRequestException({
+    code: API_ERROR_CODES.PLAN_PRICE_INVALID,
+    message: PLAN_PRICE_INVALID_MESSAGE,
+  });
+
 /** What a pick resolves to, from reads only. */
 export interface PickTerms {
   planKey: string;
@@ -134,6 +144,13 @@ export async function readPickTerms(
   const planName = planDisplayName(planKey) ?? def.name;
   if (current === planKey) {
     const pinned = await d.catalog.getVersionForTenant(resolvePlanVersionId(sub, tenant));
+    // the same one price rule, on the PINNED version and the business's own fee: a plan it cannot be charged for is refused
+    // here, before the customer resolver (a refused pick writes nothing)
+    const own = resolvePlanPrice(findPlanDefinition(pinned.definitions, planKey), {
+      monthly: sub?.priceOverrideMonthly,
+      annual: sub?.priceOverrideAnnual,
+    });
+    if (!own.ok || !(own.monthly > 0)) throw planPriceInvalid();
     return { planKey, planName, planVersionId: pinned.id, sameAsPinned: true, monthly: null };
   }
   // either fee column counts, the same rule completion uses to keep a negotiated fee
@@ -145,12 +162,7 @@ export async function readPickTerms(
   }
   // the ONE price rule (resolvePlanPrice): a plan with no usable positive price is never quoted, so never a $0 session
   const price = resolvePlanPrice(def, null);
-  if (!price.ok || !(price.monthly > 0)) {
-    throw new BadRequestException({
-      code: API_ERROR_CODES.PLAN_PRICE_INVALID,
-      message: PLAN_PRICE_INVALID_MESSAGE,
-    });
-  }
+  if (!price.ok || !(price.monthly > 0)) throw planPriceInvalid();
   return {
     planKey,
     planName,

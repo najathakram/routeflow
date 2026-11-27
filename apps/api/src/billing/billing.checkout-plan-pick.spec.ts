@@ -311,32 +311,93 @@ describe("m-2: a REFUSED pick writes nothing at all, identity included", () => {
     expect(h.create).not.toHaveBeenCalled();
   };
 
-  it.each([
+  const gateRefuses = (e: () => Error) => async () => {
+    throw e();
+  };
+  const priceless = (h: ReturnType<typeof make>, planKey: string) => {
+    const bad = (v: any) => ({
+      ...v,
+      definitions: v.definitions.map((d: any) =>
+        d.planKey === planKey ? { ...d, monthlyPrice: null } : d,
+      ),
+    });
+    h.catalog.getPublishedCatalog.mockResolvedValue(bad(PUBLISHED));
+    h.catalog.getVersionForTenant.mockResolvedValue(bad(PUBLISHED));
+  };
+  it.each<
+    [string, Record<string, unknown>, string, null | (() => Error), null | string, null | string]
+  >([
     [
       "a TRIAL with the flag off (the gate refuses)",
+      {},
+      "GROWTH",
       () => new ForbiddenException({ reason: "trial_active" }),
+      null,
+      null,
     ],
     [
       "an ACTIVE business with no card (PLAN_PICK_ASK_FOR_LINK)",
+      {},
+      "GROWTH",
       () => new ConflictException({ code: API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK }),
+      API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
+      null,
     ],
-  ])("%s creates no Stripe customer and no subscription row", async (_n, refusal) => {
-    const h = make({ noCustomer: true });
-    const gate = jest.fn(async () => {
-      throw refusal();
-    });
-    const err = await rejection(
-      h.billing.createCheckoutSession("t1", { ...self, pick: { planKey: "GROWTH", gate } }),
-    );
-    expect(err).toBeDefined();
-    noTrace(h);
-  });
-
-  it("an offer check that refuses (LITE key, a plan with no price) creates none either", async () => {
-    const h = make({ noCustomer: true });
-    expect(await rejection(h.billing.createCheckoutSession("t1", pick("LITE").opts))).toBeDefined();
-    noTrace(h);
-  });
+    ["LITE (whitelist)", {}, "LITE", null, API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED, null],
+    [
+      "an unknown key (whitelist)",
+      {},
+      "NOPE",
+      null,
+      API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED,
+      null,
+    ],
+    [
+      "a quoted fee picking another plan",
+      { override: 150 },
+      "GROWTH",
+      null,
+      API_ERROR_CODES.CUSTOM_FEE_PLAN_PICK_REFUSED,
+      null,
+    ],
+    [
+      "another plan with no usable price",
+      {},
+      "GROWTH",
+      null,
+      API_ERROR_CODES.PLAN_PRICE_INVALID,
+      "GROWTH",
+    ],
+    [
+      "its own plan with no usable price",
+      {},
+      "STARTER",
+      null,
+      API_ERROR_CODES.PLAN_PRICE_INVALID,
+      "STARTER",
+    ],
+    [
+      "its own plan at a $0 fee",
+      { override: 0 },
+      "STARTER",
+      null,
+      API_ERROR_CODES.PLAN_PRICE_INVALID,
+      null,
+    ],
+  ])(
+    "%s creates no Stripe customer and no subscription row",
+    async (_n, opts, planKey, refusal, code, pricelessKey) => {
+      const h = make({ noCustomer: true, ...opts });
+      if (pricelessKey) priceless(h, pricelessKey);
+      const gate = refusal ? jest.fn(gateRefuses(refusal)) : pick(planKey).gate;
+      const err = await rejection(
+        h.billing.createCheckoutSession("t1", { ...self, pick: { planKey, gate } }),
+      );
+      expect(err).toBeDefined();
+      if (code) expect(err.getResponse()).toMatchObject({ code });
+      noTrace(h);
+    },
+  );
 
   it("the order is: gate, then the customer, then the session", async () => {
     const h = make({ noCustomer: true });
