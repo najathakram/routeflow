@@ -76,6 +76,8 @@ export interface UpdateInvoiceItem extends CreateInvoiceItem {
 export interface SendInvoiceEmailResult {
   success: boolean;
   sentTo: string;
+  /** W-1443: the staff address that got a private copy; set ONLY when that copy was delivered. */
+  copiedTo?: string;
   /**
    * Non-blocking warning: the tenant's own SMTP failed but Resend (RouteFlow's
    * platform mail service) rescued the send, so `success` is still true. Set by

@@ -9,6 +9,8 @@ import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { formatMoney } from "@/lib/format";
 import { KEPT_DRAFT_TOAST, keptDraftInvoiceId } from "@/lib/kept-draft-invoice";
 import { WriteButton } from "@/lib/read-only-gate";
+import { getDaysForTerms } from "@/lib/invoice-terms";
+import { PaymentTermsSelect } from "@/components/PaymentTermsSelect";
 
 interface SplitInvoiceModalProps {
   isOpen: boolean;
@@ -21,13 +23,7 @@ interface SplitInvoiceModalProps {
   onCreated?: (invoiceId: string) => void;
 }
 
-const TERM_DAYS: Record<string, number> = {
-  "Due on Receipt": 0,
-  "Net 15": 15,
-  "Net 30": 30,
-  "Net 45": 45,
-  "Net 60": 60,
-};
+const daysForTerms = (terms: string): number => getDaysForTerms(terms) ?? 30; // W-1487: one shared table
 
 function todayPlusDays(days: number): string {
   const d = new Date();
@@ -52,7 +48,9 @@ export function SplitInvoiceModal({
   // F04: rows whose typed quantity went past what is left (the box still clamps; the row says how much is left).
   const [overById, setOverById] = React.useState<Record<string, boolean>>({});
   const [terms, setTerms] = React.useState(defaultTerms);
-  const [dueDate, setDueDate] = React.useState(() => todayPlusDays(TERM_DAYS[defaultTerms] ?? 30));
+  // R-345 F6: the custom days box shows an error, so create waits (mobile parity).
+  const [termsInvalid, setTermsInvalid] = React.useState(false);
+  const [dueDate, setDueDate] = React.useState(() => todayPlusDays(daysForTerms(defaultTerms)));
   const [send, setSend] = React.useState(false);
 
   // When items change (e.g. modal reopens after a previous split), reset defaults to remaining.
@@ -66,7 +64,7 @@ export function SplitInvoiceModal({
     setQtyById(next);
     setOverById({});
     setTerms(defaultTerms);
-    setDueDate(todayPlusDays(TERM_DAYS[defaultTerms] ?? 30));
+    setDueDate(todayPlusDays(daysForTerms(defaultTerms)));
     setSend(false);
   }, [isOpen, items, defaultTerms]);
 
@@ -77,10 +75,11 @@ export function SplitInvoiceModal({
 
   const onTermsChange = (newTerms: string) => {
     setTerms(newTerms);
-    setDueDate(todayPlusDays(TERM_DAYS[newTerms] ?? 30));
+    setDueDate(todayPlusDays(daysForTerms(newTerms)));
   };
 
   const submit = () => {
+    if (termsInvalid) return; // R-345 F6: the custom days box shows an error
     const chosen = billable
       .map((it) => ({ orderItemId: it.id, qty: qtyById[it.id] ?? 0 }))
       .filter((row) => row.qty > 0);
@@ -146,7 +145,7 @@ export function SplitInvoiceModal({
           <WriteButton
             type="button"
             loading={createPartial.isPending}
-            disabled={billable.length === 0}
+            disabled={billable.length === 0 || termsInvalid}
             onClick={submit}
           >
             Create invoice
@@ -225,17 +224,12 @@ export function SplitInvoiceModal({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="mb-1 block text-xs font-medium text-navy">Terms</label>
-            <select
+            <PaymentTermsSelect
               value={terms}
-              onChange={(e) => onTermsChange(e.target.value)}
+              onChange={onTermsChange}
+              onInvalidChange={setTermsInvalid}
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              {Object.keys(TERM_DAYS).map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+            />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-navy">Due date</label>

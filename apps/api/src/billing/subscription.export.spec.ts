@@ -213,6 +213,7 @@ describe("SubscriptionService.getExport (B1187)", () => {
           "coupon.unbilled",
           "coupon.billed",
           "addon.state_changed",
+          "refund.staff",
         ],
       },
     });

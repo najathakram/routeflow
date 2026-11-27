@@ -33,6 +33,8 @@ import {
   tenantLabel,
 } from "../../../_components/TenantActionDialogs";
 import { TenantPricingCard } from "./_components/TenantPricingCard";
+import { StaffRefundSection } from "./_components/StaffRefundDialog";
+import { BillingEventsList } from "./_components/BillingEventsList";
 import { ReadinessCard, type AdminReadState } from "./_components/ReadinessCard";
 import { useFocusTarget } from "./_features/useFocusTarget";
 import { LayoutDashboard, CreditCard, Puzzle, Building2, History } from "lucide-react";
@@ -786,7 +788,10 @@ function BillingTab({
         ) : (
           <p className="text-sm text-slate-400">No subscription record yet.</p>
         )}
+        <StaffRefundSection tenantId={tenant.id} onMessage={setMsg} />
       </AdminCard>
+
+      <BillingEventsList tenantId={tenant.id} />
 
       {/* Manual Activation */}
       <AdminCard title="Manual activation" className="min-w-0 lg:col-span-2">

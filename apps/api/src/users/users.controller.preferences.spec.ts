@@ -103,6 +103,7 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
     "bill.lastSupplierId": "sup-123",
     "payment.lastMethod": "ACH",
     "orders.posMode": "true",
+    invoiceEmailCopy: "true", // W-1443 (SA-1516 T16/T17): opt-in, absent = off
   };
 
   it("the api allow-list is the shared client key list", () => {
@@ -157,6 +158,9 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
     ["orders.posMode", true],
     ["orders.posMode", null],
     ["orders.posMode", "TRUE"],
+    ["invoiceEmailCopy", "yes"],
+    ["invoiceEmailCopy", true],
+    ["invoiceEmailCopy", null],
   ])("rejects %s=%p with 400 and writes nothing", async (k, v) => {
     await request(app.getHttpServer())
       .patch("/users/me/preferences")

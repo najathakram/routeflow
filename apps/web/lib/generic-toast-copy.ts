@@ -37,6 +37,7 @@ import { sellingRestrictedCopy } from "./selling-restricted-copy";
 import { RULE_ERROR_COPY } from "./restriction-rule-errors";
 import { PRICE_RIGHTS_COPY } from "./price-rights-copy";
 import { paymentKeyRefusalCopy } from "@routeflow/types/payment-submit-key";
+import { ADJUSTMENT_KEY_REUSED_COPY, isAdjustmentKeyReused } from "@routeflow/types/sale-attempt";
 import { paymentRefusalCopy } from "@routeflow/types/payment-refusal-copy";
 
 /**
@@ -600,6 +601,9 @@ export function genericToastCopy(err: unknown, surfaceRefusal?: string): string 
   // resolved key was cancelled with nothing charged; a key in flight is retryable. Fixed copy, by code.
   const recorded = paymentKeyRefusalCopy(err);
   if (recorded) return recorded;
+  // B1415 M1b: an adjustment key reused for a different adjustment means the first one landed. Fixed copy, by code
+  // and reason (the stock adjustment hooks no longer touch the response body).
+  if (isAdjustmentKeyReused(err)) return ADJUSTMENT_KEY_REUSED_COPY;
   const coded = codedToastCopy(err);
   if (coded) return coded;
   if (!err || typeof err !== "object") return GENERIC_COPY;

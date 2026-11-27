@@ -22,6 +22,8 @@ const whenPresent = () => ValidateIf((_o, v) => v !== undefined);
  *  - pushEnabled: mobile lib/notification-prefs.ts -> NotificationsService (opt-out, "false")
  *  - staffOrderEmail: web Notifications toggle (WS4) -> messaging resolveStaffRecipients (opt-out, "false")
  *  - staffBuyerChangeEmail: same toggle group (WS4) -> messaging resolveStaffRecipients (opt-out, "false")
+ *  - invoiceEmailCopy: web Notifications "Copies of emails you send" + mobile operator settings -> invoices/
+ *    invoice-staff-copy.ts (W-1443; OPT-IN: absent = off, only "true" turns it on)
  *  - locale: web lib/i18n (en | es) -> web lib/i18n
  *  - bill.lastSupplierId: web vendor-bills create modal -> same modal (prefill)
  *  - payment.lastMethod: web vendor-bill record-payment -> same modal (default method)
@@ -44,6 +46,10 @@ export class UpdatePreferencesDto {
   @whenPresent()
   @IsIn(["true", "false"], { message: 'staffBuyerChangeEmail must be exactly "true" or "false"' })
   staffBuyerChangeEmail?: string;
+
+  @whenPresent()
+  @IsIn(["true", "false"], { message: 'invoiceEmailCopy must be exactly "true" or "false"' })
+  invoiceEmailCopy?: string;
 
   @whenPresent()
   @IsIn(["en", "es"], { message: "locale must be one of en, es" })
@@ -75,6 +81,7 @@ export const PREFERENCE_KEYS = [
   "pushEnabled",
   "staffOrderEmail",
   "staffBuyerChangeEmail",
+  "invoiceEmailCopy",
   "locale",
   "bill.lastSupplierId",
   "payment.lastMethod",
