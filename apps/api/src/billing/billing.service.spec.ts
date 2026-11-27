@@ -22,6 +22,7 @@ import { toCents } from "@routeflow/pricing";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
 import { PlanCatalogService } from "./plan-catalog.service";
+import { STRIPE_CHECKOUT_APPLIED_ACTION } from "./config-snapshot-audit.constants";
 import { BillingService } from "./billing.service";
 import { paymentReinstatableWhere } from "./dunning-config";
 import {
@@ -3757,23 +3758,28 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
 
 // SA-1547 PR-3 (R3): a checkout that converts a business that was NEVER activated stamps `trialConvertedAt` and emits
 // TRIAL_CONVERTED, like subscribe() does. Today a checkout-converted trial drops out of the billing export.
-// SA-1547 PR-5 (SA-1319 R1 / R1a): a card-first PICK session carries the plan, catalog version and quoted price the customer
-// paid; the completion applies them once, in the apply transaction. Nothing was written when the pick was made.
-describe("onCheckoutCompleted: a PAID pick session applies its own terms (SA-1319 R1 2/5, R1a 8)", () => {
+// SA-1547 PR-5 (SA-1319 R1 / R1a / R2): a card-first PICK session carries the plan, catalog version and quoted price the customer
+// paid. They are applied ONLY by the SETTLED apply (the one that writes the APPLIED marker): a card completion, or
+// `async_payment_succeeded` for a bank debit (even when the subscription is already linked). An unpaid delivery links
+// identity and applies none of them. Nothing was written when the pick was made.
+describe("onCheckoutCompleted: a PAID pick session applies its own terms, settled only (SA-1319 R1 2/5, R1a 8, R2 1-5)", () => {
+  const PICK_META = {
+    tenantId: "t1",
+    planKey: "CORE",
+    selfPick: "1",
+    planVersionId: "v14",
+    quotedMonthly: "199",
+  };
   const pickSession = (over: Record<string, unknown> = {}) => ({
     id: "cs_pick",
-    metadata: {
-      tenantId: "t1",
-      planKey: "CORE",
-      selfPick: "1",
-      planVersionId: "v14",
-      quotedMonthly: "199",
-    },
+    metadata: PICK_META,
     subscription: "sub_1",
     customer: "cus_1",
     payment_status: "paid",
     ...over,
   });
+  const unpaid = (over: Record<string, unknown> = {}) =>
+    pickSession({ payment_status: "unpaid", ...over });
   const subOf = (planKey: string, status: string, readOnlyReason: string | null) => ({
     tenantId: "t1",
     planKey,
@@ -3784,40 +3790,79 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms (SA-131
     trialConvertedAt: null,
     tenant: { status, readOnlyReason },
   });
-  function setup(sub: any, tenantPlan = "ALL_IN") {
+  const TRIAL = () => subOf("ALL_IN", "TRIAL", null);
+  const EXPIRED = () => subOf("ALL_IN", "READ_ONLY", "trial_expired");
+  /** `hook: false` is the plan-transition (config snapshot) flag OFF. The APPLIED marker is a real store, so a redelivery sees it. */
+  function setup(sub: any, o: { hook?: boolean } = {}) {
     const h = make({ transitionCount: 1, sub });
     h.prisma.tenant.findUnique.mockResolvedValue({
       id: "t1",
       class: "PRODUCTION",
       status: sub.tenant.status,
-      plan: tenantPlan,
+      plan: "ALL_IN",
       planVersionId: "v1",
     });
     h.mutations.inclusionCatalog = jest
       .fn()
       .mockResolvedValue({ addonSkus: [], planNameOf: (k: string) => k });
-    return h;
+    h.mutations.invalidatePlanCaches = jest.fn();
+    if (o.hook === false) {
+      h.planTransition.isEnabled.mockResolvedValue(false);
+      h.planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
+    }
+    const marks: any[] = [];
+    h.tx.auditLog.create.mockImplementation(async ({ data }: any) => {
+      marks.push(data);
+      return {};
+    });
+    const find = async ({ where }: any) =>
+      marks.find((m) => m.entityId === where.entityId && m.action === where.action) ?? null;
+    h.tx.auditLog.findFirst.mockImplementation(find);
+    h.prisma.auditLog.findFirst.mockImplementation(find);
+    const link = () =>
+      h.prisma.tenantSubscription.findUnique.mockResolvedValue({ ...sub, stripeSubId: "sub_1" });
+    return { ...h, marks, link };
+  }
+  const upserts = (h: any) => h.prisma.tenantSubscription.upsert.mock.calls.map((c: any[]) => c[0]);
+  const converted = (h: any) =>
+    h.events.emit.mock.calls.filter((c: any[]) => c[1] === BILLING_EVENTS.TRIAL_CONVERTED);
+  const stamped = (h: any) =>
+    h.tx.tenantSubscription.updateMany.mock.calls.filter(
+      (c: any[]) => c[0]?.data && "trialConvertedAt" in c[0].data,
+    );
+  /** Nothing of the pick's terms was written: not the plan, the snapshot, the pins, the tenant plan or a transition. */
+  function expectNothingApplied(h: any) {
+    for (const u of upserts(h)) {
+      expect(u.update).not.toHaveProperty("planKey");
+      expect(u.update).not.toHaveProperty("currentPlan");
+      expect(u.update).not.toHaveProperty("basePriceSnapshot");
+      expect(u.create.planKey ?? null).toBeNull();
+      expect(u.create.basePriceSnapshot ?? null).toBeNull();
+    }
+    expect(h.tx.tenant.update).not.toHaveBeenCalled();
+    expect(h.tx.tenantSubscription.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { planVersionId: expect.anything() } }),
+    );
+    expect(h.planTransition.onPlanChange).not.toHaveBeenCalled();
+    expect(h.mutations.invalidatePlanCaches).not.toHaveBeenCalled();
+    expect(h.pricing.resolveCatalogPricing).not.toHaveBeenCalled();
   }
 
   it.each([
-    ["a Pro TRIAL picks Essentials", subOf("ALL_IN", "TRIAL", null)],
-    [
-      "a trial-expired READ_ONLY business picks Essentials",
-      subOf("ALL_IN", "READ_ONLY", "trial_expired"),
-    ],
+    ["a Pro TRIAL picks Essentials and pays by card", TRIAL],
+    ["a trial-expired READ_ONLY business picks Essentials and pays by card", EXPIRED],
   ])(
-    "%s: the session's plan, version, price and the tenant's plan are written, once",
+    "R2 5: %s: the session's plan, version, price and the tenant's plan are written, once",
     async (_n, sub) => {
-      const h = setup(sub);
+      const h = setup(sub());
       await (h.svc as any).onCheckoutCompleted(pickSession());
-      const upsert = h.prisma.tenantSubscription.upsert.mock.calls[0][0];
-      expect(upsert.update).toMatchObject({
+      expect(upserts(h)).toHaveLength(1);
+      expect(upserts(h)[0].update).toMatchObject({
         planKey: "CORE",
         currentPlan: "CORE",
         basePriceSnapshot: 199, // the session's quoted price, never the old plan's catalog price
       });
       expect(h.pricing.resolveCatalogPricing).not.toHaveBeenCalled();
-      // both catalog pins through the one pin writer, and the tenant's own plan
       expect(h.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
         where: { tenantId: "t1" },
         data: { planVersionId: "v14" },
@@ -3830,7 +3875,7 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms (SA-131
         where: { id: "t1" },
         data: { plan: "CORE" },
       });
-      // onPlanChange exactly once, from the plan the business is LEAVING to the session's, judged on the session's version
+      // onPlanChange exactly once, from the plan the business is LEAVING, judged on the session's version
       expect(h.planTransition.onPlanChange).toHaveBeenCalledTimes(1);
       expect(h.planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({
         fromPlanKey: "ALL_IN",
@@ -3838,30 +3883,142 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms (SA-131
         toPlanVersionId: "v14",
       });
       expect(h.mutations.inclusionCatalog).toHaveBeenCalledWith("t1", "v14");
+      // M1: the caches drop after the commit, and the APPLIED row is written once
+      expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
+      expect(h.marks).toHaveLength(1);
+      // m3: the trial conversion is stamped and announced exactly once
+      expect(stamped(h)).toHaveLength(1);
+      expect(converted(h)).toHaveLength(1);
     },
   );
 
-  it("R5: a paid session completes on its OWN terms even when its version is no longer the published one", async () => {
-    const h = setup(subOf("ALL_IN", "TRIAL", null));
-    // BillingService holds no catalog here: any read of the published catalog would throw
-    await expect((h.svc as any).onCheckoutCompleted(pickSession())).resolves.toBeUndefined();
-    expect(h.billingNotification.notifyCheckoutPlanNotApplied).not.toHaveBeenCalled();
-    expect(h.prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1);
+  it("R2 1: a bank debit completed UNPAID links identity and applies none of the pick", async () => {
+    const h = setup(TRIAL());
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    expect(upserts(h)).toHaveLength(1);
+    expect(upserts(h)[0].update).toMatchObject({ stripeSubId: "sub_1", stripeCustomerId: "cus_1" });
+    expectNothingApplied(h);
+    expect(h.marks).toHaveLength(0); // no APPLIED row: "applied" means only that row
+    expect(stamped(h)).toHaveLength(0);
+    expect(converted(h)).toHaveLength(0);
   });
 
-  it("a bodyless session (no pick metadata) completes exactly as before: catalog price, no pin, no tenant plan write", async () => {
-    const h = setup(subOf("ALL_IN", "TRIAL", null));
+  it("R2 2: then async_payment_succeeded applies the terms ONCE, though the subscription is already linked", async () => {
+    const h = setup(TRIAL());
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    h.link();
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    const applied = upserts(h).filter((u: any) => u.update.planKey === "CORE");
+    expect(applied).toHaveLength(1);
+    expect(applied[0].update).toMatchObject({ currentPlan: "CORE", basePriceSnapshot: 199 });
+    expect(h.tx.tenant.update).toHaveBeenCalledTimes(1);
+    expect(h.planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+    expect(h.planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({ fromPlanKey: "ALL_IN" });
+    expect(h.marks).toHaveLength(1);
+    expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
+    expect(converted(h)).toHaveLength(1);
+  });
+
+  it("R2 3: the same settled event delivered again applies nothing a second time", async () => {
+    const h = setup(TRIAL());
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    h.link();
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expect(upserts(h).filter((u: any) => u.update.planKey === "CORE")).toHaveLength(1);
+    expect(h.planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+    expect(h.tx.tenant.update).toHaveBeenCalledTimes(1);
+    expect(h.marks).toHaveLength(1);
+    expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
+  });
+
+  it("R2 4: a bank debit that FAILS applies nothing; the trial still reads Pro", async () => {
+    const h = setup(TRIAL());
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    await (h.svc as any).onCheckoutAsyncPaymentFailed(unpaid());
+    expectNothingApplied(h);
+    // the failure leaves its own notice rows, never an APPLIED row
+    expect(h.marks.map((m: any) => m.action)).not.toContain(STRIPE_CHECKOUT_APPLIED_ACTION);
+  });
+
+  it("M2: with the config-snapshot flag OFF (the prod default) a paid pick is still applied, and the caches still drop", async () => {
+    const h = setup(TRIAL(), { hook: false });
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expect(upserts(h)[0].update).toMatchObject({
+      planKey: "CORE",
+      currentPlan: "CORE",
+      basePriceSnapshot: 199,
+    });
+    expect(h.tx.tenant.update).toHaveBeenCalledWith({
+      where: { id: "t1" },
+      data: { plan: "CORE" },
+    });
+    expect(h.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: "t1" },
+      data: { planVersionId: "v14" },
+    });
+    expect(h.planTransition.onPlanChange).not.toHaveBeenCalled();
+    expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
+    expect(h.marks).toHaveLength(1);
+  });
+
+  it("M2 / flag off: an unpaid delivery still writes none of it", async () => {
+    const h = setup(TRIAL(), { hook: false });
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    expectNothingApplied(h);
+  });
+
+  it("R5 / m2: a version unpublished after the pick still completes on its own terms (only the session's version is read)", async () => {
+    const h = setup(TRIAL());
+    // the REAL inclusion reader over a catalog whose v14 is retired: only that version, by id, is served
+    const catalog = {
+      getPublishedCatalog: jest
+        .fn()
+        .mockRejectedValue(new Error("the published catalog must not be read")),
+      getVersionForTenant: jest.fn(async (id: string | null) => {
+        if (id !== "v14") throw new Error(`unexpected version ${id}`);
+        return { id: "v14", status: "ARCHIVED", definitions: [], addonSkus: [] };
+      }),
+    };
+    const real = Object.create(SubscriptionMutationService.prototype) as any;
+    real.prisma = {
+      tenantSubscription: { findUnique: jest.fn(async () => ({ planVersionId: "v9" })) },
+      tenant: { findUnique: jest.fn(async () => ({ planVersionId: "v9" })) },
+    };
+    real.catalog = catalog;
+    h.mutations.inclusionCatalog = (t: string, v?: string) => real.inclusionCatalog(t, v);
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expect(catalog.getVersionForTenant).toHaveBeenCalledWith("v14");
+    expect(catalog.getPublishedCatalog).not.toHaveBeenCalled();
+    expect(upserts(h)[0].update).toMatchObject({ planKey: "CORE", basePriceSnapshot: 199 });
+    expect(h.billingNotification.notifyCheckoutPlanNotApplied).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no plan version", { ...PICK_META, planVersionId: undefined }],
+    ["no price", { ...PICK_META, quotedMonthly: undefined }],
+  ])(
+    "m1: a marked session with %s is never treated as bodyless: nothing applied, the admin is told",
+    async (_n, metadata) => {
+      const h = setup(TRIAL());
+      await (h.svc as any).onCheckoutCompleted(pickSession({ metadata }));
+      expectNothingApplied(h);
+      expect(h.billingNotification.notifyCheckoutPlanNotApplied).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("a bodyless session (no pick marker) completes exactly as before: catalog price, no pin, no tenant plan write, no cache call", async () => {
+    const h = setup(TRIAL());
     await (h.svc as any).onCheckoutCompleted(
       pickSession({ metadata: { tenantId: "t1", planKey: "GROWTH" } }),
     );
     expect(h.pricing.resolveCatalogPricing).toHaveBeenCalled();
     expect(h.tx.tenant.update).not.toHaveBeenCalled();
-    expect(h.prisma.tenantSubscription.upsert.mock.calls[0][0].update).not.toHaveProperty(
-      "currentPlan",
-    );
+    expect(upserts(h)[0].update).not.toHaveProperty("currentPlan");
     expect(h.tx.tenantSubscription.updateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: { planVersionId: expect.anything() } }),
     );
+    expect(h.mutations.invalidatePlanCaches).not.toHaveBeenCalled();
   });
 });
 

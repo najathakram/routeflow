@@ -44,7 +44,7 @@ import { planGateRefusal } from "./self-serve-plan-gate";
 import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
  * SA-1547 card-first: the checkout body. A plan KEY and nothing else: the global pipe's `forbidNonWhitelisted` makes a
- * price, an interval or an add-on a 400. Which keys may be picked is the published catalog's call (the pin helper).
+ * price, an interval or an add-on a 400. Which keys may be picked is the published catalog's call (`readPickTerms`).
  */
 export class CheckoutPlanPickDto {
   @IsOptional()
@@ -262,8 +262,8 @@ export class SettingsBillingController {
    * R2.9 / SA-1547: Pay now. A Stripe Checkout session for the tenant's pinned plan/price, offered only when the
    * server's own verdict (`selfPay.eligible`, self-checkout-eligibility.ts) says so: an invited LITE business that is not
    * ACTIVE, or a trial-expired READ_ONLY one. A TRIAL with days left is refused (B1). The body is optional and takes a
-   * plan KEY only (card-first chunk 2): the business re-pins onto a published self-serve plan under the checkout's one
-   * hold, and the price, interval and add-ons are always the server's. With card-first ON a TRIAL business that picks
+   * plan KEY only (card-first chunk 2): the session is built from that published self-serve plan under the checkout's one
+   * hold (nothing is written until it is paid), and the price, interval and add-ons are always the server's. With card-first ON a TRIAL business that picks
    * pays now, like any other pick (nothing is written before payment). Switching plans for a card payer still goes through subscribe/upgrade/downgrade.
    */
   @Post("subscription/checkout")

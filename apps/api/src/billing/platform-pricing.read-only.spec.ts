@@ -40,13 +40,12 @@ describe("checkoutPriceData readOnly", () => {
   });
 });
 
-describe("checkoutPriceDataForPlan (SA-1547 PR-5: a plan the business is only picking)", () => {
+describe("checkoutPriceData with a picked plan (SA-1547 PR-5)", () => {
   it("prices the given plan in whole cents, ensures its product, and reads no tenant", async () => {
     const { svc, fake } = makeSvc();
-    const pd = await svc.checkoutPriceDataForPlan(
-      { planKey: "CORE", planName: "Essentials", monthly: 199 },
-      "month",
-    );
+    const pd = await svc.checkoutPriceData("t1", "month", undefined, {
+      plan: { planKey: "CORE", planName: "Essentials", monthly: 199 },
+    });
     expect(pd).toMatchObject({
       currency: "usd",
       unit_amount: 19900,

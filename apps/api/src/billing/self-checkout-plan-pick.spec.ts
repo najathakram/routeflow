@@ -3,7 +3,12 @@ import * as path from "path";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { planDisplayName } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { assertSelfServePlanDef, pickSessionTerms, readPickTerms } from "./self-checkout-plan-pick";
+import {
+  assertSelfServePlanDef,
+  readPickSession,
+  readPickTerms,
+  validPickMetadata,
+} from "./self-checkout-plan-pick";
 
 /**
  * SA-1547 PR-5 (SA-1319 R1 / R1a): the READS a card-first pick makes. R7 (only a self-serve key in the PUBLISHED catalog),
@@ -178,17 +183,32 @@ describe("readPickTerms: what the offer is built from (reads only)", () => {
   });
 });
 
-describe("pickSessionTerms: what completion reads off a session", () => {
+describe("readPickSession: the ONE validator, at create and at completion (m1, m4)", () => {
   const meta = { planKey: "CORE", selfPick: "1", planVersionId: "v14", quotedMonthly: "199" };
-  it("a pick session yields its paid terms", () => {
-    expect(pickSessionTerms(meta)).toEqual({ planKey: "CORE", planVersionId: "v14", monthly: 199 });
+  it("a pick session yields its paid terms, the price rounded to cents", () => {
+    expect(readPickSession(meta)).toEqual({
+      status: "PICK",
+      terms: { planKey: "CORE", planVersionId: "v14", monthly: 199 },
+    });
+    expect(readPickSession({ ...meta, quotedMonthly: "199.005" })).toMatchObject({
+      terms: { monthly: 199.01 },
+    });
+    expect(validPickMetadata(meta)).toBe(true);
+  });
+  it("a session with no marker is NONE: it completes as a bodyless one", () => {
+    expect(readPickSession({ planKey: "CORE" })).toEqual({ status: "NONE" });
+    expect(validPickMetadata({ planKey: "CORE" })).toBe(false);
   });
   it.each([
-    ["a bodyless session", { planKey: "CORE" }],
+    ["no plan key", { ...meta, planKey: undefined }],
     ["no version", { ...meta, planVersionId: undefined }],
     ["no price", { ...meta, quotedMonthly: undefined }],
+    ["an empty price", { ...meta, quotedMonthly: "" }],
     ["a bad price", { ...meta, quotedMonthly: "abc" }],
-  ])("%s is not a pick", (_n, m) => {
-    expect(pickSessionTerms(m as any)).toBeNull();
+    ["a negative price", { ...meta, quotedMonthly: "-1" }],
+    ["a marker that is not 1", { ...meta, selfPick: "yes" }],
+  ])("a marked session with %s is INVALID, never bodyless", (_n, m) => {
+    expect(readPickSession(m as any)).toEqual({ status: "INVALID" });
+    expect(validPickMetadata(m as any)).toBe(false);
   });
 });

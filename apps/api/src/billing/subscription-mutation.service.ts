@@ -10,7 +10,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
-import { fromCents, planDisplayName, roundMoney, toCents } from "@routeflow/pricing";
+import { fromCents, roundMoney, toCents } from "@routeflow/pricing";
 import { PlanCatalogService, PlanVersionWithCatalog } from "./plan-catalog.service";
 import { ProrationService } from "./proration.service";
 import { SubscriptionService } from "./subscription.service";
@@ -149,7 +149,7 @@ export type PlanChangeAction =
   "SUBSCRIBE" | "UPGRADE" | "DOWNGRADE" | "NOOP" | "KEEP_CURRENT" | "CONTACT_SALES";
 
 // The refusal texts (custom, invite-only, off-ladder) and the published-catalog check live in
-// self-checkout-plan-pin.ts: subscribe and the card-first checkout pick share one copy of the rule.
+// self-checkout-plan-pick.ts: subscribe and the card-first checkout pick share one copy of the rule.
 
 /** Committing an UPGRADE or a DOWNGRADE writes `cancelAtPeriodEnd: false`, so a tenant who
  *  had cancelled must be told at the decision point that the cancellation is being called off. */
@@ -411,6 +411,17 @@ export class SubscriptionMutationService {
   ) {}
 
   private readonly logger = new Logger(SubscriptionMutationService.name);
+
+  /**
+   * SA-1547 PR-5 (M1): after a PAID plan pick committed (the settled checkout apply moved the plan, its version and the
+   * tenant's plan), drop the caches a plan change drops: entitlements, the feature resolver and the tenant-status guard. The
+   * same calls subscribe and upgrade make; the plan-transition caches are dropped by the caller while that flag is on.
+   */
+  invalidatePlanCaches(tenantId: string): void {
+    this.entitlements.invalidate(tenantId);
+    this.authority?.invalidate(tenantId);
+    this.tenantStatus.invalidate(tenantId);
+  }
 
   /**
    * W1 (COPY 2q, PLAN F24): after a plan change COMMITTED, tell the owner when this account has no card. Each caller decides
@@ -1324,8 +1335,8 @@ export class SubscriptionMutationService {
     addonSkus: readonly AddonSkuDef[];
     planNameOf(planKey: string): string;
   }> {
-    // SA-815a: the tenant's own pinned catalog (sub pin, else tenant pin, else published) - a checkout does not
-    // re-pin, so both sides of the move are judged by the version the tenant sits on.
+    // SA-815a: the tenant's own pinned catalog (sub pin, else tenant pin, else published). A plain checkout does not
+    // re-pin, so both sides of the move are judged by the version the tenant sits on; a PAID pick session names its own.
     const [sub, tenant] = await Promise.all([
       this.prisma.tenantSubscription.findUnique({
         where: { tenantId },

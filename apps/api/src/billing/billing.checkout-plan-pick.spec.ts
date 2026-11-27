@@ -8,7 +8,7 @@ import {
   billingReturnUrl,
 } from "./billing-return-paths";
 import { BillingService } from "./billing.service";
-import { openCheckoutSessionHeld } from "./open-checkout-session";
+import { openCheckoutSession } from "./open-checkout-session";
 import { PlanCatalogService } from "./plan-catalog.service";
 
 /**
@@ -110,22 +110,16 @@ function make(
     status?: string;
     readOnlyReason?: string | null;
     sub?: Record<string, unknown>;
-    /** The class the wall reads the SECOND time (inside the hold). */
-    holdClass?: string;
   } = {},
 ) {
   const planKey = o.planKey ?? "STARTER";
-  let wallReads = 0;
   const stripeFake = fakeStripe();
   const prisma: any = {
     tenant: {
       findUnique: jest.fn(async (a: any) => {
         if (a?.select?.class === true && Object.keys(a.select).length === 1) {
           log.push("wall");
-          wallReads += 1;
-          return {
-            class: wallReads > 1 && o.holdClass ? o.holdClass : (o.tenantClass ?? "PRODUCTION"),
-          };
+          return { class: o.tenantClass ?? "PRODUCTION" };
         }
         return {
           id: "t1",
@@ -165,22 +159,26 @@ function make(
       planName: planKey,
       monthly: o.override ?? o.lockedMonthly ?? PRICE[planKey],
     })),
-    checkoutPriceData: jest.fn(async (_t: string, interval: string) => ({
-      currency: "usd",
-      product: "prod_x",
-      unit_amount: Math.round((o.override ?? o.lockedMonthly ?? PRICE[planKey]) * 100),
-      recurring: { interval },
-    })),
-    // a plan the business is PICKING, from its published price
-    checkoutPriceDataForPlan: jest.fn(async (p: any, interval: string) => ({
-      currency: "usd",
-      product: "prod_x",
-      unit_amount: Math.round(p.monthly * 100),
-      recurring: { interval },
-    })),
+    // `opts.plan` is a plan the business is PICKING (its published price); otherwise the plan it is on, from its pin
+    checkoutPriceData: jest.fn(
+      async (
+        _t: string,
+        interval: string,
+        _p?: unknown,
+        opts?: { plan?: { monthly: number } },
+      ) => ({
+        currency: "usd",
+        product: "prod_x",
+        unit_amount: Math.round(
+          (opts?.plan?.monthly ?? o.override ?? o.lockedMonthly ?? PRICE[planKey]) * 100,
+        ),
+        recurring: { interval },
+      }),
+    ),
   };
   const mutations: any = {
     checkoutAddonLines: jest.fn(async () => ({ lineItems: [], skus: [] })),
+    invalidatePlanCaches: jest.fn(),
   };
   const events = { emit: jest.fn() };
   const catalog = {
@@ -254,6 +252,9 @@ describe("R1a 7 / 10: a trial-expired business picks another plan; nothing is wr
     expect(h.prisma.tenant.update).toBeUndefined();
     expect(h.prisma.tenantSubscription.update).toBeUndefined();
     expect(h.prisma.$transaction).toBeUndefined();
+    // M2: no subscription upsert (ensureStripeCustomer's is skipped: the customer exists) and no cache dropped at pick time
+    expect(h.prisma.tenantSubscription.upsert).not.toHaveBeenCalled();
+    expect(h.mutations.invalidatePlanCaches).not.toHaveBeenCalled();
   });
 
   it("a request with no pick is today's: the pinned plan, no pick metadata, no pick read", async () => {
@@ -307,7 +308,7 @@ describe("R1a 9: a business pinned at a locked price picks its own plan", () => 
     await h.billing.createCheckoutSession("t1", pick("CORE").opts);
     expect((h.create.mock.calls[0][0] as any).line_items[0].price_data.unit_amount).toBe(7900);
     expect(meta(h)).toMatchObject({ planVersionId: "v9", quotedMonthly: "79", selfPick: "1" });
-    expect(h.pricing.checkoutPriceDataForPlan).not.toHaveBeenCalled();
+    expect(h.pricing.checkoutPriceData).toHaveBeenLastCalledWith("t1", "month"); // the pinned plan's price path
     expect(h.mutations.checkoutAddonLines).toHaveBeenLastCalledWith("t1", "month", {});
   });
 });
@@ -377,7 +378,7 @@ describe("R6 / R7: what a pick may name", () => {
       } as any,
     });
     const err = await rejection(
-      openCheckoutSessionHeld(d, {
+      openCheckoutSession(d, {
         tenantId: "t1",
         customerId: "cus_1",
         surface: "TENANT_SELF",
@@ -400,9 +401,11 @@ describe("R10 / R11: one hold, the wall first", () => {
     expect(price[0].waitMs).toBe(2_500);
   });
 
-  it("inside the hold: the wall, then the eligibility gate, then the session", async () => {
+  it("inside the hold: the wall, then the eligibility gate (ONCE per click), then the session", async () => {
     const h = make();
-    await h.billing.createCheckoutSession("t1", pick("GROWTH").opts);
+    const p = pick("GROWTH");
+    await h.billing.createCheckoutSession("t1", p.opts);
+    expect(p.gate).toHaveBeenCalledTimes(1);
     const inHold = log.slice(log.indexOf("lock") + 1);
     expect(inHold.slice(0, 2)).toEqual(["wall", "gate"]);
     expect(inHold.indexOf("gate")).toBeLessThan(inHold.indexOf("session"));
@@ -414,14 +417,8 @@ describe("R10 / R11: one hold, the wall first", () => {
     expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.LIVE_PAYMENTS_OFF });
     expect(h.create).not.toHaveBeenCalled();
     expect(h.catalog.getPublishedCatalog).not.toHaveBeenCalled();
-  });
-
-  it("R11: a class that turns non-PRODUCTION while the click waits is caught by the wall inside the hold", async () => {
-    const h = make({ holdClass: "TEST" });
-    const err = await rejection(h.billing.createCheckoutSession("t1", pick("GROWTH").opts));
-    expect(err.getResponse()).toMatchObject({ code: API_ERROR_CODES.LIVE_PAYMENTS_OFF });
-    expect(log).toContain("lock");
-    expect(h.create).not.toHaveBeenCalled();
+    expect(log.indexOf("wall")).toBeGreaterThan(log.indexOf("lock")); // the wall is the first read inside the hold
+    expect(log).not.toContain("gate"); // and the gate never ran
   });
 
   it("the refusals run again inside the hold: a manual-pay business is refused before any session", async () => {

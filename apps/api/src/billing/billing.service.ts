@@ -20,17 +20,14 @@ import { PrismaService } from "../prisma/prisma.service";
 import {
   cancelOpenLink,
   openCheckoutSession,
-  openCheckoutSessionHeld,
   readOpenLink,
-  underSlotLock,
   type SlotOffer,
 } from "./open-checkout-session";
 import {
   PICK_META,
-  pickSessionTerms,
+  readPickSession,
   readPickTerms,
   type CheckoutPick,
-  type PickTerms,
 } from "./self-checkout-plan-pick";
 import { EmailService } from "../email/email.service";
 import { routeflowNotice } from "../email/routeflow-mail";
@@ -611,18 +608,7 @@ export class BillingService {
 
     const interval: "month" | "year" = opts?.interval === "year" ? "year" : "month";
 
-    // SA-1547: a plan pick refuses early too (a cheap 4xx; no Stripe customer for a business that cannot pay): the wall,
-    // the caller's eligibility gate, then the whitelist and quoted-fee reads. All run AGAIN under the hold in `pickAndOpen`.
-    if (opts.pick) {
-      await this.pickRefusals(tenantId, opts.pick);
-      await readPickTerms(
-        { prisma: this.prisma, catalog: this.catalog! },
-        tenantId,
-        opts.pick.planKey,
-      );
-    }
-
-    // The refusals that read the subscription, a catch-up claim, an overdue invoice and Stripe (also re-run under a pick's hold).
+    // The refusals that read the subscription, a catch-up claim, an overdue invoice and Stripe (a plan pick re-runs it under the hold).
     await this.assertCheckoutAllowed(tenantId);
 
     // SA-690 option A: every active self-serve add-on that has no Stripe item yet (a trial's, or a
@@ -647,7 +633,6 @@ export class BillingService {
     // W-1338 (W9): an unpriceable business never gets a Stripe customer (throws BadRequest). Gate only: no Stripe call,
     // value unbound; the price billed is read under the slot's lock. The customer id is identity, not a term.
     await this.pricing.checkoutPriceData(tenantId, interval, undefined, { readOnly: true });
-    if (opts.pick) return this.pickAndOpen(tenantId, tenant.slug, opts.surface, opts.pick);
     const customerId = await this.ensureStripeCustomer(tenantId);
 
     // W-1338: ONE slot for the admin link and Pay now; it reads the terms (checkoutOffer) only while it holds the lock.
@@ -657,14 +642,22 @@ export class BillingService {
         tenantId,
         customerId,
         surface: opts.surface,
-        readOffer: () => this.checkoutOffer(tenantId, tenant.slug, customerId, interval),
+        readOffer: () =>
+          this.checkoutOffer(tenantId, tenant.slug, customerId, interval, opts.pick?.planKey),
+        // SA-1547: a plan pick's eligibility gate (ONCE per click) and the checks above run UNDER the hold, after the wall
+        beforeOffer: opts.pick
+          ? async () => {
+              await opts.pick!.gate();
+              await this.assertCheckoutAllowed(tenantId);
+            }
+          : undefined,
       },
     );
   }
 
   /**
    * The checkout's refusals that read the business's subscription, any catch-up claim, an overdue invoice and Stripe.
-   * Called outside the lock as the fast refusal, and again under a plan pick's hold before the re-pin.
+   * Called outside the lock as the fast refusal, and again under a plan pick's hold (`beforeOffer`).
    */
   private async assertCheckoutAllowed(tenantId: string): Promise<void> {
     // A second checkout on a tenant that already has a live subscription creates a
@@ -729,52 +722,6 @@ export class BillingService {
     }
   }
 
-  /** The wall first, then the caller's eligibility gate. Writes nothing. */
-  private async pickRefusals(tenantId: string, pick: CheckoutPick): Promise<void> {
-    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
-    await pick.gate();
-  }
-
-  /**
-   * SA-1547 card-first (SA-1319 R1 / R1a): a plan pick is ONE `underSlotLock` hold (never nested) and writes NOTHING. Under it:
-   * the wall, the eligibility gate, the subscription / overdue / live-subscription checks, the whitelist and quoted-fee reads
-   * (all before any Stripe write), then the slot opens or reuses the one session, built from the REQUESTED plan. The plan,
-   * its catalog version and its price ride on that session; the paid completion applies them once.
-   */
-  private async pickAndOpen(
-    tenantId: string,
-    slug: string,
-    surface: CheckoutSurface,
-    pick: CheckoutPick,
-  ): Promise<CheckoutStart> {
-    const customerId = await this.ensureStripeCustomer(tenantId);
-    return underSlotLock(
-      tenantId,
-      async () => {
-        await this.pickRefusals(tenantId, pick); // the wall first inside the hold, then eligibility
-        await this.assertCheckoutAllowed(tenantId);
-        return openCheckoutSessionHeld(
-          { prisma: this.prisma, stripe: this.stripe },
-          {
-            tenantId,
-            customerId,
-            surface,
-            readOffer: async () => {
-              // read again UNDER the hold (a fee or plan may have changed while this click waited for the lock)
-              const picked = await readPickTerms(
-                { prisma: this.prisma, catalog: this.catalog! },
-                tenantId,
-                pick.planKey,
-              );
-              return this.checkoutOffer(tenantId, slug, customerId, "month", picked);
-            },
-          },
-        );
-      },
-      TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
-    );
-  }
-
   /**
    * The terms and body of a new subscription session. Called ONLY by the slot, under the tenant-price lock.
    * SA-733 D6 / M6: ALWAYS an explicit anchor (the next 1st, 12:00 UTC), prorations created, and a session that
@@ -787,8 +734,12 @@ export class BillingService {
     customerId: string,
     interval: "month",
     /** SA-1547 PR-5: the plan the business picked. Absent = today's offer, from the pinned plan, unchanged. */
-    pick?: PickTerms,
+    pickPlanKey?: string,
   ): Promise<SlotOffer> {
+    // read UNDER the lock: refuses a pick the business may not make (whitelist, LITE, quoted fee) before anything is closed
+    const pick = pickPlanKey
+      ? await readPickTerms({ prisma: this.prisma, catalog: this.catalog! }, tenantId, pickPlanKey)
+      : undefined;
     // A DIFFERENT plan is billed from its PUBLISHED version (price and included add-ons); the plan it is on, from its pin.
     const moved = pick && !pick.sameAsPinned ? pick : undefined;
     const addons = await this.mutations.checkoutAddonLines(
@@ -801,7 +752,7 @@ export class BillingService {
       ? { planKey: moved.planKey, planName: moved.planName, monthly: moved.monthly! }
       : await this.pricing.resolveTenantPricing(tenantId);
     const priceData = moved
-      ? await this.pricing.checkoutPriceDataForPlan(pricing, interval)
+      ? await this.pricing.checkoutPriceData(tenantId, interval, undefined, { plan: pricing })
       : await this.pricing.checkoutPriceData(tenantId, interval);
     const baseUrl = webBaseUrl();
     // the terms a PAID pick session is completed on; a bodyless session carries none of this
@@ -2136,15 +2087,35 @@ export class BillingService {
     // resolves correctly even before planKey is written below. It can throw BadRequestException
     // (isCustom plan, no price) — a webhook handler must never throw uncaught (Stripe retries
     // forever), so this is best-effort: planKey still gets recorded, basePriceSnapshot left unset.
-    // SA-1547 PR-5 (SA-1319 R1): a card-first PICK session carries the terms the customer paid (plan, catalog version, quoted
-    // monthly price); they are applied as paid, never re-read from a pin that has not moved yet and never refused for a
-    // catalog that changed since. Any other session completes exactly as before.
-    const pick = pickSessionTerms(session.metadata);
+    // SA-1547 PR-5 (SA-1319 R1/R2): a card-first PICK session carries the terms the customer paid (plan, catalog version, quoted
+    // monthly price). They are applied as paid, ONLY in the SETTLED apply (the one that writes the APPLIED marker): a card
+    // completion, or `async_payment_succeeded` for a bank debit, even when the subscription is already linked. An unpaid
+    // first delivery links identity (subscription, customer, period) and writes none of them. A paid session is never
+    // refused for a catalog that changed since. A session marked as a pick whose terms are bad is never treated as a
+    // bodyless one. Any other session completes exactly as before.
+    const pickSession = readPickSession(session.metadata);
+    const pick = pickSession.status === "PICK" ? pickSession.terms : null;
+    const applyPick = !!pick && settled;
+    const holdsPlan = (!!pick && !settled) || pickSession.status === "INVALID";
+    if (pickSession.status === "INVALID") {
+      this.logger.error(
+        `checkout.session.completed ${session.id ?? "?"} for tenant ${tenantId}: a pick session with bad terms - plan not applied`,
+      );
+      if (settled && resolvedPlanKey && session.id) {
+        await this.billingNotification.notifyCheckoutPlanNotApplied(
+          tenantId,
+          resolvedPlanKey,
+          session.id,
+        );
+      }
+    }
     let resolvedBasePrice: number | null = null;
     try {
-      resolvedBasePrice = pick
+      resolvedBasePrice = applyPick
         ? pick.monthly
-        : (await this.pricing.resolveCatalogPricing(tenantId)).monthly;
+        : holdsPlan
+          ? null
+          : (await this.pricing.resolveCatalogPricing(tenantId)).monthly;
     } catch (err) {
       this.logger.warn(
         `checkout.session.completed: could not resolve catalog price for tenant ${tenantId} (${(err as Error).message}) — planKey recorded, basePriceSnapshot left unset`,
@@ -2323,8 +2294,9 @@ export class BillingService {
     // The STORED key is canonical (a legacy `metadata.plan` enum name -> its canonical key) only
     // while the snapshot flag is on — the same string the snapshot/audit rows carry, so it never
     // differs by cohort. Flag OFF the raw key is written exactly as before (byte-identical).
-    let planKeyForCheckout =
-      snapshotOn && resolvedPlanKey
+    let planKeyForCheckout = holdsPlan
+      ? null
+      : snapshotOn && resolvedPlanKey
         ? (normalizePlanKey(resolvedPlanKey) ?? resolvedPlanKey)
         : resolvedPlanKey;
     // P0 hotfix: THIS session's own subscription is already the stored one, so an earlier (unpaid) delivery of it linked
@@ -2348,7 +2320,7 @@ export class BillingService {
         });
         return;
       }
-      if (typeof session.created === "number" && !alreadyLinked) {
+      if (typeof session.created === "number" && (!alreadyLinked || applyPick)) {
         // A downgrade that committed AFTER this session was created is the tenant's (or an admin's)
         // newer decision: an out-of-order/redelivered checkout must not reverse it. The Stripe ids
         // and period still land (money moved); only the PLAN change is skipped.
@@ -2390,7 +2362,9 @@ export class BillingService {
       }
     }
 
-    if (alreadyLinked) planKeyForCheckout = null; // linked (plan, base price) at the first delivery: never re-written
+    // linked (plan, base price) at the first delivery: never re-written. A PICK is applied by its SETTLED delivery whatever
+    // the link: only the APPLIED row means "applied".
+    if (alreadyLinked && !applyPick) planKeyForCheckout = null;
 
     const transition =
       planKeyForCheckout && tenantRow
@@ -2412,7 +2386,7 @@ export class BillingService {
     // includes stops billing and stays on; one it stops including is billed by the adoption step (billUnbilledRow
     // already bills a $0 row whose SKU the new plan does not include).
     const inclusion =
-      planKeyForCheckout && !alreadyLinked
+      planKeyForCheckout && (!alreadyLinked || applyPick)
         ? await this.mutations.inclusionCatalog?.(tenantId, pick?.planVersionId)
         : undefined;
 
@@ -2435,9 +2409,10 @@ export class BillingService {
         // The plan KEY resolved from the session, never the skipped/stale one: when the plan
         // change is skipped `planKeyForCheckout` is null and this would otherwise fall back to a
         // raw `metadata.plan` cast to the enum — a plan-key value is a Prisma enum reject (500 loop).
-        currentPlan: resolvedPlanKey
-          ? planKeyToEnum(resolvedPlanKey)
-          : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
+        currentPlan:
+          resolvedPlanKey && !holdsPlan
+            ? planKeyToEnum(resolvedPlanKey)
+            : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
         planKey: planKeyForCheckout,
         basePriceSnapshot: resolvedBasePrice,
         ...(period ?? {}),
@@ -2453,7 +2428,9 @@ export class BillingService {
         // else on this base clears externalPayment on a card checkout.
         ...(isCatchupSession(session) ? { externalPayment: false } : {}),
         ...(planKeyForCheckout ? { planKey: planKeyForCheckout } : {}),
-        ...(pick && planKeyForCheckout ? { currentPlan: planKeyToEnum(planKeyForCheckout) } : {}),
+        ...(applyPick && planKeyForCheckout
+          ? { currentPlan: planKeyToEnum(planKeyForCheckout) }
+          : {}),
         ...(planKeyForCheckout && resolvedBasePrice != null && !hasNegotiatedOverride
           ? { basePriceSnapshot: resolvedBasePrice }
           : {}),
@@ -2525,7 +2502,8 @@ export class BillingService {
                   existingOverride?.planKey,
                 );
                 const row = await tx.tenantSubscription.upsert(upsertArgs);
-                if (pick && planKeyForCheckout) await this.applyPickedTermsTx(tx, tenantId, pick);
+                if (applyPick && planKeyForCheckout)
+                  await this.applyPickedTermsTx(tx, tenantId, pick);
                 await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
                 await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
                 // P0 hotfix: only a SETTLED session leaves the marker (an unpaid bank debit is linked, not applied)
@@ -2600,7 +2578,7 @@ export class BillingService {
               existingOverride?.planKey,
             );
             const row = await tx.tenantSubscription.upsert(upsertArgs);
-            if (pick && planKeyForCheckout) await this.applyPickedTermsTx(tx, tenantId, pick);
+            if (applyPick && planKeyForCheckout) await this.applyPickedTermsTx(tx, tenantId, pick);
             await this.emitTrialConvertedTx(tx, tenantId, convertedAt, conversionPlanKey);
             await this.resetCouponIfSubReplacedTx(tx, tenantId, previousSubId, subscriptionId);
             if (session.id && settled) {
@@ -2621,6 +2599,12 @@ export class BillingService {
         return;
       }
       throw err;
+    }
+
+    // M1: a PICK moved the plan, the version and the tenant's plan in that commit: drop the entitlement, authority and tenant-status
+    // caches (the plan-transition ones ran above while its flag is on), whatever that flag. Never on the unpaid delivery.
+    if (applyPick && planKeyForCheckout && upserted !== ALREADY_APPLIED) {
+      this.mutations.invalidatePlanCaches(tenantId);
     }
 
     if (upserted === ALREADY_APPLIED) {

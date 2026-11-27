@@ -145,14 +145,30 @@ export async function readPickTerms(
   };
 }
 
-/** The terms a PAID pick session carries, or null for any other session (today's bodyless ones complete as before). */
-export function pickSessionTerms(
-  metadata: Record<string, string | undefined> | null | undefined,
-): { planKey: string; planVersionId: string; monthly: number } | null {
-  if (metadata?.[PICK_META.selfPick] !== "1") return null;
-  const planKey = metadata.planKey;
-  const planVersionId = metadata[PICK_META.planVersionId];
-  const monthly = Number(metadata[PICK_META.quotedMonthly]);
-  if (!planKey || !planVersionId || !Number.isFinite(monthly) || monthly < 0) return null;
-  return { planKey, planVersionId, monthly };
+export type PickSession =
+  | { status: "NONE" }
+  | { status: "INVALID" }
+  | { status: "PICK"; terms: { planKey: string; planVersionId: string; monthly: number } };
+
+/**
+ * The ONE validator for a pick session's metadata, used where the session is created (refused before it exists) and where the
+ * paid completion applies it. A session marked `selfPick` with a missing or bad plan, version or price is INVALID, never
+ * "none": it must not complete as if it were today's bodyless session. A session with no marker is NONE and completes as before.
+ */
+export function readPickSession(metadata: Record<string, unknown> | null | undefined): PickSession {
+  if (!metadata?.[PICK_META.selfPick]) return { status: "NONE" };
+  const text = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
+  const planKey = text(metadata.planKey);
+  const planVersionId = text(metadata[PICK_META.planVersionId]);
+  const raw = text(metadata[PICK_META.quotedMonthly]);
+  const monthly = raw === undefined ? NaN : Number(raw);
+  if (metadata[PICK_META.selfPick] !== "1" || !planKey || !planVersionId) {
+    return { status: "INVALID" };
+  }
+  if (!Number.isFinite(monthly) || monthly < 0) return { status: "INVALID" };
+  return { status: "PICK", terms: { planKey, planVersionId, monthly: roundMoney(monthly) } };
 }
+
+/** True for a well-formed pick session. */
+export const validPickMetadata = (metadata: Record<string, unknown> | null | undefined): boolean =>
+  readPickSession(metadata).status === "PICK";
