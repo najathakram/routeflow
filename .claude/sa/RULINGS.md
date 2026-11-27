@@ -587,5 +587,5 @@
 - SA-1319 · 2026-11-27 · SA-1547 PR-5 trial pick; comment 7217948207, re-ruled R1 7218308125, R1a 7218367456, R2 7219551666 (SA-B)
 - SA-1320 · 2026-11-27 · W-1503 A1 Lens questions and what A0 is; comment 7217997186 (SA-B)
 - SA-1321 · 2026-11-27 · PACK W-1505 U0, the status rule for the three wallet checks, plus the planner-status line for W-1471 A3c; comment 7218057879 (SA-B)
-- SA-1322 · 2026-11-27 · standalone payment method candidate (B1522): triaged HIGH, own fix ahead of W-1503 A0; comment 7218142383 (SA-B), details with the lead
+- SA-1322 · 2026-11-27 · a payment-path candidate (B1522, details private): triaged HIGH, own fix ahead of W-1503 A0; comment 7218142383 (SA-B), details with the lead
 - SA-1323 · 2026-11-27 · W-1485 PR-1 Lens questions, the label column's name and imports; comment 7218217650 (SA-B)

@@ -98,12 +98,6 @@
 - **Lesson:** **Drop the odd trailing byte before any utf16le decode. A guard hook prints a refusal and exits non-zero for every exit code that is not 0 or its own refusal code, so a runtime crash reads as a blocked push with a reason. Run the hook self-test under `sh -e`, the way git runs it, not under a forgiving shell.**
 - **Guard:** #4563 (merged 2026-11-26, `8e183d480a`) carries the odd-byte drop, the hook refusal on an unexpected exit code and the `sh -e` self-test; the crash was PC-only and a retry changed nothing.
 
-· 2026-11-22 · tooling · a gate that kills a long child on a time cap reports the timeout as a timeout, never as a genuine failure; the cap is overridable and sized for a loaded host (#4427)
-
-- **Symptom:** the forced `turbo run test --force` in `campaign-check` had a fixed 15-minute cap. On a loaded host the api suite ran longer, `spawnSync` returned `ETIMEDOUT`, and the gate printed "genuine failure"; two pushes were refused on 2026-11-22, each after a 40 to 60 minute verify.
-- **Root cause:** the gate read any non-success child result as a test failure. A killed child has no exit status of its own, so a slow run and a red suite looked the same.
-- **Lesson:** **When a gate runs a child under a time cap, branch on the timeout first and say so (`TIMED OUT after N min`, still a refusal); keep "genuine failure" for a real non-zero exit. Size the default to the loaded host and let one env var override it (a positive integer; anything else is ignored).**
-- **Guard:** `campaign-check-force-timeout.spec.ts` and `campaign-check-freshness.spec.ts` (#4427); `scripts/lib/campaign-force-run.cjs` holds the one parser.
 
 ### L-395 · 2026-11-19 · tooling · a guard that matches file names read from `+++ b/` diff headers decodes git's C-quoting (or takes names from `-z` output), and withholds any name git quoted (#4363)
 
@@ -135,19 +129,7 @@
 - **Lesson:** **Before the read, list the specs that copy or run `.husky/*` (grep the hook name in `apps/api/src/common/*-script.spec.ts`) and run them with the hook change. A fixture that copies a hook must copy everything the hook calls, and a missing file refuses with a plain message, not a node stack.**
 - **Guard:** the fixtures in `pre-push-trunk-script.spec.ts` and `skip-verify-audit-script.spec.ts` copy the checker and its lib, and each spec has a missing-checker case; `scripts/registry-root.self-test.mjs` lists the fixture. Cf. [[L-322]], [[L-323]].
 
-· 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
 
-- **Symptom:** a web PR went red in CI on `react-hooks/rules-of-hooks`: a plain helper in a test file was called from a callback and its name began with `use`.
-- **Root cause:** the lint rule keys on the name, not on what the function does; the lane's gate had not run web lint.
-- **Lesson:** **Name test helpers for what they return (`makeX`, `renderX`, `withX`), never `useX`, unless the function really is a hook called at a component's top level. Web lint is part of every web PR gate.**
-- **Guard:** the web ESLint `react-hooks/rules-of-hooks` rule in `npm run lint`. Cf. [[L-386]].
-
-· 2026-11-15 · testing · a source scan's file-walk predicate is pinned by a row that names edge files, and a label type error shows only under the spec ratchet (#4344)
-
-- **Symptom:** a return-address scan walked the API sources with `/.(spec|test).tsx?$/` as its skip filter; the unescaped dot also dropped `common/testing/db-spec.ts` and `smtp-spec.ts`, so the scan read green while skipping both. A reader found it, not the scan.
-- **Root cause:** the predicate was never itself tested, and a scan that finds nothing in a skipped file looks identical to a clean file. Separately, a row label written with two quoted pieces was a type error that plain `tsc` never reports, because it skips specs.
-- **Lesson:** **Give every scan's walk a row that asserts the named edge files ARE scanned (a helper called `*-spec.ts`, a `.tsx` file) and the excluded kinds are not; escape the dots in a file-name predicate. A spec type error is judged only by `npm run check-types -w apps/api` (the ratchet), and prettier rewrites quoted keys, so a row meant to test a quoted-key spelling tests nothing: label it as a label.**
-- **Guard:** the walk row in `apps/api/src/billing/billing-return-paths.spec.ts` (db-spec.ts and smtp-spec.ts scanned, no `*.spec.ts(x)`, at least seven `.tsx` files).
 
 ### L-392 · 2026-11-19 · testing · a raw control byte typed into a regex literal makes a negative pin pass whatever the code holds (#4349, B1313)
 
@@ -328,12 +310,6 @@
 - **Lesson:** **Redact at the place the error is stored for the screen, not only in the log line, and give each transport branch its own test that asserts the staff-visible text. A transport added later with its own catch is a new unredacted exit unless a test names it.**
 - **Guard:** `email/email.tenant-smtp-error-redact.w1289.spec.ts` (tenant fail with and without a platform transport, the statement 400, the log line).
 
-· 2026-11-21 · security · when a storage key is renamed, the reader drops the old key and logout clears it once; a fallback read keeps a signed-out person signed in (#4371)
-
-- **Symptom:** a buyer who signed in with Google and then signed out was read as signed in again, and revisiting the portal showed it.
-- **Root cause:** the Google callback still wrote the pre-namespacing `buyerAccessToken` key, the token reader fell back to it, and logout cleared only the namespaced keys. A second page read yet another key (`buyerToken`) that nothing writes, so its request went out with no Authorization header.
-- **Lesson:** **After a storage-key migration the writer stops writing the old key, the reader stops falling back to it, and logout removes it once for browsers that still hold it. Every page reads the token through the one accessor, never by a key literal.**
-- **Guard:** `apps/web/lib/buyer-auth.legacy-token.test.ts`, `page.code-only.test.tsx` (callback) and `page.merge-request.test.tsx` (settings), #4371.
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
 
@@ -386,12 +362,6 @@
 - **Lesson:** **Keep ONE played-list for every reveal path. A trigger reached at rest (inside a refresh, from an anchor, on the print return) is pushed to it at once and leaves its content as it is; only a callback from a scroll update plays. Never use `once` as the record.**
 - **Guard:** `apps/web/e2e/85-site-proof-pages.spec.ts` T1 (same trigger count as a fresh load after print) and T2 (no heading waits for a scroll), and its replay cell, which asserts the at-rest precondition before it measures. Cf. [[L-377]].
 
-· 2026-11-12 · web · a text field inside a closing dialog is not a typing target; one predicate decides it for every guard that asks "is a person typing" (#4303)
-
-- **Symptom:** at the till, a scan that started 100-150 ms after Escape in a dialog's text box lost its leading digits and looked up a suffix. A 1-3 digit suffix is a quantity: the next correct scan could ring up x31.
-- **Root cause:** a Radix dialog stays mounted with `data-state="closed"` for its 150 ms exit animation and keeps focus in its text box. The refocus and the key redirect both read a focused text box as "a person is typing" and stood down, so the keys died with the unmount.
-- **Lesson:** **A guard that asks whether a person is typing asks one shared predicate, and that predicate excludes a field inside a closing dialog. Add no timer, no key timing and no new focus owner for it. Test it with a harness that emulates the exit animation (jsdom has none), at start delays on both sides of the animation, and with both line endings.**
-- **Guard:** `insideClosingDialog` in `lib/refocus-scanner.ts` (read by `isTextEntryElement`); `refocus-scanner.test.ts` and `CounterSaleScreen.escape-scan.test.tsx` (removing the predicate turns 18 tests red). Open: Change the price with a code that starts in lowercase (`CounterLinePriceEdit.tsx:252`). Cf. [[L-353]].
 
 ### L-385 · 2026-11-15 · web · one exported predicate says whether a key starts a scan run; each screen decides only where the scan goes (#4320, B1310, B1314)
 
