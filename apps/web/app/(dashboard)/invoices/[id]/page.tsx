@@ -124,7 +124,7 @@ import {
   useResyncOnZone,
   useTenantTimeZone,
 } from "@/lib/tenant-timezone";
-import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
+import { LinkedOrderLine, OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { dayClosedCopy } from "@/lib/day-closed-copy";
 import { toastDuplicatePaymentRef } from "@/lib/duplicate-payment-ref";
@@ -2790,19 +2790,11 @@ export default function InvoiceDetailPage() {
             <Card title="Linked Order">
               <div className="flex items-center gap-3">
                 <Package className="h-4 w-4 text-navy/70" />
-                <button
-                  type="button"
-                  onClick={() => setOrderPreviewOpen(true)}
-                  className="text-sm font-medium text-brand-500 hover:underline"
-                >
-                  Preview order
-                </button>
-                <Link
-                  href={`/orders/${(invoice as any).orderId}`}
-                  className="text-sm text-navy/60 hover:underline"
-                >
-                  Open →
-                </Link>
+                <LinkedOrderLine
+                  orderId={(invoice as any).orderId}
+                  orderNumber={invoice.order?.orderNumber}
+                  onPreview={() => setOrderPreviewOpen(true)}
+                />
               </div>
             </Card>
           )}

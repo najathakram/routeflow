@@ -45,6 +45,7 @@ import {
   rowEditPatch,
   rowVariance,
   rowVarianceMoney,
+  scanMode,
   type StockCountMode,
   type StockCountRow,
   type StockCountSessionStatus,
@@ -240,7 +241,7 @@ export default function StockCountSessionScreen() {
       ];
     });
     pushUndo({ productId: p.id, amount, wasNewRow: wasNew });
-    autosave.queueScan(p.id, amount, modeRef.current);
+    autosave.queueScan(p.id, amount, scanMode(rowsRef.current, p.id, modeRef.current));
   };
 
   const applyRowEdit = (productId: string, updater: (row: StockCountRow) => StockCountRow) => {

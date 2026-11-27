@@ -51,7 +51,7 @@ export interface StockCountLineWritePayload {
 
 type PendingEntry =
   | { kind: "increment"; delta: number; mode: StockCountMode }
-  | { kind: "edit"; patch: StockCountEditPatch; mode: StockCountMode }
+  | { kind: "edit"; patch: StockCountEditPatch; mode: StockCountMode; scanDelta?: number }
   | { kind: "remove" };
 
 export interface StockCountAutosaveDeps {
@@ -140,8 +140,16 @@ export function createStockCountAutosave(deps: StockCountAutosaveDeps): StockCou
     }
     if (failed.kind === "increment" && current.kind === "increment") {
       pending.set(productId, { ...current, delta: current.delta + failed.delta });
+    } else if (failed.kind === "edit" && current.kind === "increment") {
+      // The failed absolute edit is older than the newer scans: keep it and carry every scan
+      // (its own scanDelta plus the newer ones) after it, so no count is lost.
+      pending.set(productId, {
+        ...failed,
+        mode: current.mode,
+        scanDelta: (failed.scanDelta ?? 0) + current.delta,
+      });
     }
-    // Any other combination: `current` is newer and already complete — drop.
+    // Any other combination: `current` is a newer edit/remove, already complete — drop.
   }
 
   async function flushOne(productId: string, entry: PendingEntry): Promise<void> {
@@ -158,6 +166,15 @@ export function createStockCountAutosave(deps: StockCountAutosaveDeps): StockCou
         });
       } else {
         await deps.upsertLine({ productId, mode: entry.mode, ...entry.patch });
+        // Scans made after the edit and before this flush ride after it, so neither is lost.
+        if (entry.scanDelta) {
+          await deps.upsertLine({
+            productId,
+            countedQty: entry.scanDelta,
+            increment: true,
+            mode: entry.mode,
+          });
+        }
       }
     } catch (err) {
       if (!deps.isPermanent?.(err)) mergeBack(productId, entry);
@@ -181,8 +198,13 @@ export function createStockCountAutosave(deps: StockCountAutosaveDeps): StockCou
     queueScan(productId, delta, mode) {
       if (disposed || delta === 0) return;
       const current = pending.get(productId);
-      const nextDelta = current?.kind === "increment" ? current.delta + delta : delta;
-      pending.set(productId, { kind: "increment", delta: nextDelta, mode });
+      if (current?.kind === "edit") {
+        // A pending absolute edit must survive: keep it and carry the scan after it.
+        pending.set(productId, { ...current, mode, scanDelta: (current.scanDelta ?? 0) + delta });
+      } else {
+        const nextDelta = current?.kind === "increment" ? current.delta + delta : delta;
+        pending.set(productId, { kind: "increment", delta: nextDelta, mode });
+      }
       notify();
       arm();
     },

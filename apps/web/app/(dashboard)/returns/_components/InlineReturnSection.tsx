@@ -12,6 +12,7 @@
 // thin wrapper both of those hosts mount). No client-side money math: every dollar figure rendered here comes verbatim from
 // the quote, and a quote is shown as current only while it is for exactly the lines on screen (useLiveReturnQuote).
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button, Input, Select, cn, useToast } from "@routeflow/ui/web";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
@@ -138,6 +139,10 @@ export interface InlineReturnSectionProps {
    *  draft the operator already typed/fetched, and so its own same-named actions (e.g. "Back")
    *  never collide with this section's DOM while it is hidden. */
   hidden?: boolean;
+  /** W-1459 / B1465: where the action row is drawn. `undefined` (the default; Create Order, the edit page, the counter) = in
+   *  place, under the summary, as always. An element = portalled there (the Returns dialog's fixed footer, outside its scroll
+   *  body). `null` = that element is not mounted yet: the row waits for it rather than flashing in place. */
+  actionsHost?: HTMLElement | null;
 }
 
 /** A line the operator chose "Return only what was bought" for: what its rows held before, so choosing the other option
@@ -165,6 +170,7 @@ export function InlineReturnSection({
   customerName,
   reasonContext,
   hidden = false,
+  actionsHost,
 }: InlineReturnSectionProps) {
   const { data: entryOrder } = useOrder(entryOrderId ?? "");
   // R7b 3.1: a counter sale's reasons read in register words (same enum values)
@@ -397,6 +403,12 @@ export function InlineReturnSection({
   const reasonLabel = (reason: ReturnReason | "") =>
     REASON_OPTIONS.find((o) => o.value === (reason || captureReason))?.label ?? "";
 
+  const actionsRow = (
+    <div className="flex flex-wrap justify-end gap-2">
+      {renderActions?.()}
+      {current && quote && renderQuoteActions?.(quote)}
+    </div>
+  );
   return (
     <div ref={rootRef} className="space-y-4">
       <div>
@@ -619,10 +631,11 @@ export function InlineReturnSection({
         </p>
       )}
       {current && !refusal && quote && renderQuoteFooter?.(quote)}
-      <div className="flex flex-wrap justify-end gap-2">
-        {renderActions?.()}
-        {current && quote && renderQuoteActions?.(quote)}
-      </div>
+      {actionsHost === undefined
+        ? actionsRow
+        : actionsHost
+          ? createPortal(actionsRow, actionsHost)
+          : null}
     </div>
   );
 }

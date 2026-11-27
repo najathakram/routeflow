@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Input, Button, PasswordInput } from "@routeflow/ui/web";
+import { BRAND } from "@routeflow/types/brand";
 import { useAuth } from "@/lib/auth-context";
 import { useTenant } from "@/components/tenant-provider";
 import { setTenantCookie } from "@/lib/tenant-cookie";
@@ -38,14 +39,14 @@ const loginSchema = z.object({
 
 type LoginFormValues = z.infer<typeof loginSchema>;
 
-// If the page is loaded on a tenant subdomain (e.g. acme.routeflow.info),
+// If the page is loaded on a tenant subdomain (e.g. acme.example.com),
 // the workspace is implied by the URL — pre-fill and lock the field.
-// On platform hosts (www.routeflow.info, app.routeflow.info, hosting-provider
+// On platform hosts (the brand's own www and app hosts, hosting-provider
 // domains, localhost) the user must type which workspace they're signing into.
 // Delegates to `@/lib/tenant-host`, which the middleware uses too. This function
 // used to carry its OWN copy of the host rules and that copy had drifted: it was
 // missing the hosting-provider guard, so on `*.up.railway.app` it returned the
-// SERVICE name ("routeflowweb-production") as a tenant slug. That hid the
+// SERVICE name as a tenant slug. That hid the
 // Workspace field and made the submit handler below write a nonexistent slug into
 // the tenant-slug cookie — form login was impossible on the Railway fallback URL.
 // Keep both callers on the shared helper; never re-inline these rules.
@@ -180,13 +181,13 @@ export default function LoginPage() {
   // (buyer/invite, buyer/portal) correctly use `${apiUrl}/uploads/<key>`.
   //
   // Tenant branding is ONLY applied on a tenant subdomain (e.g.
-  // `acme.routeflow.info/login`). On platform hosts (`www.routeflow.info`,
-  // `app.routeflow.info`, localhost) this is the generic RouteFlow entry
+  // `acme.example.com/login`). On platform hosts (the brand's own www and
+  // app hosts, localhost) this is the generic platform entry
   // point — operators here may be signing into any workspace. A stale
   // tenant-slug cookie from a previous session would otherwise leak that
   // tenant's name and logo onto the platform-level login screen.
   const useTenantBranding = !!subdomainWorkspace && !!branding?.logoKey;
-  const businessName = useTenantBranding ? (branding?.businessName ?? "RouteFlow") : "RouteFlow";
+  const businessName = useTenantBranding ? (branding?.businessName ?? BRAND.name) : BRAND.name;
   // The guarded /uploads route rejects an <img>'s unauthenticated request
   // (RF-075); the public logo endpoint streams the same file with no auth.
   const logoUrl = useTenantBranding
@@ -210,7 +211,7 @@ export default function LoginPage() {
             </a>
           </p>
           <p className="text-xs text-navy/70">
-            New to RouteFlow?{" "}
+            New to {BRAND.name}?{" "}
             <a href="/signup" className="text-brand-600 hover:underline font-medium">
               Start your 14-day free trial
             </a>

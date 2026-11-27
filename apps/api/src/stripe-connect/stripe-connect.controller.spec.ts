@@ -12,7 +12,7 @@
  * Mock pattern (mockRes) mirrors payment-requests/connect-webhook.controller.spec.ts.
  */
 
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import {
   CANCELLED_SENTENCE,
   READ_ONLY_SENTENCE,
@@ -53,6 +53,20 @@ describe("StripeConnectCallbackController", () => {
     expect(redirected.searchParams.get("stripe")).toBe("error");
     expect(redirected.searchParams.get("reason")).toBe(
       "That's RouteFlow's own Stripe account — sign in to your business's Stripe account and try again.",
+    );
+  });
+
+  it("W-1464: the live-payments wall's 409 shows its own fixed sentence, not the generic one", async () => {
+    mockConnect.completeOAuth.mockRejectedValue(
+      new ConflictException({ code: "LIVE_PAYMENTS_OFF", message: "internal text" }),
+    );
+    const res = mockRes();
+
+    await controller.callback("code", "state", undefined, res);
+
+    const redirected = new URL(res.redirectedTo!);
+    expect(redirected.searchParams.get("reason")).toBe(
+      "This is a test business. Payments are switched off.",
     );
   });
 

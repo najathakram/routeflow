@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { SITE_BRAND } from "@routeflow/types/brand";
 import { hasBuyerPresence, hasOpPresence, readLastPortalCookie } from "@/lib/presence-cookies";
 import { resolveLandingTarget } from "@/lib/portal-routing";
 import { MENU_LINKS, NAV_LINKS } from "./site-frame-nav";
@@ -18,6 +20,7 @@ export function SiteFrameHeader({
   /** A store arriving from an invite or verify link is not a prospect: no marketing button. */
   hideTrial?: boolean;
 }) {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [dashboard, setDashboard] = useState<string | null>(null);
 
@@ -51,17 +54,20 @@ export function SiteFrameHeader({
     };
   }, []);
 
+  // The sign-up page is the trial: no second trial button in its header or menu.
+  const p = pathname ?? "";
+  const showTrial = !hideTrial && !(p === "/signup" || p.startsWith("/signup/"));
   const signIn = dashboard ?? "/login";
   const signInLabel = dashboard ? "Open dashboard" : "Sign in";
 
   return (
     <>
-      <header className="site-header hero-btn-in">
+      <header className="site-header">
         <div className="wrap nav">
-          <Link className="brand" href="/" aria-label="RouteFlow home">
+          <Link className="brand" href="/" aria-label={`${SITE_BRAND.name} home`}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/site/img/routeflow-mark-64.png" width={30} height={30} alt="" />
-            <span>RouteFlow</span>
+            <img src={SITE_BRAND.logo.onLight} width={30} height={30} alt="" />
+            <span>{SITE_BRAND.name}</span>
           </Link>
           <nav aria-label="Main">
             <ul className="nav-links">
@@ -81,7 +87,7 @@ export function SiteFrameHeader({
             <Link className="nav-signin" href={signIn}>
               {signInLabel}
             </Link>
-            {hideTrial ? null : (
+            {showTrial && (
               <Link className="btn btn-primary btn-sm" href="/signup">
                 Start free trial
               </Link>
@@ -115,7 +121,7 @@ export function SiteFrameHeader({
             </Link>
           ))}
           <Link href={signIn}>{signInLabel}</Link>
-          {hideTrial ? null : (
+          {showTrial && (
             <Link className="btn btn-primary btn-lg" href="/signup">
               Start free trial
             </Link>

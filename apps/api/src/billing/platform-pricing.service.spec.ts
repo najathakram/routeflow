@@ -488,7 +488,7 @@ describe("PlatformPricingService", () => {
       const monthly = await service.checkoutPriceData("tenant-1", "month");
       expect(monthly.unit_amount).toBe(9900);
       expect(monthly.product).toBe("rf_plan_lite");
-      expect(products.table.get("rf_plan_lite")?.name).toBe("RouteFlow Lite");
+      expect(products.table.get("rf_plan_lite")?.name).toBe("Lite");
 
       const annual = await service.checkoutPriceData("tenant-1", "year");
       expect(annual.unit_amount).toBe(99000); // 99 * 10 * 100 — the 10x-monthly fallback

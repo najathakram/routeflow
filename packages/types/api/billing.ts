@@ -6,6 +6,7 @@
 // set-equal by `apps/api/src/common/enum-parity.spec.ts`'s WP1 T2 case. Keep both lists in sync
 // by hand.
 
+import type { BillingCycle } from "./enums";
 import type { ApiErrorCode } from "./error-codes";
 
 /** The 21 feature-flag / addon keys enforced server-side (pricing-plans.md §Feature-flag keys). */
@@ -47,11 +48,48 @@ export type FlagKey = (typeof FLAG_KEYS)[number];
  * re-deriving entitlement locally), and `paymentRequired` flags a subscription state where the
  * tenant must supply/update payment before continuing (e.g. converting off an invite-only trial).
  */
+/**
+ * SA-1547: why a business is, or is not, offered "Pay now" (`self-checkout-eligibility.ts` is the one place that
+ * decides). Lower-case coded values, like `readOnlyReason`; a client branches on `eligible` and prints its own sentence.
+ */
+export type SelfPayReason =
+  | "trial_expired"
+  | "lite_payment_due"
+  | "trial_active"
+  | "active_no_card"
+  | "not_self_pay_state"
+  | "not_reinstatable"
+  | "external_payment"
+  | "live_subscription"
+  | "link_pending"
+  | "not_paying_row"
+  | "live_payments_off"
+  | "coupon_full"
+  | "no_price"
+  | "not_admin"
+  | "support_session"
+  | "unavailable";
+
+/**
+ * SA-1547 (OP-14): everything the Pay now confirm prints, made by the server (the web works out no figure).
+ * `monthly` is the monthly price Stripe will bill (the catalog or the quoted fee); each add-on `monthly` is its line
+ * total (price x quantity); `firstFullChargeAt` is the anchor the checkout session would use.
+ */
+export interface SelfPayView<TDate = string> {
+  eligible: boolean;
+  reason: SelfPayReason;
+  planKey: string | null;
+  planName: string | null;
+  monthly: number | null;
+  addons: Array<{ name: string; monthly: number | null }>;
+  firstFullChargeAt: TDate | null;
+}
+
 export interface SubscriptionView<TDate = string> {
   planKey: string;
   planName: string;
   status: string;
-  cycle: "MONTHLY" | "ANNUAL";
+  cycle: BillingCycle;
   monthlyPrice: number | null;
   annualPrice: number | null;
   isCustom: boolean;
@@ -80,6 +118,8 @@ export interface SubscriptionView<TDate = string> {
    *  (an older server) reads as `[]`. A capacity SKU is never in it. */
   alreadyHaveAddonSkus?: string[];
   paymentRequired: boolean;
+  /** SA-1547: who may pay now and what the confirm prints. Absent (an older server) reads as not eligible. */
+  selfPay?: SelfPayView<TDate>;
   /** SA-733r6 (B4) - the dunning clock and the banner's facts. All optional/null: a tenant that never failed a
    *  payment (and any older server) simply omits them, and the banner then shows the autopay card only. */
   /** When the first failed payment of the open invoice was stamped; day 0 of the 14-day grace. */

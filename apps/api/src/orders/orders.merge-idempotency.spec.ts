@@ -111,6 +111,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import {
   IDEMPOTENCY_KEY_CONFLICT,
   IDEMPOTENCY_REPLAY_NEEDS_RECONCILE,
+  insertMergeIdempotencyKey,
   mergeRequestHash,
 } from "./merge-idempotency";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -652,7 +653,7 @@ describe("OrdersService.updateOrderItems — merge idempotency key write (REG-B2
     }
   });
 
-  it("REG-B215 T14: a tenant-less session cannot record a merge key", async () => {
+  it("REG-B215 T14: a tenant-less session on a money-bearing edit is refused 403 by the order-edit guard, before any key insert", async () => {
     const prisma = createMockPrisma();
     const gateway = mockGateway();
     const service = await buildOrdersService(prisma, gateway);
@@ -665,6 +666,29 @@ describe("OrdersService.updateOrderItems — merge idempotency key write (REG-B2
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect((prisma as any).orderIdempotencyKey.create).not.toHaveBeenCalled();
+  });
+
+  it("REG-B215 T14b: the merge-key insert itself refuses a tenant-less session (403) and writes nothing; with a tenant it writes the tenant's key", async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const logger = { warn: jest.fn() };
+    const idem = { key: "K1", responseHash: "h1" };
+    const deps = (tenant: string | null) => ({
+      prisma: { getTenantId: () => tenant, forTenant: () => ({}) },
+      logger,
+    });
+    await expect(
+      insertMergeIdempotencyKey(deps(null), { orderIdempotencyKey: { create } }, "ord-1", idem),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(create).not.toHaveBeenCalled();
+    await insertMergeIdempotencyKey(
+      deps("t-1"),
+      { orderIdempotencyKey: { create } },
+      "ord-1",
+      idem,
+    );
+    expect(create).toHaveBeenCalledWith({
+      data: { tenantId: "t-1", key: "K1", orderId: "ord-1", responseHash: "h1" },
+    });
   });
 
   it("REG-B215 T15: a non-P2002 failure on the key insert propagates unchanged", async () => {

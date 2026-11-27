@@ -393,9 +393,8 @@ function SignupInner() {
             <input
               id="signup-password"
               type={showPassword ? "text" : "password"}
-              placeholder="At least 8 characters"
               autoComplete="new-password"
-              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               {...register("adminPassword")}
             />
             <button
@@ -427,7 +426,7 @@ function SignupInner() {
         </Button>
       </form>
 
-      <p className="mt-4 text-center text-xs text-navy/70">
+      <p className="mt-4 text-pretty text-xs text-navy/70">
         By signing up you agree to our{" "}
         <a href="/terms" className="text-brand-600 hover:underline">
           Terms of Service

@@ -5,7 +5,8 @@ import {
   PART_PAY_CREDIT_FAILED_COPY,
   PART_PAY_CREDIT_COVERS_COPY,
   isPartPayProblemCopy,
-  PART_PAY_OVER_TOTAL_COPY,
+  partPayOverTotalCopy,
+  partPayOverTotalProblem,
   partPayOverCreditCopy,
   partPayEqualsTotal,
   creditMayApply,
@@ -211,18 +212,29 @@ describe("partPayAmountProblem: Amount paying now that is not a positive number"
     expect(partPayAmountProblem({ ...input("19.99"), total: 20 })).toBeNull();
   });
 
-  it("an amount strictly above the total is refused (the server's COUNTER_PAYMENT_EXCEEDS_TOTAL), not silently a full payment", () => {
-    for (const method of ["CARD", "CHECK"] as const) {
-      expect(partPayAmountProblem({ method, isWalkIn: false, tendered: "20.01", total: 20 })).toBe(
-        PART_PAY_OVER_TOTAL_COPY,
-      );
-      expect(partPayAmountProblem({ method, isWalkIn: false, tendered: "400", total: 20 })).toBe(
-        PART_PAY_OVER_TOTAL_COPY,
-      );
-    }
-    expect(PART_PAY_OVER_TOTAL_COPY).toBe(
-      "Amount paying now can't be more than the total. Lower it, or leave it empty to pay in full.",
+  it("an amount strictly above the total is refused with both figures and the method named (B1468)", () => {
+    expect(
+      partPayAmountProblem({ method: "CARD", isWalkIn: false, tendered: "20.01", total: 20 }),
+    ).toBe("$20.01 is more than the $20.00 total. Check the card amount.");
+    expect(
+      partPayAmountProblem({ method: "CHECK", isWalkIn: false, tendered: "400", total: 20 }),
+    ).toBe("$400.00 is more than the $20.00 total. Check the check amount.");
+    expect(partPayOverTotalCopy(1234.5, 6.95, "CARD")).toBe(
+      "$1,234.50 is more than the $6.95 total. Check the card amount.",
     );
+  });
+
+  it("partPayOverTotalProblem reads only the over-total rule, live", () => {
+    const o = (tendered: string, method: "CARD" | "CHECK" | "CASH" = "CARD", isWalkIn = false) =>
+      partPayOverTotalProblem({ method, isWalkIn, tendered, total: 6.95 });
+    expect(o("7")).toBe("$7.00 is more than the $6.95 total. Check the card amount.");
+    expect(o("$7", "CHECK")).toBe("$7.00 is more than the $6.95 total. Check the check amount.");
+    expect(o("6.95")).toBeNull();
+    expect(o("5")).toBeNull();
+    expect(o("")).toBeNull();
+    expect(o("abc")).toBeNull();
+    expect(o("700", "CASH")).toBeNull();
+    expect(o("700", "CARD", true)).toBeNull();
   });
 
   it("cash, on account and a walk-in are not subject to the over-total refusal", () => {
@@ -278,7 +290,7 @@ describe("partPayAmountProblem with the customer's open credit (server parity)",
 
   it("exactly the total is still a full payment (it states no amount), and above it is over the total", () => {
     expect(at("100", 10)).toBeNull();
-    expect(at("100.01", 10)).toBe(PART_PAY_OVER_TOTAL_COPY);
+    expect(at("100.01", 10)).toBe(partPayOverTotalCopy(100.01, 100, "CARD"));
   });
 
   it("with no credit the cap is the total, as before", () => {
@@ -314,7 +326,8 @@ describe("partPayAmountProblem with the customer's open credit (server parity)",
   it("isPartPayProblemCopy recognises every Amount paying now refusal (so editing the field clears it)", () => {
     for (const c of [
       PART_PAY_AMOUNT_COPY,
-      PART_PAY_OVER_TOTAL_COPY,
+      partPayOverTotalCopy(20.01, 20, "CARD"),
+      partPayOverTotalCopy(20.01, 20, "CHECK"),
       PART_PAY_CREDIT_PENDING_COPY,
       PART_PAY_CREDIT_FAILED_COPY,
       PART_PAY_CREDIT_COVERS_COPY,

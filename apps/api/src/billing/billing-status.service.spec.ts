@@ -105,4 +105,26 @@ describe("BillingStatusService", () => {
     await svc.get(`t${WARNED_TENANTS_CAP}`, UserRole.OPERATOR); // newest still remembered
     expect(warn).toHaveBeenCalledTimes(WARNED_TENANTS_CAP + 2);
   });
+
+  // SA-1547 R-340 F1: the checkout route refuses a support session, so the status must not offer Pay now in one.
+  describe("pay_now in a support session", () => {
+    const TRIAL_ENDED = {
+      ...OWED,
+      status: "READ_ONLY",
+      readOnlyReason: "trial_expired",
+      billingState: undefined,
+      selfPay: { eligible: true, reason: "trial_expired" },
+    };
+    const PAY_NOW = { kind: "pay_now", target: "self_checkout" };
+
+    it("a workspace admin gets pay_now", async () => {
+      expect((await make(TRIAL_ENDED).get("t1", UserRole.TENANT_ADMIN)).action).toEqual(PAY_NOW);
+    });
+
+    it("F1: an impersonating admin does not (the state stays, the action falls back to choose_plan)", async () => {
+      const view = await make(TRIAL_ENDED).get("t1", UserRole.TENANT_ADMIN, new Date(), true);
+      expect(view).toMatchObject({ state: "trial_ended" });
+      expect(view.action).toEqual({ kind: "choose_plan", target: "choose_plan" });
+    });
+  });
 });

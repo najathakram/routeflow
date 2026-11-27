@@ -51,6 +51,8 @@ on:
       - "apps/api/src/billing/config-snapshot-flag.service.ts"
       - "apps/api/src/import/numbering.service.ts"
       - "apps/api/src/invoices/invoices.service.ts"
+      # #4569 broke trial-addon-checkout.db.spec.ts on master unseen (billing code only, so no Replay ran).
+      - "apps/api/src/billing/**"
       # B667 (#1185 review round 4): recomputeOrderFromInvoices' coverage/orphan-cancel logic
       # lives here, proven only by recompute-order-partial.db.spec.ts -- an edit to this file
       # ALONE (not invoices.service.ts) must still run this lane.

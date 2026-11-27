@@ -92,11 +92,18 @@ export class UsersService {
    * Fails closed: a delivery failure is logged, never thrown — the caller's own action
    * (account created / password reset) always succeeds regardless of email delivery.
    */
-  private async sendSetPasswordInvite(userId: string, to: string, username: string): Promise<void> {
+  private async sendSetPasswordInvite(
+    userId: string,
+    to: string,
+    username: string,
+    tenantId: string | null,
+  ): Promise<void> {
     try {
       const urls = this.configService.get<AppConfig["urls"]>("urls")!;
       const link = await issueSetPasswordLink(this.prisma, userId, urls.web);
       const result = await this.email.sendSetPasswordEmail({
+        // The business comes from the account row, never the request: the email-change confirm is public.
+        tenantId,
         to,
         username,
         setPasswordUrl: link.url,
@@ -127,9 +134,11 @@ export class UsersService {
     status: string;
     deletedAt?: Date | null;
     forcePasswordChange?: boolean;
+    /** The account's own business, read off its row (null for a platform account). */
+    tenantId: string | null;
   }): Promise<void> {
     if (!account.forcePasswordChange || !account.email || !this.mayMintInvite(account)) return;
-    await this.sendSetPasswordInvite(account.id, account.email, account.username);
+    await this.sendSetPasswordInvite(account.id, account.email, account.username, account.tenantId);
   }
 
   async findByUsername(username: string, tenantId?: string | null): Promise<User | null> {
@@ -316,10 +325,11 @@ export class UsersService {
         role: true,
         status: true,
         forcePasswordChange: true,
+        tenantId: true,
       },
     });
 
-    await this.sendSetPasswordInvite(user.id, user.email, user.username);
+    await this.sendSetPasswordInvite(user.id, user.email, user.username, user.tenantId);
 
     return { user, tempPassword };
   }
@@ -593,7 +603,11 @@ export class UsersService {
       // any outstanding token; then — only if the user has never set their own password — mint and
       // send a fresh one to the corrected address so they aren't left with no way in at all.
       await this.notifyEmailChanged(userId, previousEmail, updated.email, updated.username);
-      await this.sendInviteIfOwed({ ...updated, deletedAt: user.deletedAt });
+      await this.sendInviteIfOwed({
+        ...updated,
+        deletedAt: user.deletedAt,
+        tenantId: user.tenantId,
+      });
     }
     if (roleChanged) {
       // A link minted for the old role does not carry over to the new one (burned above).
@@ -606,7 +620,12 @@ export class UsersService {
         changedByUsername ?? "an administrator",
       );
       // The same rule as the email branch: a person who has never set a password is not left with a dead first mail.
-      if (!emailWritten) await this.sendInviteIfOwed({ ...updated, deletedAt: user.deletedAt });
+      if (!emailWritten)
+        await this.sendInviteIfOwed({
+          ...updated,
+          deletedAt: user.deletedAt,
+          tenantId: user.tenantId,
+        });
     }
 
     // The user as it stands, plus the address it is waiting on. A write at once burned any pending row (above).
@@ -634,6 +653,7 @@ export class UsersService {
       const urls = this.configService.get<AppConfig["urls"]>("urls")!;
       const confirmUrl = `${urls.web.replace(/\/+$/, "")}/confirm-email-change?token=${token}`;
       const link = await this.email.sendEmailChangeLink({
+        tenantId: this.prisma.getTenantId(),
         to: newEmail,
         username,
         confirmUrl,
@@ -643,6 +663,7 @@ export class UsersService {
         this.logger.error(`Email-change link NOT delivered to the new address for user ${userId}.`);
       }
       const notice = await this.email.sendEmailChangeRequestedNotice({
+        tenantId: this.prisma.getTenantId(),
         to: oldEmail,
         username,
         maskedNewEmail: maskEmail(newEmail),
@@ -672,6 +693,7 @@ export class UsersService {
     try {
       if (previousEmail) {
         const result = await this.email.sendEmailChangedNotice({
+          tenantId: this.prisma.getTenantId(),
           to: previousEmail,
           username,
           newEmail,
@@ -683,6 +705,7 @@ export class UsersService {
         }
       }
       const confirmResult = await this.email.sendEmailChangeConfirmation({
+        tenantId: this.prisma.getTenantId(),
         to: newEmail,
         username,
       });
@@ -709,6 +732,7 @@ export class UsersService {
     if (!to) return;
     try {
       const result = await this.email.sendRoleChangedNotice({
+        tenantId: this.prisma.getTenantId(),
         to,
         username,
         oldRole,
@@ -802,6 +826,7 @@ export class UsersService {
       ...updated,
       deletedAt: user.deletedAt,
       forcePasswordChange: user.forcePasswordChange,
+      tenantId: user.tenantId,
     });
     return updated;
   }

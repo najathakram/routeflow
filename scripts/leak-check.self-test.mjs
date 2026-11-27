@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
-import { scanRevs } from "./leak-check.mjs";
+import { scanPaths, scanRevs } from "./leak-check.mjs";
 import { loadPatterns, matches } from "./lib/leak-patterns.mjs";
 import { symlinkSync } from "node:fs";
 
@@ -110,12 +110,13 @@ function hookBlock() {
   return a >= 0 && b > a ? t.slice(a, b) : null;
 }
 // Runs the REAL leak-guard block of .husky/pre-push (extracted between its markers) in a temp repo.
-function hook(repo, refsLine, extra) {
+function hook(repo, refsLine, extra, remoteArgs = []) {
   const block = hookBlock();
   if (block === null) return { code: 99, out: "hook has no leak-guard block" };
   const stub = path.join(repo, "stub-pre-push");
   writeFileSync(stub, `refs="$(cat)"\n${block}\nexit 0\n`);
-  const r = spawnSync("sh", [stub], {
+  // `sh -e`, as husky runs hooks: a failing command must still reach the refusal message
+  const r = spawnSync("sh", ["-e", stub, ...remoteArgs], {
     cwd: repo,
     env: env(extra),
     encoding: "utf8",
@@ -392,6 +393,362 @@ try {
         `merge commit ${label} hit exits 1 without echo`,
         r.code === 1 && !leaks(r.out),
         JSON.stringify(r),
+      );
+    }
+    // 11b. merging master: master's own (public) content is not the branch's to answer for (W-1265)
+    {
+      // remote: "fresh" (local origin/master == the remote's master), "stale" (the local origin/master holds a
+      // commit the remote's master lacks), "broken" (origin cannot be reached), "other" (push to a non-origin remote).
+      const mergeRepo = ({
+        own = {},
+        evil = null,
+        patterns = FIXTURE,
+        remote = "fresh",
+        evilMv = null,
+      } = {}) => {
+        const repo = makeRepo({ patterns });
+        const base = commit(repo, { "a.txt": "hello\n" }, "chore: base");
+        const bare = path.join(tmpRoot, `bare${n++}`);
+        const other = path.join(tmpRoot, `bare${n++}`);
+        git(repo, ["init", "-q", "--bare", bare]);
+        git(repo, ["init", "-q", "--bare", other]);
+        git(repo, ["remote", "add", "origin", bare]);
+        git(repo, ["push", "-q", "origin", `${base}:refs/heads/master`]);
+        git(repo, ["checkout", "-q", "-b", "feat"]);
+        commit(repo, { "feat.txt": "clean\n", ...own }, "feat: own work");
+        git(repo, ["checkout", "-q", "master"]);
+        // master's public brand: private-pattern file names AND content, already published
+        const tip = commit(
+          repo,
+          {
+            "zzfixture-brand.txt": "zzfixture brand line\n",
+            "site/qqsecret-page.txt": "qqsecret page\n",
+            "zzpriv/page.txt": "public page\n",
+            "site/page.txt": "public page\n",
+          },
+          "feat: public brand",
+        );
+        // the non-origin remote HOLDS the same master, so only the URL match can refuse the push
+        if (remote === "other") git(repo, ["push", "-q", other, `${tip}:refs/heads/master`]);
+        if (remote !== "stale") git(repo, ["push", "-q", "origin", `${tip}:refs/heads/master`]);
+        git(repo, ["update-ref", "refs/remotes/origin/master", tip]);
+        if (remote === "broken") {
+          git(repo, ["remote", "set-url", "origin", path.join(tmpRoot, "nowhere")]);
+        }
+        git(repo, ["checkout", "-q", "feat"]);
+        git(repo, ["merge", "--no-commit", "--no-ff", "master"]);
+        for (const [f, c] of Object.entries(evil ?? {})) {
+          writeFileSync(path.join(repo, f), c);
+          git(repo, ["add", "-f", "--", f]);
+        }
+        if (evilMv) {
+          const [from, to, body] = evilMv;
+          git(repo, ["rm", "-q", "-f", "--", from]);
+          writeFileSync(path.join(repo, to), body);
+          git(repo, ["add", "-f", "--", to]);
+        }
+        git(repo, ["commit", "-q", "-m", "chore: merge master"]);
+        const head = git(repo, ["rev-parse", "HEAD"]);
+        const url = remote === "other" ? other : git(repo, ["remote", "get-url", "origin"]);
+        return {
+          repo,
+          head,
+          url,
+          rargs: [remote === "other" ? "other" : "origin", url],
+          line: `refs/heads/feat ${head} refs/heads/feat ${ZERO}`,
+        };
+      };
+      const probe = (label, m, code, extra) => {
+        const r = hook(m.repo, m.line, extra, m.rargs);
+        check(label, r.code === code && (code === 0 || !leaks(r.out)), JSON.stringify(r));
+      };
+      const A = mergeRepo();
+      probe("merge of master's public brand files and content: 0 hits", A, 0);
+      const rt = cli(A.repo, ["--range", `${A.head}~1..${A.head}`, "--remote-url", A.url]);
+      check(
+        "merge commit alone: master's brand not flagged (--range with a fresh remote view)",
+        rt.code === 0,
+        JSON.stringify(rt),
+      );
+      check(
+        "--range with no remote info keeps the old first-parent scan",
+        cli(A.repo, ["--range", `${A.head}~1..${A.head}`]).code === 1,
+      );
+      check("hook with no remote info keeps the old scan", hook(A.repo, A.line).code === 1);
+      probe(
+        "stale local origin/master (private content the remote lacks): merge refused",
+        mergeRepo({ remote: "stale" }),
+        1,
+      );
+      probe("push to a non-origin remote: old scan", mergeRepo({ remote: "other" }), 1);
+      probe("ls-remote failure: old scan (fail closed)", mergeRepo({ remote: "broken" }), 1);
+      // A merge parent that origin/master does not contain is never used to excuse content, even when it is
+      // outside the pushed range (the remote's current sha, a --range start) and so never scanned on its own.
+      const sideMerge = ({ token, patterns = FIXTURE, octopus = false }) => {
+        const repo = makeRepo({ patterns });
+        const base = commit(repo, { "a.txt": "hello\n" }, "chore: base");
+        const bare = path.join(tmpRoot, `bare${n++}`);
+        git(repo, ["init", "-q", "--bare", bare]);
+        git(repo, ["remote", "add", "origin", bare]);
+        git(repo, ["push", "-q", "origin", `${base}:refs/heads/master`]);
+        git(repo, ["update-ref", "refs/remotes/origin/master", base]);
+        git(repo, ["checkout", "-q", "-b", "side"]);
+        const t = commit(repo, token, "feat: side");
+        git(repo, ["checkout", "-q", "-b", "feat", base]);
+        commit(repo, { "feat.txt": "clean\n" }, "feat: own work");
+        if (octopus) {
+          git(repo, ["checkout", "-q", "-b", "clean", base]);
+          commit(repo, { "c.txt": "clean\n" }, "feat: clean side");
+          git(repo, ["checkout", "-q", "feat"]);
+          git(repo, ["merge", "-q", "--no-ff", "-m", "chore: octopus", "clean", "side"]);
+        } else {
+          git(repo, ["merge", "-q", "--no-ff", "-m", "chore: merge side", "side"]);
+        }
+        const head = git(repo, ["rev-parse", "HEAD"]);
+        const url = git(repo, ["remote", "get-url", "origin"]);
+        return {
+          repo,
+          head,
+          url,
+          t,
+          rargs: ["origin", url],
+          line: `refs/heads/feat ${head} refs/heads/feat ${t}`,
+        };
+      };
+      const side = (label, m, rangeToo = true) => {
+        probe(`${label} (parent is the remote's current sha)`, m, 1);
+        if (!rangeToo) return; // path rules are a hook-only check
+        const r = cli(m.repo, ["--range", `${m.t}..${m.head}`, "--remote-url", m.url]);
+        check(
+          `${label} (--range starting at the side tip)`,
+          r.code === 1 && !leaks(r.out),
+          JSON.stringify(r),
+        );
+      };
+      side(
+        "private line held only by a non-master parent still refused",
+        sideMerge({ token: { "s.txt": "side zzfixture\n" } }),
+      );
+      side(
+        "private file name held only by a non-master parent still refused",
+        sideMerge({ token: { "qqsecret-s.txt": "innocent\n" } }),
+      );
+      side(
+        "private path rule file held only by a non-master parent still refused",
+        sideMerge({ patterns: `${FIXTURE}\npath:zzpriv/`, token: { "zzpriv/s.txt": "x\n" } }),
+        false,
+      );
+      side(
+        "octopus merge with a private non-master parent still refused",
+        sideMerge({ token: { "s.txt": "side zzfixture\n" }, octopus: true }),
+      );
+      // A parent that origin/master contains but whose content master has since REMOVED (R1 adds, R2 removes)
+      // must not excuse that content: the excuse also needs the line / path to be in origin/master now.
+      const removedLater = ({ add, patterns = FIXTURE }) => {
+        const repo = makeRepo({ patterns });
+        const base = commit(repo, { "a.txt": "hello\n" }, "chore: base");
+        const bare = path.join(tmpRoot, `bare${n++}`);
+        git(repo, ["init", "-q", "--bare", bare]);
+        git(repo, ["remote", "add", "origin", bare]);
+        git(repo, ["checkout", "-q", "-b", "feat"]);
+        commit(repo, { "feat.txt": "clean\n" }, "feat: own work");
+        git(repo, ["checkout", "-q", "master"]);
+        const r1 = commit(repo, add, "feat: r1");
+        for (const f of Object.keys(add)) {
+          if (f === "a.txt") writeFileSync(path.join(repo, f), "hello\n");
+          else git(repo, ["rm", "-q", "--", f]);
+        }
+        git(repo, ["add", "-f", "--", "a.txt"]);
+        git(repo, ["commit", "-q", "-m", "feat: r2"]);
+        const r2 = git(repo, ["rev-parse", "HEAD"]);
+        git(repo, ["push", "-q", "origin", `${r2}:refs/heads/master`]);
+        git(repo, ["update-ref", "refs/remotes/origin/master", r2]);
+        git(repo, ["checkout", "-q", "feat"]);
+        git(repo, ["merge", "-q", "--no-ff", "-m", "chore: merge r1", r1]);
+        const head = git(repo, ["rev-parse", "HEAD"]);
+        const url = git(repo, ["remote", "get-url", "origin"]);
+        return {
+          repo,
+          head,
+          url,
+          rargs: ["origin", url],
+          line: `refs/heads/feat ${head} refs/heads/feat ${ZERO}`,
+        };
+      };
+      probe(
+        "merge of a master commit whose private file master later removed still refused",
+        removedLater({ add: { "later.txt": "was public zzfixture\n" } }),
+        1,
+      );
+      probe(
+        "merge of a master commit whose private line master later removed still refused",
+        removedLater({ add: { "a.txt": "hello\nwas public zzfixture\n" } }),
+        1,
+      );
+      probe(
+        "merge of a master commit whose private file name master later removed still refused",
+        removedLater({ add: { "qqsecret-later.txt": "innocent\n" } }),
+        1,
+      );
+      probe(
+        "merge of a master commit whose private-path file master later removed still refused",
+        removedLater({
+          patterns: `${FIXTURE}\npath:zzpriv/`,
+          add: { "zzpriv/later.txt": "x\n" },
+        }),
+        1,
+      );
+      const PAT = `${FIXTURE}\npath:zzpriv/`;
+      probe(
+        "merge of master's files under a private path rule: 0 hits",
+        mergeRepo({ patterns: PAT }),
+        0,
+      );
+      probe(
+        "branch's own file under a private path rule still fails",
+        mergeRepo({ patterns: PAT, own: { "zzpriv/own.txt": "x\n" } }),
+        1,
+      );
+      const B1 = mergeRepo({ own: { "own.txt": "sample zzfixture here\n" } });
+      probe("private name in the branch's own commit still fails after a master merge", B1, 1);
+      probe(
+        "private file name in the branch's own commit still fails",
+        mergeRepo({ own: { "qqsecret-own.txt": "innocent\n" } }),
+        1,
+      );
+      probe(
+        "evil merge adding a private line still fails",
+        mergeRepo({ evil: { "evil.txt": "smuggled zzfixture\n" } }),
+        1,
+      );
+      probe(
+        "evil merge adding a private file name still fails",
+        mergeRepo({ evil: { "qqsecret-evil.txt": "innocent\n" } }),
+        1,
+      );
+      probe(
+        "evil merge adding a private line to a master file with a clean name still fails",
+        mergeRepo({ evil: { "site/page.txt": "public page\nzzfixture smuggled\n" } }),
+        1,
+      );
+      probe(
+        "evil merge renaming a master file and adding a private line still fails",
+        mergeRepo({
+          evilMv: ["site/page.txt", "site/moved.txt", "public page\nzzfixture smuggled\n"],
+        }),
+        1,
+      );
+      probe(
+        "evil merge editing a master file to add a private line still fails",
+        mergeRepo({
+          evil: { "zzfixture-brand.txt": "zzfixture brand line\nzzfixture smuggled\n" },
+        }),
+        1,
+      );
+      probe(
+        "branch's own copy of a brand-named file is still scanned (own commit)",
+        mergeRepo({ own: { "zzfixture-brand.txt": "zzfixture brand line\n" } }),
+        1,
+      );
+      // RF_REBRAND_PUSH behaves as before on a merge push
+      const rline = `refs/heads/feat ${A.head} refs/heads/rebrand/x ${ZERO}`;
+      check(
+        "rebrand ref carrying the merge refused without the switch",
+        hook(A.repo, rline).code === 1,
+      );
+      check(
+        "rebrand ref carrying the merge allowed with RF_REBRAND_PUSH=launch",
+        hook(A.repo, rline, { RF_REBRAND_PUSH: "launch" }).code === 0,
+      );
+      probe("launch does not unscan a non-rebrand ref with a private line", B1, 1, {
+        RF_REBRAND_PUSH: "launch",
+      });
+    }
+    // Native-crash regression: decoding an odd-length Buffer view as UTF-16LE corrupts the heap on Node 24.20 /
+    // Windows (exit 127, no output). matchesBuf must survive many such views; the child is killed, not us.
+    {
+      const fz = path.join(tmpRoot, "odd-utf16-fuzz.mjs");
+      writeFileSync(
+        fz,
+        [
+          'import { pathToFileURL } from "node:url";',
+          "const lib = await import(pathToFileURL(process.argv[2]).href);",
+          "let x = 987;",
+          "const rnd = () => ((x = (x * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);",
+          "const big = Buffer.alloc(1 << 16);",
+          "for (let i = 0; i < big.length; i++) big[i] = (rnd() * 256) | 0;",
+          "for (let i = 0; i < 3000; i++) {",
+          "  const off = 1 + 2 * ((rnd() * 1000) | 0);",
+          "  const len = 1 + 2 * ((rnd() * 400) | 0);",
+          "  const v = big.subarray(off, off + len);",
+          "  v[0] = 0; // a NUL so matchesBuf takes the UTF-16 decodes",
+          "  lib.matchesBuf([/zzfixture/i], v);",
+          "}",
+          'console.log("done");',
+        ].join("\n"),
+      );
+      const r = spawnSync(process.execPath, [fz, LIB], { encoding: "utf8" });
+      check(
+        "matchesBuf survives odd-length odd-offset UTF-16 views (no native crash)",
+        r.status === 0 && /done/.test(r.stdout),
+        `exit ${r.status} ${r.stderr}`,
+      );
+      // a guard that dies without a word must still end in a refusal line from the hook
+      const crashRepo = makeRepo();
+      commit(crashRepo, { "a.txt": "x\n" }, "chore: base");
+      writeFileSync(path.join(crashRepo, "scripts", "leak-check.mjs"), "process.exit(127);\n");
+      const h = hook(crashRepo, `refs/heads/feat ${"1".repeat(40)} refs/heads/feat ${ZERO}`);
+      check(
+        "hook: a guard that crashes silently is still refused with a message",
+        h.code === 1 && /crashed \(exit 127\)/.test(h.out),
+        JSON.stringify(h),
+      );
+    }
+    // Cost pin: a path rule must not cost one git call per merged file. Only files under a rule's prefix may
+    // be looked up in origin/master's tree (R-316: 3,505 calls, 29 s on a 3,499-file master merge).
+    {
+      const repo = makeRepo({ patterns: `${FIXTURE}\npath:zzpriv/` });
+      const base = commit(repo, { "a.txt": "hello\n" }, "chore: base");
+      git(repo, ["checkout", "-q", "-b", "feat"]);
+      commit(repo, { "feat.txt": "clean\n" }, "feat: own work");
+      git(repo, ["checkout", "-q", "master"]);
+      const many = {};
+      for (let i = 0; i < 60; i++) many[`docs/f${i}.txt`] = `line ${i}\n`;
+      many["zzpriv/page.txt"] = "public page\n";
+      const tip = commit(repo, many, "feat: many files");
+      git(repo, ["update-ref", "refs/remotes/origin/master", tip]);
+      git(repo, ["checkout", "-q", "feat"]);
+      git(repo, ["merge", "-q", "--no-ff", "-m", "chore: merge master", "master"]);
+      const calls = { catFile: 0, total: 0 };
+      const counting = (cwd, args) => {
+        calls.total++;
+        if (args[0] === "cat-file") calls.catFile++;
+        const r = spawnSync("git", args, {
+          cwd,
+          env: scrubbedGitEnv(),
+          maxBuffer: 256 * 1024 * 1024,
+        });
+        const buf = r.stdout ?? Buffer.alloc(0);
+        return { ok: r.status === 0 && !r.error, buf, out: buf.toString("utf8") };
+      };
+      const hits = [];
+      const ok = scanPaths(
+        repo,
+        ["zzpriv/"],
+        ["HEAD", "--not", "refs/remotes/origin/master"],
+        hits,
+        { trusted: () => true },
+        counting,
+      );
+      check(
+        "path scan: git cat-file calls only for files under a rule prefix",
+        ok && calls.catFile <= 2,
+        `cat-file calls ${calls.catFile} of ${calls.total}`,
+      );
+      check(
+        "path scan: the same merge still has no hit for master's own file",
+        hits.length === 0,
+        JSON.stringify(hits),
       );
     }
     // B2: unreadable / non-UTF-8 patterns files refuse
@@ -793,8 +1150,8 @@ try {
     check("path: added binary under a listed prefix is refused", h.code === 1, JSON.stringify(h));
     check("path: refusal does not print the path", !h.out.includes("zzkit"), h.out);
     check(
-      "path: RF_REBRAND_PUSH=launch lifts it",
-      hook(repo, line(inside), { RF_REBRAND_PUSH: "launch" }).code === 0,
+      "path: RF_REBRAND_PUSH=launch with no rebrand ref in the push does NOT lift it",
+      hook(repo, line(inside), { RF_REBRAND_PUSH: "launch" }).code === 1,
     );
     git(repo, ["reset", "-q", "--hard", "refs/remotes/origin/master"]);
     const outside = commit(repo, { "other/logo.bin": bin }, "chore: asset");
@@ -986,7 +1343,7 @@ try {
       let q = push(sr, ["origin", "feat/img"]);
       check("real push: added binary under a listed path refused", q.code !== 0, q.out);
       q = push(sr, ["origin", "feat/img"], { RF_REBRAND_PUSH: "launch" });
-      check("real push: path launch escape allows", q.code === 0, q.out);
+      check("real push: launch alone does not lift a path rule", q.code !== 0, q.out);
       branchWith(sr, "feat/img2", { "other/logo.bin": bin });
       q = push(sr, ["origin", "feat/img2"]);
       check("real push: the same file outside the listed path allowed", q.code === 0, q.out);

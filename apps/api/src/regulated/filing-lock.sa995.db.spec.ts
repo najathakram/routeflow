@@ -26,6 +26,7 @@ import { RegulatedService } from "./regulated.service";
 import { RegulatedFilingService } from "./regulated-filing.service";
 import { RegulatedFilingCronService } from "./regulated-filing-cron.service";
 import { assertLedgerRowsNotLocked } from "./filing-lock";
+import { findFiledPeriod } from "./filed-periods";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 
@@ -291,7 +292,7 @@ describeDb("SA-995 — the filing lock decides by figures, rows and the tenant's
     const writer = inTenant(() =>
       prisma.tenantTransaction(async (tx: any) => {
         await assertLedgerRowsNotLocked(tx, [
-          { trackedCategoryId: categoryId, periodBucket: SEPT },
+          { tenantId, trackedCategoryId: categoryId, periodBucket: SEPT },
         ]);
         guardDone();
         await gate;
@@ -317,7 +318,7 @@ describeDb("SA-995 — the filing lock decides by figures, rows and the tenant's
       inTenant(() =>
         prisma.tenantTransaction(async (tx: any) => {
           await assertLedgerRowsNotLocked(tx, [
-            { trackedCategoryId: categoryId, periodBucket: SEPT },
+            { tenantId, trackedCategoryId: categoryId, periodBucket: SEPT },
           ]);
           await tx.regulatedSalesLedger.create({ data: sale("2026-09-16T15:00:00Z", SEPT) });
         }),
@@ -342,7 +343,7 @@ describeDb("SA-995 — the filing lock decides by figures, rows and the tenant's
               await gate;
             }
             await assertLedgerRowsNotLocked(tx, [
-              { trackedCategoryId: categoryId, periodBucket: SEPT },
+              { tenantId, trackedCategoryId: categoryId, periodBucket: SEPT },
             ]);
             await tx.regulatedSalesLedger.create({ data: sale("2026-09-16T15:00:00Z", SEPT) });
           },
@@ -416,5 +417,86 @@ describeDb("SA-995 — the filing lock decides by figures, rows and the tenant's
     jest.useRealTimers();
     const next = await raw.regulatedFiling.findFirst({ where: { tenantId, periodKey: "2026-10" } });
     expect(next?.status).toBe("GENERATED");
+  }, 120_000);
+
+  // ─── T22: filed-period reads require a tenant (read-scope hardening) ───────────────────────────────────────
+  it("T22: findFiledPeriod reads only the named tenant's filings, on a scoped or an unscoped client", async () => {
+    const approved = assertTestTenant(`qa-sa1524-${run}`, "filing-lock.sa995.db.spec.ts");
+    const testSlug = assertTestTenant("test", "filing-lock.sa995.db.spec.ts");
+    const existingTest = await raw.tenant.findUnique({ where: { slug: testSlug } });
+    const testTenant =
+      existingTest ?? (await raw.tenant.create({ data: { slug: testSlug, name: "Acme Test" } }));
+    const otherId = (
+      await raw.tenant.create({ data: { slug: approved, name: `SA1524 ${approved}` } })
+    ).id;
+    const cat = await raw.trackedCategory.create({
+      data: {
+        tenantId: testTenant.id,
+        name: `Acme Excise ${run}`,
+        taxType: "EXCISE_PER_UNIT",
+        rate: 0.05,
+        priceIncludesTax: false,
+      },
+    });
+    try {
+      // The filing row sits in the OTHER tenant but points at the `test` tenant's category: raw SQL only.
+      await raw.$executeRaw`INSERT INTO "RegulatedFiling"
+        ("id","tenantId","trackedCategoryId","reportTemplate","cadence","periodKey","periodStart","periodEnd","status","rows","updatedAt")
+        VALUES (${randomUUID()}, ${otherId}, ${cat.id}, 'acme', 'MONTHLY', '2026-08',
+          '2026-08-01T00:00:00Z'::timestamp, '2026-09-01T00:00:00Z'::timestamp, 'GENERATED', '[]'::jsonb, now())`;
+      const scoped = await tenantCtx.run(testTenant.id, () =>
+        findFiledPeriod(prisma.forTenant(), testTenant.id, [cat.id], "2026-08"),
+      );
+      const unscoped = await findFiledPeriod(raw, testTenant.id, [cat.id], "2026-08");
+      const other = await findFiledPeriod(raw, otherId, [cat.id], "2026-08");
+      // eslint-disable-next-line no-console
+      console.log(
+        `T22 observed: test-tenant scoped=${JSON.stringify(scoped)} unscoped=${JSON.stringify(unscoped)} other=${JSON.stringify(other)}`,
+      );
+      // The raw (unscoped) client decides: the scoped client filters by itself and would pass on the old code.
+      expect(unscoped).toBeNull();
+      expect(other).toEqual({
+        periodKey: "2026-08",
+        status: "GENERATED",
+        trackedCategoryId: cat.id,
+      });
+      await expect(findFiledPeriod(raw, "", [cat.id], "2026-08")).rejects.toMatchObject({
+        status: 500,
+      });
+    } finally {
+      await raw.regulatedFiling.deleteMany({ where: { trackedCategoryId: cat.id } });
+      await raw.trackedCategory.delete({ where: { id: cat.id } });
+      await raw.tenant.deleteMany({ where: { id: otherId } });
+      if (!existingTest) await raw.tenant.deleteMany({ where: { id: testTenant.id } });
+    }
+  }, 120_000);
+
+  it("D1: a LOCKED filing of another business on this business's category id does not refuse this business's ledger writer", async () => {
+    const otherSlug = assertTestTenant(`qa-sa1524-g-${run}`, "filing-lock.sa995.db.spec.ts");
+    const otherId = (
+      await raw.tenant.create({ data: { slug: otherSlug, name: `SA1524 ${otherSlug}` } })
+    ).id;
+    try {
+      // Hand-made row (raw SQL only): the filing belongs to the other business but names this business's category.
+      await raw.$executeRaw`INSERT INTO "RegulatedFiling"
+        ("id","tenantId","trackedCategoryId","reportTemplate","cadence","periodKey","periodStart","periodEnd","status","rows","updatedAt")
+        VALUES (${randomUUID()}, ${otherId}, ${categoryId}, 'acme', 'MONTHLY', '2026-08',
+          '2026-08-01T00:00:00Z'::timestamp, '2026-09-01T00:00:00Z'::timestamp, 'LOCKED', '[]'::jsonb, now())`;
+      const row = { tenantId, trackedCategoryId: categoryId, periodBucket: "2026-08" };
+      const outcome = await inTenant(() =>
+        prisma
+          .tenantTransaction(async (tx: any) => {
+            await assertLedgerRowsNotLocked(tx, [row]);
+            return "resolved";
+          })
+          .catch((e: any) => `threw ${e?.response?.code ?? e?.message}`),
+      );
+      // eslint-disable-next-line no-console
+      console.log(`D1 observed: guard in this business's transaction ${outcome}`);
+      expect(outcome).toBe("resolved");
+    } finally {
+      await raw.regulatedFiling.deleteMany({ where: { tenantId: otherId } });
+      await raw.tenant.deleteMany({ where: { id: otherId } });
+    }
   }, 120_000);
 });

@@ -5,7 +5,9 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useState } from "react";
 import { apiClient } from "../api-client";
+import { singleFlight } from "./single-flight";
 import type { ImageUploadFile } from "../product-image";
 import { nextProductPage, type PaginationMeta } from "../product-search-params";
 
@@ -271,14 +273,18 @@ export function useDeleteProductImage() {
   });
 }
 
+type AdjustStockDto = { productId: string; quantity: number; notes?: string; reference?: string };
+
 export function useAdjustProductStock() {
   const qc = useQueryClient();
-  return useMutation<
-    unknown,
-    Error,
-    { productId: string; quantity: number; notes?: string; reference?: string }
-  >({
-    mutationFn: (dto) => apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data),
+  // B1415 (SA-1404 M1a): a double tap of Save is ONE adjustment (see singleFlight). One guard per mounted form.
+  const [post] = useState(() =>
+    singleFlight((dto: AdjustStockDto) =>
+      apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data as unknown),
+    ),
+  );
+  return useMutation<unknown, Error, AdjustStockDto>({
+    mutationFn: post,
     onSuccess: (_, { productId }) => {
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["products", productId] });

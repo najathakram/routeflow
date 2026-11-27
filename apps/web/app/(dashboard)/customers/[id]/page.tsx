@@ -399,6 +399,7 @@ function AddressFormModal({
 
   return (
     <Modal
+      scroll={false} // B1444: CLIP
       open={isOpen}
       onClose={onClose}
       title={mode === "add" ? "Add Address" : "Edit Address"}
@@ -1341,6 +1342,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
 
       {/* Add / Edit modal */}
       <Modal
+        scroll={false} // B1444: CLIP
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title={editingPrice ? "Edit tier override" : "Add tier override"}
@@ -1627,6 +1629,7 @@ function DocumentViewer({ doc, onClose }: { doc: CustomerDocument | null; onClos
   const isPdf = doc.mimeType === "application/pdf";
   return (
     <Modal
+      scroll={false} // B1444: LAYOUT
       open={!!doc}
       onClose={onClose}
       title={doc.originalName}

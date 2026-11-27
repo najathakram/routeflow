@@ -69,6 +69,8 @@ export interface LineItemRowReadOnlyProps {
   components?: ReadonlyArray<LineComponentView> | null;
   /** SA-714: pieces sold past stock (staff-only); > 0 shows the "Backorder" tag. Display only. */
   backorderPieces?: number;
+  /** B1440: the product's own selling unit, so a plain line's tag says "3 bags" like the order summary. */
+  backorderUnit?: string | null;
   /**
    * Row 510: staff-only content that belongs to THIS line (the "Sold despite restriction" note). Rendered inside the
    * line's own text column, so it is part of the row and never a separate row or a block under the list.
@@ -111,6 +113,7 @@ export function LineItemRowReadOnly({
   custom,
   components,
   backorderPieces,
+  backorderUnit,
   footer,
   className,
   leading,
@@ -217,7 +220,7 @@ export function LineItemRowReadOnly({
           <BackorderTag
             pieces={backorderPieces}
             soldPieces={qty}
-            unit={{ boxes, unitsPerBox, unitLabel: boxLabel }}
+            unit={{ boxes, unitsPerBox, unitLabel: boxLabel, unit: backorderUnit }}
           />
         )}
         {custom && (

@@ -1,3 +1,5 @@
+import { BRAND } from "@routeflow/types/brand";
+
 // The header and footer links of the public site, in one place. They are the same links the
 // ready-made pages in public/site carry (header, phone menu, footer); site-frame.test.tsx reads
 // those files and fails when the two lists differ, so the React pages that wear the same frame
@@ -41,4 +43,4 @@ export const FOOTER_COLUMNS = [
   },
 ] as const;
 
-export const SITE_EMAIL = "hello@routeflow.info";
+export const SITE_EMAIL: string = BRAND.email;

@@ -669,7 +669,12 @@ export class RegulatedLedgerService {
       ).values(),
     ].sort((a, b) => String(a.periodBucket).localeCompare(String(b.periodBucket)));
     for (const r of filedCandidates) {
-      amendedPeriod = await this.findFiledPeriod(db, [r.trackedCategoryId], r.periodBucket);
+      amendedPeriod = await this.findFiledPeriod(
+        db,
+        r.tenantId,
+        [r.trackedCategoryId],
+        r.periodBucket,
+      );
       if (amendedPeriod) break;
     }
     return { written: data.length, invoiceIds, amendedPeriod };
@@ -753,6 +758,7 @@ export class RegulatedLedgerService {
           ],
         },
         select: {
+          tenantId: true,
           entryType: true,
           invoiceItemId: true,
           trackedCategoryId: true,
@@ -789,7 +795,12 @@ export class RegulatedLedgerService {
       .filter((r) => r.trackedCategoryId && r.periodBucket && r.periodBucket !== current)
       .sort((a, b) => String(a.periodBucket).localeCompare(String(b.periodBucket)));
     for (const r of candidates) {
-      const filed = await this.findFiledPeriod(db, [r.trackedCategoryId], r.periodBucket);
+      const filed = await this.findFiledPeriod(
+        db,
+        r.tenantId,
+        [r.trackedCategoryId],
+        r.periodBucket,
+      );
       if (filed) return filed;
     }
     return null;
@@ -1722,10 +1733,11 @@ export class RegulatedLedgerService {
    *  is returned so the response names the right one. */
   async findFiledPeriod(
     db: any,
+    tenantId: string,
     categoryIds: string[],
     bucket: string,
   ): Promise<FiledPeriod | null> {
-    return findFiledPeriodIn(db, categoryIds, bucket); // SA-819 MUST 1: the query lives in filed-periods.ts
+    return findFiledPeriodIn(db, tenantId, categoryIds, bucket); // SA-819 MUST 1: the query lives in filed-periods.ts
   }
 
   /** Read-only: would resolving this parked row book into an already-filed period? Uses the SAME fold
@@ -1747,6 +1759,7 @@ export class RegulatedLedgerService {
     const shape = (await resolveSaleLines(db, [saleRow])).get(saleRow.id);
     return this.findFiledPeriod(
       db,
+      saleRow.tenantId,
       RegulatedLedgerService.touchedCategoryIds(
         saleRow,
         sales,
@@ -2034,6 +2047,7 @@ export class RegulatedLedgerService {
       );
       filedPeriod = await this.findFiledPeriod(
         db,
+        saleRow.tenantId,
         RegulatedLedgerService.touchedCategoryIds(
           saleRow,
           built.sales,
