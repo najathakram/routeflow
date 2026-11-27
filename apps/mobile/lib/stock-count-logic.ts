@@ -368,3 +368,16 @@ export function hydrateRowsFromSession(lines: StockCountSessionLine[]): StockCou
     averageCost: l.product.averageCost != null ? toNum(l.product.averageCost) : undefined,
   }));
 }
+
+/**
+ * The mode a scan of `productId` writes with: the ROW's own mode when the product is already on the screen
+ * (the operator may have switched it), else the screen default. The server overwrites a line's mode on every
+ * write, so sending the default here would silently flip a row the operator set to Add back to Replace.
+ */
+export function scanMode(
+  rows: ReadonlyArray<Pick<StockCountRow, "productId" | "mode">>,
+  productId: string,
+  defaultMode: StockCountMode,
+): StockCountMode {
+  return rows.find((r) => r.productId === productId)?.mode ?? defaultMode;
+}
