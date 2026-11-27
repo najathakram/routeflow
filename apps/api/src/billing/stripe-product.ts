@@ -106,6 +106,8 @@ export async function ensurePlanProduct(
   createName?: string,
 ): Promise<string> {
   const named = planDisplayName(planKey);
+  // A caller's own fallback can still pass the raw key for an unnamed key with no catalog name (open owner question:
+  // refusing it would break the restore paths that fall back to sub.planKey); see the PR body.
   const name = named ?? createName?.trim();
   if (!name)
     throw new Error(

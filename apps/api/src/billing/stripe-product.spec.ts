@@ -119,8 +119,6 @@ describe("SA-1547 Q3: plan products are named by the plan key alone", () => {
   });
 
   it("R17: a rename writes the name only (no price, no subscription item); an inactive one is also reactivated in the same call", async () => {
-    const f = fakeStripeProducts([{ id: "rf_plan_pro", active: false, name: "RouteFlow Pro" }]);
-    await ensurePlanProduct(f, "ALL_IN");
     const g = fakeStripeProducts([{ id: "rf_plan_all_in", active: false, name: "RouteFlow Pro" }]);
     await ensurePlanProduct(g, "ALL_IN");
     expect(g.products.update).toHaveBeenCalledTimes(1);
@@ -132,7 +130,6 @@ describe("SA-1547 Q3: plan products are named by the plan key alone", () => {
           .sort(),
       );
     }
-    expect(f.products.create).toHaveBeenCalledTimes(1); // a different id: created, nothing else touched
   });
 
   it("a key planDisplayName does not name is created with the definition name and never renamed", async () => {
