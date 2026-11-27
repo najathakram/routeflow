@@ -39,3 +39,20 @@ describe("checkoutPriceData readOnly", () => {
     expect(fake.table.get("rf_plan_growth")?.active).toBe(true);
   });
 });
+
+describe("checkoutPriceDataForPlan (SA-1547 PR-5: a plan the business is only picking)", () => {
+  it("prices the given plan in whole cents, ensures its product, and reads no tenant", async () => {
+    const { svc, fake } = makeSvc();
+    const pd = await svc.checkoutPriceDataForPlan(
+      { planKey: "CORE", planName: "Essentials", monthly: 199 },
+      "month",
+    );
+    expect(pd).toMatchObject({
+      currency: "usd",
+      unit_amount: 19900,
+      recurring: { interval: "month" },
+    });
+    expect(fake.table.get("rf_plan_core")?.active).toBe(true);
+    expect(svc.resolveTenantPricing).not.toHaveBeenCalled();
+  });
+});
