@@ -216,7 +216,6 @@ export function ZReportView({
       open={open}
       onClose={onClose}
       title={`Z report · ${dayCloseDateLabel(snapshot.day)}`}
-      scroll
       footer={footer}
       // focus lands on the title (the sheet's own heading), not on a focus-ringed ×
       onOpenAutoFocus={(e) => {

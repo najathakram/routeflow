@@ -149,30 +149,10 @@ describe("the end-state trial button has one source", () => {
     expect(count(api.staticHTML(), go)).toBe(1);
   });
 
-  it("home.html holds the same markup once, inside the wheel scene", () => {
-    const go = load().goHTML();
-    expect(count(home, go)).toBe(1);
-    const open = home.indexOf('data-scene="wheel"');
-    expect(open).toBeGreaterThan(-1);
-    const tag = home.indexOf(">", open);
-    // the scene element's own contents: find the matching close by tag depth
-    let depth = 1;
-    let i = tag + 1;
-    const re = /<(\/?)div\b[^>]*>/g;
-    re.lastIndex = i;
-    let end = -1;
-    for (let m = re.exec(home); m; m = re.exec(home)) {
-      depth += m[1] ? -1 : 1;
-      if (depth === 0) {
-        end = m.index;
-        break;
-      }
-    }
-    expect(end).toBeGreaterThan(tag);
-    expect(count(home.slice(tag + 1, end), go)).toBe(1);
-  });
-
-  it("home.html has exactly one sy-go class", () => {
-    expect(home.match(/\bsy-go\b/g) ?? []).toHaveLength(1);
+  // The home page has no second wheel now: its trial button is the story hero's own, once, and the module's
+  // end-state button is not on the page.
+  it("home.html has the one hero trial button and no wheel end-state button", () => {
+    expect(home.match(/data-where="hero"/g) ?? []).toHaveLength(1);
+    expect(home.match(/\bsy-go\b/g) ?? []).toHaveLength(0);
   });
 });

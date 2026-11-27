@@ -1,8 +1,9 @@
+import { BRAND } from "../common/brand";
 import { escapeHtml } from "../common/html-escape";
 import { emailParagraph, htmlToPlainText, renderEmailLayout } from "./email-layout";
 
 /**
- * RouteFlow's OWN emails (as opposed to mail a tenant sends its people): each builder returns the
+ * The platform's OWN emails (as opposed to mail a tenant sends its people): each builder returns the
  * subject, the layout html and a matching plain-text part. A token link is the button's target
  * and the fallback link's target — never visible text — and the text part carries it in full.
  */
@@ -30,22 +31,21 @@ export function verifyEmailMessage(p: {
 }): BuiltEmail {
   const reminder = signIn(p.webUrl, p.workspaceId);
   const introHtml = p.resendFor
-    ? `Hi ${escapeHtml(p.resendFor.username)}, here is a new verification link for your RouteFlow account (<strong>${escapeHtml(p.businessName)}</strong>).`
-    : `Thanks for signing up for RouteFlow. Verify your email to open your 14-day free trial for <strong>${escapeHtml(p.businessName)}</strong>.`;
+    ? `Hi ${escapeHtml(p.resendFor.username)}, here is a new verification link for your ${escapeHtml(BRAND.name)} account (<strong>${escapeHtml(p.businessName)}</strong>).`
+    : `Thanks for signing up. Verify your email to open your 14-day ${escapeHtml(BRAND.name)} free trial for <strong>${escapeHtml(p.businessName)}</strong>.`;
   const introText = p.resendFor
-    ? `Hi ${p.resendFor.username}, here is a new verification link for your RouteFlow account (${p.businessName}).`
-    : `Thanks for signing up for RouteFlow. Verify your email to open your 14-day free trial for ${p.businessName}.`;
+    ? `Hi ${p.resendFor.username}, here is a new verification link for your ${BRAND.name} account (${p.businessName}).`
+    : `Thanks for signing up. Verify your email to open your 14-day ${BRAND.name} free trial for ${p.businessName}.`;
   const { html, text } = renderEmailLayout({
     look: { kind: "routeflow" },
     heading: "Verify your email",
-    preheader: "Verify your email to open your RouteFlow account.",
+    preheader: `Verify your email to open your ${BRAND.name} account.`,
     bodyHtml: `${emailParagraph(introHtml)}${emailParagraph("The link works for 24 hours.")}${reminder.html}`,
     bodyText: [introText, "The link works for 24 hours.", reminder.text],
     cta: { label: "Verify my email", url: p.verifyUrl },
-    footerNote:
-      "You are getting this because this address was used to sign up for RouteFlow. If that was not you, you can ignore this email.",
+    footerNote: `You are getting this because this address was used to sign up for a ${BRAND.name} account. If that was not you, you can ignore this email.`,
   });
-  return { subject: "Verify your email to activate RouteFlow", html, text };
+  return { subject: `Verify your email to activate ${BRAND.name}`, html, text };
 }
 
 /** The password-reset message. The link works for 15 minutes (the token's own expiry). */
@@ -53,24 +53,25 @@ export function passwordResetMessage(p: {
   resetUrl: string;
   tenantName?: string | null;
 }): BuiltEmail {
-  const generic = "We received a request to reset the password for your RouteFlow account.";
+  const account = `${BRAND.name} account`;
+  const generic = `We received a request to reset the password for your ${account}.`;
   const introHtml = p.tenantName
-    ? `We received a request to reset the password for your RouteFlow account at <strong>${escapeHtml(p.tenantName)}</strong>.`
-    : generic;
+    ? `We received a request to reset the password for your ${escapeHtml(account)} at <strong>${escapeHtml(p.tenantName)}</strong>.`
+    : escapeHtml(generic);
   const introText = p.tenantName
-    ? `We received a request to reset the password for your RouteFlow account at ${p.tenantName}.`
+    ? `We received a request to reset the password for your ${account} at ${p.tenantName}.`
     : generic;
   const { html, text } = renderEmailLayout({
     look: { kind: "routeflow" },
     heading: "Reset your password",
-    preheader: "Choose a new password for your RouteFlow account.",
+    preheader: `Choose a new password for your ${BRAND.name} account.`,
     bodyHtml: `${emailParagraph(introHtml)}${emailParagraph("The link works for 15 minutes.")}`,
     bodyText: [introText, "The link works for 15 minutes."],
     cta: { label: "Choose a new password", url: p.resetUrl },
     footerNote:
       "You are getting this because a password reset was requested for this address. If it was not you, ignore this email and your password will not change.",
   });
-  return { subject: "Reset your RouteFlow password", html, text };
+  return { subject: `Reset your ${BRAND.name} password`, html, text };
 }
 
 /** One line of a notice: plain text, or pieces where `{ b }` is shown bold. Always escaped. */
@@ -85,7 +86,7 @@ const lineText = (l: NoticeLine) =>
   typeof l === "string" ? l : l.map((x) => (typeof x === "string" ? x : x.b)).join("");
 
 /**
- * A short RouteFlow notice: lines of plain text (escaped here, so a sender can pass any value),
+ * A short platform notice: lines of plain text (escaped here, so a sender can pass any value),
  * an optional single button, and the true reason the person got it.
  */
 export function routeflowNotice(p: {
@@ -113,50 +114,50 @@ export function signInLinkedMessage(p: {
   address: string;
   portal: boolean;
 }): BuiltEmail {
-  const account = p.portal ? "RouteFlow portal account" : "RouteFlow account";
+  const account = p.portal ? `${BRAND.name} portal account` : `${BRAND.name} account`;
   return routeflowNotice({
-    subject: `${p.provider} Sign-In linked to your RouteFlow account`,
+    subject: `${p.provider} Sign-In linked to your ${BRAND.name} account`,
     heading: `${p.provider} Sign-In linked`,
     lines: [
       [`Sign in with ${p.provider} (`, { b: p.address }, `) has been linked to your ${account}.`],
       "If you did not authorise this, please contact support immediately.",
     ],
-    why: "You are getting this because a sign-in method was linked to your RouteFlow account.",
+    why: `You are getting this because a sign-in method was linked to your ${BRAND.name} account.`,
   });
 }
 
 /** The "new login detected" security notice. */
 export function newLoginMessage(p: { device: string; ip: string; time: string }): BuiltEmail {
   return routeflowNotice({
-    subject: "New login detected on your RouteFlow account",
+    subject: `New login detected on your ${BRAND.name} account`,
     heading: "New login detected",
     lines: [
-      "A new login was detected on your RouteFlow account.",
+      `A new login was detected on your ${BRAND.name} account.`,
       [{ b: "Device: " }, p.device],
       [{ b: "IP address: " }, p.ip],
       [{ b: "Time: " }, p.time],
       "If this wasn't you, please contact support immediately and change your password.",
     ],
-    why: "You are getting this because someone signed in to your RouteFlow account from a device we had not seen before.",
+    why: `You are getting this because someone signed in to your ${BRAND.name} account from a device we had not seen before.`,
   });
 }
 
 /** The notice sent after a Google-only account (staff or portal) adds a password. */
 export function passwordSetMessage(p: { portal: boolean; ip: string; time: string }): BuiltEmail {
   return routeflowNotice({
-    subject: "A password was set on your RouteFlow account",
+    subject: `A password was set on your ${BRAND.name} account`,
     heading: "Password set",
     lines: [
-      `A password was just set on your RouteFlow ${p.portal ? "portal " : ""}account, which previously signed in with Google only.`,
+      `A password was just set on your ${BRAND.name} ${p.portal ? "portal " : ""}account, which previously signed in with Google only.`,
       [{ b: "Time: " }, p.time],
       [{ b: "IP address: " }, p.ip],
       `You can now sign in with your ${p.portal ? "email" : "username"} and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.`,
     ],
-    why: "You are getting this because a password was added to your RouteFlow account.",
+    why: `You are getting this because a password was added to your ${BRAND.name} account.`,
   });
 }
 
-/** A RouteFlow notice whose body is html a sender already built (escaped there); text is derived. */
+/** A platform notice whose body is html a sender already built (escaped there); text is derived. */
 export function routeflowFragmentMail(p: {
   subject: string;
   heading: string;

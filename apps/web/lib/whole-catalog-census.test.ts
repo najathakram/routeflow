@@ -29,10 +29,8 @@ const KNOWN: Record<string, number> = {
   "app/buyer/portal/[seller]/_components/ReorderReviewSheet.tsx": 1,
   "app/buyer/portal/[seller]/cart/page.tsx": 1,
   "app/buyer/portal/[seller]/orders/[id]/page.tsx": 2,
-  "components/AssignProductsModal.tsx": 1,
-  "components/GroupAsVariantsModal.tsx": 1,
-  "components/InlineCreateProductModal.tsx": 1,
-  "components/ProductCreateModal.tsx": 1,
+  // W-1413: the one door for popup fetch-all reads; it runs only while the popup is open.
+  "lib/api/catalog-when-open.ts": 1,
 };
 
 function walk(dir: string, out: string[]): string[] {
@@ -81,9 +79,9 @@ describe("whole-catalog reads (limit: 0) in apps/web", () => {
     }
   });
 
-  it("is at or below the known ceiling of 15 call lines in 13 files", () => {
-    expect(Object.values(found).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(15);
-    expect(Object.keys(found).length).toBeLessThanOrEqual(13);
+  it("is at or below the known ceiling of 12 call lines in 10 files", () => {
+    expect(Object.values(found).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(12);
+    expect(Object.keys(found).length).toBeLessThanOrEqual(10);
   });
 
   it("scans the real app (vacuity guard: more than 1,000 source files)", () => {

@@ -57,3 +57,4 @@ Counted on 2026-10-08 from `local-assets/specs/*-review-*.md` and `*-check-*.md`
   - Aim: raise the first-review PASS rate from 0 of 8, and cut verdicts per spec from 2.5.
   - Check: `node .claude/skills/future-proof/scripts/check-gate.mjs --self-test`.
   - Next: gate the next 10 specs, then run the ten-run review.
+- 2026-11-11 · rovio-rebrand Program A (site rebrand + wheel fixes + second host) · 4 Opus rounds to PASS (FAIL 9 must-fix → FAIL 3 → FAIL 2 → PASS). Classes: G1 facts assumed (one WEB_URL for every return; root metadataBase and favicon as hidden writers), G4 hand lists of writers, G5 a guard that expires sessions off one base. Sharper G1 question: for a host or brand change, list every writer of identity by Next's metadata merge order (file-based icons, root metadata, route-group layouts) and every API reader of the web base, not only the files you plan to touch.

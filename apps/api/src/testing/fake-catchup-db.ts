@@ -72,6 +72,8 @@ export function fakeCatchupDb(seed: { subs?: Row[]; invoices?: Row[] } = {}): Fa
   };
 
   const tx: any = {
+    // W-1464: the live-payments wall reads the business class; a PRODUCTION business unless a test re-mocks it.
+    tenant: { findUnique: jest.fn(async () => ({ class: "PRODUCTION" })) },
     tenantSubscription: table(subs, false),
     rfInvoice: table(invoices),
     auditLog: {

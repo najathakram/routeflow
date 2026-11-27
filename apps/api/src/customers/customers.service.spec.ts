@@ -22,6 +22,7 @@ import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { withAdvisoryLock as mockedWithAdvisoryLock } from "../common/db-locks";
 import { RECEIVED_METHOD_FILTER } from "../invoices/payment-predicates";
+import { BRAND } from "../common/brand";
 
 // B310: a real advisory lock serializes concurrent callers sharing a key on a dedicated
 // Postgres connection (see db-locks.db.spec.ts for that primitive's own coverage). A plain
@@ -1622,9 +1623,10 @@ describe("CustomersService", () => {
         dueDate: null,
         payments: [],
       });
-      await expect(applyAdv("inv-draft")).rejects.toThrow(
-        "Cannot apply advance payment to invoice with status DRAFT",
-      );
+      // The coded refusal (B1396), so mobile shows the ruled sentence, not the raw server text.
+      await expect(applyAdv("inv-draft")).rejects.toMatchObject({
+        response: { code: "INVOICE_NOT_PAYABLE", reason: "DRAFT" },
+      });
       expect(prisma.invoicePayment.create).not.toHaveBeenCalled();
       expect(prisma.invoice.update).not.toHaveBeenCalled();
       expect(prisma.advancePayment.update).not.toHaveBeenCalled();
@@ -3092,8 +3094,8 @@ describe("CustomersService", () => {
       expect(sent.replyTo).toBeUndefined();
       const visible = (sent.html as string).replace(/<[^>]+>/g, "");
       expect(visible).toContain("Acme Distribution");
-      expect(visible).toContain("Sent with RouteFlow");
-      expect(sent.html).not.toContain("routeflow-mark");
+      expect(visible).toContain(`Sent with ${BRAND.name}`);
+      expect(sent.html).not.toContain(BRAND.emailLogo);
       expect(result.emailSent).toBe(true);
       expect(result.message).toMatch(/emailed to buyer@example\.com/i);
     });

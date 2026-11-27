@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { BUYER_KEYS, OP_KEYS } from "@/lib/auth-keys";
 import { documentNav } from "@/lib/document-nav";
+import { BRAND } from "@routeflow/types/brand";
 import ChooseRolePage from "./page";
 
 /**
@@ -11,7 +12,10 @@ import ChooseRolePage from "./page";
  * buyer login with the email prefilled: no buyer token is minted from the staff session, and both are never live.
  */
 const replace = jest.fn();
-jest.mock("next/navigation", () => ({ useRouter: () => ({ replace, push: jest.fn() }) }));
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useRouter: () => ({ replace, push: jest.fn() }),
+}));
 const mockGet = jest.fn();
 const mockPost = jest.fn();
 jest.mock("@/lib/api-client", () => ({
@@ -45,7 +49,7 @@ it("asks a driver who also buys which role to use", async () => {
   mockGet.mockResolvedValue({ data: { alsoBuyer: true, email: "Sam@Acme.example" } });
   renderWithProviders(<ChooseRolePage />);
   expect(
-    await screen.findByRole("heading", { name: "How do you want to use RouteFlow?" }),
+    await screen.findByRole("heading", { name: `How do you want to use ${BRAND.name}?` }),
   ).toBeVisible();
   expect(await screen.findByRole("button", { name: /Drive/ })).toBeVisible();
   expect(screen.getByRole("button", { name: /Shop/ })).toBeVisible();

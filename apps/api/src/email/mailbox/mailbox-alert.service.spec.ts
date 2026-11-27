@@ -122,6 +122,7 @@ describe("MailboxAlertService — REVOKED", () => {
     ]);
     expect(email.sendMailboxRevokedNotice.mock.calls.map((c: any[]) => c[0])).toEqual([
       {
+        tenantId: "tenant-a",
         to: "owner@acme.test",
         username: "owner",
         accountEmail: "sales@acme.test",
@@ -129,6 +130,7 @@ describe("MailboxAlertService — REVOKED", () => {
         hasFallback: true,
       },
       {
+        tenantId: "tenant-a",
         to: "partner@acme.test",
         username: "partner",
         accountEmail: "sales@acme.test",

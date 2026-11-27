@@ -232,6 +232,7 @@ export class TenantsService {
         businessName,
       });
       const sendResult = await this.email.send({
+        tenantId: result.tenant.id,
         to: result.user.email,
         subject: mail.subject,
         html: mail.html,
@@ -343,6 +344,7 @@ export class TenantsService {
         resendFor: { username: user.username },
       });
       const sendResult = await this.email.send({
+        tenantId: user.tenant.id,
         to: user.email,
         subject: mail.subject,
         html: mail.html,

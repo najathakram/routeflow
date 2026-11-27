@@ -10,6 +10,7 @@ import { assertPackKeepsLevelsValid } from "../products/unit-pack-rules";
 import { lockProductPack } from "../units/tenant-units-lock";
 import { lockBarcodeCodes, syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
 import { labelNameKey, syncCategoryLabel } from "../product-categories/label-writer";
+import { requireTenantContext } from "../messaging/require-tenant-context";
 
 /** Default gross margin for a brand-new product's list price: cost × (1 + margin). */
 const DEFAULT_MARGIN = 0.3;
@@ -35,8 +36,9 @@ export class VariantResolutionService {
    * variant is a full product sharing family settings; caller supplies name + SKU.
    */
   async createVariant(dto: { parentProductId: string; variantName: string; sku?: string }) {
-    const parent = await this.prisma.forTenant().product.findUnique({
-      where: { id: dto.parentProductId },
+    const tenantId = requireTenantContext(this.prisma);
+    const parent = await this.prisma.forTenant().product.findFirst({
+      where: { id: dto.parentProductId, tenantId },
     });
     if (!parent) throw new NotFoundException("Parent product not found");
     const name = (dto.variantName ?? "").trim();
@@ -72,6 +74,7 @@ export class VariantResolutionService {
    * until price/units are confirmed (surfaces under "Finish setup").
    */
   async createBrandNew(dto: { name: string; sku?: string; cost?: number; unit?: string }) {
+    requireTenantContext(this.prisma);
     const name = (dto.name ?? "").trim();
     if (!name) throw new BadRequestException("A product name is required.");
     const cost = dto.cost && dto.cost > 0 ? dto.cost : 0;
@@ -100,6 +103,7 @@ export class VariantResolutionService {
     productId?: string | null;
     expenseCategoryId?: string | null;
   }) {
+    requireTenantContext(this.prisma);
     if (!dto.productId && !dto.expenseCategoryId) {
       throw new BadRequestException("A product or expense category is required to match.");
     }
@@ -112,8 +116,9 @@ export class VariantResolutionService {
 
   /** Products awaiting "Finish setup" (brand-new, details not yet confirmed). */
   async listIncomplete() {
+    const tenantId = requireTenantContext(this.prisma);
     return this.prisma.forTenant().product.findMany({
-      where: { detailsIncomplete: true },
+      where: { detailsIncomplete: true, tenantId },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -141,8 +146,7 @@ export class VariantResolutionService {
     id: string,
     dto: { pricePerUnit?: number; unit?: string; unitsPerBox?: number; category?: string },
   ) {
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId) throw new BadRequestException("No tenant context");
+    const tenantId = requireTenantContext(this.prisma);
     return this.prisma.tenantTransaction(async (tx: any) => {
       // units_v1: confirming a pack word / size must not invalidate the product's levels. Same guarded
       // path as ProductsService.update: tenant units lock (shared) + this product's lock FIRST, then the

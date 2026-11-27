@@ -21,6 +21,7 @@ import {
   type ResolvedLineUnits,
 } from "../products/line-units";
 import { raisedBy, type LineAuthorLookup } from "./line-author-channel";
+import { assertBuyerLinesWithinCap } from "./buyer-line-cap";
 import { norm } from "./unit-label-norm";
 import { customerPricing, type CustomerPricing } from "./units-prices-v2";
 import { liveLines } from "./order-edit-cancelled";
@@ -319,7 +320,11 @@ export interface UnitWriteContext {
   held?: ReadonlyMap<string, unknown>;
   /** SA-1149 F1: the delivered floor per line id, from the one `heldAtBookedFloor` read in updateOrderItems (required: no second read, no second rule). */
   flooredDelivered: ReadonlyMap<string, unknown>;
-  /** H3: the buyer's count diff re-prices a tier line at the current tier on a qty-only edit (SA-507b). */
+  /**
+   * H3: the buyer's count diff re-prices a tier line at the current tier on a qty-only edit (SA-507b). Set exactly
+   * when the editor is a CUSTOMER (orders.service.ts updateOrderItems' merge-branch context), so B1386's buyer line
+   * cap in `updateUnitLine` keys on it too.
+   */
   repriceTierOnQtyOnly?: boolean;
   /** trackedCategoryId -> TrackedCategory row, for the products this edit touches (B297). */
   categoryMap: Map<string, TrackedCategoryRow>;
@@ -479,6 +484,17 @@ export async function updateUnitLine(
       held?.qty,
       rest.qty,
     ); // SA-1149 D2 / F1
+    // B1386 (SA-1285 section 1): a buyer's count diff on a unit-aware line (SA-407) skips the replace pairing, so it
+    // is capped here on the built PIECE total, rise-only against the held line. Before the write.
+    if (ctx.repriceTierOnQtyOnly === true) {
+      assertBuyerLinesWithinCap([
+        {
+          productId: product.id,
+          pieces: Number(rest.qty ?? 0),
+          storedPieces: Number(held?.qty ?? beforeQty ?? 0),
+        },
+      ]);
+    }
   }
   const data = isSubstitute
     ? {

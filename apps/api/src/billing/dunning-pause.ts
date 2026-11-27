@@ -3,6 +3,11 @@ import { autoLockAllowed, autoLockClassProtected, recordAutoLockSkip } from "./a
 import { HOUR_MS, PAYMENT_OVERDUE_REASON, READ_ONLY_STATUS } from "./dunning-config";
 import { type DunningDeps, type DunningRow, isStripeMissing } from "./dunning-core";
 import { forEachRotated } from "./dunning-paging";
+import {
+  assertTenantLivePaymentsAllowed,
+  isLivePaymentsRefusal,
+  recordLivePaymentsHeld,
+} from "./live-payments-wall";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import type { PauseExit } from "./transition-to-active";
 
@@ -173,6 +178,9 @@ export async function clearPauseCollection(
   opts: { throwOnError?: boolean } = {},
 ): Promise<boolean> {
   try {
+    // W-1464 R-305 m2: removing the pause turns renewal charges back on, so it is walled. Setting a pause is not.
+    // Held, never thrown: a webhook redelivery of a refused unpause can never succeed.
+    await assertTenantLivePaymentsAllowed(deps.prisma, exit.tenantId);
     await deps.stripe.updateSubscription(
       exit.stripeSubId,
       { pause_collection: "" },
@@ -180,6 +188,18 @@ export async function clearPauseCollection(
     );
     return true;
   } catch (err) {
+    if (isLivePaymentsRefusal(err)) {
+      await recordLivePaymentsHeld(
+        { prisma: deps.prisma, logger: deps.logger },
+        {
+          tenantId: exit.tenantId,
+          entityType: "stripe_subscription",
+          entityId: exit.stripeSubId,
+          what: "dunning pause removal",
+        },
+      );
+      return false;
+    }
     if (isStripeMissing(err)) return true; // the subscription is gone: nothing to unpause
     deps.logger.error(
       `billing.dunning.unpause_failed tenant=${exit.tenantId}: ${(err as Error)?.message} - the reconciler will correct Stripe`,
@@ -280,6 +300,28 @@ async function reconcileOne(
             `billing.dunning.would_unpause tenant=${r.tenantId} sub=${subId} (BILLING_PAUSE_MODE=${mode}: Stripe pause_collection is set and local state does not know it; not removed)`,
           );
           return false;
+        }
+        // W-1464 R-305 m2: the unpause arm turns renewal charges back on; the pause arm does not.
+        if (!wantPaused) {
+          try {
+            await assertTenantLivePaymentsAllowed(tx, r.tenantId);
+          } catch (err) {
+            if (!isLivePaymentsRefusal(err)) throw err;
+            // n1: once per business per day-window, like would_unpause, not every hourly run
+            if (!deps.once(`held_unpause:${r.tenantId}:${Math.floor(runAt.getTime() / DAY_MS)}`)) {
+              return false;
+            }
+            await recordLivePaymentsHeld(
+              { prisma: deps.prisma, logger: deps.logger },
+              {
+                tenantId: r.tenantId,
+                entityType: "stripe_subscription",
+                entityId: subId,
+                what: "dunning pause reconcile",
+              },
+            );
+            return false;
+          }
         }
         await deps.stripe.updateSubscription(
           subId,

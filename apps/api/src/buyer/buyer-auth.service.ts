@@ -1,3 +1,4 @@
+import { BRAND } from "../common/brand";
 import { assertSafeBuyerName } from "../common/text-cell-guards";
 import {
   BadRequestException,
@@ -120,17 +121,19 @@ export class BuyerAuthService {
     const verifyUrl = `${urls.web}/buyer/verify-email?token=${rawToken}`;
 
     return this.emailService.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: account.email,
       ...routeflowNotice({
-        subject: "Verify your email for RouteFlow",
+        subject: `Verify your email for ${BRAND.name}`,
         heading: "Verify your email",
         lines: [
-          "A RouteFlow buyer portal account was created with this email address. Confirm it’s yours to unlock instant connections to sellers who already know this email.",
+          `A ${BRAND.name} buyer portal account was created with this email address. Confirm it’s yours to unlock instant connections to sellers who already know this email.`,
           "The link works for 24 hours.",
           "Did not create this account? Ignore this email and do not click the button. The account will simply stay unverified.",
         ],
         cta: { label: "Verify my email", url: verifyUrl },
-        why: "You are getting this because a RouteFlow buyer portal account was created with this address.",
+        why: `You are getting this because a ${BRAND.name} buyer portal account was created with this address.`,
       }),
       // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
       senderClass: "platform",
@@ -541,6 +544,8 @@ export class BuyerAuthService {
     // Fire-and-forget — email failures must not block the mutation.
     this.emailService
       .send({
+        // a buyer account is global: it belongs to no business.
+        tenantId: null,
         to: account.email,
         ...passwordSetMessage({
           portal: true,
@@ -602,12 +607,14 @@ export class BuyerAuthService {
     // just never blocks the response.
     this.emailService
       .send({
+        // a buyer account is global: it belongs to no business.
+        tenantId: null,
         to: account.email,
         ...routeflowNotice({
-          subject: "Reset your RouteFlow password",
+          subject: `Reset your ${BRAND.name} password`,
           heading: "Reset your password",
           lines: [
-            "We received a request to reset the password for your RouteFlow portal account.",
+            `We received a request to reset the password for your ${BRAND.name} portal account.`,
             "The link works for 15 minutes. If you did not request this, ignore this email and your password will not change.",
           ],
           cta: { label: "Reset password", url: resetUrl },

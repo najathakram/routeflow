@@ -93,6 +93,7 @@ export function RuleFormDialog({
 
   return (
     <Modal
+      scroll={false} // B1444: CLIP
       open={open}
       onClose={onClose}
       title="New selling restriction"

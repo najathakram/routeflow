@@ -8,11 +8,15 @@
 // pages' own copy instead of the redesign's preview-only text.
 
 import { Package, Route, Warehouse, type LucideIcon } from "lucide-react";
+import { BRAND, SITE_BRAND } from "@routeflow/types/brand";
 
+// Name, host and mailbox come from packages/types/brand/brand.json (the brand seam, T35): nothing
+// in this file types them. `site` is the site's view (the overlay: the new name and the main host).
+// Terms and Privacy are contracts and read BRAND (today's name and host), never this table.
 export const site = {
-  name: "RouteFlow",
-  origin: "https://www.routeflow.info",
-  email: "hello@routeflow.info",
+  name: SITE_BRAND.name,
+  origin: SITE_BRAND.origin,
+  email: SITE_BRAND.email,
 };
 
 export interface MarketingRoute {
@@ -27,39 +31,37 @@ export const routes: MarketingRoute[] = [
     slug: "product",
     label: "Product",
     title: "Product",
-    description:
-      "What RouteFlow does for businesses that sell to stores: orders, bills, payments, stock, delivery, and counter sales. 14 days free, no card needed.",
+    description: `What ${site.name} does for businesses that sell to stores: orders, bills, payments, stock, delivery, and counter sales. 14 days free, no card needed.`,
   },
   {
     slug: "pricing",
     label: "Pricing",
     title: "Pricing",
-    description:
-      "RouteFlow plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed.",
+    description: `${site.name} plans from $99 a month. Starter, Growth, Scale, and Enterprise. 14 days free, no card needed.`,
   },
   {
     slug: "company",
     label: "Company",
     title: "Company",
-    description: "We make wholesalers’ lives easier. Why we built RouteFlow, and who to write to.",
+    description: `We make wholesalers’ lives easier. Why we built ${site.name}, and who to write to.`,
   },
   {
     slug: "contact",
     label: "Contact",
     title: "Contact",
-    description: "Write to hello@routeflow.info and we reply within one business day.",
+    description: `Write to ${site.email} and we reply within one business day.`,
   },
   {
     slug: "privacy",
     label: "Privacy",
     title: "Privacy Policy",
-    description: "How RouteFlow collects, uses, and protects the information you share with us.",
+    description: `How ${BRAND.name} collects, uses, and protects the information you share with us.`,
   },
   {
     slug: "terms",
     label: "Terms",
     title: "Terms of Service",
-    description: "The terms that apply to accessing and using the RouteFlow platform.",
+    description: `The terms that apply to accessing and using the ${BRAND.name} platform.`,
   },
 ];
 

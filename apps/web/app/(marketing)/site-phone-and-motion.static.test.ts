@@ -47,7 +47,7 @@ describe("phone menu and footer reach the three depth pages", () => {
   });
 
   it("the header Pricing pill steps aside while the phone menu is open", () => {
-    expect(read("css/home-up.css")).toContain(
+    expect(read("css/site.css")).toContain(
       ".js body.menu-open .site-header.hero-btn-in .nav-price{display:none}",
     );
   });
@@ -74,13 +74,11 @@ describe("no figure counts through a wrong value while scroll holds it", () => {
 });
 
 describe("wheel pieces are explained and legible on a phone", () => {
-  it("home lists what every wheel piece does, shown only when the moving wheel is mounted", () => {
+  it("home lists what every part does: a plain list without script and in print, left out while the story plays", () => {
     const html = read("home.html");
-    const list = html.slice(html.indexOf('class="w sy-parts"'));
+    const list = html.slice(html.indexOf('class="stx-parts sy-parts"'));
     const items = list.slice(0, list.indexOf("</div>")).match(/<li><b>/g) ?? [];
     expect(items).toHaveLength(15);
-    expect(read("css/home-up.css")).toContain(
-      "body:has(.rfw:not(.rfw--static)) .sy-parts{display:block",
-    );
+    expect(read("css/home-scenes.css")).toContain(".js-motion .stx-parts{display:none}");
   });
 });

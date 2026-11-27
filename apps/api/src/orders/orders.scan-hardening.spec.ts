@@ -1443,6 +1443,8 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
     const ordersService: any = {
       create: jest.fn().mockResolvedValue(created),
       mergeAllPendingForCustomer: jest.fn().mockRejectedValue(mergeInProgress()),
+      // B1386: a CUSTOMER create reads the live packs for its piece cap before create()
+      liveUnitsPerBoxByProduct: jest.fn().mockResolvedValue(new Map()),
     };
     const controller = buildController(ordersService);
     const warn = jest.spyOn((controller as any).logger, "warn").mockImplementation(() => undefined);

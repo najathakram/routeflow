@@ -160,6 +160,7 @@ export class BillingNotificationService {
     for (const admin of admins) {
       const tmpl = build(admin, businessName, dateFor);
       const result = await this.email.sendPlatform({
+        tenantId,
         to: admin.email,
         subject: tmpl.subject,
         html: tmpl.html,

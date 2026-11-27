@@ -149,7 +149,9 @@ function make(opts: Opts = {}) {
   const prisma = {
     tenantAddon,
     tenant: {
-      findUnique: jest.fn().mockResolvedValue({ slug: "acme", name: "Acme", plan: "STARTER" }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ slug: "acme", name: "Acme", plan: "STARTER", class: "PRODUCTION" }),
     },
     tenantSubscription: { findUnique: jest.fn(async () => ({ ...sub })) },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
