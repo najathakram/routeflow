@@ -148,6 +148,7 @@ export * from "./unvoid-amended-period";
 
 export * from "./order-line-backorder";
 export * from "./invoice-line-code";
+export * from "./invoice-status-tone"; // W-1470: the one invoice status table (tone, staff word, buyer word, legend)
 export * from "./piece-synonyms";
 export * from "./api/enums";
 export * from "./api/invoice-account"; // SA-1197: the invoice account block rows + its one label map
