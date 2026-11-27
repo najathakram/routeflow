@@ -13,8 +13,16 @@ jest.mock("resend", () => ({
  * customer's INVOICE_SENT row, and a name carrying a line break cannot start a second header line.
  * Mocked at the module boundary: `send()` is spied, nothing is delivered.
  */
-function makeService(record: jest.Mock = jest.fn()): EmailService {
+function makeService(
+  record: jest.Mock = jest.fn(),
+  wall: { klass: string; allowed?: string[] } = { klass: "PRODUCTION" },
+): EmailService {
   const prisma = {
+    // Since the mail wall (#4551) every send reads the business class; PRODUCTION is never walled.
+    tenant: { findUnique: jest.fn().mockResolvedValue({ class: wall.klass }) },
+    $queryRaw: jest
+      .fn()
+      .mockResolvedValue(wall.allowed ? [{ value: JSON.stringify(wall.allowed) }] : []),
     getTenantId: () => "t1",
     forTenant: () => ({
       systemConfig: {
@@ -103,6 +111,30 @@ describe("EmailService.sendInvoice - staffCopy (W-1443)", () => {
   it("T11: INVOICE_STAFF_COPY is a declared kind with the tenant audience", () => {
     expect(EMAIL_KINDS).toContain("INVOICE_STAFF_COPY");
     expect(EMAIL_KIND_AUDIENCE.INVOICE_STAFF_COPY).toBe("tenant");
+  });
+
+  it("a held, non-PRODUCTION business sends no staff copy either (the customer's allowed address still goes)", async () => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const svc = makeService(record, { klass: "TEST", allowed: ["owner@acme.test"] });
+    const sent = jest
+      .spyOn(svc as any, "sendUnrecorded")
+      .mockResolvedValue({ delivered: true, transport: "smtp", id: "<m@acme.test>" });
+
+    const customer = await svc.sendInvoice(base);
+    const copy = await svc.sendInvoice({
+      ...base,
+      to: "staff@acme.test",
+      staffCopy: { sentTo: "owner@acme.test" },
+    });
+
+    expect(customer.delivered).toBe(true);
+    expect(copy.delivered).toBe(false);
+    expect(sent).toHaveBeenCalledTimes(1); // only the customer's email reached the transport
+    const rows = record.mock.calls.map((c) => c[0]);
+    expect(rows.map((r) => [r.kind, r.status])).toEqual([
+      ["INVOICE_SENT", "SENT"],
+      ["INVOICE_STAFF_COPY", "FAILED"],
+    ]);
   });
 
   it("R-264: the copy has its own refToken and Message-ID; a bounce lookup by the customer's Message-ID finds only the customer's row", async () => {
