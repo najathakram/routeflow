@@ -48,6 +48,8 @@ export function SplitInvoiceModal({
   // F04: rows whose typed quantity went past what is left (the box still clamps; the row says how much is left).
   const [overById, setOverById] = React.useState<Record<string, boolean>>({});
   const [terms, setTerms] = React.useState(defaultTerms);
+  // R-345 F6: the custom days box shows an error, so create waits (mobile parity).
+  const [termsInvalid, setTermsInvalid] = React.useState(false);
   const [dueDate, setDueDate] = React.useState(() => todayPlusDays(daysForTerms(defaultTerms)));
   const [send, setSend] = React.useState(false);
 
@@ -77,6 +79,7 @@ export function SplitInvoiceModal({
   };
 
   const submit = () => {
+    if (termsInvalid) return; // R-345 F6: the custom days box shows an error
     const chosen = billable
       .map((it) => ({ orderItemId: it.id, qty: qtyById[it.id] ?? 0 }))
       .filter((row) => row.qty > 0);
@@ -142,7 +145,7 @@ export function SplitInvoiceModal({
           <WriteButton
             type="button"
             loading={createPartial.isPending}
-            disabled={billable.length === 0}
+            disabled={billable.length === 0 || termsInvalid}
             onClick={submit}
           >
             Create invoice
@@ -224,6 +227,7 @@ export function SplitInvoiceModal({
             <PaymentTermsSelect
               value={terms}
               onChange={onTermsChange}
+              onInvalidChange={setTermsInvalid}
               className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
           </div>

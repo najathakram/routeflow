@@ -53,6 +53,36 @@ describe("payment-terms: the API literal is pinned to packages/types", () => {
     }
   });
 
+  it("termDays agrees on the edge list (whitespace, case, padding, fullwidth, range, junk)", () => {
+    const EDGES = [
+      " Net 30 ",
+      "Net 30\n",
+      "net 21",
+      "NET 7",
+      "Net  7",
+      "Net 07",
+      "Net 1e2",
+      "Net ７", // fullwidth 7
+      "Net 1000",
+      "Net 0",
+      "Net 366",
+      "Net -5",
+      "Net 7.5",
+      "due on receipt",
+      "Due on Receipt ",
+      "",
+      "Net",
+    ];
+    for (const label of EDGES) {
+      expect({ label, days: api.termDays(label) }).toEqual({
+        label,
+        days: shared.termDays(label),
+      });
+      const n = api.termDays(label);
+      if (n !== null) expect(api.netLabel(n)).toBe(shared.netLabel(n));
+    }
+  });
+
   it("netLabel agrees, in range and out", () => {
     for (const n of [0, 1, 7, 21, 90, 365, 366, 7.5, -3, NaN]) {
       expect(api.netLabel(n)).toBe(shared.netLabel(n));
@@ -79,8 +109,16 @@ describe("IsPaymentTerm: the customer and tenant default-terms DTOs take a prese
     (v) => expect(errorsFor(UpdateCustomerDto, "defaultPaymentTerms", v)).toHaveLength(0),
   );
 
-  it.each([" Net 30 ", "Net 30 ", " Due on Receipt", "Net 30\n"])(
-    "the customer DTO refuses surrounding whitespace %p (it would be stored with it)",
+  it.each([
+    " Net 30 ",
+    "Net 30 ",
+    " Due on Receipt",
+    "Net 30\n",
+    "net 21",
+    "NET 7",
+    "due on receipt",
+  ])(
+    "the customer DTO refuses non-canonical %p (whitespace or case: it would be stored as typed)",
     (v) => expect(errorsFor(UpdateCustomerDto, "defaultPaymentTerms", v)).toHaveLength(1),
   );
 

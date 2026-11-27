@@ -27,6 +27,8 @@ export interface PaymentTermsSelectProps {
   className?: string;
   disabled?: boolean;
   "aria-label"?: string;
+  /** R-345 F6: told whether the custom box shows an error, so a create or edit form can hold its submit (mobile parity). */
+  onInvalidChange?: (invalid: boolean) => void;
 }
 
 const isPreset = (v: string) => (PAYMENT_TERM_PRESETS as readonly string[]).includes(v);
@@ -39,12 +41,18 @@ export function PaymentTermsSelect({
   className,
   disabled,
   "aria-label": ariaLabel,
+  onInvalidChange,
 }: PaymentTermsSelectProps) {
   const storedCustom = value !== "" && !isPreset(value) && termDays(value) !== null;
   const [customChosen, setCustomChosen] = React.useState(false);
   const [days, setDays] = React.useState(storedCustom ? String(termDays(value)) : "");
   const [error, setError] = React.useState<string | null>(null);
   const showCustom = customChosen || storedCustom;
+  const invalidRef = React.useRef(onInvalidChange);
+  invalidRef.current = onInvalidChange;
+  React.useEffect(() => {
+    invalidRef.current?.(error !== null);
+  }, [error]);
   // The last label THIS field reported: a different value arriving means the parent changed it (a hand-typed due date
   // clears the term, a record loads), so the custom box closes instead of showing a stale number.
   const reported = React.useRef(value);

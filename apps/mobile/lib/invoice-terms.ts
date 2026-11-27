@@ -34,6 +34,23 @@ export function customDaysBlocksCreate(text: string | undefined): boolean {
   return text !== undefined && customTermsFromInput(text).error !== null;
 }
 
+/**
+ * R-345 F1: settle a draft's custom-days box at Create, so a typed value never depends on an end-editing event
+ * (Expo web has no onEndEditing, and a NavBar tap does not end editing). No text: the draft as it is. A valid whole
+ * 1-365 that differs from the draft's terms: that label and its due date. Anything invalid blocks Create.
+ */
+export function settlePendingCustomTerms(
+  text: string | undefined,
+  draft: { terms: string; dueDate: string },
+): { blocked: true } | { blocked: false; terms: string; dueDate: string } {
+  if (text === undefined) return { blocked: false, terms: draft.terms, dueDate: draft.dueDate };
+  const { terms, error } = commitCustomDays(text, draft.terms);
+  if (error) return { blocked: true };
+  if (terms === draft.terms) return { blocked: false, terms: draft.terms, dueDate: draft.dueDate };
+  // the same date the chips set (setTerms): today plus the term's days
+  return { blocked: false, terms, dueDate: todayPlusDays(daysForTerms(terms)) };
+}
+
 export const TERM_OPTIONS: string[] = [...PAYMENT_TERM_PRESETS];
 export const TERM_CHIPS = TERM_OPTIONS.map((label) => ({ label }));
 export const DEFAULT_TERMS = "Net 30";

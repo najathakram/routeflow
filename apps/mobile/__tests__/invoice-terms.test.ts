@@ -13,8 +13,11 @@ import {
   daysForTerms,
   TERM_OPTIONS,
   dueDateFor,
+  settlePendingCustomTerms,
   todayPlusDays,
 } from "../lib/invoice-terms";
+import * as fs from "fs";
+import * as path from "path";
 
 describe("term constants", () => {
   it("options and chips derive from the shared presets in order", () => {
@@ -123,5 +126,70 @@ describe("W-1487: customDaysBlocksCreate (a bad custom box blocks create)", () =
 
   it("0, 366, 7.5 and words block create, so Net 36 is never sent for a typed 366", () => {
     for (const bad of ["0", "366", "7.5", "abc"]) expect(customDaysBlocksCreate(bad)).toBe(true);
+  });
+});
+
+describe("R-345 F1: Create settles the custom-days box (Expo web has no onEndEditing)", () => {
+  const draft = { terms: "Net 30", dueDate: "2026-12-26" };
+
+  it("no typed text: the draft goes as it is", () => {
+    expect(settlePendingCustomTerms(undefined, draft)).toEqual({ blocked: false, ...draft });
+  });
+
+  it("a valid typed 21 that was never committed becomes Net 21 with its due date", () => {
+    expect(settlePendingCustomTerms("21", draft)).toEqual({
+      blocked: false,
+      terms: "Net 21",
+      dueDate: todayPlusDays(21),
+    });
+    expect(settlePendingCustomTerms(" 90 ", draft)).toEqual({
+      blocked: false,
+      terms: "Net 90",
+      dueDate: todayPlusDays(90),
+    });
+  });
+
+  it("text that equals the draft's terms keeps the draft's own due date", () => {
+    expect(settlePendingCustomTerms("30", draft)).toEqual({ blocked: false, ...draft });
+  });
+
+  it.each(["0", "366", "7.5", "abc", "-3"])("an invalid %j blocks Create", (text) => {
+    expect(settlePendingCustomTerms(text, draft)).toEqual({ blocked: true });
+  });
+
+  it("cleared text is no custom value: the draft goes as it is", () => {
+    expect(settlePendingCustomTerms("", draft)).toEqual({ blocked: false, ...draft });
+  });
+});
+
+describe("R-345 F1: the split-invoice screen wires the custom box for Expo web and NavBar Create", () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, "..", "components", "SplitInvoiceScreen.tsx"),
+    "utf8",
+  );
+  const box = src.slice(
+    src.indexOf("Custom: number of days") - 900,
+    src.indexOf("Custom: number of days"),
+  );
+
+  it("the custom-days box commits on blur as well as on end-editing, once per focus", () => {
+    expect(box).toContain("onFocus={() => pendingCustomRef.current.add(draft.id)}");
+    expect(box).toContain("onEndEditing={() => commitCustom(draft)}");
+    expect(box).toContain("onBlur={() => commitCustom(draft)}");
+    expect(src).toContain("if (!pendingCustomRef.current.delete(draft.id)) return;");
+  });
+
+  it("Create settles every draft's typed text before any request", () => {
+    const submit = src.slice(
+      src.indexOf("const submitAll = async"),
+      src.indexOf("setBulkPending(true)"),
+    );
+    expect(submit).toContain("settlePendingCustomTerms(customText[d.id], d)");
+    const loop = src.slice(
+      src.indexOf("setBulkPending(true)"),
+      src.indexOf("setBulkPending(false)"),
+    );
+    expect(loop).toContain("for (const d of ready)");
+    expect(loop).not.toContain("for (const d of submitable)");
   });
 });

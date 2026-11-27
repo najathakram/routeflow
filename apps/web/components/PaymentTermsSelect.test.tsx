@@ -1,6 +1,8 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { render, screen } from "@testing-library/react";
+import * as fs from "fs";
+import * as path from "path";
 import { PaymentTermsSelect } from "./PaymentTermsSelect";
 
 /** W-1487 B-7: the terms field offers Net 7 and Net 90 and takes a typed number of days; 0 and 366 are refused inline. */
@@ -105,5 +107,50 @@ describe("PaymentTermsSelect (B-7)", () => {
     render(<Harness initial="Net 21" onChange={jest.fn()} />);
     expect(screen.getByLabelText("Number of days")).toHaveValue(21);
     expect(screen.getByLabelText("Payment terms")).toHaveDisplayValue("Custom (Net N)…");
+  });
+});
+
+describe("R-345 F6: a create or edit form holds submit while the custom box shows an error", () => {
+  it("reports invalid on a refused number and valid again once fixed or a preset is picked", async () => {
+    const onInvalidChange = jest.fn();
+    render(
+      <PaymentTermsSelect
+        value="Net 30"
+        aria-label="Payment terms"
+        onChange={jest.fn()}
+        onInvalidChange={onInvalidChange}
+      />,
+    );
+    await userEvent.selectOptions(screen.getByLabelText("Payment terms"), "Custom (Net N)…");
+    await userEvent.type(screen.getByLabelText("Number of days"), "366");
+    await userEvent.tab();
+    expect(onInvalidChange).toHaveBeenLastCalledWith(true);
+    await userEvent.clear(screen.getByLabelText("Number of days"));
+    await userEvent.type(screen.getByLabelText("Number of days"), "21");
+    await userEvent.tab();
+    expect(onInvalidChange).toHaveBeenLastCalledWith(false);
+    await userEvent.clear(screen.getByLabelText("Number of days"));
+    await userEvent.type(screen.getByLabelText("Number of days"), "0");
+    await userEvent.tab();
+    expect(onInvalidChange).toHaveBeenLastCalledWith(true);
+    await userEvent.selectOptions(screen.getByLabelText("Payment terms"), "Net 7");
+    expect(onInvalidChange).toHaveBeenLastCalledWith(false);
+  });
+
+  const APP = path.resolve(__dirname, "..", "app", "(dashboard)");
+  it.each([
+    [
+      "orders/_components/SplitInvoiceModal.tsx",
+      "disabled={billable.length === 0 || termsInvalid}",
+    ],
+    ["invoices/new/page.tsx", "const saveBlocked = priceBlocked || termsInvalid;"],
+    [
+      "invoices/[id]/edit/page.tsx",
+      "disabled={updateInvoice.isPending || priceBlocked || termsInvalid}",
+    ],
+  ])("%s wires onInvalidChange into its submit", (file, hold) => {
+    const src = fs.readFileSync(path.join(APP, file), "utf8");
+    expect(src).toContain("onInvalidChange={setTermsInvalid}");
+    expect(src).toContain(hold);
   });
 });

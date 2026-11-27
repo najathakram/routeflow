@@ -1053,6 +1053,9 @@ export default function NewInvoicePage() {
     openSuggestions: items.some((i) => !!i.productId && !i.priceEdited),
   });
   const priceBlocked = pricingGate.blockSave;
+  // R-345 F6: a custom days box showing an error holds every save (mobile parity).
+  const [termsInvalid, setTermsInvalid] = React.useState(false);
+  const saveBlocked = priceBlocked || termsInvalid;
   // SA-890 (the recurring form's SA-856 rule 2): the products picked on THIS form, so a customer switch can re-suggest them.
   const pickedProducts = React.useRef(new Map<string, any>());
   // A customer switch re-suggests ONLY pack lines picked here whose price the operator has not typed, once the new customer's
@@ -2053,7 +2056,7 @@ export default function NewInvoicePage() {
   }
 
   function handleSubmit(sendNow: boolean, lines: LineItemState[] = items) {
-    if (priceBlocked) return;
+    if (saveBlocked) return;
     if (!validate()) return;
 
     // If we already have a preview draft, just update it and optionally send.
@@ -2359,6 +2362,7 @@ export default function NewInvoicePage() {
                       value={terms}
                       emptyLabel="Select terms…"
                       onChange={handleTermsChange}
+                      onInvalidChange={setTermsInvalid}
                       className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                     />
                   </div>
@@ -3226,7 +3230,7 @@ export default function NewInvoicePage() {
                     downloadLoading ||
                     createInvoice.isPending ||
                     updateInvoice.isPending ||
-                    priceBlocked
+                    saveBlocked
                   }
                   title="Save as draft and download the PDF without sending"
                 >
@@ -3237,7 +3241,7 @@ export default function NewInvoicePage() {
                   className="min-h-11"
                   onClick={() => withResolvedItems((l) => handleSubmit(false, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
-                  disabled={createInvoice.isPending || updateInvoice.isPending || priceBlocked}
+                  disabled={createInvoice.isPending || updateInvoice.isPending || saveBlocked}
                 >
                   Save as draft
                 </WriteButton>
@@ -3245,7 +3249,7 @@ export default function NewInvoicePage() {
                   className="min-h-11"
                   onClick={() => withResolvedItems((l) => handleSubmit(true, l))}
                   loading={createInvoice.isPending || updateInvoice.isPending}
-                  disabled={createInvoice.isPending || updateInvoice.isPending || priceBlocked}
+                  disabled={createInvoice.isPending || updateInvoice.isPending || saveBlocked}
                 >
                   Save and send
                 </WriteButton>

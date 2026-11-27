@@ -16,9 +16,9 @@ import { useCreatePartialInvoiceFromOrder } from "../lib/api/invoices";
 import {
   TERM_OPTIONS,
   commitCustomDays,
-  customDaysBlocksCreate,
   customTermsFromInput,
   daysForTerms,
+  settlePendingCustomTerms,
   todayPlusDays,
 } from "../lib/invoice-terms";
 import { showToast } from "../lib/toast";
@@ -240,6 +240,18 @@ export function SplitInvoiceScreen({
     updateDraft(draftId, { terms, dueDate: todayPlusDays(daysForTerms(terms)) });
   };
 
+  // One commit per focus session (the ProductForm pattern): native fires onEndEditing AND onBlur, Expo web fires
+  // onBlur only (#3470 review), so both are wired and the first to arrive commits.
+  const pendingCustomRef = useRef<Set<string>>(new Set());
+  const commitCustom = (draft: { id: string; terms: string }) => {
+    if (!pendingCustomRef.current.delete(draft.id)) return;
+    const { terms, error } = commitCustomDays(
+      customText[draft.id] ?? daysText(draft.terms),
+      draft.terms,
+    );
+    if (!error && terms !== draft.terms) setTerms(draft.id, terms);
+  };
+
   const removeDraft = (draftId: string) => {
     setDrafts((prev) => prev.filter((d) => d.id !== draftId));
   };
@@ -277,13 +289,24 @@ export function SplitInvoiceScreen({
       );
       return;
     }
-    // A custom-days box showing an error blocks create: no request with the old or a partial term.
-    if (submitable.some((d) => customDaysBlocksCreate(customText[d.id]))) {
+    // R-345 F1: settle each draft's custom-days text here, not only on end-editing (Expo web has no onEndEditing,
+    // and a NavBar tap does not end editing). A valid typed value becomes the draft's terms and due date; an
+    // invalid one blocks create, so no request goes out with the old or a partial term.
+    const settledById = new Map(
+      submitable.map((d) => [d.id, settlePendingCustomTerms(customText[d.id], d)] as const),
+    );
+    if ([...settledById.values()].some((x) => x.blocked)) {
       alertInfo("Check the terms", "Enter a whole number of days from 1 to 365, or pick a term.");
       return;
     }
+    const ready = submitable.map((d) => {
+      const x = settledById.get(d.id);
+      if (!x || x.blocked || (x.terms === d.terms && x.dueDate === d.dueDate)) return d;
+      updateDraft(d.id, { terms: x.terms, dueDate: x.dueDate });
+      return { ...d, terms: x.terms, dueDate: x.dueDate };
+    });
     // Validate each draft has a usable due date.
-    for (const d of submitable) {
+    for (const d of ready) {
       if (!d.dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(d.dueDate)) {
         alertInfo(
           "Bad due date",
@@ -296,7 +319,7 @@ export function SplitInvoiceScreen({
     setBulkPending(true);
     let lastInvoiceId: string | null = null;
     try {
-      for (const d of submitable) {
+      for (const d of ready) {
         const chosen = billable
           .map((it) => ({ orderItemId: it.id, qty: Number(d.qtyById[it.id] ?? 0) }))
           .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
@@ -319,7 +342,7 @@ export function SplitInvoiceScreen({
         });
         lastInvoiceId = invoice.id;
       }
-      showToast(`Created ${submitable.length} invoice${submitable.length === 1 ? "" : "s"}`);
+      showToast(`Created ${ready.length} invoice${ready.length === 1 ? "" : "s"}`);
       if (lastInvoiceId) onCreated(lastInvoiceId);
     } catch (err: any) {
       const msg = err?.response?.data?.message ?? err?.message ?? "One or more invoices failed.";
@@ -581,13 +604,9 @@ export function SplitInvoiceScreen({
                         [draft.id]: customTermsFromInput(v).error,
                       }));
                     }}
-                    onEndEditing={() => {
-                      const { terms, error } = commitCustomDays(
-                        customText[draft.id] ?? daysText(draft.terms),
-                        draft.terms,
-                      );
-                      if (!error && terms !== draft.terms) setTerms(draft.id, terms);
-                    }}
+                    onFocus={() => pendingCustomRef.current.add(draft.id)}
+                    onEndEditing={() => commitCustom(draft)}
+                    onBlur={() => commitCustom(draft)}
                     placeholder="Custom: number of days (1-365)"
                     keyboardType="number-pad"
                     style={styles.dueInput}

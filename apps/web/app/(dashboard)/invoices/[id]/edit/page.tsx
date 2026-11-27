@@ -651,9 +651,11 @@ export default function EditInvoicePage() {
     priceLayer,
     productIds: items.map((i) => i.productId),
   }).blockSave;
+  // R-345 F6: a custom days box showing an error holds the save (mobile parity).
+  const [termsInvalid, setTermsInvalid] = React.useState(false);
 
   function handleSubmit() {
-    if (priceBlocked) return;
+    if (priceBlocked || termsInvalid) return;
     if (!validate()) return;
 
     const dto = {
@@ -851,6 +853,7 @@ export default function EditInvoicePage() {
                   value={paymentTermsLabel}
                   emptyLabel="Select terms…"
                   onChange={handleTermsChange}
+                  onInvalidChange={setTermsInvalid}
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
@@ -1218,7 +1221,7 @@ export default function EditInvoicePage() {
                 className="w-full"
                 onClick={handleSubmit}
                 loading={updateInvoice.isPending}
-                disabled={updateInvoice.isPending || priceBlocked}
+                disabled={updateInvoice.isPending || priceBlocked || termsInvalid}
               >
                 Save changes
               </Button>
