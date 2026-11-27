@@ -3,7 +3,8 @@
  * the driver delivered (deliveredQty > 0) cannot be cut, deleted, cancelled, substituted, re-united or replaced:
  * 409 LINE_ALREADY_DELIVERED, and the stock counter, the ledger, the lines and the header are exactly as before.
  * The undelivered line stays editable and a note on the delivered line is allowed. A stale pre-tx read (the line
- * looked undelivered, a delivery landed before the Order lock) is refused on the LOCKED read.
+ * looked undelivered, a delivery landed before the Order lock) is refused on the LOCKED read with 409
+ * ORDER_CHANGED_DURING_EDIT (SA-1544 (ap), the later ruling): the order changed under the edit. Both refusals write nothing.
  *
  * Builds a REAL OrdersService via `Object.create` (no Nest DI), as b1050-delivered-edit.db.spec.ts does.
  * NOT RUN by the lane that wrote it (Docker/DB down); the DB lane runs it.
@@ -224,6 +225,8 @@ describeDb(
     });
     const ledgerRows = (productId: string) => raw.stockMovement.findMany({ where: { productId } });
     const REFUSED = { response: { code: "LINE_ALREADY_DELIVERED" }, status: 409 };
+    /** A line that became delivered between the pre-read and the lock: the order changed under the edit (SA-1544 (ap)). */
+    const CHANGED = { response: { code: "ORDER_CHANGED_DURING_EDIT" }, status: 409 };
 
     /** A SENT invoice linked to the order, billing what the lines are worth. */
     async function sentInvoice(orderId: string, total: string) {
@@ -421,7 +424,7 @@ describeDb(
       try {
         await expect(
           edit(o.id, { replaceAll: false, items: [{ id: target.id, qty: 2 }] }),
-        ).rejects.toMatchObject(REFUSED);
+        ).rejects.toMatchObject(CHANGED);
       } finally {
         seam.spy.mockRestore();
         orders.invoicesService.revertLinkedInvoicesForOrderEdit = realRevert;
@@ -488,7 +491,7 @@ describeDb(
       try {
         await expect(
           edit(o.id, { replaceAll: false, items: [{ id: target.id, qty: 2 }] }),
-        ).rejects.toMatchObject(REFUSED);
+        ).rejects.toMatchObject(CHANGED);
       } finally {
         seam.spy.mockRestore();
       }
@@ -520,7 +523,7 @@ describeDb(
       try {
         await expect(
           edit(o.id, { replaceAll: false, items: [{ id: target.id, qty: 2 }] }),
-        ).rejects.toMatchObject(REFUSED);
+        ).rejects.toMatchObject(CHANGED);
       } finally {
         seam.spy.mockRestore();
       }

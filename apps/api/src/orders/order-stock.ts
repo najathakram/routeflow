@@ -266,12 +266,14 @@ function unlistedLineDeltas(
 }
 
 /**
- * B1050 (SA-703): per-line booking. `deliveredQty` is never rewritten by an edit, so a line can sit
- * with qty < delivered; delivered goods are gone, so a line books `max(qty, delivered)`. The CALLER
+ * B1050 (SA-703): per-line booking. `deliveredQty` is not rewritten by an ordinary edit, so a line can sit
+ * with qty < delivered; the one exception is an admin's delivered-line CORRECTION (SA-1506), which passes the restated
+ * figure in `correctedDelivered` (read only in the "stable" identity; "recreated" with the map throws); delivered goods are gone, so a line books `max(qty, delivered)`. The CALLER
  * says how the final lines relate to the held ones (`lineIdentity`):
  *  - "stable" (default; an in-place diff edit): a line is the SAME line when both sides carry the same
  *    NON-NULL id (undefined never matches). C_after = Σ matched max(q, d) + Σ removed held d + Σ new q;
- *    a struck delivered line stays booked (its d) and never nets against a new line of the product.
+ *    a struck delivered line stays booked (its d, or the restated figure when a correction took it off) and never nets
+ *    against a new line of the product.
  *  - "recreated" (the deleteMany + re-create paths: operator replaceAll, CUSTOMER/DRIVER non-diff):
  *    ids are fresh, so nothing can match; C_after = max(Σ final q, Σ held d), the pooled behaviour.
  * C_before = Σ held max(q, d) either way; the counter moves by C_after − C_before. No credit cap.
@@ -313,6 +315,13 @@ export function bookedTerms(
   held: BookedLine[],
   final: BookedLine[],
   identity: LineIdentity = "stable",
+  /**
+   * SA-1506 PR-1a (B2): the delivered quantity an admin's CORRECTION restated, by line id (default empty: an edit never
+   * rewrites `deliveredQty`). Read in BOTH after-branches below, so the goods the correction says never left come back:
+   * the matched after-term `b` (sized with the FINAL line's pack snapshot, like `a`) and the removed / struck-off
+   * after-term `a` (a struck line has no final line, so it uses the HELD snapshot). The before-terms keep the held d.
+   */
+  corrected?: ReadonlyMap<string, number>,
 ): BookedTerm[] {
   const finalById = new Map<string, BookedLine>();
   if (identity === "stable")
@@ -324,12 +333,18 @@ export function bookedTerms(
   for (const h of held) {
     const d = partsOf(h, h.deliveredQty ?? 0);
     const f = h.id != null ? finalById.get(h.id) : undefined;
+    const cd = h.id != null ? corrected?.get(h.id) : undefined;
     terms.push({ bucket: f ? "matched" : "unmatched", side: "before", a: partsOf(h, h.qty), b: d });
     if (f && !matchedFinal.has(f)) {
       matchedFinal.add(f);
-      terms.push({ bucket: "matched", side: "after", a: partsOf(f, f.qty), b: d });
+      terms.push({
+        bucket: "matched",
+        side: "after",
+        a: partsOf(f, f.qty),
+        b: cd != null ? partsOf(f, cd) : d,
+      });
     } else if (identity === "stable") {
-      terms.push({ bucket: "unmatched", side: "after", a: d }); // removed: delivered stays booked
+      terms.push({ bucket: "unmatched", side: "after", a: cd != null ? partsOf(h, cd) : d }); // removed: delivered stays booked, unless a correction restated it (a take-off books 0)
     } else {
       heldD = plusParts(heldD, d);
     }
@@ -354,10 +369,12 @@ export function bookedPieces(
   final: BookedLine[],
   livePack?: unknown,
   identity: LineIdentity = "stable",
+  /** SA-1533 (w): the restated delivered figures of a correction (see `bookedTerms`); an ordinary caller omits it. */
+  corrected?: ReadonlyMap<string, number>,
 ) {
   const r3 = (n: number) => Math.round(n * 1000) / 1000;
   const out = { matched: { before: 0, after: 0 }, unmatched: { before: 0, after: 0 } };
-  for (const t of bookedTerms(held, final, identity))
+  for (const t of bookedTerms(held, final, identity, corrected))
     out[t.bucket][t.side] += termPieces(t, livePack);
   return {
     matched: { before: r3(out.matched.before), after: r3(out.matched.after) },
@@ -405,9 +422,10 @@ function effectiveDeltaParts(terms: BookedTerm[]): BookedParts | null {
  *   - a product whose booked qty FALLS (line reduced, removed, or zeroed)
  *     returns the difference to currentStock. Booked qty is per line
  *     `max(qty, deliveredQty)` (B1050 / SA-703, see `bookedTerms`): delivered
- *     goods are gone and never come back via an edit, and an edit below
- *     delivered neither credits nor, on the way back up, decrements them a
- *     second time. There is no pooled per-product cap. This is new; the
+ *     goods are gone and never come back via an edit (except an admin's
+ *     delivered-line CORRECTION, which restates the figure, SA-1506), and an
+ *     edit below delivered neither credits nor, on the way back up,
+ *     decrements them a second time. There is no pooled per-product cap. This is new; the
  *     pre-refactor version only validated increases, it never wrote
  *     anything.
  * Held/requested are compared over the UNION of product ids on both sides
@@ -486,8 +504,14 @@ export async function settleStockForEdit(
     markerMode?: "adjust" | "set";
     /** SA-716 M2: held markers captured before a recreate-mode create-merge fold (product + pack group). */
     markerCarry?: ReadonlyMap<string, number>;
+    /** SA-1506 PR-1a (B2): delivered quantities an admin correction restated, by line id; only the edit passes it. */
+    correctedDelivered?: ReadonlyMap<string, number>;
   },
 ): Promise<void> {
+  // SA-1506 A6 M-1: the "recreated" branch never reads the corrected map, so the goods a correction says never left
+  // would stay booked silently. Fail closed, before any read or write.
+  if (opts?.correctedDelivered && opts.lineIdentity === "recreated")
+    throw new Error("settleStockForEdit: correctedDelivered needs the stable line identity");
   if (order.status === "DRAFT") return;
 
   // SA-696a: an order with the carrier has a fixed line set, unlisted lines included (they carry no
@@ -564,7 +588,12 @@ export async function settleStockForEdit(
   const terms = new Map(
     productIds.map((id) => [
       id,
-      bookedTerms(heldLines.get(id) ?? [], finalLines.get(id) ?? [], opts?.lineIdentity),
+      bookedTerms(
+        heldLines.get(id) ?? [],
+        finalLines.get(id) ?? [],
+        opts?.lineIdentity,
+        opts?.correctedDelivered,
+      ),
     ]),
   );
   const effTouched = productIds.filter((id) => {

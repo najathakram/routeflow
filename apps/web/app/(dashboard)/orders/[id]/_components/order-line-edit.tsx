@@ -20,7 +20,18 @@ import { useEditLineStock } from "../edit-line-stock";
 import { LineStockNote } from "@/components/LineStockNote";
 import { EDIT_QTY_INPUT, EDIT_TAP_BELOW_LG } from "../edit-line-controls";
 import { EditScanBar } from "./EditScanBar";
-import { DeliveredLockedHint, DeliveredLockedQty } from "./DeliveredLineLock";
+import {
+  CorrectableLineNote,
+  DeliveredLockedHint,
+  DeliveredLockedQty,
+  TakeOffConfirm,
+} from "./DeliveredLineLock";
+import {
+  correctedQtyFields,
+  isLineCorrectable,
+  lockedLineHint,
+  takeOffFields,
+} from "@/lib/order-line-lock";
 import {
   findLockedUnitLineEdit,
   LockedUnitLineBadge,
@@ -73,6 +84,12 @@ export type ApiOrderStatus =
   | "CANCELLED";
 
 export interface EditItemState {
+  /** SA-1506: the server said an admin may correct this DELIVERED line (`lineEditMode` CORRECT). Never a swap. */
+  correctable?: boolean;
+  /** SA-1506: the sentence under a LOCKED delivered line (the server's reason, worded by `lockedLineHint`). */
+  lockedHint?: string;
+  /** The delivered quantity a correctable line shows in its note. */
+  deliveredNote?: number;
   priceEdited?: boolean; // #2381: the operator typed this price (picker remounts keep it)
   /** Units P0b: the picker shows this derived base option for a pack-pieces line. Display state, never submitted. */
   derivedBase?: string;
@@ -355,6 +372,10 @@ export function buildEditItemFromLine(li: OrderItem): EditItemState {
   const ownLinePack = lineDisplayPack(li);
   const noPack = own.kind === "none"; // sold with no pack: a plain line, no split sent
   return {
+    ...(isLineCorrectable(li)
+      ? { correctable: true, deliveredNote: Number(li.deliveredQty ?? 0) }
+      : {}),
+    ...(li.lineEditMode === "LOCKED" ? { lockedHint: lockedLineHint(li, label) } : {}),
     id: li.id,
     isUnlisted,
     originalProductId: li.productId ?? "",
@@ -478,7 +499,7 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
     const notePatch = noteChanged ? { notes: (edited.notes ?? "").trim() } : {};
 
     if (edited.cancelled) {
-      updates.push({ id: edited.id, action: "CANCEL" });
+      updates.push({ id: edited.id, action: "CANCEL", ...takeOffFields(orig) });
     } else if (edited.substituteProductId) {
       updates.push(substituteDtoUpdate(edited));
     } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged || noteChanged)) {
@@ -486,6 +507,7 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
       updates.push({
         id: edited.id,
         qty: edited.qty,
+        ...correctedQtyFields(orig, qtyChanged),
         ...(nameChanged ? { name: edited.productName.trim() } : {}),
         ...(priceChanged ? { unitPrice: edited.unitPrice } : {}),
         ...notePatch,
@@ -494,11 +516,17 @@ export function buildItemUpdates(items: EditItemState[], original: OrderItem[]):
       // SA-1097 A-2: a pack-locked line takes a note only - no qty or split, so the server's note-only path writes it.
       if (noteChanged) updates.push({ id: edited.id, action: "UPDATE", ...notePatch });
     } else if (qtyChanged || priceChanged || noteChanged) {
+      // SA-1546 M2: a correctable line's price-only edit names no quantity (a price is never a delivered statement); a changed
+      // quantity opts in to the server's correction with `correctDelivered`.
+      const quantityFields =
+        isLineCorrectable(orig) && !qtyChanged
+          ? {}
+          : { qty: edited.qty, ...boxedDtoFields(edited) };
       updates.push({
         id: edited.id,
         action: "UPDATE",
-        qty: edited.qty,
-        ...boxedDtoFields(edited),
+        ...quantityFields,
+        ...correctedQtyFields(orig, qtyChanged),
         ...(edited.unitLabel ? { unitLabel: edited.unitLabel, productId: edited.productId } : {}),
         ...(priceChanged
           ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
@@ -788,6 +816,8 @@ export function EditableLineItems({
   orderStatus?: string;
 }) {
   const isLocked = (id: string) => lockedLineIds?.has(id) === true;
+  // SA-1415: a delivered line is taken off only after "Take off" is confirmed (its stock and invoice move).
+  const [takeOffId, setTakeOffId] = React.useState<string | null>(null);
   const { toast } = useToast();
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
@@ -1272,18 +1302,21 @@ export function EditableLineItems({
                 </button>
               ) : isLocked(item.id) ? null : (
                 <>
-                  {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
-                    <button
-                      className={cn(
-                        "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50",
-                        EDIT_TAP_BELOW_LG,
-                      )}
-                      disabled={!pricingReady}
-                      onClick={() => setSubstituteOpenId((p) => (p === item.id ? null : item.id))}
-                    >
-                      Substitute
-                    </button>
-                  )}
+                  {!item.substituteProductId &&
+                    !item.isUnlisted &&
+                    !item.countLocked &&
+                    !item.correctable && (
+                      <button
+                        className={cn(
+                          "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50",
+                          EDIT_TAP_BELOW_LG,
+                        )}
+                        disabled={!pricingReady}
+                        onClick={() => setSubstituteOpenId((p) => (p === item.id ? null : item.id))}
+                      >
+                        Substitute
+                      </button>
+                    )}
                   {item.substituteProductId && (
                     <button
                       className={cn(
@@ -1310,15 +1343,17 @@ export function EditableLineItems({
                       Undo
                     </button>
                   )}
-                  <button
-                    className={cn(
-                      "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy",
-                      EDIT_TAP_BELOW_LG,
-                    )}
-                    onClick={() => update(item.id, { cancelled: true })}
-                  >
-                    Not available
-                  </button>
+                  {!item.correctable && (
+                    <button
+                      className={cn(
+                        "rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy",
+                        EDIT_TAP_BELOW_LG,
+                      )}
+                      onClick={() => update(item.id, { cancelled: true })}
+                    >
+                      Not available
+                    </button>
+                  )}
                   <button
                     className={cn(
                       TAP_TARGET,
@@ -1326,7 +1361,7 @@ export function EditableLineItems({
                     )}
                     title={`Remove ${item.productName?.trim() || "item"}`}
                     aria-label={`Remove ${item.productName?.trim() || "item"}`}
-                    onClick={() => onDelete(item.id)}
+                    onClick={() => (item.correctable ? setTakeOffId(item.id) : onDelete(item.id))}
                   >
                     <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                     {/* r5 F11: the word on a phone (icon-only from sm up; aria-label still names the line) */}
@@ -1384,7 +1419,20 @@ export function EditableLineItems({
               />
             )}
 
-          {isLocked(item.id) && !item.cancelled && <DeliveredLockedHint />}
+          {isLocked(item.id) && !item.cancelled && <DeliveredLockedHint text={item.lockedHint} />}
+          {item.correctable && !item.cancelled && (
+            <CorrectableLineNote qty={item.deliveredNote ?? 0} unit={item.unit} />
+          )}
+          {takeOffId === item.id && (
+            <TakeOffConfirm
+              item={item.productName}
+              onTakeOff={() => {
+                setTakeOffId(null);
+                onDelete(item.id);
+              }}
+              onKeep={() => setTakeOffId(null)}
+            />
+          )}
 
           {/* Per-line note — carried onto the invoice line (buyer-visible). */}
           {!item.cancelled && (

@@ -31,7 +31,9 @@ describe("updateOrderItems: the overpay judge is wired at the tail of the edit t
   });
 
   it("skipInPlaceResync is computed from the in-tx held lines and returned by the tx", () => {
-    expect(body).toContain("heldItems, postDeliveryEdit");
+    expect(
+      body.split("heldItems,").some((rest) => rest.trimStart().startsWith("postDeliveryEdit")),
+    ).toBe(true);
     expect(body).toContain("skipInPlaceResync = await judgeEditTail(");
     expect(body).not.toContain("const skipInPlaceResync = postDeliveryEdit"); // the pre-lock post-commit read is gone
   });

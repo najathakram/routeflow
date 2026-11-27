@@ -1,7 +1,7 @@
 import { API_ERROR_CODES } from "@routeflow/types";
 import { planPickCopy } from "../lib/plan-pick-copy";
 
-/** SA-1547 PR-5 (SA-C): a plan pick's refusals are fixed sentences by code; the server's message is never shown. */
+/** SA-1547 PR-5a (SA-C): a plan pick's refusals are fixed sentences by code; the server's message is never shown. */
 const err = (code: string) => ({
   response: { status: 409, data: { code, message: "raw server text" } },
 });

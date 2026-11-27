@@ -228,6 +228,33 @@ if (process.env.T16_PLANTS === "1") {
     expect.soft(twin.ringContrast ?? 99, "W11 twin: settled ring contrast").toBeLessThan(3);
   });
 
+  test("T16 plants R1 R2 a box-shadow ring counts as the ring; no outline and no shadow is red", async () => {
+    test.setTimeout(PLANTS_TEST_HARD_MS);
+    const r = await threeRuns({
+      route: "/",
+      size: DESKTOP,
+      tag: (p) =>
+        appendPlants(
+          p,
+          '<a href="/pricing" data-t16-plant="R1">R1 shadow ring</a> ' +
+            '<a href="/pricing" data-t16-plant="R2">R2 nothing</a>',
+        ),
+      defect: css(
+        // W-1265. R1: a transparent outline with a solid 2px teal shadow is a ring (the sign-in fields).
+        '[data-t16-plant="R1"]:focus-visible{outline:2px solid transparent !important;box-shadow:0 0 0 2px #0f766e !important}' +
+          // R2: a transparent outline and no shadow draws nothing a visitor can see.
+          '[data-t16-plant="R2"]:focus-visible{outline:2px solid transparent !important;box-shadow:none !important}',
+      ),
+    });
+    expectStable(`/ ${sizeName(DESKTOP)}`, r);
+    const r1 = rowOf(r.planted, "R1");
+    expect.soft(r1.ring.style, "R1: the ring is the shadow").toBe("box-shadow");
+    expect.soft(r1.ringContrast ?? 0, "R1: ring contrast").toBeGreaterThanOrEqual(3);
+    const r2 = rowOf(r.planted, "R2");
+    expect.soft(r2.ringContrast ?? 99, "R2: no ring").toBe(0);
+    expect.soft(readProblems(r2).length, "R2: red").toBeGreaterThan(0);
+  });
+
   test("T16 plant W2 a desktop-nav link with no equivalent is unreached and red", async () => {
     test.setTimeout(PLANTS_TEST_HARD_MS);
     const r = await threeRuns({

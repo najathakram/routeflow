@@ -25,6 +25,12 @@ import {
   throwIfWithCarrier,
 } from "./order-status-invoicing";
 import { lastShipStateSource } from "./order-ship-state";
+import { holdsLiveDeliveredLine } from "./delivered-line-lock";
+import { BUYER_EDIT_CLOSED_STATUSES } from "./edit-window";
+import {
+  BUYER_EDIT_CLOSED_DELIVERED_MESSAGE,
+  ORDER_CHANGED_DURING_EDIT_MESSAGE,
+} from "./delivered-line-copy";
 
 /** The two `OrdersService` fields the guard reads (the service passes itself). */
 type CarrierDeps = {
@@ -76,9 +82,18 @@ export async function buyerEditClosedMessage(
 ): Promise<string> {
   // W-1189: a refused order is not "out for delivery", and a change request cannot change it
   if ((order as { status?: string }).status === "REFUSED") return REFUSED_ORDER_MESSAGE;
-  return (await carrierBlocked(deps, order)) === null
-    ? "This order is already out for delivery. Send a change request instead."
-    : SHIPPED_ORDER_MESSAGE;
+  if ((await carrierBlocked(deps, order)) !== null) return SHIPPED_ORDER_MESSAGE;
+  // SA-1544 P-5: closed by the delivered goods it holds, not by dispatch (a reopened order is CONFIRMED again)
+  const { status, lineItems } = order as {
+    status?: string;
+    lineItems?: Array<{ status?: unknown; deliveredQty?: unknown }>;
+  };
+  if (
+    !BUYER_EDIT_CLOSED_STATUSES.includes(status as OrderStatus) &&
+    holdsLiveDeliveredLine(lineItems)
+  )
+    return BUYER_EDIT_CLOSED_DELIVERED_MESSAGE;
+  return "This order is already out for delivery. Send a change request instead.";
 }
 
 export interface CarrierEditGuard {
@@ -112,8 +127,46 @@ const POST_DELIVERY_EDIT_STATUSES: ReadonlySet<string> = new Set([
  * `replayMergeReconcile`, so a replayed merge routes exactly as the fold that landed did (B215:
  * the two may not drift). A with-carrier order re-syncs its shipment invoice in place (D2 / S4).
  */
-export function resyncsInPlace(status: string, guard: CarrierEditGuard): boolean {
-  return POST_DELIVERY_EDIT_STATUSES.has(status) || guard.withCarrier;
+export function resyncsInPlace(
+  status: string,
+  guard: CarrierEditGuard,
+  /**
+   * SA-1506 PR-1a (B4): the order HOLDS a live delivered line (`isLiveDeliveredLine`, computed on the HELD lines). A
+   * reopened order (CONFIRMED / PENDING again) that still carries delivered goods restates its invoice in place, like a
+   * DELIVERED one (B215), instead of flipping to PENDING and reverting the invoice to a draft. REQUIRED, so the compiler
+   * makes every caller say what it knows (the edit, replace-after-delivery, the merge replay, the revert set).
+   */
+  holdsLiveDelivered: boolean,
+): boolean {
+  return POST_DELIVERY_EDIT_STATUSES.has(status) || guard.withCarrier || holdsLiveDelivered;
+}
+
+/**
+ * SA-1544 (ao): the edit is routed in place BY the held lines alone: neither the status nor the carrier already routed it,
+ * so no old edit moves. One named export beside the rule, never a second call of `resyncsInPlace` with `false`.
+ */
+export function routedByHeldLines(
+  status: string,
+  guard: CarrierEditGuard,
+  held: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }>,
+): boolean {
+  return holdsLiveDeliveredLine(held) && !resyncsInPlace(status, guard, false);
+}
+
+/**
+ * SA-1544 (ap) / A9 9.3 item 8: the routing input (does the order HOLD a live delivered line) was read before the
+ * transaction; it is recomputed on the LOCKED held lines for EVERY role and a difference is a 409, nothing written.
+ * Same shape as `carrierRevertUnderLock`: call it right after `lockEditedOrder`, before the first write.
+ */
+export function routingUnderLock(
+  preHolds: boolean,
+  heldLocked: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }>,
+): void {
+  if (holdsLiveDeliveredLine(heldLocked) === preHolds) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
+    message: ORDER_CHANGED_DURING_EDIT_MESSAGE,
+  });
 }
 
 const IN_TRANSIT: ReadonlySet<string> = new Set([

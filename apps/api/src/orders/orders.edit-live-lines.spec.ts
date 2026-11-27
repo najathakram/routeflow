@@ -236,7 +236,11 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
     // The shape stampDeliveredInFull writes (manual DELIVERED, counter sale, pickup hand-over): the goods left, so
     // the line carries deliveredQty but no route evidence and no invoice yet. SA-961 R10 struck it off instead of
     // hard-deleting; the owner ruled (11-04) a delivered line is never removed, staff record a return.
-    lockedLines([{ ...SNAPSHOT_LINE, qty: 2, deliveredQty: 2, invoicedQty: 0 }]);
+    const delivered = { ...SNAPSHOT_LINE, qty: 2, deliveredQty: 2, invoicedQty: 0 };
+    // SA-1544 (ap): the snapshot shows the delivery too (an undelivered snapshot over a delivered lock is the routing race,
+    // 409 ORDER_CHANGED_DURING_EDIT, pinned in order-edit-routing-a9 and the routing db spec).
+    prisma.order.findUnique.mockResolvedValue({ ...snapshotOrder(), lineItems: [delivered] });
+    lockedLines([delivered]);
     prisma.deliveryMutation.count.mockResolvedValue(0);
     prisma.orderItem.updateMany.mockResolvedValue({ count: 1 });
     prisma.orderItem.deleteMany.mockResolvedValue({ count: 1 });

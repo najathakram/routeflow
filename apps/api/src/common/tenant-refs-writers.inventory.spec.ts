@@ -189,6 +189,9 @@ const TABLE: Record<string, Row> = {
     "routeRunStop.id",
     "stopId is the path stop, read tenant-scoped with its run (404) before any write; the delivery mutation stores that stop's own id",
   ),
+  [f("orders/delivered-line-correction.ts", "writeOfficeRow")]: X(
+    "writes routeRunStopId: null (an admin correction of an office-delivered line has no stop)",
+  ),
   [f("orders/office-evidence-completion.ts", "completeOfficeEvidencedLines")]: X(
     "writes routeRunStopId: null (an office completion has no stop)",
   ),

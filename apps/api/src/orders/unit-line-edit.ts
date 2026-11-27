@@ -30,6 +30,7 @@ import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import type { OrdersService } from "./orders.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { assertQtyNotBelowDelivered } from "./delivered-line-lock";
+import { deliveredLineEditMode, NO_ORDER_FACTS } from "./delivered-line-edit-mode";
 import { linesPriceAtCustomerTier } from "./driver-line-price";
 
 /**
@@ -483,6 +484,7 @@ export async function updateUnitLine(
       ctx.flooredDelivered.get(lineId) ?? held?.deliveredQty,
       held?.qty,
       rest.qty,
+      held ? deliveredLineEditMode(held, NO_ORDER_FACTS) : undefined, // SA-1506 C2: always LOCKED UNIT
     ); // SA-1149 D2 / F1
     // B1386 (SA-1285 section 1): a buyer's count diff on a unit-aware line (SA-407) skips the replace pairing, so it
     // is capped here on the built PIECE total, rise-only against the held line. Before the write.

@@ -12,7 +12,6 @@ import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { LIVE_PAYMENTS_OFF_SENTENCE } from "@routeflow/types/live-payments-off-copy";
 import {
-  CHECKOUT_PAYMENT_IN_PROGRESS_SENTENCE,
   CUSTOM_FEE_PLAN_PICK_REFUSED_SENTENCE,
   PLAN_PICK_ASK_FOR_LINK_SENTENCE,
   SELF_SERVE_PLAN_NOT_ALLOWED_SENTENCE,
@@ -73,11 +72,10 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.PROMOTIONS_OFF]: PROMOTIONS_OFF_COPY,
   // SA-1547 M1: the live-payments wall (W-1464); a tester on a test business sees this on every payment surface
   [API_ERROR_CODES.LIVE_PAYMENTS_OFF]: LIVE_PAYMENTS_OFF_SENTENCE,
-  // SA-1547 PR-5 (SA-C): a card-first plan pick's refusals (fixed sentences shared with mobile, never the server text)
+  // SA-1547 PR-5a (SA-C): a card-first plan pick's refusals (fixed sentences shared with mobile, never the server text)
   [API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED]: SELF_SERVE_PLAN_NOT_ALLOWED_SENTENCE,
   [API_ERROR_CODES.CUSTOM_FEE_PLAN_PICK_REFUSED]: CUSTOM_FEE_PLAN_PICK_REFUSED_SENTENCE,
   [API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK]: PLAN_PICK_ASK_FOR_LINK_SENTENCE,
-  [API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS]: CHECKOUT_PAYMENT_IN_PROGRESS_SENTENCE,
   // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
   // fixed sentences for a surface with no dialog, never the server's text.
   [API_ERROR_CODES.RESTRICTION_WARNING]:
@@ -299,6 +297,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.DAY_CLOSED_FOR_PAYMENT_DATE]: DAY_CLOSED_FOR_PAYMENT_DATE_COPY,
   // P-4: the one overpay copy (order-overpay.ts); a surface with the structured numbers uses orderOverpayCopy.
   [API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY]: ORDER_OVERPAY_GENERIC_COPY,
+  // SA-1506 AD-3 placeholder until SA-C words it.
+  [API_ERROR_CODES.ORDER_EDIT_EMPTIES_INVOICE]:
+    "This would leave the invoice with nothing on it. To bill nothing for this order, void the invoice.",
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
   // SA-733r5 (billing go-live): a manual-pay account completes card setup through its RouteFlow contact, and a card
   // checkout already in progress blocks a second one. Fixed sentences; no ids.

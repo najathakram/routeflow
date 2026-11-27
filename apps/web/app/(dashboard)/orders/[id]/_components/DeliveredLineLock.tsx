@@ -1,11 +1,16 @@
 import * as React from "react";
 import { Lock } from "lucide-react";
-import { DELIVERED_LINE_LOCK_HINT } from "@/lib/order-line-lock";
+import {
+  DELIVERED_LINE_LOCK_HINT,
+  TAKE_OFF_BODY,
+  correctableLineNote,
+  takeOffTitle,
+} from "@/lib/order-line-lock";
 
 /**
- * B1234 (D-O2-a): what the edit builder shows in place of the controls of a DELIVERED line on a
- * PARTIALLY_DELIVERED order. The quantity is read-only text; the hint says why. The server refuses
- * any edit of such a line (409 LINE_ALREADY_DELIVERED), so no editing control is rendered.
+ * B1234 (D-O2-a) + SA-1506: what the edit builder shows for a DELIVERED line. A LOCKED line (the server's `lineEditMode`) shows
+ * its quantity as read-only text and the sentence that says why; a CORRECTABLE line (an admin) keeps its controls and shows the
+ * correction note; taking it off asks first.
  */
 export function DeliveredLockedQty({ qty }: { qty: number }) {
   return (
@@ -18,11 +23,58 @@ export function DeliveredLockedQty({ qty }: { qty: number }) {
   );
 }
 
-export function DeliveredLockedHint() {
+export function DeliveredLockedHint({ text }: { text?: string }) {
   return (
     <p className="ml-11 mt-1 flex items-center gap-1.5 text-xs text-navy/70">
       <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
-      {DELIVERED_LINE_LOCK_HINT}
+      {text || DELIVERED_LINE_LOCK_HINT}
     </p>
+  );
+}
+
+/** SA-1408 item 1: the note on a line an admin may correct. */
+export function CorrectableLineNote({ qty, unit }: { qty: number; unit?: string | null }) {
+  return (
+    <p className="ml-11 mt-1 text-xs text-navy/70" data-testid="correctable-note">
+      {correctableLineNote(qty, unit)}
+    </p>
+  );
+}
+
+/** SA-1408 item 2: the take-off confirm. Take off removes the line on save; Keep leaves it. */
+export function TakeOffConfirm({
+  item,
+  onTakeOff,
+  onKeep,
+}: {
+  item: string;
+  onTakeOff: () => void;
+  onKeep: () => void;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-label={takeOffTitle(item)}
+      className="ml-11 mt-2 rounded-lg border border-surface-border bg-surface-raised p-3"
+    >
+      <p className="text-sm font-medium text-navy">{takeOffTitle(item)}</p>
+      <p className="mt-1 text-xs text-navy/70">{TAKE_OFF_BODY}</p>
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          className="rounded bg-danger px-3 py-1 text-xs font-medium text-white"
+          onClick={onTakeOff}
+        >
+          Take off
+        </button>
+        <button
+          type="button"
+          className="rounded px-3 py-1 text-xs text-navy/70 hover:bg-surface-border"
+          onClick={onKeep}
+        >
+          Keep
+        </button>
+      </div>
+    </div>
   );
 }

@@ -88,6 +88,11 @@ const REGISTRY: Record<string, Entry> = {
     kind: "exempt",
     reason: "SA-763r: writes only OrderItem.deliveredQty, on lines with no delivery evidence",
   },
+  "orders/delivered-line-correction.ts::applyLineCorrections": {
+    kind: "exempt",
+    reason:
+      "SA-1506: writes only OrderItem.deliveredQty (an admin's correction of a delivered line lowers it to the new quantity); the edit writes the quantity, split and price",
+  },
   "orders/office-evidence-completion.ts::completeOfficeEvidencedLines": {
     kind: "exempt",
     reason:

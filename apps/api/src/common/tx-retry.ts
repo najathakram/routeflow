@@ -18,7 +18,7 @@ export const TX_CONFLICT_MAX_ATTEMPTS = 3;
 export const TX_CONFLICT_BACKOFF_MS = [100, 300];
 const logger = new Logger("tx-retry");
 /** A tx budget at or above this is long enough that an expiry (P2028) is not retried (see `retryStockTx`). */
-const LONG_BUDGET_MS = 30_000;
+export const LONG_BUDGET_MS = 30_000;
 
 /** The SQLSTATE / Prisma code in any shape Prisma 7 or `pg` reports it (raw query, adapter, pg). */
 function errorState(err: any): unknown {

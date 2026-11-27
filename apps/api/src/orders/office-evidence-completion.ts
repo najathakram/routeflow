@@ -16,7 +16,7 @@
  * that rode a route stop is never touched (as the stamp). Idempotent: a completed line has no remainder.
  * The only "closed short" exit stays DELIVERED -> CONFIRMED with its required reason (SA-814h #1).
  */
-import { isEvidenceRow } from "../invoices/delivered-basis-by-line";
+import { evidenceOrigin, isEvidenceRow } from "../invoices/delivered-basis-by-line";
 import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
 
 const EPS = 0.0005;
@@ -80,7 +80,7 @@ export async function completeOfficeEvidencedLines(
     if (!m.orderItemId) continue;
     const e = byLine.get(m.orderItemId) ?? { sum: 0, office: true };
     e.sum = r3(e.sum + (m.type === "REFUSED" ? 0 : Number(m.quantityDelivered)));
-    if (m.routeRunStopId != null || m.driverId != null || !OFFICE_ROW_TYPES.includes(m.type)) {
+    if (evidenceOrigin(m) === "route" || !OFFICE_ROW_TYPES.includes(m.type)) {
       e.office = false;
     }
     byLine.set(m.orderItemId, e);

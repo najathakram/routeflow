@@ -523,13 +523,14 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
       expect(Number(after.qty)).toBe(3);
     }, 60_000);
 
-    it("B9: the delivered-line replace stays 409 ORDER_EDIT_DELIVERED_LINES with the listed shape", async () => {
-      const { o, y } = await reopened();
+    it("B9: the delivered-line replace by the buyer is the closed window (SA-1544 P-5): 403 with the change-request sentence, nothing written", async () => {
+      const { o, x, y } = await reopened();
+      const before = await everything(o.id, [x, y]);
       const got = await send(route, o.id, { items: [{ productId: y, qty: 1 }] });
-      expect({ status: got.status, code: got.code }).toEqual({
-        status: 409,
-        code: "ORDER_EDIT_DELIVERED_LINES",
-      });
+      expect({ status: got.status, code: got.code }).toEqual({ status: 403, code: undefined }); // wrong value: 409 LINES_REPLACE_AFTER_DELIVERY
+      expect(got.message).toMatch(/change request/i);
+      expect(got.message).not.toMatch(/out for delivery/i);
+      expect(await everything(o.id, [x, y])).toEqual(before);
     }, 60_000);
 
     it("B10: a stale expectedRevisionNumber stays 409 ORDER_REVISION_STALE", async () => {
@@ -549,6 +550,52 @@ describeDb("buyer edit allowlist (SA-1161), real Postgres", () => {
       const o = await orderFor(customerId, [plain(x, 2)], "OUT_FOR_DELIVERY");
       const got = await send(route, o.id, { items: [{ orderItemId: o.lineItems[0].id, qty: 1 }] });
       expect(got.status).toBe(403);
+    }, 60_000);
+
+    it("P-5: the listed-shape edit of a reopened order that holds a delivered line is 403, nothing written, the SENT invoice untouched", async () => {
+      const x = await product("bei-p5");
+      const y = await product("bei-p5");
+      const o = await orderFor(customerId, [plain(x, 13, 12), plain(y, 2, 0)], "CONFIRMED");
+      const inv = await raw.invoice.create({
+        data: {
+          tenantId,
+          customerId,
+          orderId: o.id,
+          invoiceNumber: `INV-${randomUUID().slice(0, 8)}`,
+          status: "SENT",
+          subtotal: "36",
+          total: "36",
+        },
+      });
+      invoiceIds.push(inv.id);
+      const other = o.lineItems.find((l) => l.productId === y)!;
+      const before = await everything(o.id, [x, y]);
+      const got = await send(route, o.id, { items: [{ orderItemId: other.id, qty: 3 }] });
+      expect({ status: got.status, code: got.code }).toEqual({ status: 403, code: undefined }); // wrong value: 200 (restated the issued invoice)
+      expect(got.message).not.toMatch(/out for delivery/i);
+      expect(await everything(o.id, [x, y])).toEqual(before);
+      expect((await raw.invoice.findUniqueOrThrow({ where: { id: inv.id } })).status).toBe("SENT");
+    }, 60_000);
+
+    it("P-5: the read descriptor says not editable for that buyer, and open again once the order holds no delivered line", async () => {
+      const x = await product("bei-p5d");
+      const o = await orderFor(customerId, [plain(x, 13, 12)], "CONFIRMED");
+      const read = () => tenantCtx.run(tenantId, () => orders.findOne(o.id, customerPrincipal()));
+      expect((await read()).editWindow).toMatchObject({
+        editable: false,
+        closedReason: "DELIVERED_LINES", // wrong value: editable true (P-5), "STATUS" (A10 10.3)
+      });
+      await raw.orderItem.updateMany({ where: { orderId: o.id }, data: { deliveredQty: 0 } });
+      expect((await read()).editWindow).toMatchObject({ editable: true, closedReason: null });
+    }, 60_000);
+
+    it("P-5: a reopened order holding NO live delivered line stays buyer-editable (master)", async () => {
+      const x = await product("bei-p5n");
+      const o = await orderFor(customerId, [plain(x, 4, 0)], "CONFIRMED");
+      const got = await send(route, o.id, {
+        items: [{ productId: x, orderItemId: o.lineItems[0].id, qty: 3 }],
+      });
+      expect(got.status).toBe(200);
     }, 60_000);
   });
 
