@@ -138,17 +138,29 @@ export function allPermissionGroups(): OperatorPermissionGroup[] {
 
 // ─── Route -> group map ───────────────────────────────────────────────────────────────────────
 
-export interface PermissionRouteEntry {
-  /** A dashboard path prefix, matched on whole path segments. */
-  prefix: string;
-  /** Holding ANY of these groups opens the route. */
-  anyOf: readonly OperatorPermissionGroup[];
-}
+/**
+ * One dashboard route's access. Either a feature-group gate (`anyOf`: holding ANY of the groups opens it) or an
+ * explicit group-free level: `BASE` (any operator, on purpose) or `ADMIN` (the page itself is the account admin's).
+ * A route with no entry at all is UNKNOWN (see `routeAccess`), never open.
+ */
+export type PermissionRouteEntry =
+  | {
+      /** A dashboard path prefix, matched on whole path segments. */
+      prefix: string;
+      /** Holding ANY of these groups opens the route. */
+      anyOf: readonly OperatorPermissionGroup[];
+    }
+  | {
+      /** A dashboard path prefix, matched on whole path segments. */
+      prefix: string;
+      /** No feature group on purpose: BASE = any operator, ADMIN = the account admin only. */
+      access: "BASE" | "ADMIN";
+    };
 
 /**
- * Dashboard routes that belong to a feature group. A path with no entry (dashboard home, settings
- * hub, anything not listed) is open to every operator. The longest matching prefix wins, so a more
- * specific entry may narrow or widen its parent.
+ * Dashboard routes and who may open them. CLOSED WORLD: every top-level dashboard directory has an entry
+ * (apps/api/src/common/surface-inventory.spec.ts pins it), and a path with NO entry is UNKNOWN, not open to
+ * everyone (`routeAccess`). The longest matching prefix wins, so a more specific entry may narrow or widen its parent.
  */
 export const PERMISSION_ROUTE_MAP: readonly PermissionRouteEntry[] = [
   { prefix: "/orders", anyOf: ["ORDERS"] },
@@ -177,6 +189,21 @@ export const PERMISSION_ROUTE_MAP: readonly PermissionRouteEntry[] = [
   { prefix: "/finance/reports", anyOf: ["REPORTS"] },
   { prefix: "/bookkeeping", anyOf: ["FINANCE", "REPORTS"] },
   { prefix: "/analytics", anyOf: ["REPORTS"] },
+  // The page reads useInvoices({ shipped: true }) -> InvoicesController.findAll (FINANCE).
+  { prefix: "/shipments", anyOf: ["FINANCE"] },
+  // Product insights: ProductInsightsController.* (REPORTS).
+  { prefix: "/insights", anyOf: ["REPORTS"] },
+  // Group-free on purpose (any operator): home, the settings hub (its sub-pages /settings/restrictions and
+  // /settings/product-categories narrow to REGULATED above), the onboarding checklist and the app-install page.
+  { prefix: "/dashboard", access: "BASE" },
+  { prefix: "/settings", access: "BASE" },
+  { prefix: "/getting-started", access: "BASE" },
+  { prefix: "/get-the-app", access: "BASE" },
+  // Reads billing plans / subscription / usage / recommendation (UNGUARDED or BASE on the server). The page has no
+  // role check of its own; its writes (subscribe, upgrade, cancel ...) are ADMIN-only on the server, so BASE here.
+  { prefix: "/choose-plan", access: "BASE" },
+  // A bare client redirect to /vendor-bills (which carries FINANCE); the page itself refuses nobody, so BASE.
+  { prefix: "/purchases", access: "BASE" },
 ];
 
 function normalizePath(path: string): string {
@@ -186,17 +213,40 @@ function normalizePath(path: string): string {
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
 
-/**
- * The groups that open `path` (any one is enough), or `null` when the route is not tied to a group.
- * Matches the longest `PERMISSION_ROUTE_MAP` prefix on whole path segments, so `/orders/12` matches
- * `/orders` but `/ordersx` does not. Query string and hash are ignored.
- */
-export function permissionForPath(path: string): OperatorPermissionGroup[] | null {
+/** The access verdict for a dashboard path: a group gate, any-operator (BASE), admin-only (ADMIN), or no entry (UNKNOWN). */
+export type RouteAccess =
+  | { kind: "GROUPS"; anyOf: OperatorPermissionGroup[] }
+  | { kind: "BASE" }
+  | { kind: "ADMIN" }
+  | { kind: "UNKNOWN" };
+
+function matchRouteEntry(path: string): PermissionRouteEntry | null {
   const target = normalizePath(path);
   let best: PermissionRouteEntry | null = null;
   for (const entry of PERMISSION_ROUTE_MAP) {
     const hit = target === entry.prefix || target.startsWith(`${entry.prefix}/`);
     if (hit && (best === null || entry.prefix.length > best.prefix.length)) best = entry;
   }
-  return best ? [...best.anyOf] : null;
+  return best;
+}
+
+/**
+ * Who may open `path`. Matches the longest `PERMISSION_ROUTE_MAP` prefix on whole path segments, so `/orders/12`
+ * matches `/orders` but `/ordersx` does not. Query string and hash are ignored. A path with no entry is UNKNOWN
+ * (closed): callers treat it as not allowed.
+ */
+export function routeAccess(path: string): RouteAccess {
+  const entry = matchRouteEntry(path);
+  if (!entry) return { kind: "UNKNOWN" };
+  if ("anyOf" in entry) return { kind: "GROUPS", anyOf: [...entry.anyOf] };
+  return { kind: entry.access };
+}
+
+/**
+ * The groups that open `path` (any one is enough), or `null` when the route is not tied to a group (a BASE or ADMIN
+ * entry, or no entry). Unchanged for existing callers; use `routeAccess` to tell those cases apart.
+ */
+export function permissionForPath(path: string): OperatorPermissionGroup[] | null {
+  const access = routeAccess(path);
+  return access.kind === "GROUPS" ? access.anyOf : null;
 }
