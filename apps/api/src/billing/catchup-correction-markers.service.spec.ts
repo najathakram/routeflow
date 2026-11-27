@@ -129,6 +129,7 @@ function make(o: { monthly?: number; invoices?: Record<string, unknown>[] } = {}
       findUnique: jest.fn(async () => ({
         id: T,
         slug: "qa-acme",
+        class: "PRODUCTION",
         status: "ACTIVE",
         deletedAt: null,
       })),

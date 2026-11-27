@@ -99,6 +99,7 @@ export async function sendCustomerStatementEmail(
 
   const tenantId = deps.prisma.getTenantId();
   const result = await deps.emailService.send({
+    tenantId: tenantId,
     to: recipientEmail,
     subject: mail.subject,
     html: mail.html,

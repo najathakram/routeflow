@@ -31,5 +31,7 @@ export function unitsLabel(
   // Boxed: a piece count — `unit` is the box noun, so it must NOT be used here.
   if (u <= 0) return `${n} pcs`;
   const split = normalizeBoxesPieces({ qty: u, unitsPerBox: upb });
+  // Under one whole box the split only repeats the count ("21 pcs (21 pcs)"), so say it once (B1478).
+  if ((split.boxes ?? 0) <= 0) return `${n} pcs`;
   return `${n} pcs (${formatQtySplit({ qty: split.qty, boxes: split.boxes, pieces: split.pieces })})`;
 }

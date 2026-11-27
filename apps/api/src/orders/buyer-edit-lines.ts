@@ -1,6 +1,14 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
-import { normalizeBoxesPieces, round4, withinStaffOverrideTolerance } from "@routeflow/pricing";
+import {
+  buyerCreateLinePieces,
+  buyerLinePieces,
+  normalizeBoxesPieces,
+  round4,
+  withinStaffOverrideTolerance,
+} from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { denominationGate } from "./buyer-denomination";
+import { assertBuyerLinesWithinCap } from "./buyer-line-cap";
 import { carriedLineFor } from "./carry-line-category";
 import { foldTarget, liveTrioFor, type FoldTrio } from "./fold-target";
 // SA-1118 MUST-1: the pack-or-pieces decision lives in the pure `buyer-denomination` module (shared with the selling-limit mirror).
@@ -335,6 +343,7 @@ export function applyBuyerEditLines<T extends BuyerEditEntry>(
     );
     upbByProduct.set(id, Number(p.unitsPerBox ?? 0));
   }
+  const trace: number[] = [];
   const resolved = resolveBuyerEditLines({
     items,
     lineItems,
@@ -342,9 +351,91 @@ export function applyBuyerEditLines<T extends BuyerEditEntry>(
     upbByProduct,
     allowIdlessFallback: !dto.namesLines,
     role: "BUYER",
+    trace,
   });
+  assertResolvedBuyerLinesWithinCap(resolved, trace, lineItems, upbByProduct, !!dto.namesLines);
   // The resolver only adds `sourceLineId` and splits an entry in two copies of itself: same shape as `T`.
   items.splice(0, items.length, ...(resolved as unknown as T[]));
+}
+
+/**
+ * B1386 (SA-1285 section 1): each buyer ENTRY's resolved piece total against the cap, rise-only, before any write.
+ * The resolver may split one entry into a kept half and an added half (`trace` maps each output to its entry), so
+ * the halves are summed: the buyer sent one line. Pieces are read exactly as the write reads them (the same
+ * `denominationGate` per resolved entry, orders.service.ts updateOrderItems); the stored side is the entry's paired
+ * line (`sourceLineId`) in pieces. The client PATCH routes only: the cart fold never reaches this (`pairEditLines`).
+ */
+function assertResolvedBuyerLinesWithinCap(
+  resolved: ReadonlyArray<BuyerEditEntry>,
+  trace: ReadonlyArray<number>,
+  lineItems: ReadonlyArray<StoredEditLine>,
+  upbByProduct: ReadonlyMap<string, number>,
+  namesLines: boolean,
+): void {
+  const denom = denominationGate(lineItems, true, namesLines);
+  const byId = new Map(lineItems.map((l) => [l.id, l]));
+  // A read-only cap figure per entry (never written back): the piece counts of its resolved halves, and its line's.
+  const perEntry = new Map<number, { productId: string; halves: number[]; storedPieces: number }>();
+  resolved.forEach((out, i) => {
+    if (!out.productId) return; // an unlisted line carries no catalogue quantity
+    const upb = upbByProduct.get(out.productId) ?? 0;
+    const entry = perEntry.get(trace[i]) ?? {
+      productId: out.productId,
+      halves: [],
+      storedPieces: 0,
+    };
+    entry.halves.push(buyerLinePieces(Number(out.qty ?? 0), denom.isPieces(out), upb));
+    const own = out.sourceLineId ? byId.get(out.sourceLineId) : undefined;
+    if (own) entry.storedPieces = buyerLinePieces(Number(own.qty ?? 0), isBoxSplit(own), upb);
+    perEntry.set(trace[i], entry);
+  });
+  assertBuyerLinesWithinCap(
+    [...perEntry.values()].map(({ productId, halves, storedPieces }) => ({
+      productId,
+      pieces: halves.reduce((sum, p) => sum + p, 0),
+      storedPieces,
+    })),
+  );
+}
+
+/**
+ * B1386 (REG-B1386 M1-M3, supersedes SA-1285 section 3 "the cart fold does not cap"): a buyer's cart folded into an
+ * open order, judged on what `updateOrderItems`' replace write will store, rise-only against the line each folded item
+ * merges into. `foldMergeItems` returns the order's COMPLETE new line set: one item per existing line (carrying its
+ * `sourceLineId`) plus one per new bucket (no `sourceLineId`, stored pieces 0), and a quantity at a changed rate trio
+ * is already a separate item, so there are no halves to sum. Pieces are read as the write reads them: an item with a
+ * split counts boxes x pack + pieces (`buyerCreateLinePieces`, at the pack the fold resolved for it, else the live
+ * one); otherwise the same `denominationGate` the edit cap uses decides pieces or packs. A line that already held
+ * more than the cap may be resent but not raised, so an old oversized line elsewhere on the order never blocks a
+ * cart for another product. `pairEditLines` itself stays uncapped: this runs in the controller, before it.
+ */
+export function assertFoldedBuyerLinesWithinCap(
+  items: ReadonlyArray<Record<string, unknown>>,
+  lineItems: ReadonlyArray<StoredEditLine>,
+  packByProduct: ReadonlyMap<string, number>,
+): void {
+  const denom = denominationGate(lineItems, true, false);
+  const byId = new Map(lineItems.map((l) => [l.id, l]));
+  assertBuyerLinesWithinCap(
+    items.flatMap((item) => {
+      const productId = typeof item.productId === "string" ? item.productId : null;
+      if (!productId) return []; // an unlisted line carries no catalogue quantity
+      const live = packByProduct.get(productId) ?? 0;
+      const entry = {
+        productId,
+        qty: item.qty as number | undefined,
+        boxes: item.boxes as number | null | undefined,
+        pieces: item.pieces as number | null | undefined,
+      };
+      const hasSplit = (entry.boxes ?? 0) > 0 || (entry.pieces ?? 0) > 0;
+      const pieces = hasSplit
+        ? buyerCreateLinePieces({ ...entry, unitsPerBox: Number(item.unitsPerBox ?? 0) || live })
+        : buyerLinePieces(Number(entry.qty ?? 0), denom.isPieces(entry), live);
+      const own = typeof item.sourceLineId === "string" ? byId.get(item.sourceLineId) : undefined;
+      const storedPieces = own ? buyerLinePieces(Number(own.qty ?? 0), isBoxSplit(own), live) : 0;
+      return [{ productId, pieces, storedPieces }];
+    }),
+  );
 }
 
 /** Who is editing: the three replace paths share ONE pairing (row 373b). */

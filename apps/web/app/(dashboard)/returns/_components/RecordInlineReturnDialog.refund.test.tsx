@@ -258,6 +258,33 @@ async function refundFlow(q = quote({ paidMethods: ["CARD"] })) {
   return ctx;
 }
 
+/** W-1459 / B1465: the scroll box is the dialog body; the confirm button and the refund error sit in the fixed footer, not in it. */
+const inScrollBody = (el: HTMLElement) => el.closest(".overflow-y-auto") !== null;
+
+describe("fixed footer (B1465)", () => {
+  it("the confirm button is outside the scrolling body, in the dialog footer", async () => {
+    await toQuote(quote({ paidMethods: ["CARD"] }));
+    const confirm = confirmBtn(/^take back items/i);
+    expect(inScrollBody(confirm)).toBe(false);
+    expect(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /^cancel$/i }),
+    ).toBeInTheDocument();
+    expect(inScrollBody(screen.getByRole("button", { name: /^cancel$/i }))).toBe(false);
+  });
+
+  it("a refund error (role=alert) is outside the scrolling body too, beside Retry refund", async () => {
+    refundReturn.mockRejectedValueOnce(apiErr(409, "REFUND_EXCEEDS_CASH_PAID"));
+    await refundFlow(quote({ paidMethods: ["CASH"] }));
+    fireEvent.click(confirmBtn(/^take back items and refund/i));
+    await waitFor(() => expect(captureMutate).toHaveBeenCalledTimes(1));
+    captureOk();
+    await findLine(REFUND_COPY.exceedsCash);
+    expect(inScrollBody(screen.getByRole("alert"))).toBe(false);
+    expect(inScrollBody(screen.getByRole("button", { name: "Retry refund" }))).toBe(false);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+});
+
 describe("refund flow", () => {
   it("Train 4: once the refund is confirmed the success screen offers the slip for THAT return (auto-print follows the device preference)", async () => {
     refundReturn.mockResolvedValue({});

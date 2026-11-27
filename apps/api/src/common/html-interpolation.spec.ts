@@ -83,7 +83,7 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "ensureLayout :: params.html":
       "the safety net around a sender's own html (see wrapUnbrandedHtml)",
     "sendUnrecorded :: params.html": { reason: TRANSPORT, count: 5 },
-    "sendPlatform :: params.html": { reason: TRANSPORT, count: 2 },
+    "deliverPlatform :: params.html": { reason: TRANSPORT, count: 2 },
     "buildInvoiceEmail :: freeUnits": NUMBER,
     "sendSetPasswordEmail :: params.expiryHours": NUMBER,
     "sendEmailChangeLink :: params.expiryHours": NUMBER,
