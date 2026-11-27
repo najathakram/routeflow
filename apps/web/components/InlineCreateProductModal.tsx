@@ -1,11 +1,12 @@
 "use client";
 
+import { useCatalogWhenOpen } from "@/lib/api/catalog-when-open";
 import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { formatReceiptMoney, unitWords } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "@routeflow/types";
-import { useCreateProduct, useProducts } from "@/lib/api/products";
+import { useCreateProduct } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
 import { codedToastCopy } from "@/lib/generic-toast-copy";
@@ -129,7 +130,7 @@ export function InlineCreateProductModal({
   // Fetch every product (active + inactive) so the operator can pick any
   // standalone product as a parent — including ones they archived earlier
   // but want to revive as a variant root.
-  const { data: allProductsData } = useProducts({ limit: 0 });
+  const { data: allProductsData } = useCatalogWhenOpen(isOpen);
   const parentCandidates = (allProductsData?.data ?? []).filter((p: any) => !p.parentProductId);
 
   // Derived: the selected parent product object (for name preview)

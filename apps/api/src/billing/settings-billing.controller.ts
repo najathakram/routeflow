@@ -26,6 +26,7 @@ import { ProrationService } from "./proration.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
 import { BillingService } from "./billing.service";
 import { BillingPaymentsService } from "./billing-payments.service";
+import { isLivePaymentsRefusal } from "./live-payments-wall";
 import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
 import { webBaseUrl } from "../config/web-base-url";
@@ -34,15 +35,14 @@ import {
   API_BILLING_RETURN_PATHS,
   billingReturnUrl,
 } from "./billing-return-paths";
-import {
-  inviteOnlyCheckoutAllowed,
-  INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
-} from "./plan-catalog.constants";
+import { selfPayForViewer } from "./self-checkout-eligibility";
 
 import { PermissionBase } from "../auth/permissions/permission.decorators";
 interface AuthUser {
   tenantId: string | null;
   sub?: string;
+  /** The platform admin's id in a support session (the token's `impersonatedBy`). */
+  impersonatedBy?: string;
 }
 
 /**
@@ -86,7 +86,17 @@ export class SettingsBillingController {
   async getSubscription(@CurrentUser() user: AuthUser & { role?: string }) {
     // S3: the card, the next charge and the amount are a workspace admin's; an operator keeps the contact's e-mail (who to ask) and the owed marker only.
     const view = await this.subscription.getSubscription(this.tenantIdOf(user));
-    return trimBillingViewForRole(view, user.role);
+    // SA-1547: Pay now is offered to a workspace admin only, never from a support session (the route refuses one).
+    const shaped = view.selfPay
+      ? {
+          ...view,
+          selfPay: selfPayForViewer(view.selfPay, {
+            role: user.role,
+            impersonated: Boolean(user.impersonatedBy),
+          }),
+        }
+      : view;
+    return trimBillingViewForRole(shaped, user.role);
   }
 
   @PermissionBase("cross-cutting lookup other areas need (spec-operator-permissions §4.3)")
@@ -231,10 +241,10 @@ export class SettingsBillingController {
   }
 
   /**
-   * R2.9: a Stripe Checkout session for the tenant's OWN pinned plan/price — e.g. an
-   * invited LITE tenant completing its first payment (see SubscriptionService.getSubscription's
-   * `paymentRequired`). DELIBERATELY takes no request body: accepting a planKey here would let
-   * a caller check out into an arbitrary plan, defeating the invite-only structural guarantee.
+   * R2.9 / SA-1547: Pay now. A Stripe Checkout session for the tenant's OWN pinned plan/price, offered only when the
+   * server's own verdict (`selfPay.eligible`, self-checkout-eligibility.ts) says so: an invited LITE business that is not
+   * ACTIVE, or a trial-expired READ_ONLY one. A TRIAL with days left is refused (B1). DELIBERATELY takes no request body:
+   * accepting a planKey here would let a caller check out into an arbitrary plan (a plan pick is the card-first chunk 2).
    * Switching plans still goes through subscribe/upgrade/downgrade above.
    */
   @Post("subscription/checkout")
@@ -244,11 +254,13 @@ export class SettingsBillingController {
   @ApiOperation({ summary: "Start a Stripe Checkout session for the tenant's own pinned plan" })
   async createCheckout(@CurrentUser() user: AuthUser) {
     const tenantId = this.tenantIdOf(user);
-    const { planKey } = await this.subscription.getSubscription(tenantId);
-    if (!inviteOnlyCheckoutAllowed(planKey, INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT)) {
-      throw new ForbiddenException(
-        "Self-serve checkout is currently disabled for this plan — contact us to complete your subscription.",
-      );
+    const { selfPay } = await this.subscription.getSubscription(tenantId);
+    if (!selfPay?.eligible) {
+      throw new ForbiddenException({
+        message:
+          "Online payment is not available for this workspace right now - contact us to complete your subscription.",
+        reason: selfPay?.reason ?? "unavailable",
+      });
     }
     return this.billing.createCheckoutSession(tenantId, { surface: "TENANT_SELF" });
   }
@@ -273,6 +285,8 @@ export class SettingsBillingController {
     ]);
     const portalUrl = portal.status === "fulfilled" ? portal.value.portalUrl : null;
     const hostedInvoiceUrl = pay.status === "fulfilled" ? pay.value : null;
+    // SA-1547 S2: the wall refused the portal, so the hosted invoice URL (a Stripe payment page) is withheld too
+    if (portal.status === "rejected" && isLivePaymentsRefusal(portal.reason)) throw portal.reason;
     if (portalUrl || hostedInvoiceUrl) return { portalUrl, hostedInvoiceUrl };
     // Neither is available. A workspace with no Stripe customer (manual / external payment) is a clean 400; a Stripe
     // outage is a retryable 503. Both coded, never a bare 500.

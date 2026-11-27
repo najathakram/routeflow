@@ -409,7 +409,6 @@ export function FulfillmentSettingsTab() {
           e.preventDefault();
           opener.current?.focus();
         }}
-        scroll
         footer={
           review && (
             <>

@@ -190,6 +190,7 @@ export class MailboxAlertService implements OnModuleInit, OnModuleDestroy {
       emailed.add(to.toLowerCase());
       try {
         const result = await this.email.sendMailboxRevokedNotice({
+          tenantId: change.tenantId,
           to,
           username: admin.username,
           accountEmail: change.accountEmail,

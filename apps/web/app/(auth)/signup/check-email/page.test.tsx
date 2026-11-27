@@ -12,7 +12,9 @@ import CheckEmailPage from "./page";
 
 let mockSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
   useSearchParams: () => mockSearchParams,
+  usePathname: () => "/signup/check-email",
 }));
 
 describe("CheckEmailPage — emailSent=false and resend-failed branches (PR #778)", () => {

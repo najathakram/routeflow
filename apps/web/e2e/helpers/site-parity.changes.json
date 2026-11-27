@@ -1,6 +1,699 @@
 [
+  {
+    "key": "/pricing|desktop",
+    "row": "details|What is {{brand:name}}?",
+    "kind": "removed",
+    "req": "R11"
+  },
+  {
+    "key": "/pricing|desktop",
+    "row": "details|What is {{brand:name}} for?",
+    "kind": "added",
+    "req": "R11"
+  },
+  {
+    "key": "/pricing|phone",
+    "row": "details|What is {{brand:name}}?",
+    "kind": "removed",
+    "req": "R11"
+  },
+  {
+    "key": "/pricing|phone",
+    "row": "details|What is {{brand:name}} for?",
+    "kind": "added",
+    "req": "R11"
+  },
   { "key": "/|desktop", "row": "id|sy-h", "kind": "removed", "req": "R8" },
   { "key": "/|desktop", "row": "id|sy-ph", "kind": "added", "req": "R8" },
   { "key": "/|phone", "row": "id|sy-h", "kind": "removed", "req": "R8" },
-  { "key": "/|phone", "row": "id|sy-ph", "kind": "added", "req": "R8" }
+  { "key": "/|phone", "row": "id|sy-ph", "kind": "added", "req": "R8" },
+  { "key": "/|desktop", "row": "details|What is {{brand:name}}?", "kind": "removed", "req": "R11" },
+  {
+    "key": "/|desktop",
+    "row": "details|What is {{brand:name}} for?",
+    "kind": "added",
+    "req": "R11"
+  },
+  { "key": "/|desktop", "row": "id|rfwsd", "kind": "removed", "req": "R18" },
+  { "key": "/|phone", "row": "details|What is {{brand:name}}?", "kind": "removed", "req": "R11" },
+  { "key": "/|phone", "row": "details|What is {{brand:name}} for?", "kind": "added", "req": "R11" },
+  { "key": "/|phone", "row": "id|rfwsd", "kind": "removed", "req": "R18" },
+  { "key": "/|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/pricing|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/product|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/landing|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/company|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/contact|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/getting-started|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/does-and-doesnt|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/data-in-and-out|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/security|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/privacy|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/terms|desktop", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/pricing|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/product|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/landing|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/company|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/contact|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/getting-started|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/does-and-doesnt|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/data-in-and-out|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/security|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/privacy|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/terms|phone", "row": "id|brand-tokens", "kind": "added", "req": "R14" },
+  { "key": "/pricing|desktop", "row": "a|#plans|Skip to plans", "kind": "added", "req": "R12" },
+  { "key": "/pricing|desktop", "row": "id|plans", "kind": "added", "req": "R12" },
+  { "key": "/pricing|phone", "row": "a|#plans|Skip to plans", "kind": "added", "req": "R12" },
+  { "key": "/pricing|phone", "row": "id|plans", "kind": "added", "req": "R12" },
+  {
+    "key": "/|desktop",
+    "row": "details|Buy from your suppliers",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|Let stores order online",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|Run routes and deliveryIf you deliver",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|See your numbers",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|See your stock",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|Sell at the counter",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|Sell by box or piece",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|Send invoices and get paid",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|Set each store’s price",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|Take orders",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "details|Take returns",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|journey",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|jr-1",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|jr-2",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|jr-3",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|jr-4",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|jr-h",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|one-system",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|pb-h",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|problem",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|shot",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|top",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|0|Purchases",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|10|Box or piece",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|11|Each buyer’s price",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|12|Store ordering",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|13|Counter sales",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|14|Returns",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|1|Supplier bills",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|2|Inventory",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|3|Orders",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|4|Routes",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|5|Delivery",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|6|Invoices",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|7|Payments",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|8|Customers",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "tile|9|Reports",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|desktop",
+    "row": "a|#stores|Skip",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "the story's Skip link to #stores"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|delivery",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "new section id on the rebuilt home page"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|dl-h",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "new section id on the rebuilt home page"
+  },
+  {
+    "key": "/|desktop",
+    "row": "id|story",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "new section id on the rebuilt home page"
+  },
+  {
+    "key": "/privacy|desktop",
+    "row": "a|/|Return to {{brand:name}}",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
+  },
+  {
+    "key": "/privacy|desktop",
+    "row": "a|/|Return to {{brand:formerly}}",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
+  },
+  {
+    "key": "/terms|desktop",
+    "row": "a|/|Return to {{brand:name}}",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
+  },
+  {
+    "key": "/terms|desktop",
+    "row": "a|/|Return to {{brand:formerly}}",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|Buy from your suppliers",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|Let stores order online",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|Run routes and deliveryIf you deliver",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|See your numbers",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|See your stock",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|Sell at the counter",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|Sell by box or piece",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|Send invoices and get paid",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|Set each store’s price",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|Take orders",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "details|Take returns",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the use-case accordion is gone: its facts moved into the story's part list (#story .stx-parts)"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|journey",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|jr-1",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|jr-2",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|jr-3",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|jr-4",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|jr-h",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|one-system",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|pb-h",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|problem",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|shot",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|top",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "section dropped: the page opens with #story, the repeated sections are gone"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|0|Purchases",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|10|Box or piece",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|11|Each buyer’s price",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|12|Store ordering",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|13|Counter sales",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|14|Returns",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|1|Supplier bills",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|2|Inventory",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|3|Orders",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|4|Routes",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|5|Delivery",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|6|Invoices",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|7|Payments",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|8|Customers",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "tile|9|Reports",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "the canvas wheel's tile buttons are gone; the 15 parts are named in the story ring's list"
+  },
+  {
+    "key": "/|phone",
+    "row": "a|#stores|Skip",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "the story's Skip link to #stores"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|delivery",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "new section id on the rebuilt home page"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|dl-h",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "new section id on the rebuilt home page"
+  },
+  {
+    "key": "/|phone",
+    "row": "id|story",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "new section id on the rebuilt home page"
+  },
+  {
+    "key": "/privacy|phone",
+    "row": "a|/|Return to {{brand:name}}",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
+  },
+  {
+    "key": "/privacy|phone",
+    "row": "a|/|Return to {{brand:formerly}}",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
+  },
+  {
+    "key": "/terms|phone",
+    "row": "a|/|Return to {{brand:name}}",
+    "kind": "removed",
+    "req": "W-1265",
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
+  },
+  {
+    "key": "/terms|phone",
+    "row": "a|/|Return to {{brand:formerly}}",
+    "kind": "added",
+    "req": "W-1265",
+    "why": "MASTER DRIFT, not this PR's work: the legal pages' back link prints the previous name while the brand name stays on the old text, so master's own T12 is red on these rows; no page change here, kept so T12 can pass"
+  }
 ]

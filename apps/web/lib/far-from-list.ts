@@ -8,6 +8,21 @@
  */
 import { formatMoney } from "./format";
 
+/**
+ * The one skip rule for every screen that shows the sentence (B1423, ruling SA-1405): a price the system set (a
+ * contract, layered or promo price, a tier price just filled in) says nothing until someone types a price this
+ * session. Returns the list price to compare with, or null for "say nothing" (also when there is no list price).
+ */
+export function farFromListReference(
+  listPrice: number | null | undefined,
+  systemSet: boolean,
+  typed: boolean,
+): number | null {
+  const list = Number(listPrice ?? 0);
+  if (!(list > 0)) return null;
+  return systemSet && !typed ? null : list;
+}
+
 export function farFromListText(unitPrice: number, listPrice: number): string | null {
   if (!(listPrice > 0) || !(unitPrice >= 0)) return null;
   if (unitPrice >= listPrice * 0.5 && unitPrice <= listPrice * 2) return null;

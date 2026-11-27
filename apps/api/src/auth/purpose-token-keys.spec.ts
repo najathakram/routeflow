@@ -84,7 +84,7 @@ async function mintConnectState(): Promise<string> {
   const prisma: any = createMockPrisma();
   prisma.tenantStripeConnect = { upsert: jest.fn().mockResolvedValue({}) };
   prisma.user.findFirst.mockResolvedValue({ email: "a@acme.example", role: "TENANT_ADMIN" });
-  prisma.tenant.findUnique.mockResolvedValue({ name: "Acme" });
+  prisma.tenant.findUnique.mockResolvedValue({ name: "Acme", class: "PRODUCTION" });
   const mod = await Test.createTestingModule({
     providers: [
       StripeConnectService,

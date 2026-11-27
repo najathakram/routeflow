@@ -1,0 +1,104 @@
+/* The four small scenes of the owner's motion sketch: a store orders, a customer buys at the counter, a driver delivers,
+   the owner is done. Drawn as inline SVG; JS (js/home-scenes.js) moves them. Colours are jobs from rf-graphics.css, never typed here. */
+.dl{background:var(--rf-white)}
+.sc-two{display:grid;gap:clamp(28px,5vw,88px);align-items:center;padding:clamp(100px,11vw,150px) 0}
+.sc-copy .sub{margin-top:14px}
+.sc-copy .ct-note{margin-top:16px}
+.sc-ill{margin:0;width:100%;max-width:560px;justify-self:center;padding:clamp(10px,2vw,28px);background:var(--rf-white);border-radius:var(--rf-r-card);box-shadow:var(--rf-ring)}
+.band-white .sc-ill{background:var(--rf-bone)}
+.sc-ill svg{display:block;width:100%;height:auto;overflow:hidden}
+.sc-ill text{font-family:var(--rf-font)}
+/* The art is only drawn once the script has put every part in its place. */
+.sc-ill:not(.is-set){visibility:hidden}
+html:not(.js-motion) .sc-ill{display:none}
+@media (min-width:900px){
+  .sc-two{grid-template-columns:1fr 1fr}
+  .sc-two--flip .sc-copy{order:2}
+  .sc-two--flip .sc-ill{order:1}
+}
+@media (max-width:899.98px){
+  .sc-two{padding:60px 0}
+  .sc-ill{max-width:420px}
+}
+
+/* Scene colours */
+:root{
+  --sc-mid:color-mix(in srgb,var(--rf-steel) 45%,var(--rf-white));
+  --sc-steel-d:color-mix(in srgb,var(--rf-steel) 70%,var(--rf-ink));
+  --sc-gray:color-mix(in srgb,var(--rf-steel) 55%,var(--rf-white));
+  --sc-skin-b:color-mix(in srgb,var(--rf-skin-a) 80%,var(--rf-ink));--sc-skin-c:color-mix(in srgb,var(--rf-skin-a) 55%,var(--rf-ink));--sc-skin-d:color-mix(in srgb,var(--rf-skin-a) 92%,var(--rf-ink));
+}
+.sc-g{fill:none;stroke:var(--sc-mid);stroke-width:3;stroke-linecap:round}
+.sc-f-white{fill:var(--rf-white)}.sc-f-bone{fill:var(--rf-bone)}.sc-f-line{fill:var(--rf-line)}.sc-f-mid{fill:var(--sc-mid)}
+.sc-f-ink{fill:var(--rf-ink)}.sc-f-steel{fill:var(--rf-steel)}.sc-f-sell{fill:var(--rf-wh-sell-2)}
+.sc-f-box{fill:var(--rf-box-front)}.sc-f-tape{fill:var(--rf-box-top)}.sc-f-side{fill:var(--rf-box-side)}
+.sc-f-ok{fill:var(--rf-paid)}.sc-f-warn{fill:var(--rf-pending-bg)}.sc-f-wall{fill:var(--rf-wh-work-wall)}
+.sc-f-beam{fill:var(--rf-overdue)}
+.sc-s-line{stroke:var(--rf-line)}.sc-s-mid{stroke:var(--sc-mid)}.sc-s-ink{stroke:var(--rf-ink)}.sc-s-beam{stroke:var(--rf-overdue)}
+.sc-s-ok{stroke:var(--rf-paid)}.sc-s-white{stroke:var(--rf-white)}.sc-s-glass{stroke:var(--rf-line)}
+.sc-t-ink{fill:var(--rf-ink)}.sc-t-white{fill:var(--rf-white)}.sc-t-warn{fill:var(--rf-pending)}
+.sc-i0{fill:var(--rf-ink)}.sc-i1{fill:var(--rf-steel)}.sc-i2{fill:var(--rf-box-front)}.sc-i3{fill:var(--rf-wh-sell-2)}
+.sc-i4{fill:var(--rf-box-side)}.sc-i5{fill:var(--rf-wh-work-wall)}
+.sc-ring-a{fill:none;stroke:var(--rf-steel)}.sc-ring-b{fill:none;stroke:var(--rf-box-front)}.sc-f-hub{fill:var(--rf-ink)}
+.sc-note{fill:var(--rf-pending-bg)}
+/* A person: the colours come from the cast's own custom properties. */
+.sc-pp{--pp-shoe:var(--rf-ink)}
+[data-person="store"]{--pp-shirt:var(--rf-steel);--pp-dark:var(--sc-steel-d);--pp-pants:var(--rf-ink);--pp-skin:var(--sc-skin-b);--pp-hair:var(--rf-hair)}
+[data-person="clerk"]{--pp-shirt:var(--rf-wh-sell-2);--pp-dark:var(--rf-ink);--pp-pants:var(--rf-ink);--pp-skin:var(--rf-skin-a);--pp-hair:var(--rf-hair)}
+[data-person="walkin"]{--pp-shirt:var(--rf-box-front);--pp-dark:var(--rf-box-side);--pp-pants:var(--rf-steel);--pp-skin:var(--sc-skin-c);--pp-hair:var(--rf-ink)}
+[data-person="driver"]{--pp-shirt:var(--rf-ink);--pp-dark:var(--rf-ink-press);--pp-pants:var(--rf-steel);--pp-skin:var(--sc-skin-d);--pp-hair:var(--rf-hair)}
+[data-person="owner"]{--pp-shirt:var(--rf-ink);--pp-dark:var(--rf-ink-press);--pp-pants:var(--rf-steel);--pp-skin:var(--sc-skin-d);--pp-hair:var(--sc-gray)}
+.pp-shirt{fill:var(--pp-shirt)}.pp-dark-s{fill:none;stroke:var(--pp-dark)}.pp-shirt-s{fill:none;stroke:var(--pp-shirt)}
+.pp-pants{fill:var(--pp-pants)}.pp-skin{fill:var(--pp-skin)}.pp-hair{fill:var(--pp-hair)}.pp-shoe{fill:var(--pp-shoe)}
+.pp-apron{fill:var(--rf-bone)}.pp-cap{fill:var(--rf-steel)}.pp-brim{fill:var(--sc-steel-d)}
+.pp-eye{fill:var(--rf-ink)}.pp-mouth{fill:none;stroke:var(--rf-ink);stroke-width:1.6;stroke-linecap:round}
+.pp-scr{fill:var(--sc-mid)}.pp-scr-on{fill:var(--rf-box-top)}.pp-phone{fill:var(--rf-ink)}
+.pp-opaque{opacity:.82}
+
+/* The story: the sketch's one wheel and one order drawn as objects, scrubbed with the scroll. It is also the opening of the page. */
+.stx{position:relative}
+.stx-grid{display:grid;gap:clamp(20px,4vw,64px);align-items:center;padding:clamp(60px,9vw,120px) 0}
+.stx-caps{display:grid;gap:clamp(36px,5vw,64px)}
+.stx-cap h1,.stx-cap h2{margin-top:10px;font-size:clamp(28px,4.2vw,64px);line-height:1.04;letter-spacing:-.035em;text-wrap:balance}
+.stx-cap h1{font-size:clamp(34px,5.2vw,72px)}
+.stx-cap .sub{margin-top:14px}
+.stx-art{margin:0;display:none}
+.stx-svg{display:block;width:100%;height:100%;overflow:visible}
+.stx-svg text{font-family:var(--rf-font)}
+.stx-steps,.stx-prog,.stx-skip{display:none}
+.stx-cap .hx-cta{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px;margin-top:22px}
+.stx-cap .does{display:flex;flex-wrap:wrap;gap:8px 18px;list-style:none;margin:18px 0 0;padding:16px 0 0;border-top:1.5px solid var(--rf-line)}
+.stx-cap .does li{font-weight:600;font-size:15px;color:var(--rf-ink)}
+.stx-parts{width:min(1200px,100% - 48px);margin:0 auto;padding:0 0 clamp(40px,6vw,80px)}
+.rg-top{fill:var(--rf-white);stroke:var(--rf-line);stroke-width:1.2}
+.rg-wall{fill:var(--rf-wh-work-wall)}.rg-wall.i{fill:var(--rf-wh-sell-wall)}
+.rg-col{fill:var(--rf-steel)}.rg-col.i{fill:var(--rf-ink)}
+.rg-ic{fill:none;stroke:var(--rf-steel);stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}
+.rg-ic.lit{stroke:var(--rf-white)}
+.sc-t-steel{fill:var(--rf-steel)}.sc-t-bad{fill:var(--rf-overdue)}.sc-s-bad{stroke:var(--rf-overdue)}
+.sc-note-a{fill:var(--rf-paid-bg)}.sc-note-b{fill:var(--rf-pending-bg)}.sc-lab{opacity:.85}
+.js-motion .stx{height:600vh;height:600svh}
+.js-motion .stx-pin{position:sticky;top:var(--rf-header-h,64px);height:calc(100vh - var(--rf-header-h,64px));height:calc(100svh - var(--rf-header-h,64px));overflow:hidden}
+.js-motion .stx-grid{height:100%;padding:0;grid-template-rows:minmax(0,46fr) minmax(0,54fr)}
+.js-motion .stx-caps{position:relative;display:block}
+.js-motion .stx-cap{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;opacity:0;visibility:hidden}
+.js-motion .stx-cap[data-first]{opacity:1;visibility:visible}
+.js-motion .stx-art{display:block;min-height:0;padding:0 8px 56px}
+.js-motion .stx-parts{display:none}
+.js-motion .stx-skip{display:block;position:absolute;right:24px;bottom:18px;font-size:15px;font-weight:600;color:var(--rf-ink);text-decoration:underline;text-underline-offset:3px}
+.js-motion .stx-prog{display:block;position:absolute;left:0;right:0;top:0;height:4px;background:var(--rf-line)}
+.js-motion .stx-prog b{display:block;height:100%;background:var(--rf-steel);transform-origin:0 50%;transform:scaleX(0)}
+.js-motion .stx-steps{display:flex;position:absolute;left:24px;bottom:14px;gap:8px;margin:0;padding:0;list-style:none}
+.js-motion .stx-steps li{display:flex;align-items:center;gap:8px;padding:6px;border-radius:999px;font-weight:600;font-size:0;color:var(--rf-steel);background:var(--rf-bone)}
+.js-motion .stx-steps i{font-style:normal;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font:700 12px/1 var(--rf-font);background:var(--rf-line);color:var(--rf-ink)}
+.js-motion .stx-steps li.done i{background:var(--rf-line);color:var(--rf-ink)}
+.js-motion .stx-steps li.on{background:var(--rf-white);box-shadow:var(--rf-ring);color:var(--rf-ink);font-size:15px;padding:6px 16px 6px 6px}
+.js-motion .stx-steps li.on i{background:var(--rf-line);color:var(--rf-ink)}
+@media (max-width:899.98px){.js-motion .stx-cap .does{display:none}}
+@media (min-width:900px){
+  .js-motion .stx-grid{grid-template-rows:none;grid-template-columns:minmax(0,46fr) minmax(0,54fr)}
+  .js-motion .stx-art{padding:40px 0 70px}
+  .js-motion .stx-steps{left:max(24px,calc((100vw - 1200px) / 2));bottom:28px}
+}
+/* print: the words show as the no-script page does; the scroll story's inline hides must not reach paper */
+@media print{.stx-caps,.stx-caps *,.stx-parts,.stx-parts *{opacity:1!important;visibility:visible!important;transform:none!important}}

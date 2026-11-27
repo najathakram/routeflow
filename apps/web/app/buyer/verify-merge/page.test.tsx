@@ -19,6 +19,7 @@ jest.mock("axios", () => ({
 
 let mockSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
   useSearchParams: () => mockSearchParams,
 }));
 

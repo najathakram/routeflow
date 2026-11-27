@@ -195,10 +195,9 @@ describe("InvoicesService — B1385 a draft payment is not credit", () => {
       });
 
     it("1a: a STRIPE_SETTLE DRAFT with a leftover is still refused (the refusal does not ride the exemption)", async () => {
-      const err: any = await write({ status: "DRAFT" }, settle).catch((e: unknown) => e);
-      expect(err.getResponse()).toEqual(
-        expect.objectContaining({ code: API_ERROR_CODES.DRAFT_PAYMENT_HAS_EXCESS }),
-      );
+      await expect(write({ status: "DRAFT" }, settle)).rejects.toMatchObject({
+        response: expect.objectContaining({ code: API_ERROR_CODES.DRAFT_PAYMENT_HAS_EXCESS }),
+      });
       nothingWritten();
     });
 

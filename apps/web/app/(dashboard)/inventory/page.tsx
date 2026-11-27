@@ -1788,10 +1788,13 @@ export default function InventoryPage() {
                         const state = stockState(s);
                         const stockColor =
                           state === "ok" ? "text-navy/70" : STOCK_TEXT_CLASS[state];
-                        const stockLabel =
-                          Number(s.currentStock) % 1 === 0
-                            ? Number(s.currentStock).toFixed(0)
-                            : Number(s.currentStock).toFixed(2);
+                        // Same label as the table: a boxed product's stock is PIECES, never
+                        // printed next to its box noun (B1475).
+                        const stockLabel = unitsLabel(
+                          Number(s.currentStock),
+                          s.unitsPerBox,
+                          s.unit,
+                        );
                         return (
                           <li
                             key={s.id}
@@ -1835,7 +1838,7 @@ export default function InventoryPage() {
                                   stockColor,
                                 )}
                               >
-                                {stockLabel} {s.unit}
+                                {stockLabel}
                               </p>
                             </button>
                             {/* Same action set as the table row, plus the product link. */}

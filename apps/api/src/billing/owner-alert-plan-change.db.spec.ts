@@ -3,6 +3,7 @@
  * REAL OwnerAlertService on Postgres (only the mail transport is a fake). The decision lives in the service, after each commit:
  *
  *   F24   a trial picks a plan with no card            one mail, naming the plan and cycle
+ *   F24h  an active monthly account picks ANNUAL       409, no mail, row unchanged (B1406)
  *   F24b  an active account upgrades                   one mail
  *   F24c  it schedules a downgrade, cancels, undoes    one mail each
  *   F24d  an account with a Stripe subscription        no mail
@@ -17,6 +18,7 @@ import { Pool } from "pg";
 import { PrismaClient, TenantClass, TenantStatus } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { OwnerAlertService } from "../email/owner-alert.service";
 import { dropPublishedCatalog, ensurePublishedCatalog } from "../testing/ensure-published-catalog";
 import { BillingEventService } from "./billing-event.service";
@@ -157,11 +159,18 @@ describeDb("W1 owner alerts on plan changes (real Postgres)", () => {
       expect(firstLine()).toMatch(/picked Starter, billed monthly\. No card was taken\.$/);
     });
 
-    it("F24h: an active account switches monthly to annual -> one mail naming the new cycle", async () => {
+    // B1406: subscribe() never enters a year, so the positive "one mail naming the new cycle" case moves to PR-6's red-first list (SA-1304 BP-1 test ruling).
+    it("F24h: an active monthly account picks ANNUAL -> 409, no mail, the row is unchanged", async () => {
       const id = await tenantIn("ACTIVE", { planKey: "STARTER", currentPlan: "STARTER" });
-      await mutations.subscribe(id, { planKey: "STARTER", cycle: "ANNUAL" as any });
-      expect(mails()).toHaveLength(1);
-      expect(firstLine()).toMatch(/billed annually/);
+      const before = await subRow(id);
+      await expect(
+        mutations.subscribe(id, { planKey: "STARTER", cycle: "ANNUAL" as any }),
+      ).rejects.toMatchObject({
+        status: 409,
+        response: expect.objectContaining({ code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED }),
+      });
+      expect(mails()).toHaveLength(0);
+      expect(await subRow(id)).toEqual(before);
     });
 
     it("F24b: an active account upgrades -> one mail naming the new plan", async () => {

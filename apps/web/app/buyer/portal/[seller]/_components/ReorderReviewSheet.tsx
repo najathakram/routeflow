@@ -54,7 +54,6 @@ export function ReorderReviewSheet({
       }}
       title="Review your order"
       className="max-w-lg"
-      scroll
     >
       {template && (
         <ReviewBody

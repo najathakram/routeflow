@@ -4,10 +4,11 @@ import { Modal } from "@routeflow/ui/web";
 
 /**
  * `Modal` is centred with a -translate-y-1/2, so a dialog taller than the viewport spills off both
- * edges and its header X / footer buttons become unreachable. `scroll` is the OPT-IN cap. jsdom has
- * no layout, so this pins the structure that matters: opt-in caps the height and scrolls only the
- * body (X and footer outside the scroller); the DEFAULT is untouched, because a default scroll
- * container would clip absolutely-positioned typeaheads inside existing dialogs.
+ * edges and its header X / footer buttons become unreachable. SA-1414 / B1444: `scroll` is ON by
+ * default. jsdom has no layout, so this pins the structure that matters: the default caps the
+ * height and scrolls only the body (X and footer outside the scroller), and `scroll={false}` is
+ * the pinned opt-out for a body with an inline absolute list, its own height cap, or a full-height
+ * layout (lib/modal-scroll-optout.census.test.ts lists every site).
  */
 const tall = (scroll?: boolean) =>
   render(
@@ -16,9 +17,9 @@ const tall = (scroll?: boolean) =>
     </Modal>,
   );
 
-describe("Modal scroll (opt-in)", () => {
-  it("scroll: caps the height and scrolls only the body, never the header X or footer", () => {
-    tall(true);
+describe("Modal scroll (default on, B1444)", () => {
+  it("default: caps the height and scrolls only the body, never the header X or footer", () => {
+    tall();
     expect(screen.getByRole("dialog").className).toMatch(/max-h-\[92vh\]/);
     const scroller = screen.getByText("body").parentElement as HTMLElement;
     expect(scroller.className).toMatch(/overflow-y-auto/);
@@ -26,8 +27,13 @@ describe("Modal scroll (opt-in)", () => {
     expect(scroller.contains(screen.getByRole("button", { name: "Save" }))).toBe(false);
   });
 
-  it("default: no height cap and no scroll container (nothing that could clip a dropdown)", () => {
-    tall();
+  it("an explicit scroll still scrolls", () => {
+    tall(true);
+    expect(screen.getByRole("dialog").className).toMatch(/max-h-\[92vh\]/);
+  });
+
+  it("scroll={false}: no height cap and no scroll container (nothing that could clip a dropdown)", () => {
+    tall(false);
     expect(screen.getByRole("dialog").className).not.toMatch(/max-h-|overflow-/);
     expect((screen.getByText("body").parentElement as HTMLElement).className).not.toMatch(
       /overflow-/,

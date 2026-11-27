@@ -216,6 +216,8 @@ export class OwnerAlertService {
       to.map(async (address) => {
         try {
           const res = await this.email.send({
+            // a platform owner alert: it is about the platform, not a business.
+            tenantId: null,
             to: address,
             subject: mail.subject,
             html: mail.html,

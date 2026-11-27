@@ -1,10 +1,11 @@
 "use client";
 
+import { useCatalogWhenOpen } from "@/lib/api/catalog-when-open";
 import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Search, X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
-import { useProducts } from "@/lib/api/products";
+
 import { displayProductName } from "@/lib/product-display";
 import {
   useTrackedCategories,
@@ -28,7 +29,7 @@ interface Props {
  */
 export function AssignProductsModal({ isOpen, onClose, category }: Props) {
   const { toast } = useToast();
-  const { data: productsData, isLoading } = useProducts({ limit: 0 });
+  const { data: productsData, isFetching } = useCatalogWhenOpen(isOpen);
   const { data: categories = [] } = useTrackedCategories();
   const assign = useAssignProductsToCategory();
   const unassign = useUnassignProductsFromCategory();
@@ -48,16 +49,20 @@ export function AssignProductsModal({ isOpen, onClose, category }: Props) {
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [search, setSearch] = React.useState("");
 
-  // Seed the selection from current membership ONCE per open (after products load).
+  // Seed the selection from current membership ONCE per open, after the open-time fetch SETTLES
+  // (not merely after data exists: a reopen finds the cache stale and would seed from it, so Save
+  // with no change would unassign a product that joined the category meanwhile).
   // Guarded by a ref so a later products refetch (e.g. our own save invalidation)
   // doesn't clobber the operator's in-progress checkboxes.
   const seeded = React.useRef(false);
+  const [ready, setReady] = React.useState(false);
   React.useEffect(() => {
     if (!isOpen) {
       seeded.current = false;
+      setReady(false);
       return;
     }
-    if (seeded.current || !category || isLoading) return;
+    if (seeded.current || !category || isFetching) return;
     setSelected(
       new Set<string>(
         products.filter((p: any) => p.trackedCategoryId === category.id).map((p: any) => p.id),
@@ -65,7 +70,8 @@ export function AssignProductsModal({ isOpen, onClose, category }: Props) {
     );
     setSearch("");
     seeded.current = true;
-  }, [isOpen, category, products, isLoading]);
+    setReady(true);
+  }, [isOpen, category, products, isFetching]);
 
   if (!isOpen || !category) return null;
 
@@ -148,7 +154,7 @@ export function AssignProductsModal({ isOpen, onClose, category }: Props) {
         </div>
 
         <div className="min-h-[8rem] flex-1 overflow-y-auto px-3 py-2">
-          {isLoading ? (
+          {!ready ? (
             <div className="h-24 animate-pulse rounded-lg bg-surface-raised" />
           ) : visible.length === 0 ? (
             <p className="py-8 text-center text-sm text-navy/60">No products match.</p>
@@ -191,6 +197,7 @@ export function AssignProductsModal({ isOpen, onClose, category }: Props) {
           <Button
             type="button"
             onClick={handleSave}
+            disabled={!ready}
             loading={assign.isPending || unassign.isPending}
           >
             Save

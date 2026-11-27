@@ -17,7 +17,7 @@ import {
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
 import { formatMoney } from "@/lib/format";
-import { farFromListText } from "@/lib/far-from-list";
+import { farFromListReference, farFromListText } from "@/lib/far-from-list";
 import { PriceChips, PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
@@ -340,8 +340,10 @@ export function LineItemRow({
   const w = unitWords({ packLabel: li.packLabel, baseUnitLabel: li.baseLabel });
   // UX audit 2026-11-24 F32: a typed price far from list (60 for 6.00) had no words here; the order page's price edit
   // already says it. A customer's special price is not a typed slip, so it is left alone.
-  const farFromList =
-    li.priceType === "SPECIAL" ? null : farFromListText(li.unitPrice, li.listPrice);
+  const farFromList = farFromListText(
+    li.unitPrice,
+    farFromListReference(li.listPrice, li.priceType === "SPECIAL", false) ?? 0,
+  );
   // F15/Q12: a pack line's price is per PACK, so its suffix is the same pack word as the toggle and the qty
   // (not the product's stored unit, e.g. "case" beside a "Box" toggle). A named-unit or single-unit line keeps its own unit.
   const priceUnit = li.unitsPerBox && li.unitsPerBox > 1 && !li.unitLabel ? w.pack.lower : li.unit;

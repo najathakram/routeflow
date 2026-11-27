@@ -55,7 +55,8 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
       "escaped by every caller (the `headerHtml` property is a sink there)",
     "renderBrandedEmail :: params.bodyHtml":
       "escaped by every caller (the `bodyHtml` property is a sink there)",
-    "lookParts :: href BRAND_SITE_URL": "a constant URL",
+    "lookParts :: href escapeHtml(BRAND_SITE_URL)":
+      "the brand's own site: https, no trailing slash, validated when brand.json loads",
     "renderEmailLayout :: params.bodyHtml":
       "escaped by every caller (the `bodyHtml` property is a sink there)",
     "wrapUnbrandedHtml :: inner":
@@ -82,7 +83,7 @@ const ALLOWED: Record<string, Record<string, Allowed>> = {
     "ensureLayout :: params.html":
       "the safety net around a sender's own html (see wrapUnbrandedHtml)",
     "sendUnrecorded :: params.html": { reason: TRANSPORT, count: 5 },
-    "sendPlatform :: params.html": { reason: TRANSPORT, count: 2 },
+    "deliverPlatform :: params.html": { reason: TRANSPORT, count: 2 },
     "buildInvoiceEmail :: freeUnits": NUMBER,
     "sendSetPasswordEmail :: params.expiryHours": NUMBER,
     "sendEmailChangeLink :: params.expiryHours": NUMBER,

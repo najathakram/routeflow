@@ -142,6 +142,9 @@
         }
       ]
     ],
+    "setupFiles": [
+      "<rootDir>/../jest.setup-stripe-key.cjs"
+    ],
     "moduleFileExtensions": [
       "js",
       "json",

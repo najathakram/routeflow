@@ -29,6 +29,8 @@ interface CartState {
    *  the product isn't in the cart. */
   setUnits: (productId: string, units: number) => void;
   remove: (productId: string) => void;
+  /** Undo of a removal (B1395 F6): the line goes back as it was; if its product was re-added since, the counts join, clamped like any add. */
+  restore: (item: CartItem) => void;
   clear: () => void;
   total: () => number;
 }
@@ -112,6 +114,21 @@ export const useCartStore = create<CartState>()((set, get) => ({
 
   remove: (productId) =>
     set((state) => ({ items: state.items.filter((i) => i.productId !== productId) })),
+
+  restore: (item) =>
+    set((state) => {
+      const held = state.items.find((i) => i.productId === item.productId);
+      if (!held) return { items: [...state.items, item] };
+      const units = Math.min(
+        sellingUnitsOf(held) + sellingUnitsOf(item),
+        maxLineUnits(held.unitsPerBox),
+      );
+      return {
+        items: state.items.map((i) =>
+          i.productId === item.productId ? { ...i, ...boxedFields(i.unitsPerBox, units) } : i,
+        ),
+      };
+    }),
 
   clear: () => set({ items: [] }),
 

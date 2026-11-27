@@ -156,7 +156,6 @@ export function CountAdjustModal({
       open
       onClose={onClose}
       anchor="top"
-      scroll
       closeClassName="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0"
       title={`Count / Adjust — ${product.name}`}
       footer={

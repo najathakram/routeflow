@@ -153,6 +153,7 @@ export class AuthorizationExpiryService {
           meta: { customerId: auth.customerId, trackedCategoryId: auth.trackedCategoryId },
         });
         await this.notify(
+          tenantId,
           auth,
           operators,
           `License expired: ${auth.trackedCategory.name}`,
@@ -195,6 +196,7 @@ export class AuthorizationExpiryService {
           data: { expiringSoonNotifiedBucket: bucket },
         });
         await this.notify(
+          tenantId,
           auth,
           operators,
           `License expiring in ${bucket} day(s): ${auth.trackedCategory.name}`,
@@ -225,6 +227,7 @@ export class AuthorizationExpiryService {
 
   /** Notify the buyer (push) + the seller's operators (push + email). Best-effort. */
   private async notify(
+    tenantId: string,
     auth: { customerId: string },
     operators: OperatorRecipient[],
     subject: string,
@@ -244,6 +247,7 @@ export class AuthorizationExpiryService {
       if (op.email && !op.email.startsWith("no-email+")) {
         await this.email
           .send({
+            tenantId: tenantId,
             to: op.email,
             subject: `${who} — ${subject}`,
             html: emailParagraph(escapeHtml(opBody)),

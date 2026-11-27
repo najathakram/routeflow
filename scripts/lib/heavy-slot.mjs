@@ -42,6 +42,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getFreeSpaceGb, meetsThreshold } from "../janitor.mjs";
 
 export const DEFAULT_SLOTS = 1;
 export const HEARTBEAT_MS = 30_000;
@@ -323,6 +324,16 @@ export const NPM_INSTALL_VERBS = new Set([
   "install-ci-test",
   "clean-install-test",
   "sit",
+  // other verbs that reify node_modules and run lifecycle scripts (R-216 MEDIUM-1)
+  "update",
+  "up",
+  "upgrade",
+  "udpate",
+  "rebuild",
+  "rb",
+  "dedupe",
+  "ddp",
+  "find-dupes",
 ]);
 
 /** npm global/config options that consume the NEXT arg unless written `--opt=value`. */
@@ -363,22 +374,47 @@ const NPM_VALUE_OPTS = new Set([
   "--json-pointer",
 ]);
 
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "cmd", "powershell", "pwsh"]);
+/** Commands that run another command from their own arguments: shells, and wrappers such as `env X=1 npm ci`. */
+const SHELLS = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
+  "ksh",
+  "fish",
+  "cmd",
+  "powershell",
+  "pwsh",
+  "env",
+  "time",
+  "nice",
+  "nohup",
+  "sudo",
+  "doas",
+  "command",
+  "exec",
+  "start",
+  "corepack",
+]);
 
-/** The words after each `npm` inside a shell command string among `args` (`sh -c 'a && npm ci'`). */
+/**
+ * The words after each `npm` among the arguments of a shell or wrapper, however they were split: `sh -c 'a && npm ci'`
+ * (one string), `cmd /c npm ci` and `powershell -Command npm ci` (one word each). The arguments are joined and scanned as
+ * one command line, so an argument without a space is not skipped.
+ */
 function* npmCallsInShell(args) {
-  for (const a of args.map(String)) {
-    if (!/\s/.test(a)) continue;
-    for (const seg of a.split(/&&|\|\||[;|\n]/)) {
-      const w = seg
-        .replace(/['"`()]/g, " ")
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean);
-      for (let i = 0; i < w.length; i++) {
-        const name = path.basename(w[i]).replace(/\.(cmd|exe)$/i, "");
-        if (name.toLowerCase() === "npm") yield w.slice(i + 1);
-      }
+  for (const seg of args
+    .map(String)
+    .join(" ")
+    .split(/&&|\|\||[;|\n]/)) {
+    const w = seg
+      .replace(/['"`()]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    for (let i = 0; i < w.length; i++) {
+      const name = path.basename(w[i]).replace(/\.(cmd|exe)$/i, "");
+      if (name.toLowerCase() === "npm") yield w.slice(i + 1);
     }
   }
 }
@@ -542,6 +578,22 @@ export function staleReason(
 const CAPPED_LABEL = /verify|pre-?push|\bpush\b/i;
 export const DEFAULT_CAPPED_MAX = 2;
 
+/** Install class: at most ONE install holds a slot at a time (fixed, no env var), and one needs this much free disk. */
+export const INSTALL_MIN_FREE_GB = 10;
+export const INSTALL_FLOOR_WAIT_MS = 15 * 60_000;
+export const INSTALL_FLOOR_EXIT_CODE = 3;
+
+/** "install" when the COMMAND is an npm install-family call (never decided by the label), else "job". */
+export const jobKind = (cmd, args = []) => (isNpmInstall(cmd, args) ? "install" : "job");
+
+/** The install waited under INSTALL_MIN_FREE_GB for INSTALL_FLOOR_WAIT_MS; npm never ran. Exit ${INSTALL_FLOOR_EXIT_CODE}. */
+export class InstallFloorError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "InstallFloorError";
+  }
+}
+
 /** RF_HEAVY_SLOT_PRIORITY: "high" (any case) or null. */
 export function parsePriority(raw) {
   return String(raw ?? "")
@@ -573,6 +625,8 @@ export function nextGrant({
   capped,
   cappedHeld = 0,
   cappedMax = Infinity,
+  install,
+  installHeld = 0,
   stale,
   high,
   now,
@@ -586,10 +640,16 @@ export function nextGrant({
   if (high?.size) order = [...order.filter(up), ...order.filter((n) => !up(n))];
   const idx = order.indexOf(myName);
   const atCap = cappedHeld >= cappedMax;
+  const installBusy = installHeld >= 1; // install cap is 1: a queued install is skipped, never a blocker
   // A ticket written under an older grant rule (or none) is not first in line: its waiter does not apply this rule, so
   // it may be unable to take the free slot, and everyone behind it would wait on a slot nobody takes. It keeps its
   // position (the wait line stays truthful) and still gets the slot if it wins the lock itself.
-  const head = order.find((n) => !(n !== myName && stale?.has(n)) && !(atCap && capped?.has(n)));
+  const head = order.find(
+    (n) =>
+      !(n !== myName && stale?.has(n)) &&
+      !(atCap && capped?.has(n)) &&
+      !(installBusy && install?.has(n)),
+  );
   return {
     position: idx + 1, // 0 = my ticket is not in the list
     total: order.length,
@@ -615,6 +675,8 @@ export function trimHistoryText(text, max = HISTORY_MAX_LINES) {
 /** One history record (ISO times; waitSec/heldSec to the millisecond). */
 export function historyRecord(lease, endedAt, exit, extra = {}) {
   return {
+    kind: lease.kind ?? "job",
+    ...(lease.freeGbBefore === undefined ? {} : { freeGbBefore: lease.freeGbBefore }),
     label: lease.label,
     branch: lease.branch,
     host: lease.host,
@@ -857,6 +919,10 @@ function resolveConfig(opts, env) {
     hostname: opts.hostname ?? os.hostname(),
     now: opts.now ?? Date.now,
     log: opts.log ?? ((m) => console.error(m)),
+    kind: opts.kind === "install" ? "install" : "job",
+    freeGb: opts.freeGb ?? getFreeSpaceGb,
+    minFreeGb: opts.minFreeGb ?? INSTALL_MIN_FREE_GB,
+    floorWaitMs: opts.floorWaitMs ?? INSTALL_FLOOR_WAIT_MS,
     label: opts.label || "job",
     branch: opts.branch ?? gitBranch(process.cwd()),
   };
@@ -900,6 +966,7 @@ async function acquire(cfg, state) {
     queuedAt,
     heartbeatAt: queuedAt,
     rule: GRANT_RULE,
+    ...(cfg.kind === "install" ? { kind: "install" } : {}),
     ...(cfg.priority ? { priority: cfg.priority } : {}),
   };
   writeJson(ticketFile, base);
@@ -922,6 +989,7 @@ async function acquire(cfg, state) {
 
   let lastLog = -Infinity;
   let warnedSlots = null;
+  let underFloorSince = null; // install only: when free disk first read under the floor
   const warnedCpu = new Set(); // one max-cpu line per distinct reason / overriding value
   try {
     for (;;) {
@@ -950,6 +1018,10 @@ async function acquire(cfg, state) {
       );
       if (isCappedLabel(cfg.label)) capped.add(name);
       if (!entries.some((t) => t.name === name)) entries.push({ name }); // just (re)written
+      const install = new Set(
+        snap.tickets.filter((t) => t.entry.kind === "install").map((t) => t.name),
+      );
+      if (cfg.kind === "install") install.add(name);
       const high = new Set(
         snap.tickets.filter((t) => t.entry.priority === "high").map((t) => t.name),
       );
@@ -961,6 +1033,8 @@ async function acquire(cfg, state) {
         capped,
         cappedHeld: snap.holders.filter((h) => isCappedLabel(h.entry.label)).length,
         cappedMax: cfg.cappedMax,
+        install,
+        installHeld: snap.holders.filter((h) => h.entry.kind === "install").length,
         stale: new Set(snap.tickets.filter((t) => ticketStale(t.entry)).map((t) => t.name)),
         high,
         now,
@@ -994,6 +1068,35 @@ async function acquire(cfg, state) {
           busy = null;
         }
       }
+      // Install floor: first in line for an install, but the disk is under the floor -> keep the place and wait;
+      // after INSTALL_FLOOR_WAIT_MS under it, give up (exit 3) before npm is ever spawned.
+      let freeGbBefore;
+      if (g.grant && !busy && cfg.kind === "install") {
+        try {
+          freeGbBefore = cfg.freeGb();
+        } catch {
+          freeGbBefore = NaN;
+        }
+        // A reader that cannot measure fails open (like the load sampler): the floor is a guard, never a wedge.
+        if (!Number.isFinite(freeGbBefore)) {
+          freeGbBefore = undefined;
+          underFloorSince = null;
+        } else if (meetsThreshold(freeGbBefore, cfg.minFreeGb)) underFloorSince = null;
+        else {
+          underFloorSince ??= now;
+          const gb = Math.round(freeGbBefore * 10) / 10;
+          const msg = `install waits: ${gb} GB free, needs ${cfg.minFreeGb}; run janitor (report-only)`;
+          if (now - underFloorSince >= cfg.floorWaitMs)
+            throw new InstallFloorError(
+              `heavy-slot: ${msg}. Gave up after ${(cfg.floorWaitMs / 60_000).toFixed(0)} min under the floor; npm was not run. Free space (npm run janitor is report-only), then retry.`,
+            );
+          if (now - lastLog >= cfg.waitLogMs) {
+            cfg.log(`heavy-slot: ${msg}`);
+            lastLog = now;
+          }
+          busy = "disk"; // keeps the place, skips the grant, and suppresses the generic wait line below
+        }
+      }
       if (g.grant && !busy) {
         let fd = null;
         try {
@@ -1005,7 +1108,14 @@ async function acquire(cfg, state) {
         if (fd !== null) {
           const startedAt = cfg.now();
           const token = randomBytes(8).toString("hex");
-          const lock = { ...base, startedAt, heartbeatAt: startedAt, token, slot: free };
+          const lock = {
+            ...base,
+            startedAt,
+            heartbeatAt: startedAt,
+            token,
+            slot: free,
+            ...(freeGbBefore === undefined ? {} : { freeGbBefore }),
+          };
           fs.writeSync(fd, JSON.stringify(lock));
           fs.closeSync(fd);
           state.cleanup();
@@ -1039,7 +1149,9 @@ async function acquire(cfg, state) {
           holder,
         );
       }
-      if (now - lastLog >= cfg.waitLogMs && busy) {
+      if (busy === "disk") {
+        /* the floor line above is this poll's wait line */
+      } else if (now - lastLog >= cfg.waitLogMs && busy) {
         cfg.log(`heavy-slot: waiting for the machine to cool (${busy}; first in line, slot free)`);
         lastLog = now;
       } else if (now - lastLog >= cfg.waitLogMs) {
@@ -1099,7 +1211,15 @@ function makeLease(cfg, lock, index) {
           /* gone */
         }
       }
-      appendHistory(cfg.dir, historyRecord(lock, endedAt, exit, extra));
+      let after = {};
+      if (lock.kind === "install") {
+        try {
+          after = { freeGbAfter: cfg.freeGb() };
+        } catch {
+          /* the figure is a convenience */
+        }
+      }
+      appendHistory(cfg.dir, historyRecord(lock, endedAt, exit, { ...after, ...extra }));
     },
   };
 }
@@ -1219,6 +1339,29 @@ export async function withHeavySlot(opts, fn) {
 
 const min = (ms) => (ms / 60_000).toFixed(1);
 
+/** The `install:` status line: the holder or none, waiting installs, the last install's free disk. */
+function installLine(dir, st) {
+  const held = st.holders.filter((h) => h.entry.kind === "install").map((h) => h.entry);
+  const waiting = st.tickets.filter((t) => t.entry.kind === "install").length;
+  const last = readHistoryLines(dir)
+    .map((x) => {
+      try {
+        return JSON.parse(x);
+      } catch {
+        return null;
+      }
+    })
+    .filter((r) => r?.kind === "install")
+    .at(-1);
+  const who = held.length
+    ? held.map((e) => `${e.label} on ${e.branch || "?"} (pid ${e.pid})`).join(", ")
+    : "none";
+  const disk = last
+    ? `${last.freeGbBefore ?? "?"} GB free before, ${last.freeGbAfter ?? "?"} after`
+    : "none";
+  return `install: ${who}; waiting ${waiting}; last: ${disk}`;
+}
+
 /** Human-readable snapshot (read-only: stale entries are flagged, not removed). */
 export function formatStatus(
   dir,
@@ -1253,6 +1396,7 @@ export function formatStatus(
     );
   }
   if (!st.holders.length) out.push("holder: none (slot free)");
+  out.push(installLine(dir, st));
   for (const h of st.holders) {
     const e = h.entry;
     out.push(

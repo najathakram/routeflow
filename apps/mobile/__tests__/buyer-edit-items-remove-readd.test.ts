@@ -4,7 +4,7 @@ import {
   addCatalogItem,
   buyerSavePlan,
   hydrateBuyerDraft,
-  setDraftQty,
+  setDraftCount,
   type BuyerOrderLineLike,
 } from "../lib/buyer-edit-items";
 
@@ -22,7 +22,7 @@ const BOXED: BuyerOrderLineLike = {
   boxes: 2,
   unitsPerBox: 12,
   status: "PENDING",
-  product: { name: "Sample Cola 12oz", unit: "case" },
+  product: { name: "Sample Cola 12oz", unit: "case", unitsPerBox: 12 },
 };
 const CATALOG = { id: "p-1", name: "Sample Cola 12oz", unit: "case", buyerPrice: 48 };
 
@@ -33,7 +33,7 @@ describe("mobile buyer editor remove then re-add (SA-1131 R-4)", () => {
       expect.objectContaining({ orderItemId: "li-1", qty: 24 }),
     ]);
 
-    const removed = setDraftQty(opened, "li-1", 0);
+    const removed = setDraftCount(opened, "li-1", 0).draft;
     expect(removed).toEqual({});
 
     const readded = addCatalogItem(removed, CATALOG);
@@ -48,10 +48,11 @@ describe("mobile buyer editor remove then re-add (SA-1131 R-4)", () => {
     });
   });
 
-  it("while the row is still in the draft, adding the product is +1 to that named row", () => {
+  // B1395: one more of the row's OWN unit. This 2-box line (24 pieces) gains one BOX (36), not one piece (it read 25).
+  it("while the row is still in the draft, adding the product is one more box on that named row", () => {
     const opened = hydrateBuyerDraft([BOXED]);
     expect(addCatalogItem(opened, CATALOG)).toEqual({
-      "li-1": expect.objectContaining({ orderItemId: "li-1", qty: 25 }),
+      "li-1": expect.objectContaining({ orderItemId: "li-1", qty: 36 }),
     });
   });
 
@@ -60,7 +61,7 @@ describe("mobile buyer editor remove then re-add (SA-1131 R-4)", () => {
       join(__dirname, "..", "app/(customer)/orders/[id]/edit-items.tsx"),
       "utf8",
     );
-    expect(src).toMatch(/setDraft\(\(d\) => setDraftQty\(d, key, qty\)\)/);
+    expect(src).toMatch(/setDraftCount\(draft, key, count\)/);
     expect(src).toMatch(/setDraft\(\(d\) => addCatalogItem\(d, p\)\)/);
   });
 });
