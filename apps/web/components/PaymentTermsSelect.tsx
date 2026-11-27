@@ -60,6 +60,9 @@ export function PaymentTermsSelect({
     if (value !== reported.current) {
       reported.current = value;
       setCustomChosen(false);
+      // R-345d N2: the closed box takes its error and typed days with it, so no form stays held by a hidden error.
+      setError(null);
+      setDays("");
     }
   }, [value]);
   const report = (label: string) => {

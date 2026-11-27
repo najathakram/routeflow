@@ -18,7 +18,8 @@ import {
   commitCustomDays,
   customTermsFromInput,
   daysForTerms,
-  settlePendingCustomTerms,
+  clearCustomFor,
+  settleDraftsForCreate,
   todayPlusDays,
 } from "../lib/invoice-terms";
 import { showToast } from "../lib/toast";
@@ -292,19 +293,13 @@ export function SplitInvoiceScreen({
     // R-345 F1: settle each draft's custom-days text here, not only on end-editing (Expo web has no onEndEditing,
     // and a NavBar tap does not end editing). A valid typed value becomes the draft's terms and due date; an
     // invalid one blocks create, so no request goes out with the old or a partial term.
-    const settledById = new Map(
-      submitable.map((d) => [d.id, settlePendingCustomTerms(customText[d.id], d)] as const),
-    );
-    if ([...settledById.values()].some((x) => x.blocked)) {
+    const settled = settleDraftsForCreate(submitable, customText);
+    if (settled.blocked) {
       alertInfo("Check the terms", "Enter a whole number of days from 1 to 365, or pick a term.");
       return;
     }
-    const ready = submitable.map((d) => {
-      const x = settledById.get(d.id);
-      if (!x || x.blocked || (x.terms === d.terms && x.dueDate === d.dueDate)) return d;
-      updateDraft(d.id, { terms: x.terms, dueDate: x.dueDate });
-      return { ...d, terms: x.terms, dueDate: x.dueDate };
-    });
+    for (const d of settled.changed) updateDraft(d.id, { terms: d.terms, dueDate: d.dueDate });
+    const ready = settled.ready;
     // Validate each draft has a usable due date.
     for (const d of ready) {
       if (!d.dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(d.dueDate)) {
@@ -618,7 +613,12 @@ export function SplitInvoiceScreen({
                   <Text style={styles.draftFooterLabel}>Due date</Text>
                   <TextInput
                     value={draft.dueDate}
-                    onChangeText={(v) => updateDraft(draft.id, { dueDate: v, terms: "" })}
+                    onChangeText={(v) => {
+                      // R-345d N1: a typed date clears the term and the custom box, as a preset pill does.
+                      setCustomText((prev) => clearCustomFor(prev, draft.id));
+                      setCustomError((prev) => clearCustomFor(prev, draft.id));
+                      updateDraft(draft.id, { dueDate: v, terms: "" });
+                    }}
                     placeholder="YYYY-MM-DD"
                     style={styles.dueInput}
                     editable={!created}

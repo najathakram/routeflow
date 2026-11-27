@@ -148,9 +148,47 @@ describe("R-345 F6: a create or edit form holds submit while the custom box show
       "invoices/[id]/edit/page.tsx",
       "disabled={updateInvoice.isPending || priceBlocked || termsInvalid}",
     ],
+    ["invoices/[id]/page.tsx", "disabled={termsInvalid}"],
   ])("%s wires onInvalidChange into its submit", (file, hold) => {
     const src = fs.readFileSync(path.join(APP, file), "utf8");
     expect(src).toContain("onInvalidChange={setTermsInvalid}");
     expect(src).toContain(hold);
+  });
+
+  it("R-345d N6: every invoices/new save button (Download, Save as draft, Save and send) is held by saveBlocked", () => {
+    const src = fs.readFileSync(path.join(APP, "invoices/new/page.tsx"), "utf8");
+    for (const label of ["Download", "Save as draft", "Save and send"]) {
+      const end = src.indexOf(`\n                  ${label}\n`);
+      expect({ label, found: end > 0 }).toEqual({ label, found: true });
+      const button = src.slice(src.lastIndexOf("<WriteButton", end), end);
+      expect({ label, held: /saveBlocked/.test(button) }).toEqual({ label, held: true });
+    }
+  });
+
+  it("R-345d N2: when the parent changes the value, a hidden error no longer holds the form", async () => {
+    const onInvalidChange = jest.fn();
+    const { rerender } = render(
+      <PaymentTermsSelect
+        value="Net 30"
+        aria-label="Payment terms"
+        onChange={jest.fn()}
+        onInvalidChange={onInvalidChange}
+      />,
+    );
+    await userEvent.selectOptions(screen.getByLabelText("Payment terms"), "Custom (Net N)…");
+    await userEvent.type(screen.getByLabelText("Number of days"), "366");
+    await userEvent.tab();
+    expect(onInvalidChange).toHaveBeenLastCalledWith(true);
+    // a hand-typed due date clears the term in the parent
+    rerender(
+      <PaymentTermsSelect
+        value=""
+        aria-label="Payment terms"
+        onChange={jest.fn()}
+        onInvalidChange={onInvalidChange}
+      />,
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(onInvalidChange).toHaveBeenLastCalledWith(false);
   });
 });

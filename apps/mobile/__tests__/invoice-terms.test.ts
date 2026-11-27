@@ -13,6 +13,8 @@ import {
   daysForTerms,
   TERM_OPTIONS,
   dueDateFor,
+  clearCustomFor,
+  settleDraftsForCreate,
   settlePendingCustomTerms,
   todayPlusDays,
 } from "../lib/invoice-terms";
@@ -184,12 +186,77 @@ describe("R-345 F1: the split-invoice screen wires the custom box for Expo web a
       src.indexOf("const submitAll = async"),
       src.indexOf("setBulkPending(true)"),
     );
-    expect(submit).toContain("settlePendingCustomTerms(customText[d.id], d)");
+    expect(submit).toContain("settleDraftsForCreate(submitable, customText)");
     const loop = src.slice(
       src.indexOf("setBulkPending(true)"),
       src.indexOf("setBulkPending(false)"),
     );
     expect(loop).toContain("for (const d of ready)");
     expect(loop).not.toContain("for (const d of submitable)");
+  });
+});
+
+describe("R-345d N1/N3: Create sends the settled drafts, and a typed due date drops the custom box", () => {
+  const d = (id: string, terms: string, dueDate: string) => ({ id, terms, dueDate, send: false });
+
+  it("N1: no custom text keeps a hand-typed due date (terms cleared) as typed", () => {
+    expect(settlePendingCustomTerms(undefined, { terms: "", dueDate: "2027-01-15" })).toEqual({
+      blocked: false,
+      terms: "",
+      dueDate: "2027-01-15",
+    });
+  });
+
+  it("N1: clearCustomFor drops one draft's entry and keeps the others", () => {
+    expect(clearCustomFor({ a: "21", b: "45" }, "a")).toEqual({ a: undefined, b: "45" });
+  });
+
+  it("N3: over several drafts, no text goes as is and valid text takes its term and due date", () => {
+    const drafts = [
+      d("a", "Net 30", "2026-12-26"),
+      d("b", "Net 30", "2026-12-26"),
+      d("c", "", "2027-01-15"),
+    ];
+    const out = settleDraftsForCreate(drafts, { b: "21" });
+    expect(out.blocked).toBe(false);
+    if (out.blocked) return;
+    expect(out.ready).toEqual([
+      drafts[0],
+      { ...drafts[1], terms: "Net 21", dueDate: todayPlusDays(21) },
+      drafts[2],
+    ]);
+    expect(out.changed.map((x) => x.id)).toEqual(["b"]);
+  });
+
+  it("N3: one invalid box blocks the whole Create", () => {
+    const drafts = [d("a", "Net 30", "2026-12-26"), d("b", "Net 30", "2026-12-26")];
+    expect(settleDraftsForCreate(drafts, { a: "21", b: "366" })).toEqual({ blocked: true });
+  });
+
+  it("N1: the due-date box clears the draft's custom text and error before it writes the date", () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "components", "SplitInvoiceScreen.tsx"),
+      "utf8",
+    );
+    const at = src.indexOf('placeholder="YYYY-MM-DD"');
+    const box = src.slice(at - 600, at);
+    expect(box).toContain("setCustomText((prev) => clearCustomFor(prev, draft.id));");
+    expect(box).toContain("setCustomError((prev) => clearCustomFor(prev, draft.id));");
+    expect(box).toContain('updateDraft(draft.id, { dueDate: v, terms: "" });');
+  });
+
+  it("N3: submitAll writes back the changed drafts and sends settled.ready", () => {
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "components", "SplitInvoiceScreen.tsx"),
+      "utf8",
+    );
+    const submit = src.slice(
+      src.indexOf("const submitAll = async"),
+      src.indexOf("setBulkPending(true)"),
+    );
+    expect(submit).toContain("const ready = settled.ready;");
+    expect(submit).toContain(
+      "for (const d of settled.changed) updateDraft(d.id, { terms: d.terms, dueDate: d.dueDate });",
+    );
   });
 });

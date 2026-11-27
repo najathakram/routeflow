@@ -339,7 +339,7 @@ describe("import-columns (FIX1 pins)", () => {
       }
     });
 
-    it.each(["Net 0", "Net 366", "Net 7.5", "Net 1000"])(
+    it.each(["Net 0", "Net 366", "Net 7.5", "Net 1000", "Net 07", "Net 007"])(
       'W-1487: an out-of-range or fractional label "%s" is refused as before (never guessed)',
       (raw) => {
         expect(col().parse(raw)).toEqual({

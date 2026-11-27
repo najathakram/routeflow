@@ -51,6 +51,42 @@ export function settlePendingCustomTerms(
   return { blocked: false, terms, dueDate: todayPlusDays(daysForTerms(terms)) };
 }
 
+/**
+ * R-345d N3: what Create sends. Every draft's typed custom days are settled (settlePendingCustomTerms); one invalid
+ * box blocks the whole Create, so no request goes out with an old or partial term. `changed` lists the drafts whose
+ * terms or due date moved, for the screen to write back.
+ */
+export function settleDraftsForCreate<D extends { id: string; terms: string; dueDate: string }>(
+  drafts: readonly D[],
+  customText: Readonly<Record<string, string | undefined>>,
+): { blocked: true } | { blocked: false; ready: D[]; changed: D[] } {
+  const ready: D[] = [];
+  const changed: D[] = [];
+  for (const d of drafts) {
+    const x = settlePendingCustomTerms(customText[d.id], d);
+    if (x.blocked) return { blocked: true };
+    if (x.terms === d.terms && x.dueDate === d.dueDate) {
+      ready.push(d);
+    } else {
+      const next = { ...d, terms: x.terms, dueDate: x.dueDate };
+      ready.push(next);
+      changed.push(next);
+    }
+  }
+  return { blocked: false, ready, changed };
+}
+
+/**
+ * R-345d N1: a hand-typed due date clears the draft's term AND its custom-days box (text and error), as a preset pill
+ * does, so Create never replaces the typed date with today plus stale custom days.
+ */
+export function clearCustomFor<T>(
+  map: Readonly<Record<string, T>>,
+  draftId: string,
+): Record<string, T | undefined> {
+  return { ...map, [draftId]: undefined };
+}
+
 export const TERM_OPTIONS: string[] = [...PAYMENT_TERM_PRESETS];
 export const TERM_CHIPS = TERM_OPTIONS.map((label) => ({ label }));
 export const DEFAULT_TERMS = "Net 30";

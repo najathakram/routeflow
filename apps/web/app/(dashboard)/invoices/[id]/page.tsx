@@ -1146,6 +1146,8 @@ function EditTermsModal({
   const [paymentTermsLabel, setPaymentTermsLabel] = React.useState("");
   const [referenceNumber, setReferenceNumber] = React.useState("");
   const [subject, setSubject] = React.useState("");
+  // R-345d N5: a custom days box showing an error holds Save (the create and edit forms do the same).
+  const [termsInvalid, setTermsInvalid] = React.useState(false);
 
   React.useEffect(() => {
     if (!isOpen) return;
@@ -1157,6 +1159,7 @@ function EditTermsModal({
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (termsInvalid) return;
     onConfirm({
       // dueDate stays undefined-when-empty: the DTO takes an ISO date and this
       // modal never clears a due date.
@@ -1187,7 +1190,7 @@ function EditTermsModal({
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="edit-terms-form" loading={isPending}>
+          <Button type="submit" form="edit-terms-form" loading={isPending} disabled={termsInvalid}>
             Save
           </Button>
         </>
@@ -1209,6 +1212,7 @@ function EditTermsModal({
             <PaymentTermsSelect
               value={paymentTermsLabel}
               emptyLabel="Select terms…"
+              onInvalidChange={setTermsInvalid}
               onChange={(label) => {
                 setPaymentTermsLabel(label);
                 // The client-reported bug: changing the term used to leave the old due
