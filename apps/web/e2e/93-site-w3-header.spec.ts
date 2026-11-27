@@ -248,9 +248,9 @@ for (const { route, scope } of [
 }
 
 // SA-1200 A3 (owner answer A): the K3 empty-band row is retired. Its intent (no hole inside a plan card) is carried
-// by exact checks: the list tops of a row start level (K1, below), each list starts right after its own button (A4,
-// below), and the buttons of a row share one top (spec 95, K4). SA-1200 A4: the card order is .pfor, the button, then
-// the list, every child a row of the card's subgrid.
+// by exact checks: the list tops of a row start level (K1, below), each button follows right after its own list (A4,
+// below), and the buttons of a row share one top (spec 95, K4). SA-1200 A4 / W-1265: the card order is .pfor, the list,
+// then the button, every child a row of the card's subgrid.
 
 // SA-1200 K1 / A1 M1: the card rows come from the grid (css/site.css, .pgrid--4 .pcard subgrid), so a row reads across: the
 // lists of the four cards start at one top. Only the list tops are pinned. The prices cannot see a wrapping description
@@ -303,15 +303,15 @@ for (const route of ["/pricing", "/"] as const) {
   }
 }
 
-// SA-1200 A4-4: each plan card's list starts right after its own button. The gap from the button's border box bottom
-// to the list's top is the designed one, read from the page's own computed style (the card's row-gap, the button's
-// margin-bottom, the list's margin-top), +-1px. This is what catches a hole between a button and its list (a button row
-// taller than its buttons, or a list moved without a margin). A margin change is a design change and moves the designed
+// SA-1200 A4-4 (W-1265): each plan card's button follows right after its own list (the page has always put the list
+// first, then the button). The gap from the list's border box bottom to the button's top is the designed one, read
+// from the page's own computed style (the card's row-gap, the list's margin-bottom, the button's margin-top), +-1px. This is what catches a hole between a list and its button (a list row
+// taller than its items, or a button moved without a margin). A margin change is a design change and moves the designed
 // gap with it (SA-1200 A6). The list is ul.checks on /pricing and the .pm meter on "/". The cards are hidden under
 // 900px (the plan table shows), so this runs at the K1 widths.
 for (const route of ["/pricing", "/"] as const) {
   for (const w of PLAN_ALIGN_WIDTHS) {
-    test(`A4 the list starts right after its own button: ${route} @${w}x900`, async ({ page }) => {
+    test(`A4 the button follows right after its own list: ${route} @${w}x900`, async ({ page }) => {
       await open(page, route, w, 900);
       const listSel = route === "/" ? ".pm" : "ul.checks";
       const read = await page.evaluate((sel) => {
@@ -325,22 +325,31 @@ for (const route of ["/pricing", "/"] as const) {
           if (btn.parentElement !== c || list.parentElement !== c)
             throw new Error(`the button and ${sel} must be the card's own rows`);
           const px = (v: string) => parseFloat(v) || 0;
+          if (list.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_PRECEDING)
+            throw new Error(`the button must come after ${sel} in the card`);
           const designed =
             px(getComputedStyle(c).rowGap) +
-            px(getComputedStyle(btn).marginBottom) +
-            px(getComputedStyle(list).marginTop);
+            px(getComputedStyle(list).marginBottom) +
+            px(getComputedStyle(btn).marginTop);
           return {
             name: (c.querySelector("h2,h3")?.textContent ?? "plan").trim(),
-            actual: list.getBoundingClientRect().top - btn.getBoundingClientRect().bottom,
+            actual: btn.getBoundingClientRect().top - list.getBoundingClientRect().bottom,
             designed,
           };
         });
       }, listSel);
       nonEmpty(read, `plan cards on ${route}`);
       expect(read.length).toBe(4);
+      // The buttons share one row across the grid (spec 95 K4), so a card with a short list has a wider gap
+      // above its button on purpose. What must hold: no card's button sits closer than designed (it would
+      // overlap its list), and the fullest card of the row sits at exactly the designed gap (no hole).
       const bad = read
-        .filter((c) => Math.abs(c.actual - c.designed) > 1)
+        .filter((c) => c.actual < c.designed - 1)
         .map((c) => `${c.name} gap ${c.actual.toFixed(1)}px, designed ${c.designed.toFixed(1)}px`);
+      if (!read.some((c) => Math.abs(c.actual - c.designed) <= 1))
+        bad.push(
+          `no card sits at the designed gap: ${read.map((c) => `${c.name} ${c.actual.toFixed(1)}px (designed ${c.designed.toFixed(1)}px)`).join(", ")}`,
+        );
       expect(bad, bad.join("; ")).toEqual([]);
     });
   }

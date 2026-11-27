@@ -491,8 +491,35 @@ function installReader(cfg: ReaderCfg): void {
       const offset = parseFloat(cs.outlineOffset) || 0;
       const backdrop = bgOf(offset < 0 ? el : el.parentElement);
       const col = parse(cs.outlineColor);
-      const eff = backdrop && col[3] < 1 ? over(col, backdrop) : col;
-      const drawn = cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0;
+      // W-1265: an outline that is transparent draws nothing (the sign-in fields set it so on purpose and
+      // paint the ring as a solid, zero-blur box-shadow). Then that shadow is the ring. With neither an
+      // outline you can see nor such a shadow the read stays "no ring" and the walk still fails.
+      const outlineSeen =
+        cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0 && col[3] > 0;
+      let shadowRing: { width: number; color: Rgba } | null = null;
+      if (!outlineSeen && cs.boxShadow !== "none") {
+        let best = 0;
+        for (const item of cs.boxShadow.split(/,(?![^(]*\))/)) {
+          if (/\binset\b/.test(item)) continue;
+          const m = item.match(
+            /(rgba?\([^)]*\))\s+(-?[\d.]+)px\s+(-?[\d.]+)px\s+(-?[\d.]+)px(?:\s+(-?[\d.]+)px)?/,
+          );
+          if (!m) continue;
+          const c = parse(m[1]!);
+          const blur = Number(m[4]);
+          const spread = m[5] === undefined ? 0 : Number(m[5]);
+          if (c[3] === 0 || blur !== 0 || spread <= 0) continue;
+          const eff2 = backdrop && c[3] < 1 ? over(c, backdrop) : c;
+          const score = backdrop ? ratio(eff2, backdrop) : 1;
+          if (!shadowRing || score > best) {
+            shadowRing = { width: spread, color: c };
+            best = score;
+          }
+        }
+      }
+      const drawn = outlineSeen || shadowRing !== null;
+      const ringCol: Rgba = outlineSeen || !shadowRing ? col : shadowRing.color;
+      const ringEff = backdrop && ringCol[3] < 1 ? over(ringCol, backdrop) : ringCol;
       const rawTok = cs.getPropertyValue("--rf-focus").trim();
       const focusTok = resolveColor("color", rawTok) ?? `unparsed:${rawTok}`;
       const rr = el.getClientRects()[0] ?? el.getBoundingClientRect();
@@ -534,13 +561,13 @@ function installReader(cfg: ReaderCfg): void {
         info: infoOf(el),
         plant: plantOf(el),
         ring: {
-          style: cs.outlineStyle,
-          width: parseFloat(cs.outlineWidth) || 0,
-          color: rgb(parse(cs.outlineColor)),
+          style: shadowRing ? "box-shadow" : cs.outlineStyle,
+          width: shadowRing ? shadowRing.width : parseFloat(cs.outlineWidth) || 0,
+          color: rgb(ringCol),
           offset,
         },
         backdrop: backdrop ? rgb(backdrop) : null,
-        ringContrast: !drawn ? 0 : backdrop ? ratio(eff, backdrop) : null,
+        ringContrast: !drawn ? 0 : backdrop ? ratio(ringEff, backdrop) : null,
         bandDark: !!backdrop && [t.panel, t.text, t.btn].includes(rgb(backdrop)),
         focusTok,
         onPanel: t.onPanel,
@@ -794,6 +821,10 @@ function installReader(cfg: ReaderCfg): void {
       const all = tabbables();
       for (const e of all) {
         if (S.reached.has(e)) continue;
+        // W-1265: the phone-menu button has no box above the phone breakpoint (1440), so it cannot be focused
+        // there and is not a gap; it is measured at the width where it shows. Any other control with no box
+        // (a hidden nav link, the W2 and W10 plants) stays unreached and red.
+        if (e.matches(".site-header .menu-btn") && e.getClientRects().length === 0) continue;
         const reason = (e as HTMLButtonElement).disabled
           ? "disabled"
           : e.closest("[inert]")
