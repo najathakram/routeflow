@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tansta
 import * as React from "react";
 import { apiClient } from "../api-client";
 import { singleFlight } from "./single-flight";
+import { createAttemptKeyHolder } from "@routeflow/types/sale-attempt";
 import { invalidateSupplierLists } from "./suppliers";
 import type {
   InventoryValuation,
@@ -71,13 +72,30 @@ export function useRecordPurchase() {
 export function useRecordAdjustment() {
   const qc = useQueryClient();
   // B1379: a double press of Save is ONE adjustment (see singleFlight). One guard per mounted form.
-  const [post] = React.useState(() =>
-    singleFlight((data: Record<string, unknown>) =>
-      apiClient.post("/inventory/movements/adjustment", data).then((r) => r.data),
+  // B1415 M1b: and a retry of an adjustment that may have landed is ONE adjustment too: the server replays the
+  // `Idempotency-Key` (kept while the body is unchanged or an outcome is unknown, dropped on success). The key rides in
+  // singleFlight's argument, so two presses carry identical arguments and still collapse. One holder per mounted form.
+  const [attempt] = React.useState(() => ({
+    keys: createAttemptKeyHolder(),
+    post: singleFlight(({ data, key }: { data: Record<string, unknown>; key: string }) =>
+      apiClient
+        .post("/inventory/movements/adjustment", data, { headers: { "Idempotency-Key": key } })
+        .then((r) => r.data),
     ),
-  );
+  }));
   return useMutation({
-    mutationFn: post,
+    mutationFn: async (data: Record<string, unknown>) => {
+      const key = attempt.keys.keyFor(JSON.stringify(data));
+      try {
+        const out = await attempt.post({ data, key });
+        attempt.keys.settle(key, { ok: true });
+        return out;
+      } catch (error) {
+        // a reused key's 409 (the first call landed) is worded by the app-wide toast's genericToastCopy, by code
+        attempt.keys.settle(key, { ok: false, error });
+        throw error;
+      }
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory"] });
       qc.invalidateQueries({ queryKey: ["products"] });

@@ -1,7 +1,7 @@
 /**
  * B1415 (SA-1404 M1a, co-signed SA-1504): mobile Adjust stock pressed twice while the first save is on its way is ONE
- * adjustment. Stock is a ledger and the server takes no idempotency key yet (M1b), so the hook must not send the same
- * body twice in flight. Mirror of the web fix B1379 (#4516, `useRecordAdjustment`).
+ * adjustment. Stock is a ledger, so the hook must not send the same body twice in flight. Mirror of the web fix B1379
+ * (#4516, `useRecordAdjustment`). M1b (R-342 M1): the hook sends the sheet's key as the Idempotency-Key header.
  */
 const post = jest.fn();
 let captured: { mutationFn: (arg: unknown) => Promise<unknown> } | undefined;
@@ -46,7 +46,6 @@ jest.mock("../lib/api-client", () => ({
 }));
 
 import { useAdjustProductStock } from "../lib/api/products";
-import { useRecordAdjustment } from "../lib/api/inventory";
 
 describe("REG-B1415 mobile Adjust stock single-flight", () => {
   beforeEach(() => {
@@ -63,7 +62,8 @@ describe("REG-B1415 mobile Adjust stock single-flight", () => {
     const first = captured!.mutationFn(body);
     const second = captured!.mutationFn({ ...body });
     expect(post).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledWith("/inventory/movements/adjustment", body);
+    // M1b adds a third argument (the request config carrying the Idempotency-Key header); the url and body are pinned.
+    expect(post.mock.calls[0].slice(0, 2)).toEqual(["/inventory/movements/adjustment", body]);
     release({ data: { ok: true } });
     await expect(first).resolves.toEqual({ ok: true });
     await expect(second).resolves.toEqual({ ok: true });
@@ -80,14 +80,45 @@ describe("REG-B1415 mobile Adjust stock single-flight", () => {
     void captured!.mutationFn({ ...body });
     expect(post).toHaveBeenCalledTimes(1);
   });
+});
 
-  it("the inventory hook posting the same adjustment is guarded the same way", () => {
+describe("REG-B1415 M1b mobile Adjust stock sends the sheet's key as the Idempotency-Key header (R-342 M1)", () => {
+  beforeEach(() => {
+    post.mockReset();
+    captured = undefined;
+    mockUnmount();
+  });
+
+  it("the key travels as the header and never in the body", async () => {
+    post.mockResolvedValue({ data: { ok: true } });
+    useAdjustProductStock();
+    const body = { productId: "acme-p1", quantity: 5, notes: "recount" };
+    await captured!.mutationFn({ ...body, idempotencyKey: "k-1" });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith("/inventory/movements/adjustment", body, {
+      headers: { "Idempotency-Key": "k-1" },
+    });
+  });
+
+  it("a retry after a dropped connection sends the SAME key again (the server replays it)", async () => {
+    post.mockRejectedValueOnce(new Error("Network Error")).mockResolvedValueOnce({ data: {} });
+    useAdjustProductStock();
+    const args = { productId: "acme-p1", quantity: 5, idempotencyKey: "k-1" };
+    await expect(captured!.mutationFn(args)).rejects.toThrow("Network Error");
+    await captured!.mutationFn({ ...args });
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post.mock.calls.map((c) => c[2])).toEqual([
+      { headers: { "Idempotency-Key": "k-1" } },
+      { headers: { "Idempotency-Key": "k-1" } },
+    ]);
+  });
+
+  it("two taps with the same key while the first is in flight are ONE request", () => {
     post.mockReturnValue(new Promise(() => {}));
-    mockRender();
-    useRecordAdjustment();
-    const body = { productId: "acme-p1", quantity: -2, notes: "damaged" };
-    void captured!.mutationFn(body);
-    void captured!.mutationFn({ ...body });
+    useAdjustProductStock();
+    const args = { productId: "acme-p1", quantity: 5, idempotencyKey: "k-1" };
+    void captured!.mutationFn(args);
+    void captured!.mutationFn({ ...args });
     expect(post).toHaveBeenCalledTimes(1);
   });
 });
