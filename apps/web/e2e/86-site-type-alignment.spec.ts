@@ -129,7 +129,12 @@ test("P14 plan-table headers share a bottom baseline at 393", async ({ page }) =
     }
     return out;
   });
-  expect(bottoms.length, "visible plan-table header cells at 393").toBe(4);
+  // Three headers on purpose (W-1265): Plan, Customers, From a month. The yearly column is off until the
+  // yearly checkout works (#4511), so the table has no fourth header.
+  expect(
+    bottoms.map((b) => b.text),
+    "visible plan-table header cells at 393",
+  ).toEqual(["Plan", "Customers", "From, a month"]);
   const lo = Math.min(...bottoms.map((b) => b.bottom));
   const hi = Math.max(...bottoms.map((b) => b.bottom));
   expect(

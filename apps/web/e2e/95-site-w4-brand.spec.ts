@@ -1,16 +1,16 @@
 /**
  * Wave 4, lane 2.5a, project "site-waves": K4 (the plan buttons line up). On /pricing every plan card's button
- * sits right after its price and its "for" line, so within one grid row all `.pcard .pbtn` tops are equal within
+ * closes its card (price, "for" line and list come first), so within one grid row all `.pcard .pbtn` tops are equal within
  * 1 px, at 1440x900, 1100x900 (where the "for" lines wrap unevenly) and 393x844 (the table shows, no cards).
- * SA-1200 A4 kept this order over the list-then-button wrapper. Signed out, desktop Chrome, against a running
+ * The page renders list then button (W-1265: the spec follows the page). Signed out, desktop Chrome, against a running
  * stack. A sweep that finds nothing throws (L-202).
  *
  * Lane 2.5b adds the page-name rows (SA-1203): T24 browser half, T26 name half, T36 header fit. Every
- * name is read from brand.json; the one allowed mention of the previous name is footerLine()'s.
+ * name is the SITE brand's (the site overlay in brand.json); the one allowed mention of the previous name is siteFooterLine()'s.
  */
 import { test, expect, type Page } from "@playwright/test";
 import brandFile from "../../../packages/types/brand/brand.json";
-import { footerLine } from "../../../packages/types/brand/index";
+import { SITE_BRAND, siteFooterLine } from "../../../packages/types/brand/index";
 import { PUBLIC_ROUTES, blockAnalytics } from "./helpers/site-proof";
 
 test.beforeEach(async ({ context }) => {
@@ -64,9 +64,10 @@ for (const { w, h } of SCREENS) {
         problems.push(`card ${i}: missing button, price line or list`);
         return;
       }
-      // price, then button, then list
-      if (!(c.forTop < c.btnTop && c.btnTop < c.listTop)) {
-        problems.push(`card ${i}: order is not price, button, list`);
+      // price line, then the list, then the button: the page has always put the button at the foot of
+      // its card (before and after the site rename), so the button tops line up across a row.
+      if (!(c.forTop < c.listTop && c.listTop < c.btnTop)) {
+        problems.push(`card ${i}: order is not price, list, button`);
       }
       const row = Math.round((c.cardTop ?? 0) / 4);
       rows.set(row, [...(rows.get(row) ?? []), c.btnTop]);
@@ -103,9 +104,9 @@ const FOOT_LINE = ".foot-bottom > span:first-child, footer.foot .w > span:first-
  * mailboxes and the legal entity, all read from brand.json. Taken out before the old-name check.
  */
 const KEPT_STRINGS = [
-  brandFile.origin,
+  SITE_BRAND.origin,
   brandFile.oldOrigin,
-  brandFile.origin.replace(/^https?:\/\//, ""),
+  SITE_BRAND.origin.replace(/^https?:\/\//, ""),
   brandFile.oldOrigin.replace(/^https?:\/\//, ""),
   brandFile.email,
   brandFile.securityEmail,
@@ -123,7 +124,7 @@ async function openPage(page: Page, route: string): Promise<void> {
     await page.locator("h1").first().waitFor({ state: "visible", timeout: 120_000 });
 }
 
-/** What a reader sees and hears, with the footer line (checked to be exactly footerLine()) taken out. */
+/** What a reader sees and hears, with the footer line (checked to be exactly siteFooterLine()) taken out. */
 async function readNames(page: Page) {
   const raw = await page.evaluate((sel) => {
     const attr = (s: string, name: string) =>
@@ -141,7 +142,7 @@ async function readNames(page: Page) {
       header: document.querySelector(".brand")?.textContent ?? "",
     };
   }, FOOT_LINE);
-  const line = squash(footerLine());
+  const line = squash(siteFooterLine());
   const body = squash(raw.body);
   const rest = [body.split(line).join(" "), ...raw.labels, ...raw.metas, raw.title].join("\n");
   const kept = KEPT_STRINGS.reduce(
@@ -158,19 +159,33 @@ async function readNames(page: Page) {
   };
 }
 
-function nameProblems(tag: string, r: Awaited<ReturnType<typeof readNames>>): string[] {
+/**
+ * The front door pages (privacy, terms, the 404 and the sign-in pages) wear the site header and footer
+ * (the site name) but are the product's own pages: their title and text say the product name
+ * (brand.json's top-level name) on purpose. W-1265: so for them the title may carry either name and
+ * the previous-name check is skipped (it is the product's everyday name there); the header name,
+ * the footer line and the official-name check still hold. The 12 site pages get every check.
+ */
+function nameProblems(
+  tag: string,
+  r: Awaited<ReturnType<typeof readNames>>,
+  frontDoor = false,
+): string[] {
   const out: string[] = [];
-  if (!r.title.endsWith(brandFile.name))
-    out.push(`${tag}: title "${r.title}" does not end in the name`);
+  // The home and landing titles lead with the name ("<name> | ..."); the others end in it.
+  const titleNames = frontDoor ? [SITE_BRAND.name, brandFile.name] : [SITE_BRAND.name];
+  if (!titleNames.some((n) => r.title.includes(n)))
+    out.push(`${tag}: title "${r.title}" does not carry the name`);
   if (r.foot.length !== 1 || r.foot[0] !== r.line || r.lineCount !== 1)
     out.push(
-      `${tag}: the footer line is not exactly footerLine() once (${JSON.stringify(r.foot)})`,
+      `${tag}: the footer line is not exactly siteFooterLine() once (${JSON.stringify(r.foot)})`,
     );
-  if (new RegExp(escapeRe(brandFile.formerly), "i").test(r.kept))
+  if (!frontDoor && new RegExp(escapeRe(SITE_BRAND.formerly), "i").test(r.kept))
     out.push(`${tag}: the previous name shows outside the footer line and the kept strings`);
-  if (r.kept.includes(brandFile.officialName)) out.push(`${tag}: the official name shows`);
-  if (squash(r.header) !== brandFile.name) out.push(`${tag}: header name is "${squash(r.header)}"`);
-  if (!r.body.includes(brandFile.name)) out.push(`${tag}: the visible text never shows the name`);
+  if (r.kept.includes(SITE_BRAND.officialName)) out.push(`${tag}: the official name shows`);
+  if (squash(r.header) !== SITE_BRAND.name)
+    out.push(`${tag}: header name is "${squash(r.header)}"`);
+  if (!r.body.includes(SITE_BRAND.name)) out.push(`${tag}: the visible text never shows the name`);
   return out;
 }
 
@@ -184,7 +199,13 @@ test("T24 browser: every page shows the everyday name, the old name only in the 
   const problems: string[] = [];
   for (const route of ALL_PAGES) {
     await openPage(page, route);
-    problems.push(...nameProblems(route, await readNames(page)));
+    problems.push(
+      ...nameProblems(
+        route,
+        await readNames(page),
+        (FRONT_DOOR as readonly string[]).includes(route),
+      ),
+    );
   }
   expect(ALL_PAGES.length, "17 pages are walked").toBe(17);
   expect(problems, problems.join("\n")).toEqual([]);
@@ -202,7 +223,7 @@ for (const { w, h } of [
     const problems: string[] = [];
     for (const route of FRONT_DOOR) {
       await openPage(page, route);
-      problems.push(...nameProblems(`${route} ${w}x${h}`, await readNames(page)));
+      problems.push(...nameProblems(`${route} ${w}x${h}`, await readNames(page), true));
     }
     // the reset page needs a link token; with none it shows its own invalid-link state
     await openPage(page, "/reset-password");

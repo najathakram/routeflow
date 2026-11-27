@@ -21,14 +21,18 @@
  */
 import { test, expect, devices, type BrowserContext, type Page, webkit } from "@playwright/test";
 import brandFile from "../../../packages/types/brand/brand.json";
+import { SITE_BRAND } from "../../../packages/types/brand/index";
 
-// The everyday name and the title separator come from the brand file, never typed here.
+// The names and the title separator come from the brand file, never typed here. The ready-made site
+// pages carry the SITE brand's name (W-1265: the site overlay, the new name after the rename); the React
+// legal pages (/privacy, /terms) keep the product's own name in their title (the top-level name).
 const BRAND_FILE = brandFile as { name: string; titleSeparator: string };
 const escapeRe = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const NAME_RE = escapeRe(BRAND_FILE.name);
-/** A ready-made page title: "<page><separator><name>". */
+const NAME_RE = escapeRe(SITE_BRAND.name);
+const PRODUCT_NAME_RE = escapeRe(BRAND_FILE.name);
+/** A ready-made page title: "<page><separator><site name>". */
 const titled = (page: string): RegExp =>
-  new RegExp(`${escapeRe(page)}${escapeRe(BRAND_FILE.titleSeparator)}${NAME_RE}`);
+  new RegExp(`${escapeRe(page)}${escapeRe(SITE_BRAND.titleSeparator)}${NAME_RE}`);
 
 // The pages that wear the site header and footer, with their one h1.
 const H1_BY_ROUTE: Record<string, string> = {
@@ -766,9 +770,10 @@ test.describe("T16 — W8: head, share image and sitemap", () => {
       const attr = (selector: string, name: string) =>
         page.locator(selector).first().getAttribute(name);
 
-      // "Company | Name" on the ready-made pages, "Privacy Policy · Name" on the React ones.
+      // "Company | Site name" on the ready-made pages, "Privacy Policy · Product name" on the React ones.
       const title = await page.title();
-      expect(title, `${route} title`).toMatch(new RegExp(`\\S (·|\\|) ${NAME_RE}$`));
+      const nameRe = route === "/privacy" || route === "/terms" ? PRODUCT_NAME_RE : NAME_RE;
+      expect(title, `${route} title`).toMatch(new RegExp(`\\S (·|\\|) ${nameRe}$`));
 
       expect(
         await attr('meta[name="description"]', "content"),
@@ -1725,13 +1730,22 @@ test.describe("T25 — the founder's note", () => {
         document.querySelector("#founder")!.scrollIntoView({ block: "start" }),
       );
       await page.waitForTimeout(1500);
-      const gap = await page.evaluate(
-        () =>
-          document.querySelector(".fd-q")!.getBoundingClientRect().top -
-          document.querySelector("#founder .kick")!.getBoundingClientRect().bottom,
-      );
-      expect(gap, "kicker to heading").toBeGreaterThanOrEqual(8);
-      expect(gap, "kicker to heading").toBeLessThanOrEqual(24);
+      // The kicker is hidden on phones on purpose (#4567; a hidden box measures 0, which read as a
+      // 107px gap). W-1265: measure from the first VISIBLE element above the heading: the kicker when
+      // it shows, else the top of the note's content box (the heading is its first visible row).
+      const { gap, from } = await page.evaluate(() => {
+        const q = document.querySelector(".fd-q")!.getBoundingClientRect();
+        const kick = document.querySelector("#founder .kick") as HTMLElement;
+        const kb = kick.getBoundingClientRect();
+        if (getComputedStyle(kick).display !== "none" && kb.height > 0)
+          return { gap: q.top - kb.bottom, from: "kicker" };
+        const inner = document.querySelector("#founder .fd-in") as HTMLElement;
+        const top =
+          inner.getBoundingClientRect().top + parseFloat(getComputedStyle(inner).paddingTop);
+        return { gap: q.top - top, from: "content top" };
+      });
+      expect(gap, `${from} to heading`).toBeGreaterThanOrEqual(from === "kicker" ? 8 : 0);
+      expect(gap, `${from} to heading`).toBeLessThanOrEqual(24);
       await context.close();
     });
   }
