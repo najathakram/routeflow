@@ -163,6 +163,8 @@ export const CATALOG_READS: Readonly<Record<string, string>> = {
     "PIN: the scheduled downgrade's PRICE, from the subscription's own pin (no add-on inclusion)",
   "billing/scheduled-price-change.ts#applyLocked.getPublishedVersion":
     "TARGET: the version the move re-pins to when the pin lacks the plan",
+  "billing/self-checkout-plan-pin.ts#repinForSelfCheckoutTx.getPublishedCatalog":
+    "TARGET: the plan the card-first checkout pick lands on (published catalog); no add-on is judged here",
   "billing/subscription-mutation.service.ts#subscribeLocked.getPublishedCatalog":
     "TARGET: the plan the pick lands on; the plan LEFT is judged by pinnedVersionOf",
   "billing/subscription-mutation.service.ts#planChangePreview.getPublishedCatalog":
@@ -293,6 +295,7 @@ describe("SA-815a P3 - the named sites read through the resolver", () => {
     ).toEqual(
       [
         "billing/billing-cron.service.ts#applyScheduledDowngrades",
+        "billing/self-checkout-plan-pin.ts#repinForSelfCheckoutTx",
         "billing/subscription-mutation.service.ts#subscribeLocked",
         "billing/subscription-mutation.service.ts#upgradeLocked",
         "platform-admin/platform-admin.service.ts#activateManualSubscription",

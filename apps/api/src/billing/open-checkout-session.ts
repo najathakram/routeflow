@@ -193,46 +193,55 @@ const termsHash = (terms: SessionTerms, surface: CheckoutSurface) =>
     ]),
   ).slice(0, 32);
 
+type SlotArgs = {
+  tenantId: string;
+  customerId: string;
+  surface: CheckoutSurface;
+  readOffer: SlotOfferReader;
+};
+
 /**
- * Open (or reuse) the business's one session for the terms `readOffer` returns under the lock.
+ * The slot body, for a caller that ALREADY holds the tenant-price lock (SA-1547 PR-5: a plan pick re-pins and then opens
+ * the session inside one hold). It takes no lock: never call it without one, and never call `underSlotLock` around it.
+ * Open (or reuse) the business's one session for the terms `readOffer` returns under that lock.
  * Hosted sessions only are reused: an embedded one has no url to hand a second click.
  */
-export async function openCheckoutSession(
-  d: SlotDeps,
-  a: { tenantId: string; customerId: string; surface: CheckoutSurface; readOffer: SlotOfferReader },
-): Promise<CheckoutStart> {
+export async function openCheckoutSessionHeld(d: SlotDeps, a: SlotArgs): Promise<CheckoutStart> {
+  // W-1464: under the tenant-price lock, before the first Stripe call (the list, the expire, the create)
+  await assertTenantLivePaymentsAllowed(d.prisma, a.tenantId);
+  const sessions = await tenantSessions(d, a.tenantId, a.customerId);
+  if (hasUnapplied(sessions, await readRow(d, a.tenantId))) throw inProgress();
+  const { terms, params } = await a.readOffer(); // the ONLY term read, under the lock
+  const hash = termsHash(terms, a.surface);
+  const live = sessions.find(
+    (s) =>
+      s.status === "open" &&
+      !!s.url &&
+      s.expires_at * 1000 > Date.now() &&
+      s.metadata?.termsHash === hash,
+  );
+  if (live) return checkoutStartFromSession({ id: live.id, url: live.url });
+  await closeOpen(d, a.tenantId, sessions);
+  const session = await d.stripe.client.checkout.sessions.create(
+    withCheckoutPolicy(
+      { ...params, metadata: { ...params.metadata, termsHash: hash } },
+      { surface: a.surface },
+    ),
+    {
+      idempotencyKey: `rf-slot-${sha(
+        `${a.tenantId}:${a.customerId}:${hash}:${sessions[0]?.id ?? "none"}`,
+      )}`,
+    },
+  );
+  logger.log(`session ${session.id} opened for tenant ${a.tenantId}`);
+  return checkoutStartFromSession(session);
+}
+
+/** Open (or reuse) the business's one session: {@link openCheckoutSessionHeld} under the tenant-price lock. */
+export async function openCheckoutSession(d: SlotDeps, a: SlotArgs): Promise<CheckoutStart> {
   return underSlotLock(
     a.tenantId,
-    async () => {
-      // W-1464: under the tenant-price lock, before the first Stripe call (the list, the expire, the create)
-      await assertTenantLivePaymentsAllowed(d.prisma, a.tenantId);
-      const sessions = await tenantSessions(d, a.tenantId, a.customerId);
-      if (hasUnapplied(sessions, await readRow(d, a.tenantId))) throw inProgress();
-      const { terms, params } = await a.readOffer(); // the ONLY term read, under the lock
-      const hash = termsHash(terms, a.surface);
-      const live = sessions.find(
-        (s) =>
-          s.status === "open" &&
-          !!s.url &&
-          s.expires_at * 1000 > Date.now() &&
-          s.metadata?.termsHash === hash,
-      );
-      if (live) return checkoutStartFromSession({ id: live.id, url: live.url });
-      await closeOpen(d, a.tenantId, sessions);
-      const session = await d.stripe.client.checkout.sessions.create(
-        withCheckoutPolicy(
-          { ...params, metadata: { ...params.metadata, termsHash: hash } },
-          { surface: a.surface },
-        ),
-        {
-          idempotencyKey: `rf-slot-${sha(
-            `${a.tenantId}:${a.customerId}:${hash}:${sessions[0]?.id ?? "none"}`,
-          )}`,
-        },
-      );
-      logger.log(`session ${session.id} opened for tenant ${a.tenantId}`);
-      return checkoutStartFromSession(session);
-    },
+    () => openCheckoutSessionHeld(d, a),
     // the tenant's own click waits briefly (the pool is small), the admin link waits as every admin price writer does
     a.surface === "TENANT_SELF" ? TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS : undefined,
   );

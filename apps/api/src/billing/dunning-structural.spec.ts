@@ -238,7 +238,10 @@ describe("SA-733r7 PR-B3 structural pins", () => {
     it("checkout (BillingService.createCheckoutSession) and the admin plan change (updatePlanLocked) call the same helper", () => {
       const billing = code(read(path.join(SRC, "billing", "billing.service.ts")));
       const i = billing.indexOf("async createCheckoutSession(");
-      expect(billing.slice(i, i + 4500)).toMatch(/await assertTenantNotPaymentOverdue\(/);
+      // the guard moved into `assertCheckoutAllowed` (SA-1547: it also re-runs under a plan pick's hold); checkout calls it first
+      expect(billing.slice(i, i + 4500)).toMatch(/await this\.assertCheckoutAllowed\(/);
+      const j0 = billing.indexOf("private async assertCheckoutAllowed(");
+      expect(billing.slice(j0, j0 + 2500)).toMatch(/await assertTenantNotPaymentOverdue\(/);
       const admin = code(read(path.join(SRC, "platform-admin", "platform-admin.service.ts")));
       const j = admin.indexOf("private async updatePlanLocked(");
       // 1400: the tenant select grew by the `planVersionId` line (SA-815a); the guard is still its first call

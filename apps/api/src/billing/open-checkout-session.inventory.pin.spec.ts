@@ -13,7 +13,12 @@ const SRC = path.resolve(__dirname, "..");
 const OPEN: Record<string, number> = {
   "billing/billing.service.ts": 1, // BillingService.createCheckoutSession (both surfaces)
 };
+/** SA-1547 PR-5: the slot body for a caller that already holds the lock (a plan pick re-pins, then opens, in ONE hold). */
+const HELD: Record<string, number> = {
+  "billing/billing.service.ts": 1, // BillingService.pickAndOpen (never inside `openCheckoutSession`'s own lock)
+};
 const EXPIRE_FIRST: Record<string, number> = {
+  "billing/billing.service.ts": 1, // pickAndOpen: before the re-pin (completion prices from the pin)
   "billing/subscription-mutation.service.ts": 3, // subscribe, upgradeLocked, downgrade
   "platform-admin/platform-admin.service.ts": 2, // updatePlanLocked (plan edit), updateTenantPriceOverrideLocked (fee save)
 };
@@ -121,6 +126,9 @@ ${before}
 describe("W-1338 open-checkout-session call-site inventory", () => {
   it("openCheckoutSession has exactly the listed callers", () => {
     expect(sites("openCheckoutSession")).toEqual(OPEN);
+  });
+  it("openCheckoutSessionHeld has exactly the listed callers", () => {
+    expect(sites("openCheckoutSessionHeld")).toEqual(HELD);
   });
   it("expireOpenCheckoutSessions has exactly the listed callers", () => {
     expect(sites("expireOpenCheckoutSessions")).toEqual(EXPIRE_FIRST);

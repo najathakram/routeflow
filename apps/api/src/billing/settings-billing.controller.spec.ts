@@ -1,4 +1,5 @@
-import { SettingsBillingController } from "./settings-billing.controller";
+import { buildGlobalValidationPipe } from "../common/global-validation-pipe";
+import { CheckoutPlanPickDto, SettingsBillingController } from "./settings-billing.controller";
 import { QuoteDto } from "./dto/quote.dto";
 
 interface AuthUser {
@@ -110,12 +111,17 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     expect(result).toEqual({ checkoutUrl: "https://checkout.stripe.com/x", sessionId: "cs_1" });
   });
 
-  // R2.9: the endpoint accepts no request body at all — a caller cannot direct
-  // checkout at any plan other than the tenant's own pinned one. This is a
-  // compile-time/structural guarantee (no @Body() param exists on the handler), so
-  // the runtime check here is that the handler's arity is exactly 1 (@CurrentUser only).
-  it("R2.9 takes no request-body param — the tenant's own plan is structural, not client-supplied", () => {
-    expect(SettingsBillingController.prototype.createCheckout.length).toBe(1);
+  // R2.9, amended by SA-1547 PR-5 (card-first chunk 2): the endpoint takes ONE optional input, a plan KEY. A caller still
+  // cannot direct checkout at a price, an interval or an add-on: the global pipe refuses every other field with a 400,
+  // and which keys may be picked is the published catalog's call (self-checkout-plan-pin.spec.ts).
+  it("R2.9 the only client input is a plan key: any other body field is a 400", async () => {
+    expect(SettingsBillingController.prototype.createCheckout.length).toBe(2);
+    const pipe = buildGlobalValidationPipe();
+    const run = (body: object) =>
+      pipe.transform(body, { type: "body", metatype: CheckoutPlanPickDto });
+    await expect(run({ planKey: "CORE" })).resolves.toEqual({ planKey: "CORE" });
+    await expect(run({ planKey: "CORE", price: 1 })).rejects.toThrow();
+    await expect(run({ interval: "year" })).rejects.toThrow();
   });
 
   // SA-1547: the REG-6 kill switch (INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT) now lives in the eligibility helper; its own

@@ -19,10 +19,18 @@ import { Prisma, TenantPlan } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   cancelOpenLink,
+  expireOpenCheckoutSessions,
   openCheckoutSession,
+  openCheckoutSessionHeld,
   readOpenLink,
+  underSlotLock,
   type SlotOffer,
 } from "./open-checkout-session";
+import {
+  repinForSelfCheckoutTx,
+  type CheckoutGateVerdict,
+  type CheckoutPick,
+} from "./self-checkout-plan-pin";
 import { EmailService } from "../email/email.service";
 import { routeflowNotice } from "../email/routeflow-mail";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
@@ -55,6 +63,7 @@ import { accountAdminsOf } from "./account-admins";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
+import { PlanCatalogService } from "./plan-catalog.service";
 import { isPayingRow } from "./mrr.service";
 import {
   applyCouponStateTx,
@@ -106,7 +115,7 @@ import { ADMIN_AUDIT_ENTITY, AdminAuditAction } from "../platform-admin/audit-ac
 import { retryOnTxConflict } from "../common/tx-retry";
 import { NO_LIVE_SUBSCRIPTION, stopBillingIncludedAddonsTx } from "./addon-inclusion";
 import { assertCheckoutSurface, type CheckoutSurface } from "./checkout-session-params";
-import type { CheckoutStart } from "@routeflow/types";
+import type { CheckoutPickResult, CheckoutStart } from "@routeflow/types";
 import { webBaseUrl } from "../config/web-base-url";
 import {
   assertLivePaymentsAllowed,
@@ -295,6 +304,7 @@ export class BillingService {
     @Optional() private readonly dunning?: DunningService,
     // SA-775: the rollout pause on AUTOMATIC locks (reconcileCanceledSubscriptions, the Stripe-cancel webhook).
     @Optional() private readonly autoLocks?: AutoLockSwitchService,
+    @Optional() private readonly catalog?: PlanCatalogService,
   ) {
     // MRR has ONE writer: dunning's pause and resume book their delta through this class's transitionAndEmit.
     this.dunning?.bindTransition((...args) => this.transitionAndEmit(...args));
@@ -567,14 +577,20 @@ export class BillingService {
    * Returns the {@link CheckoutStart}: a url to visit (hosted) or, when BILLING_CHECKOUT_UI=embedded and the
    * surface is TENANT_SELF, a client secret that mounts the card form on our page (SA-1139).
    */
-  async createCheckoutSession(
+  createCheckoutSession(
     tenantId: string,
     // SA-1139: `surface` is REQUIRED and never defaulted (the admin link is hosted, a tenant's own checkout follows the switch).
-    opts: {
-      interval?: "month" | "year";
-      surface: CheckoutSurface;
-    },
-  ): Promise<CheckoutStart> {
+    opts: { interval?: "month" | "year"; surface: CheckoutSurface },
+  ): Promise<CheckoutStart>;
+  /** SA-1547 card-first: the same checkout with a plan pick (`pick`); answers a session or a TRIAL_PLAN_SET. */
+  createCheckoutSession(
+    tenantId: string,
+    opts: { interval?: "month" | "year"; surface: CheckoutSurface; pick: CheckoutPick },
+  ): Promise<CheckoutPickResult>;
+  async createCheckoutSession(
+    tenantId: string,
+    opts: { interval?: "month" | "year"; surface: CheckoutSurface; pick?: CheckoutPick },
+  ): Promise<CheckoutStart | CheckoutPickResult> {
     assertCheckoutSurface(opts?.surface); // before anything is read, claimed or created
 
     const tenant = await this.prisma.tenant.findUnique({
@@ -600,6 +616,55 @@ export class BillingService {
 
     const interval: "month" | "year" = opts?.interval === "year" ? "year" : "month";
 
+    // SA-1547: a plan pick refuses early too (a cheap 4xx; no Stripe customer for a business that cannot pay): the wall,
+    // then the caller's eligibility gate. Both run AGAIN under the hold in `pickAndOpen`, before the re-pin.
+    const early = opts.pick ? await this.pickGate(tenantId, opts.pick) : null;
+
+    // The refusals that read the subscription, a catch-up claim, an overdue invoice and Stripe (also re-run under a pick's hold).
+    await this.assertCheckoutAllowed(tenantId);
+
+    // SA-690 option A: every active self-serve add-on that has no Stripe item yet (a trial's, or a
+    // pilot's) is billed on THIS checkout as one extra line. The live-subscription guard above runs
+    // first (a tenant that cannot check out never has its add-on rows read); an annual checkout with
+    // such an add-on is refused (409, ADDON_ANNUAL_NOT_SUPPORTED) before the customer or the session
+    // is created. A read-only gate (no Stripe call, value unbound): the lines billed are read again under the slot's lock.
+    await this.mutations.checkoutAddonLines(tenantId, interval, { readOnly: true });
+
+    // SA-733 D6: a new subscription is MONTHLY only - an anchored annual checkout would bill a prorated slice of
+    // the YEAR now (10-03 ruling: annual Stripe subscriptions are not offered). Refused before the customer or the session is created.
+    if (interval === "year") {
+      throw new BadRequestException({
+        code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
+        message: "Annual checkout is not available. Subscriptions are billed monthly.",
+      });
+    }
+
+    // F3: the 91-minute 409 ahead of any Stripe write (the slot plans the anchor again under its lock).
+    planCheckoutAnchor(new Date());
+
+    // W-1338 (W9): an unpriceable business never gets a Stripe customer (throws BadRequest). Gate only: no Stripe call,
+    // value unbound; the price billed is read under the slot's lock. The customer id is identity, not a term.
+    await this.pricing.checkoutPriceData(tenantId, interval, undefined, { readOnly: true });
+    if (opts.pick) return this.pickAndOpen(tenantId, tenant.slug, opts.surface, opts.pick, early!);
+    const customerId = await this.ensureStripeCustomer(tenantId);
+
+    // W-1338: ONE slot for the admin link and Pay now; it reads the terms (checkoutOffer) only while it holds the lock.
+    return openCheckoutSession(
+      { prisma: this.prisma, stripe: this.stripe },
+      {
+        tenantId,
+        customerId,
+        surface: opts.surface,
+        readOffer: () => this.checkoutOffer(tenantId, tenant.slug, customerId, interval),
+      },
+    );
+  }
+
+  /**
+   * The checkout's refusals that read the business's subscription, any catch-up claim, an overdue invoice and Stripe.
+   * Called outside the lock as the fast refusal, and again under a plan pick's hold before the re-pin.
+   */
+  private async assertCheckoutAllowed(tenantId: string): Promise<void> {
     // A second checkout on a tenant that already has a live subscription creates a
     // SECOND Stripe subscription on the same customer: both invoice every cycle, and
     // the completion webhook overwrites `stripeSubId`, orphaning the first one where
@@ -660,40 +725,79 @@ export class BillingService {
         );
       }
     }
+  }
 
-    // SA-690 option A: every active self-serve add-on that has no Stripe item yet (a trial's, or a
-    // pilot's) is billed on THIS checkout as one extra line. The live-subscription guard above runs
-    // first (a tenant that cannot check out never has its add-on rows read); an annual checkout with
-    // such an add-on is refused (409, ADDON_ANNUAL_NOT_SUPPORTED) before the customer or the session
-    // is created. A read-only gate (no Stripe call, value unbound): the lines billed are read again under the slot's lock.
-    await this.mutations.checkoutAddonLines(tenantId, interval, { readOnly: true });
+  private async pickGate(tenantId: string, pick: CheckoutPick): Promise<CheckoutGateVerdict> {
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
+    return pick.gate();
+  }
 
-    // SA-733 D6: a new subscription is MONTHLY only - an anchored annual checkout would bill a prorated slice of
-    // the YEAR now (10-03 ruling: annual Stripe subscriptions are not offered). Refused before the customer or the session is created.
-    if (interval === "year") {
-      throw new BadRequestException({
-        code: API_ERROR_CODES.CHECKOUT_ANNUAL_NOT_SUPPORTED,
-        message: "Annual checkout is not available. Subscriptions are billed monthly.",
-      });
-    }
-
-    // F3: the 91-minute 409 ahead of any Stripe write (the slot plans the anchor again under its lock).
-    planCheckoutAnchor(new Date());
-
-    // W-1338 (W9): an unpriceable business never gets a Stripe customer (throws BadRequest). Gate only: no Stripe call,
-    // value unbound; the price billed is read under the slot's lock. The customer id is identity, not a term.
-    await this.pricing.checkoutPriceData(tenantId, interval, undefined, { readOnly: true });
-    const customerId = await this.ensureStripeCustomer(tenantId);
-
-    // W-1338: ONE slot for the admin link and Pay now; it reads the terms (checkoutOffer) only while it holds the lock.
-    return openCheckoutSession(
-      { prisma: this.prisma, stripe: this.stripe },
-      {
-        tenantId,
-        customerId,
-        surface: opts.surface,
-        readOffer: () => this.checkoutOffer(tenantId, tenant.slug, customerId, interval),
+  /**
+   * SA-1547 card-first: a plan pick in ONE `underSlotLock` hold (never nested): every refusal first (the wall, the
+   * eligibility gate, the subscription / overdue / live-subscription checks, then the whitelist and custom-fee checks in the
+   * helper), then the re-pin WITHOUT activation, then the session under the same hold. A TRIAL business that picked stays
+   * TRIAL: the answer is the plan, and no session is opened.
+   */
+  private async pickAndOpen(
+    tenantId: string,
+    slug: string,
+    surface: CheckoutSurface,
+    pick: CheckoutPick,
+    early: CheckoutGateVerdict,
+  ): Promise<CheckoutPickResult> {
+    if (!this.catalog) throw new Error("BillingService: the plan catalog is not wired");
+    const catalog = this.catalog;
+    // no Stripe customer for a trial business that is only choosing its plan
+    let customerId = early === "TRIAL_PICK" ? null : await this.ensureStripeCustomer(tenantId);
+    return underSlotLock(
+      tenantId,
+      async () => {
+        const verdict = await this.pickGate(tenantId, pick); // the wall BEFORE any write (R11), then eligibility
+        await this.assertCheckoutAllowed(tenantId);
+        if (verdict === "SESSION") customerId ??= await this.ensureStripeCustomer(tenantId);
+        // Completion writes `planKey` from its session's metadata but prices the snapshot from the pin: a plan move may never
+        // sit beside a paid session the webhook has not applied. Refuses it (409) and closes any open one, as every plan writer does.
+        await expireOpenCheckoutSessions({ prisma: this.prisma, stripe: this.stripe }, tenantId);
+        const pinned = await repinForSelfCheckoutTx(
+          { prisma: this.prisma, catalog },
+          tenantId,
+          pick.planKey,
+        );
+        if (verdict === "TRIAL_PICK") {
+          const t = await this.prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { trialEndsAt: true },
+          });
+          return {
+            kind: "TRIAL_PLAN_SET" as const,
+            planKey: pinned.planKey,
+            planName: pinned.planName,
+            trialEndsAt: t?.trialEndsAt?.toISOString() ?? null,
+          };
+        }
+        const start = await openCheckoutSessionHeld(
+          { prisma: this.prisma, stripe: this.stripe },
+          {
+            tenantId,
+            customerId: customerId!,
+            surface,
+            readOffer: async () => {
+              const offer = await this.checkoutOffer(tenantId, slug, customerId!, "month");
+              // never a session for the wrong plan: the offer read under the hold must show the pinned plan
+              if (offer.terms.planKey !== pick.planKey) {
+                throw new ConflictException({
+                  code: API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED,
+                  message:
+                    "Your plan changed while we opened checkout. Nothing was charged. Please try again.",
+                });
+              }
+              return offer;
+            },
+          },
+        );
+        return { ...start, kind: "SESSION" as const };
       },
+      TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
     );
   }
 

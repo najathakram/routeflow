@@ -38,9 +38,9 @@ const ALLOWED: Readonly<Record<string, LedgerRow>> = {
     reason: "after `if (!def)`: echoes a key the caller sent that no published plan holds",
   },
   'billing/subscription-mutation.service.ts|Unknown plan "${}"': {
-    sites: 3,
+    sites: 2,
     reason:
-      "subscribe, upgrade and downgrade, each after `if (!def)`: echoes a key the caller sent that no published plan holds. The off-ladder case (a published key outside PLAN_KEYS) reads OFF_LADDER_PLAN_MESSAGE",
+      "upgrade and downgrade, each after `if (!def)`: echoes a key the caller sent that no published plan holds. The off-ladder case (a published key outside PLAN_KEYS) reads OFF_LADDER_PLAN_MESSAGE",
   },
   'platform-admin/platform-admin.service.ts|Plan "${}" is not in the published plan catalog — publish it before assigning te':
     {
