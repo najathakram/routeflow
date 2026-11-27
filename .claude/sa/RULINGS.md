@@ -573,3 +573,19 @@
 - SA-957 · 2026-10-25 · #3541 PASS 2 relay @6f73c645e: M1 multi-part entry BUILD in this PR (one row per ladder option, web only); M2 YES one countFactorOf + countPieces (3 dp) in @routeflow/pricing, API piecesOf + web preview call it, parity pin; M3 Playwright 1440/768/390 + apple-ux + apple-design + W-785 at the FINAL head required; Fix 1 keeps null + warn, no COUNT_CORRECTION default; L4 + L5 ride (XS), L1 (only rename takes EXCLUSIVE, amends SA-828a premise) + L6 rows
 - SA-958 · 2026-10-25 · sprint batch after crash #5: #3541 M1 shape = tabs, Add|Remove segmented, one row per ladder option with unit words baseUnitLabel else Piece, plural moved to pricing, parts preview like describeParts, messages under fields, top-anchored modal, 44 px below sm, 409 copy via code; stock below zero WARNED + allowed (SA-828 §3 kept); #3756 = SA-956 unchanged; 460 no buyer reopen exists, unvoid judges every line STAFF channel SA-272 shape, reopen PAID->DRAFT no new judge; 430 audit row BUILD (4 writers, pin), updatedAt LATER sitting; W-748 Q1 remove dead fn + rewrite l8 spec on PC DB lane, Q2 import stamp covers imported qty only, increase re-judged; 478 (a)(b) WON'T-DO
 - SA-959 · 2026-10-25 · #3748 @d087b1624 walk-in no-refund: a credit note is NOT right, SA-932 §B/§D kept; delete the walk-in credit-note copy/label/context, show one refusal sentence and no take-back button until the server sends the cause; SA-932 server half not on master (no WALK_IN_STORE_CREDIT_REFUSED), its P1 row stays on the Counter lane
+- SA-1308 · 2026-11-27 · W-1485 invoice line grouping by category; comment 7213743398 (SA-B)
+- SA-1309 · 2026-11-27 · SA-1549 fit amendments for W-1471, W-1472 and W-1469; comment 7216750787 (SA-B)
+- SA-1310 · 2026-11-27 · W-1494 counter sale: every number shown adds up; comment 7216927472 (SA-B)
+- SA-1311 · 2026-11-27 · W-1484 slice 5, line discount and line tax on the PO and the vendor bill; comment 7217158347 (SA-B)
+- SA-1312 · 2026-11-27 · W-1473 C3 bounce undo reach and the bounced-reopen triage (B1518); comment 7217279341 (SA-B)
+- SA-1313 · 2026-11-27 · group N collections tables (W-1489, W-1490, W-1493); comment 7217379413, Amendment 1 7217508158 (SA-B)
+- SA-1314 · 2026-11-27 · W-1495 R2 refund ledger shape and R3 approval switch; comment 7217416742 (SA-B)
+- SA-1315 · 2026-11-27 · W-1492 Q1, is a delivered-but-DRAFT invoice a receivable; comment 7217495210 (SA-B)
+- SA-1316 · 2026-11-27 · group N sitting items, STATEMENT_SENT and the W-1489 day mark; comment 7217594664 (SA-B)
+- SA-1317 · 2026-11-27 · two money reads, W-1479 pack and the CONFIRMED_STATUS sweep; comment 7217777750 (SA-B)
+- SA-1318 · 2026-11-27 · PACK P0 (W-1474 prefactor), D1 and D2 land in P0b; comment 7217915629 (SA-B)
+- SA-1319 · 2026-11-27 · SA-1547 PR-5 trial pick; comment 7217948207, re-ruled R1 7218308125, R1a 7218367456, R2 7219551666 (SA-B)
+- SA-1320 · 2026-11-27 · W-1503 A1 Lens questions and what A0 is; comment 7217997186 (SA-B)
+- SA-1321 · 2026-11-27 · PACK W-1505 U0, the status rule for the three wallet checks, plus the planner-status line for W-1471 A3c; comment 7218057879 (SA-B)
+- SA-1322 · 2026-11-27 · a payment-path candidate (B1522, details private): triaged HIGH, own fix ahead of W-1503 A0; comment 7218142383 (SA-B), details with the lead
+- SA-1323 · 2026-11-27 · W-1485 PR-1 Lens questions, the label column's name and imports; comment 7218217650 (SA-B)

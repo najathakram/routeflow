@@ -12,6 +12,13 @@
 
 ## process
 
+### L-417 · 2026-11-27 · process · a count pin that two branches both raised by the same amount merges with no conflict and the wrong value; recount from the merged tree (#4544, #4555)
+
+- **Symptom:** two PRs each added DB specs and raised the ND3 count pin in `scripts/ci-lanes.self-test.mjs` (553 to 556, and 553 to 559). Master moved the same pin to 554 between them. A text merge keeps one side's number, and the pin then fails on the merged tree or, worse, matches a count that is no longer true.
+- **Root cause:** the pin is a number about the whole tree, written as an edit of one line. Two branches that edit that line by a delta do not conflict when the deltas hide behind an equal base, and git cannot add them. Each branch's own green is true only for its own tree.
+- **Lesson:** **A count pin is never merged by choosing a side. After a merge that touches it, count the spec files in the merged tree (the lane's own listing), write that number, and say how it was counted in the PR body. A squash that lands behind another count raise needs the sum, not either value.**
+- **Guard:** the pin itself fails Verify on the merged tree (`ci-lanes.self-test.mjs`, "ND3 count pin"); the merge desk reads it on the merge with current master, as [[L-390]] does for the size ratchet.
+
 ### L-412 · 2026-11-25 · process · a post to a shared board runs only inside `if leak-check | grep -q clean`; chaining the two commands with `;` posts anyway
 
 - **Symptom:** a board post went out although the leak check had refused it. The check printed its refusal and exited non-zero, and the post ran next.
@@ -91,12 +98,6 @@
 - **Lesson:** **Drop the odd trailing byte before any utf16le decode. A guard hook prints a refusal and exits non-zero for every exit code that is not 0 or its own refusal code, so a runtime crash reads as a blocked push with a reason. Run the hook self-test under `sh -e`, the way git runs it, not under a forgiving shell.**
 - **Guard:** #4563 (merged 2026-11-26, `8e183d480a`) carries the odd-byte drop, the hook refusal on an unexpected exit code and the `sh -e` self-test; the crash was PC-only and a retry changed nothing.
 
-### L-402 · 2026-11-22 · tooling · a gate that kills a long child on a time cap reports the timeout as a timeout, never as a genuine failure; the cap is overridable and sized for a loaded host (#4427)
-
-- **Symptom:** the forced `turbo run test --force` in `campaign-check` had a fixed 15-minute cap. On a loaded host the api suite ran longer, `spawnSync` returned `ETIMEDOUT`, and the gate printed "genuine failure"; two pushes were refused on 2026-11-22, each after a 40 to 60 minute verify.
-- **Root cause:** the gate read any non-success child result as a test failure. A killed child has no exit status of its own, so a slow run and a red suite looked the same.
-- **Lesson:** **When a gate runs a child under a time cap, branch on the timeout first and say so (`TIMED OUT after N min`, still a refusal); keep "genuine failure" for a real non-zero exit. Size the default to the loaded host and let one env var override it (a positive integer; anything else is ignored).**
-- **Guard:** `campaign-check-force-timeout.spec.ts` and `campaign-check-freshness.spec.ts` (#4427); `scripts/lib/campaign-force-run.cjs` holds the one parser.
 
 ### L-395 · 2026-11-19 · tooling · a guard that matches file names read from `+++ b/` diff headers decodes git's C-quoting (or takes names from `-z` output), and withholds any name git quoted (#4363)
 
@@ -128,19 +129,7 @@
 - **Lesson:** **Before the read, list the specs that copy or run `.husky/*` (grep the hook name in `apps/api/src/common/*-script.spec.ts`) and run them with the hook change. A fixture that copies a hook must copy everything the hook calls, and a missing file refuses with a plain message, not a node stack.**
 - **Guard:** the fixtures in `pre-push-trunk-script.spec.ts` and `skip-verify-audit-script.spec.ts` copy the checker and its lib, and each spec has a missing-checker case; `scripts/registry-root.self-test.mjs` lists the fixture. Cf. [[L-322]], [[L-323]].
 
-· 2026-11-15 · testing · a test helper is not named `use*`: the web lint reads it as a hook and fails the PR (#4340)
 
-- **Symptom:** a web PR went red in CI on `react-hooks/rules-of-hooks`: a plain helper in a test file was called from a callback and its name began with `use`.
-- **Root cause:** the lint rule keys on the name, not on what the function does; the lane's gate had not run web lint.
-- **Lesson:** **Name test helpers for what they return (`makeX`, `renderX`, `withX`), never `useX`, unless the function really is a hook called at a component's top level. Web lint is part of every web PR gate.**
-- **Guard:** the web ESLint `react-hooks/rules-of-hooks` rule in `npm run lint`. Cf. [[L-386]].
-
-· 2026-11-15 · testing · a source scan's file-walk predicate is pinned by a row that names edge files, and a label type error shows only under the spec ratchet (#4344)
-
-- **Symptom:** a return-address scan walked the API sources with `/.(spec|test).tsx?$/` as its skip filter; the unescaped dot also dropped `common/testing/db-spec.ts` and `smtp-spec.ts`, so the scan read green while skipping both. A reader found it, not the scan.
-- **Root cause:** the predicate was never itself tested, and a scan that finds nothing in a skipped file looks identical to a clean file. Separately, a row label written with two quoted pieces was a type error that plain `tsc` never reports, because it skips specs.
-- **Lesson:** **Give every scan's walk a row that asserts the named edge files ARE scanned (a helper called `*-spec.ts`, a `.tsx` file) and the excluded kinds are not; escape the dots in a file-name predicate. A spec type error is judged only by `npm run check-types -w apps/api` (the ratchet), and prettier rewrites quoted keys, so a row meant to test a quoted-key spelling tests nothing: label it as a label.**
-- **Guard:** the walk row in `apps/api/src/billing/billing-return-paths.spec.ts` (db-spec.ts and smtp-spec.ts scanned, no `*.spec.ts(x)`, at least seven `.tsx` files).
 
 ### L-392 · 2026-11-19 · testing · a raw control byte typed into a regex literal makes a negative pin pass whatever the code holds (#4349, B1313)
 
@@ -321,12 +310,6 @@
 - **Lesson:** **Redact at the place the error is stored for the screen, not only in the log line, and give each transport branch its own test that asserts the staff-visible text. A transport added later with its own catch is a new unredacted exit unless a test names it.**
 - **Guard:** `email/email.tenant-smtp-error-redact.w1289.spec.ts` (tenant fail with and without a platform transport, the statement 400, the log line).
 
-### L-399 · 2026-11-21 · security · when a storage key is renamed, the reader drops the old key and logout clears it once; a fallback read keeps a signed-out person signed in (#4371)
-
-- **Symptom:** a buyer who signed in with Google and then signed out was read as signed in again, and revisiting the portal showed it.
-- **Root cause:** the Google callback still wrote the pre-namespacing `buyerAccessToken` key, the token reader fell back to it, and logout cleared only the namespaced keys. A second page read yet another key (`buyerToken`) that nothing writes, so its request went out with no Authorization header.
-- **Lesson:** **After a storage-key migration the writer stops writing the old key, the reader stops falling back to it, and logout removes it once for browsers that still hold it. Every page reads the token through the one accessor, never by a key literal.**
-- **Guard:** `apps/web/lib/buyer-auth.legacy-token.test.ts`, `page.code-only.test.tsx` (callback) and `page.merge-request.test.tsx` (settings), #4371.
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
 
@@ -379,12 +362,6 @@
 - **Lesson:** **Keep ONE played-list for every reveal path. A trigger reached at rest (inside a refresh, from an anchor, on the print return) is pushed to it at once and leaves its content as it is; only a callback from a scroll update plays. Never use `once` as the record.**
 - **Guard:** `apps/web/e2e/85-site-proof-pages.spec.ts` T1 (same trigger count as a fresh load after print) and T2 (no heading waits for a scroll), and its replay cell, which asserts the at-rest precondition before it measures. Cf. [[L-377]].
 
-### L-376 · 2026-11-12 · web · a text field inside a closing dialog is not a typing target; one predicate decides it for every guard that asks "is a person typing" (#4303)
-
-- **Symptom:** at the till, a scan that started 100-150 ms after Escape in a dialog's text box lost its leading digits and looked up a suffix. A 1-3 digit suffix is a quantity: the next correct scan could ring up x31.
-- **Root cause:** a Radix dialog stays mounted with `data-state="closed"` for its 150 ms exit animation and keeps focus in its text box. The refocus and the key redirect both read a focused text box as "a person is typing" and stood down, so the keys died with the unmount.
-- **Lesson:** **A guard that asks whether a person is typing asks one shared predicate, and that predicate excludes a field inside a closing dialog. Add no timer, no key timing and no new focus owner for it. Test it with a harness that emulates the exit animation (jsdom has none), at start delays on both sides of the animation, and with both line endings.**
-- **Guard:** `insideClosingDialog` in `lib/refocus-scanner.ts` (read by `isTextEntryElement`); `refocus-scanner.test.ts` and `CounterSaleScreen.escape-scan.test.tsx` (removing the predicate turns 18 tests red). Open: Change the price with a code that starts in lowercase (`CounterLinePriceEdit.tsx:252`). Cf. [[L-353]].
 
 ### L-385 · 2026-11-15 · web · one exported predicate says whether a key starts a scan run; each screen decides only where the scan goes (#4320, B1310, B1314)
 
@@ -394,6 +371,20 @@
 - **Guard:** `apps/web/lib/scan-run.test.ts`, `scan-run.structure.test.ts` (the module reads no clock, no second spelling of the rule), `CreateOrderModal.scan-destination.test.tsx`, `CounterSaleScreen.sa1067.test.tsx`.
 
 ## deploy
+
+### L-418 · 2026-11-27 · deploy · a post-merge job that is cancelled at its time cap every run is no signal; PR checks show the E2E job as skipped, so a red there goes unseen
+
+- **Symptom:** for about two weeks (sampled runs from 2026-11-12 to 2026-11-27) every sampled master run whose `E2E (Playwright)` job actually started ended `cancelled` at 45 minutes and 15 seconds. Site PRs merged with their E2E red and nobody saw it, because on a PR the E2E jobs are `skipped` and the run reads green.
+- **Root cause:** `ci.yml` starts E2E on Railway's `deployment_status`, not on the PR, and the job's `timeout-minutes` is 45. The suite had grown past the cap, so the job was killed before it reported. A cancelled run is neither red nor green, and a freshness gate that skips E2E reports a green run too, so no check ever turned red.
+- **Lesson:** **Read the E2E job's own conclusion and duration, never the run's. A duration at the cap means no E2E evidence at all, not a pass. A change to the site, or any page E2E covers, is proven by the local E2E lane on the tree, and the PR body says so; a merge does not wait on a signal that cannot arrive.**
+- **Guard:** none yet (the lead reads the job rows by hand); owed: a check that fails when the E2E job ends cancelled at its cap. Cf. [[L-367]], [[L-388]].
+
+### L-419 · 2026-11-27 · deploy · `npm run post-deploy-check` defaults to `http://localhost:3000`; a green run is not evidence about production unless `SMOKE_BASE_URL` names it
+
+- **Symptom:** a deploy runbook step and the `regression` script both end with `post-deploy-check`, and the run printed a pass. Nothing said which API it had asked.
+- **Root cause:** `scripts/post-deploy-check.mjs` reads `SMOKE_BASE_URL` and falls back to `http://localhost:3000` (and the `e2e-routeflow` test business). `local:validate` runs it against the local stack on purpose, so the same command is a local proof in one place and silently the same in the deploy runbook.
+- **Lesson:** **A smoke script's target is part of its result. Print the base URL first and name it in the report; production proof sets `SMOKE_BASE_URL` to the deployed API and says so, and a pass without that line counts as local only.**
+- **Guard:** none automatic. Cf. [[L-360]], [[L-393]].
 
 ### L-367 · 2026-10-31 · deploy · a hosted job's timeout is sized from its measured stages with headroom; a cancelled run is read by its annotation, and a local verify red mid-chain hides every later step
 
