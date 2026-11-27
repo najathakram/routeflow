@@ -27,7 +27,8 @@ const refuse = (code: string): PlanGateOutcome => ({ kind: "REFUSE", code });
 
 /**
  * Order matters: link-pending first (a payment is already in flight), then manual pay, then the card payer,
- * then everyone else (no card subscription) who is sent to Checkout.
+ * then everyone else (no card subscription) who is sent to Checkout. SA-1547: a business that is already ACTIVE
+ * with no card is the exception: it is told to ask for a payment link.
  */
 export function selfServePlanGate(
   tenant: PlanGateTenant,
@@ -47,6 +48,9 @@ export function selfServePlanGate(
   if (cardPayer) {
     return op === "subscribe" ? refuse(API_ERROR_CODES.USE_PLAN_CHANGE) : { kind: "PROCEED" };
   }
+
+  // SA-1547: an ACTIVE business with no card has no checkout of its own to pick a plan at (the owner sends it a link).
+  if (tenant.status === TenantStatus.ACTIVE) return refuse(API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK);
 
   return op === "downgrade"
     ? refuse(API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT)
@@ -78,6 +82,7 @@ const REFUSAL_MESSAGE: Record<string, string> = {
     "Your plan is paid by card. Use Change plan to switch; the new price is prorated.",
   [API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT]:
     "Choose your plan at checkout. Your plan starts once your payment clears.",
+  [API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK]: "Ask us for a payment link.",
 };
 
 /** The coded 409 for a refused self-serve plan operation (shape of `admin-lock-refusal.ts`). */

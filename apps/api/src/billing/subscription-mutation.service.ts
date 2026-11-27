@@ -120,6 +120,12 @@ import {
 import { dunningZone } from "./dunning-zone";
 import { formatInZone } from "./subscription-billing-extras";
 import { stripeSubscriptionPeriod } from "./stripe-period";
+import {
+  CUSTOM_PLAN_MESSAGE,
+  OFF_LADDER_PLAN_MESSAGE,
+  assertSelfServePlanDef,
+  inviteOnlyRefusal,
+} from "./self-checkout-plan-pin";
 import { ScheduledPriceChangeService } from "./scheduled-price-change";
 import { TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS, underTenantPriceLock } from "./price-lock";
 import { CardFirstFlagService } from "./card-first-flag.service";
@@ -142,17 +148,8 @@ export interface SubscribeInput {
 export type PlanChangeAction =
   "SUBSCRIBE" | "UPGRADE" | "DOWNGRADE" | "NOOP" | "KEEP_CURRENT" | "CONTACT_SALES";
 
-/** Custom (Enterprise) plans are negotiated, never self-service — the same refusal
- *  subscribe()/upgrade()/downgrade() throw, surfaced by the preview as an action. */
-const CUSTOM_PLAN_MESSAGE = "Enterprise is a custom plan — contact sales.";
-
-/** SA-1254 V7 (P-45): the invite-only refusal names the plan ("The Lite plan"), never its key. */
-function inviteOnlyRefusal(planKey: string): string {
-  return `The ${planDisplayName(planKey) ?? "requested"} plan is available by invitation only — contact us.`;
-}
-
-/** A published key outside PLAN_KEYS has no name to show, so the refusal prints none (P-45). */
-const OFF_LADDER_PLAN_MESSAGE = "This plan can't be chosen here — contact support.";
+// The refusal texts (custom, invite-only, off-ladder) and the published-catalog check live in
+// self-checkout-plan-pin.ts: subscribe and the card-first checkout pick share one copy of the rule.
 
 /** Committing an UPGRADE or a DOWNGRADE writes `cancelAtPeriodEnd: false`, so a tenant who
  *  had cancelled must be told at the decision point that the cancellation is being called off. */
@@ -529,25 +526,9 @@ export class SubscriptionMutationService {
 
   private async subscribeLocked(tenantId: string, input: SubscribeInput, actorId?: string) {
     const version = await this.catalog.getPublishedCatalog();
-    const def = version.definitions.find((d) => d.planKey === input.planKey);
-    if (!def) throw new BadRequestException(`Unknown plan "${input.planKey}"`);
-    if (def.isCustom) throw new BadRequestException("Enterprise is a custom plan — contact sales.");
-    // S5/WP3a: LITE (and any future invite-only plan) can only be landed on via an explicit
-    // platform-admin action — never this self-service surface. Enforced here, not just in the
-    // UI, so this is the structural gate the whole invite-only lane depends on.
-    if (isInviteOnlyPlanKey(input.planKey)) {
-      throw new BadRequestException(inviteOnlyRefusal(input.planKey));
-    }
-    // B218: `def` only proves `input.planKey` matches a PUBLISHED catalog definition
-    // verbatim — nothing stops a published PlanDefinition's key from being outside
-    // PLAN_KEYS (a catalog-publishing bug), and this IS the client-reachable path (the
-    // client picks from whatever /billing/quote actually offers). Left unchecked,
-    // planKeyToEnum() below now THROWS instead of silently writing STARTER, which would
-    // otherwise crash the request with a 500 for what is really a 400 — refuse it here,
-    // the same seam planChangePreview() already guards for the ranking paths.
-    if (!normalizePlanKey(input.planKey)) {
-      throw new BadRequestException(OFF_LADDER_PLAN_MESSAGE);
-    }
+    // Unknown, custom, invite-only (S5/WP3a: never this self-service surface) and off-ladder (B218: a 400, not a 500
+    // from planKeyToEnum() below) keys are refused: the ONE check, shared with the card-first checkout pick.
+    const def = assertSelfServePlanDef(version, input.planKey);
     const quote = await this.proration.quote({
       planKey: input.planKey,
       cycle: input.cycle,

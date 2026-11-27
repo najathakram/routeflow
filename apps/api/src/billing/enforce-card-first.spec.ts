@@ -70,6 +70,33 @@ describe("SubscriptionMutationService.enforceCardFirst (SA-774 chunk 1)", () => 
     ).toBe(API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT);
   });
 
+  it("flag on: an ACTIVE business with no card is told to ask for a link, on all three entry points", async () => {
+    const f = { tenant: { status: "ACTIVE" }, sub: { stripeSubId: null, externalPayment: false } };
+    for (const op of ["subscribe", "upgrade", "downgrade"] as const) {
+      expect(await codeOf(service({ flag: true, ...f }).run(op))).toBe(
+        API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
+      );
+    }
+  });
+
+  it("flag OFF: the same ACTIVE business with no card is not refused by the gate (as today)", async () => {
+    const f = { tenant: { status: "ACTIVE" }, sub: { stripeSubId: null, externalPayment: false } };
+    for (const op of ["subscribe", "upgrade", "downgrade"] as const) {
+      await expect(service({ flag: false, ...f }).run(op)).resolves.toBeUndefined();
+      await expect(service({ flag: "absent", ...f }).run(op)).resolves.toBeUndefined();
+    }
+  });
+
+  it("R13 / R14, flag on: a trial and a trial-expired business with no card cannot subscribe (CHECKOUT, never activated free)", async () => {
+    for (const tenant of [
+      { status: "TRIAL" },
+      { status: "READ_ONLY", readOnlyReason: "trial_expired" },
+    ]) {
+      const m = service({ flag: true, tenant, sub: { stripeSubId: null, externalPayment: false } });
+      expect(await codeOf(m.run("subscribe"))).toBe(API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT);
+    }
+  });
+
   it("flag on: a missing tenant is left to the caller's own not-found handling", async () => {
     await expect(service({ flag: true, tenant: null }).run("subscribe")).resolves.toBeUndefined();
   });
