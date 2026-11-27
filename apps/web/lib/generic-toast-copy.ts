@@ -12,6 +12,10 @@ import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { LIVE_PAYMENTS_OFF_SENTENCE } from "@routeflow/types/live-payments-off-copy";
 import {
+  CHECKOUT_PAYMENT_IN_PROGRESS_SENTENCE,
+  PLAN_PICK_ASK_FOR_LINK_SENTENCE,
+} from "@routeflow/types/plan-pick-copy";
+import {
   routeStopsNotPlacedFromBody,
   routeStopsNotPlacedSentence,
 } from "@routeflow/types/route-stops-not-placed";
@@ -67,6 +71,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.PROMOTIONS_OFF]: PROMOTIONS_OFF_COPY,
   // SA-1547 M1: the live-payments wall (W-1464); a tester on a test business sees this on every payment surface
   [API_ERROR_CODES.LIVE_PAYMENTS_OFF]: LIVE_PAYMENTS_OFF_SENTENCE,
+  // SA-1547 PR-5a (SA-C): a card-first plan pick's refusals (fixed sentences shared with mobile, never the server text)
+  [API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK]: PLAN_PICK_ASK_FOR_LINK_SENTENCE,
+  [API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS]: CHECKOUT_PAYMENT_IN_PROGRESS_SENTENCE,
   // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
   // fixed sentences for a surface with no dialog, never the server's text.
   [API_ERROR_CODES.RESTRICTION_WARNING]:

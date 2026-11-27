@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Optional,
   Param,
   Post,
   Query,
@@ -36,6 +37,8 @@ import {
   billingReturnUrl,
 } from "./billing-return-paths";
 import { selfPayForViewer } from "./self-checkout-eligibility";
+import { CardFirstFlagService } from "./card-first-flag.service";
+import { planGateRefusal } from "./self-serve-plan-gate";
 
 import { PermissionBase } from "../auth/permissions/permission.decorators";
 interface AuthUser {
@@ -66,6 +69,8 @@ export class SettingsBillingController {
     private readonly mutations: SubscriptionMutationService,
     private readonly billing: BillingService,
     private readonly payments: BillingPaymentsService,
+    // SA-774: the dark platform switch for card-first (absent or off = today's behaviour).
+    @Optional() private readonly cardFirst?: CardFirstFlagService,
   ) {}
 
   /**
@@ -256,6 +261,10 @@ export class SettingsBillingController {
     const tenantId = this.tenantIdOf(user);
     const { selfPay } = await this.subscription.getSubscription(tenantId);
     if (!selfPay?.eligible) {
+      // SA-1547 card-first: an ACTIVE business with no card is told to ask for a payment link (a coded 409, not a bare 403)
+      if (selfPay?.reason === "active_no_card" && (await this.cardFirst?.isEnabled())) {
+        throw planGateRefusal(API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK);
+      }
       throw new ForbiddenException({
         message:
           "Online payment is not available for this workspace right now - contact us to complete your subscription.",

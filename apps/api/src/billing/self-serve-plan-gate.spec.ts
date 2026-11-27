@@ -1,5 +1,10 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { isNeverActivated, selfServePlanGate, type PlanGateOp } from "./self-serve-plan-gate";
+import {
+  isNeverActivated,
+  planGateRefusal,
+  selfServePlanGate,
+  type PlanGateOp,
+} from "./self-serve-plan-gate";
 
 type T = Parameters<typeof selfServePlanGate>[0];
 type S = Parameters<typeof selfServePlanGate>[1];
@@ -26,11 +31,10 @@ describe("selfServePlanGate (SA-774 r6: card first, then active)", () => {
     });
   });
 
-  describe("a business with no card subscription (trial, locked trial or never paid)", () => {
+  describe("a business with no card subscription (trial or locked trial)", () => {
     it.each<[string, T]>([
       ["a trial", trial],
       ["a locked trial", trialLocked],
-      ["an ACTIVE tenant with no card", active],
     ])("%s is sent to Checkout for subscribe and upgrade", (_n, tenant) => {
       expect(selfServePlanGate(tenant, noCardSub, false, "subscribe")).toEqual({
         kind: "CHECKOUT",
@@ -51,6 +55,38 @@ describe("selfServePlanGate (SA-774 r6: card first, then active)", () => {
           "upgrade",
         ),
       ).toEqual({ kind: "CHECKOUT" });
+    });
+  });
+
+  describe("R13 / R14 (SA-1547): subscribe never activates a business that has no card", () => {
+    it.each<[string, T]>([
+      ["a TRIAL with days left", trial],
+      ["a READ_ONLY trial_expired business", trialLocked],
+      [
+        "a READ_ONLY trial_cancelled business",
+        { status: "READ_ONLY", readOnlyReason: "trial_cancelled" },
+      ],
+    ])("%s: subscribe is CHECKOUT, never PROCEED", (_n, tenant) => {
+      expect(selfServePlanGate(tenant, noCardSub, false, "subscribe")).toEqual({
+        kind: "CHECKOUT",
+      });
+    });
+  });
+
+  describe("an ACTIVE business with no card and no manual pay: ask us for a link", () => {
+    it.each<PlanGateOp>(["subscribe", "upgrade", "downgrade"])(
+      "%s is a 409 PLAN_PICK_ASK_FOR_LINK",
+      (op) => {
+        expect(selfServePlanGate(active, noCardSub, false, op)).toEqual(
+          refuse(API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK),
+        );
+      },
+    );
+    it("the refusal says what to do", () => {
+      expect(planGateRefusal(API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK).getResponse()).toEqual({
+        code: API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
+        message: "Ask us for a payment link.",
+      });
     });
   });
 

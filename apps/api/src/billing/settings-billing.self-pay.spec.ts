@@ -1,4 +1,6 @@
+import { ConflictException, ForbiddenException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { NO_IMPERSONATION_KEY } from "../auth/guards/no-impersonation.guard";
 import { SettingsBillingController } from "./settings-billing.controller";
@@ -19,7 +21,7 @@ const SELF_PAY_OK = {
 };
 const SELF_PAY_TRIAL = { ...SELF_PAY_OK, eligible: false, reason: "trial_active" };
 
-function make(selfPay: unknown, planKey = "STARTER") {
+function make(selfPay: unknown, planKey = "STARTER", cardFirst?: boolean) {
   const subscription = {
     getSubscription: jest.fn().mockResolvedValue({ planKey, selfPay }),
   } as any;
@@ -34,6 +36,7 @@ function make(selfPay: unknown, planKey = "STARTER") {
     {} as any,
     billing,
     {} as any,
+    cardFirst === undefined ? undefined : ({ isEnabled: async () => cardFirst } as any),
   );
   return { controller, subscription, billing };
 }
@@ -103,5 +106,59 @@ describe("the checkout route's guards (R5 guard: already true on master)", () =>
   it("is TENANT_ADMIN only and refused in a support session", () => {
     expect(reflector.get(ROLES_KEY, handler)).toEqual(["TENANT_ADMIN"]);
     expect(reflector.get(NO_IMPERSONATION_KEY, handler)).toBe("billing");
+  });
+});
+
+const rejects = async (p: Promise<unknown>): Promise<any> => {
+  try {
+    await p;
+  } catch (e) {
+    return e;
+  }
+  throw new Error("expected a rejection");
+};
+
+describe("SA-1547 PR-5a: the checkout route says ask-for-a-link for an ACTIVE business with no card", () => {
+  const ACTIVE_NO_CARD = { ...SELF_PAY_OK, eligible: false, reason: "active_no_card" };
+  const call = (selfPay: unknown, flag?: boolean) => {
+    const { controller, billing } = make(selfPay, "STARTER", flag);
+    return { billing, run: () => controller.createCheckout({ tenantId: "t1" } as any) };
+  };
+
+  it("flag ON: a coded 409 PLAN_PICK_ASK_FOR_LINK, not a bare 403; no session is opened", async () => {
+    const { run, billing } = call(ACTIVE_NO_CARD, true);
+    const e = await rejects(run());
+    expect(e).toBeInstanceOf(ConflictException);
+    expect(e.getResponse()).toEqual({
+      code: API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
+      message: "Ask us for a payment link.",
+    });
+    expect(billing.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("flag OFF or absent: the 403 it is today, reason kept", async () => {
+    for (const flag of [false, undefined]) {
+      const e = await rejects(call(ACTIVE_NO_CARD, flag).run());
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect(e.getResponse()).toMatchObject({ reason: "active_no_card" });
+    }
+  });
+
+  it("every other ineligible reason keeps its 403 and reason, flag ON or OFF", async () => {
+    for (const reason of ["trial_active", "live_subscription", "unavailable"]) {
+      for (const flag of [true, false]) {
+        const e = await rejects(call({ ...SELF_PAY_OK, eligible: false, reason }, flag).run());
+        expect(e).toBeInstanceOf(ForbiddenException);
+        expect(e.getResponse()).toMatchObject({ reason });
+      }
+    }
+  });
+
+  it("an eligible business opens its session as before, flag ON or OFF", async () => {
+    for (const flag of [true, false]) {
+      const { run, billing } = call(SELF_PAY_OK, flag);
+      await run();
+      expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", { surface: "TENANT_SELF" });
+    }
   });
 });
