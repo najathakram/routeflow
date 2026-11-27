@@ -33,6 +33,7 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateAiConfigDto } from "./dto/update-ai-config.dto";
 import { SetTenantAiCapDto } from "./dto/set-tenant-ai-cap.dto";
+import { SetMailWallDto } from "./dto/set-mail-wall.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
 import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
@@ -96,6 +97,7 @@ import type {
   BusinessProfilePreviewResponse,
 } from "@routeflow/types";
 import { PlatformScoped } from "../tenant/platform-scoped.decorator";
+import { assertListLimit, parseBucketParam } from "./tenant-bucket-list";
 
 /** Attach a config key's applied mode to its explain-trace row (B1132); no mode, no change. */
 function withConfigMode(feature: EffectiveFeature, mode?: FeatureModeState): EffectiveFeature {
@@ -155,6 +157,13 @@ export class PlatformAdminController {
   })
   @ApiQuery({ name: "sortDir", required: false, enum: ["asc", "desc"] })
   @ApiQuery({ name: "includeDeleted", required: false, type: Boolean })
+  @ApiQuery({
+    name: "bucket",
+    required: false,
+    description:
+      "Comma list: paying, trial, not_billed, paused, closed, test_demo, internal, unknown",
+  })
+  @ApiQuery({ name: "attention", required: false, type: Boolean })
   listTenants(
     @Query("page") page = "1",
     @Query("limit") limit = "20",
@@ -164,7 +173,10 @@ export class PlatformAdminController {
     @Query("sortKey") sortKey?: string,
     @Query("sortDir") sortDir?: string,
     @Query("includeDeleted") includeDeleted?: string,
+    @Query("bucket") bucket?: string,
+    @Query("attention") attention?: string,
   ) {
+    assertListLimit(Number(limit));
     return this.svc.listTenants(Number(page), Number(limit), {
       search: search || null,
       status: status || null,
@@ -172,6 +184,8 @@ export class PlatformAdminController {
       sortKey: sortKey || null,
       sortDir: sortDir === "asc" ? "asc" : sortDir === "desc" ? "desc" : null,
       includeDeleted: includeDeleted === "true" || includeDeleted === "1",
+      buckets: parseBucketParam(bucket),
+      attention: attention === "true" || attention === "1",
     });
   }
 
@@ -215,6 +229,22 @@ export class PlatformAdminController {
   ) {
     await this.svc.setTenantAiCap(id, dto.aiMonthlyCapUsd, admin.sub);
     return this.platformConfig.getTenantAiCap(id);
+  }
+
+  @Get("tenants/:id/mail-wall")
+  @ApiOperation({ summary: "A business's allowed mail addresses (enforced for a Test business)" })
+  getMailWall(@Param("id") id: string) {
+    return this.svc.getMailWall(id);
+  }
+
+  @Put("tenants/:id/mail-wall")
+  @ApiOperation({ summary: "Replace a business's allowed mail addresses (empty clears the list)" })
+  setMailWall(
+    @Param("id") id: string,
+    @Body() dto: SetMailWallDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.setMailWall(id, dto.addresses, admin.sub);
   }
 
   @Delete("tenants/:id")

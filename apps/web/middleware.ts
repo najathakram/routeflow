@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { tenantSlugFromHostname } from "@/lib/tenant-host";
 import { BUYER_PRESENCE_COOKIE, OP_PRESENCE_COOKIE } from "@/lib/presence-cookies";
 import { resolveOperatorPathGuard } from "@/lib/portal-routing";
+import { classifySitePath } from "@/lib/site-raw-path";
 
 // Platform-level subdomains and hosting-provider base domains live in
 // `@/lib/tenant-host` so the login page derives the workspace with exactly these
@@ -22,6 +23,18 @@ export function middleware(request: NextRequest) {
   const opAuthed = request.cookies.get(OP_PRESENCE_COOKIE)?.value === "1";
   const buyerAuthed = request.cookies.get(BUYER_PRESENCE_COOKIE)?.value === "1";
   const isProd = process.env.NODE_ENV === "production";
+
+  // The raw file of a ready-made page (/site/<page>.html, in any spelling: encoded, upper case,
+  // trailing dot...) still has its {{brand:key}} tokens. next.config.mjs redirects the plain
+  // spelling only (it matches the encoded path), so every other one is caught here, on the
+  // normalised path (lib/site-raw-path.ts). A broken escape that hides such a name gets a 400.
+  const sitePath = classifySitePath(pathname);
+  if (sitePath.kind === "page") {
+    const dest = url.clone();
+    dest.pathname = sitePath.clean;
+    return NextResponse.redirect(dest, 307);
+  }
+  if (sitePath.kind === "malformed") return new NextResponse("Bad Request", { status: 400 });
 
   // "/" is the marketing home for everyone, signed in or not (owner order 2026-11-03). It used to
   // 307 a signed-in visitor to their dashboard or portal; now the site header shows "Open dashboard"

@@ -1,0 +1,11 @@
+{
+  "board": { "repo": "najathakram/routeflow", "issue": 4456 },
+  "lanes": [
+    { "id": "mac", "machine": "mac", "kind": "reader" },
+    { "id": "mac-2", "machine": "mac", "kind": "reader" },
+    { "id": "mac-3", "machine": "mac", "kind": "reader" },
+    { "id": "pc-rev-3", "machine": "pc", "kind": "reader" },
+    { "id": "pc-sa-3", "machine": "pc", "kind": "architect" },
+    { "id": "laptop-build", "machine": "laptop", "kind": "builder" }
+  ]
+}

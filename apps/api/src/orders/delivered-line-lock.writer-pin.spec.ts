@@ -101,6 +101,11 @@ const REGISTRY: Record<string, Entry> = {
   },
 
   // Columns outside the lock (quantity, price, unit, removal).
+  "orders/delivered-line-correction.ts::applyLineCorrections": {
+    kind: "not-a-lock-column",
+    reason:
+      "SA-1506: an admin CORRECT lowers deliveredQty (or zeroes a taken-off line) and restates the office rows, in the guarded edit's transaction",
+  },
   "orders/delivered-stamp.ts::stampDeliveredInFull": {
     kind: "not-a-lock-column",
     reason: "writes deliveredQty on lines with no delivery evidence",
@@ -382,9 +387,11 @@ describe("delivered-line lock: every writer of an existing OrderItem is guarded 
   });
 
   it.each(Object.entries(REGISTRY).filter(([, e]) => e.kind === "guarded"))(
-    "%s calls assertDeliveredLinesUntouched",
+    "%s calls the guard (assertDeliveredLinesUntouched, directly or through deliveredLineEdit)",
     (key) => {
-      expect(sites.get(key)).toMatch(/assertDeliveredLinesUntouched\(/);
+      // SA-1506: the guard is reached through `deliveredLineEdit(...).assertPre / assertLocked`, which runs it with the
+      // decider's decisions (delivered-line-correction.ts); a direct call stays valid for any other guarded writer.
+      expect(sites.get(key)).toMatch(/assertDeliveredLinesUntouched\(|\bdl\.assertPre\(/);
     },
   );
 
@@ -418,13 +425,58 @@ describe("delivered-line lock: every writer of an existing OrderItem is guarded 
     },
   );
 
-  it("the lock itself is wired: updateOrderItems calls the guard on the pre-tx read AND the locked read", () => {
+  it("the lock itself is wired: updateOrderItems judges the pre-tx read AND the locked read, through the decider", () => {
     const body = sites.get("orders/orders.service.ts::updateOrderItems") ?? "";
-    expect(body.match(/assertDeliveredLinesUntouched\(/g)?.length).toBeGreaterThanOrEqual(2);
-    expect(body).toMatch(/assertDeliveredLinesUntouched\(order, order\.lineItems/);
-    // SA-814: the locked call decides applicability from the status read under the Order lock, never `order.status`.
-    expect(body).toMatch(
-      /assertDeliveredLinesUntouched\(\s*\{ status: lockedStatus\?\.status \?\? order\.status \},\s*heldItems/,
+    expect(body).toContain("const dl = deliveredLineEdit({");
+    expect(body).toContain("await dl.assertPre()");
+    // SA-814: the locked call re-reads the status under the Order lock (inside the glue), never `order.status`.
+    expect(body).toContain("await dl.assertLocked(tx, heldItems)");
+    const glue = textOf("orders/delivered-line-correction.ts");
+    expect(glue).toContain("assertDeliveredLinesUntouched(");
+    expect(glue).toContain("tx.order.findUnique(");
+    expect(glue).toContain("select: { status: true }");
+  });
+});
+
+/**
+ * SA-1506 PR-1a (C2): `deliveredLineEditMode` is consulted at exactly these sites, so a new refusal cannot grow its own
+ * rule. The amendment pinned orders.service.ts lines; the wrappers live in delivered-line-correction.ts here (the
+ * service's size ratchet), so the pin is by file. Shrink-only: a new consumer fails here and is added deliberately.
+ */
+describe("deliveredLineEditMode consult sites (SA-1506 C2)", () => {
+  const countIn = (needle: string, skip: string): string[] =>
+    files
+      .map((f) => relOf(f))
+      .filter((rel) => rel !== skip && textOf(rel).includes(needle))
+      .sort();
+
+  it("the decider is called only by the facts loader and the unit-line writer", () => {
+    expect(countIn("deliveredLineEditMode(", "orders/delivered-line-edit-mode.ts")).toEqual([
+      "orders/delivered-line-facts.ts",
+      "orders/unit-line-edit.ts",
+    ]);
+  });
+
+  it("the per-order decision map is built only by the edit glue and the order read", () => {
+    expect(countIn("deliveredLineModes(", "orders/delivered-line-facts.ts")).toEqual([
+      "orders/delivered-line-correction.ts",
+    ]);
+    expect(countIn("attachLineEditModes(", "orders/delivered-line-facts.ts")).toEqual([
+      "orders/order-find-one.ts",
+    ]);
+    expect(countIn("deliveredLineEdit(", "orders/delivered-line-correction.ts")).toEqual([
+      "orders/orders.service.ts",
+    ]);
+  });
+
+  it("the floor is judged by the decider at its two writers; delivered-stamp.ts is exempt by name", () => {
+    expect(textOf("orders/orders.service.ts")).toContain("modes.get(li.id),");
+    expect(textOf("orders/unit-line-edit.ts")).toContain(
+      "deliveredLineEditMode(held, NO_ORDER_FACTS)",
+    );
+    // DELIVERED only, no user in scope: it keeps the default EDIT decision and so today's words.
+    expect(textOf("orders/delivered-stamp.ts")).toContain(
+      "assertQtyNotBelowDelivered(v.delivered, v.held, v.next)",
     );
   });
 });

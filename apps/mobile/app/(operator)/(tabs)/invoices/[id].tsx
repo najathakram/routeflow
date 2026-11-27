@@ -56,7 +56,9 @@ import { reminderErrorCopy } from "../../../../lib/invoice-reminder-error-copy";
 import { invoiceSendStateLine } from "../../../../lib/invoice-send-state";
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
+import { linkedOrderTarget } from "../../../../lib/linked-order-route";
 import { showToast } from "../../../../lib/toast";
+import { paymentRefusalCopy } from "../../../../lib/payment-refusal-copy";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
 import {
   invoiceLineSubLines,
@@ -76,6 +78,7 @@ import { overpaidText, revisedBadgeText } from "../../../../lib/invoice-revision
 import {
   nextPdfSharePhase,
   smtpFallbackNotice,
+  withCopyNote,
   type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
@@ -228,6 +231,8 @@ export default function InvoiceDetailScreen() {
   });
   // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
   // to know about it or it offers a guaranteed 400.
+  // B1443: every order-linked invoice opens its order in one tap, not only a pending mirror.
+  const orderLink = linkedOrderTarget(invoice);
   const pendingMirror = isPendingOrderMirror({
     pendingMirror: invoice.pendingMirror,
     orderId: invoice.orderId,
@@ -297,8 +302,8 @@ export default function InvoiceDetailScreen() {
           // is a disclosure, not an error — but it can't ride a toast: showToast is
           // nowrap/2.2s and a no-op on iOS, and a dead tenant mailbox has to be
           // read. Plain successes keep the toast.
-          if (notice) alertInfo(label, notice);
-          else showToast(label);
+          if (notice) alertInfo(label, withCopyNote(notice, res));
+          else showToast(withCopyNote(label, res));
           refetch();
         },
         onError: (e: any) => {
@@ -679,6 +684,15 @@ export default function InvoiceDetailScreen() {
               <Text style={styles.headerMeta}>{overpaidText(invoice.overpaidBy)}</Text>
             ) : null}
             <Text style={styles.customer}>{invoice.customer?.businessName ?? "Customer"}</Text>
+            {orderLink ? (
+              <Pressable
+                accessibilityRole="link"
+                onPress={() => router.push(orderLink.route as any)}
+                hitSlop={8}
+              >
+                <Text style={[styles.headerMeta, { color: ios.brand }]}>{orderLink.label} ›</Text>
+              </Pressable>
+            ) : null}
             {invoice.subject?.trim() ? (
               <Text style={styles.headerMeta} numberOfLines={2}>
                 {invoice.subject}
@@ -832,11 +846,11 @@ export default function InvoiceDetailScreen() {
             ) : null}
             {/* A pending mirror is driven by its order, so send/edit both live
                 there. Offer the way through instead of two missing tiles. */}
-            {pendingMirror && invoice.orderId ? (
+            {orderLink ? (
               <ActionTile
                 icon="cube-outline"
-                label="Open order"
-                onPress={() => router.push(`/(operator)/orders/${invoice.orderId}` as any)}
+                label={pendingMirror ? "Open order" : orderLink.label}
+                onPress={() => router.push(orderLink.route as any)}
               />
             ) : null}
             <ActionTile
@@ -1303,7 +1317,9 @@ function ApplyAdvanceSheet({
               onClose();
             },
             onError: (e: any) =>
-              showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+              showToast(
+                paymentRefusalCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+              ),
           },
         ),
       { confirmText: "Apply" },

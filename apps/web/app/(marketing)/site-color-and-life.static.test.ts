@@ -62,60 +62,83 @@ describe("the colour files are linked", () => {
   });
 });
 
-describe("text stays readable on every tint (AA, 4.5:1)", () => {
+describe("text stays readable on every band (AA, 4.5:1)", () => {
   const css = read("css/home-color.css") + read("css/color-deep.css");
+  const PALETTE = JSON.parse(
+    fs.readFileSync(
+      path.resolve(__dirname, "../../../../packages/types/brand/palette.json"),
+      "utf8",
+    ),
+  ).color as Record<string, string>;
 
-  it("every kicker pill ink is AA on its pill", () => {
-    const pairs = [...css.matchAll(/--k-bg:(#[0-9a-f]{6});--k-ink:(#[0-9a-f]{6})/gi)];
-    expect(pairs.length).toBeGreaterThanOrEqual(8);
-    for (const [, bg, ink] of pairs) expect(ratio(bg, ink)).toBeGreaterThanOrEqual(4.5);
-  });
-
-  it("the navy ink and the darker grey are AA on every field tint", () => {
-    const fields = [...css.matchAll(/--fld-[a-z]+:(#[0-9a-f]{6})/gi)].map((m) => m[1]);
-    expect(fields.length).toBeGreaterThanOrEqual(5);
-    for (const f of fields) {
-      expect(ratio("#0f1b2d", f)).toBeGreaterThanOrEqual(4.5);
-      expect(ratio("#44546b", f)).toBeGreaterThanOrEqual(4.5);
+  it("the kicker pill is ink on bone, or ink on white where the band is bone, with a dot", () => {
+    expect(css).toContain("background:var(--rf-soft);color:var(--rf-text)");
+    expect(css).toContain(
+      'content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--rf-accent)',
+    );
+    for (const bg of [PALETTE.bone, PALETTE.white]) {
+      expect(ratio(PALETTE.ink, bg)).toBeGreaterThanOrEqual(4.5);
     }
   });
 
-  it("small grey text that sits on a tint is the darker grey, never the old one", () => {
-    expect(read("css/home-color.css")).toMatch(/\.home \.sy-list span[^{]*\{color:#44546b\}/);
-    expect(read("css/color-deep.css")).toMatch(/\.pd \.pd-note\{color:#44546b\}/);
+  it("the ink and the steel grey are AA on every band colour the repaint uses", () => {
+    for (const band of [PALETTE.white, PALETTE.bone]) {
+      expect(ratio(PALETTE.ink, band)).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(PALETTE.steel, band)).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(ratio(PALETTE.white, PALETTE.ink)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("small grey text that sits on a band is the steel job colour, never the old grey", () => {
+    expect(read("css/home-color.css")).toMatch(
+      /\.home \.sy-list span[^{]*\{color:var\(--rf-text-2\)\}/,
+    );
+    expect(read("css/color-deep.css")).toMatch(/\.pd \.pd-note\{color:var\(--rf-text-2\)\}/);
   });
 });
 
 describe("the wheel wears its colours at rest", () => {
   const js = read("graphics/rf-wheel-up.js");
-  const colours = [...js.matchAll(/{ k: "[a-z]+", t: "[^"]+"[^}]*?c: "(#[0-9a-f]{6})"/g)].map(
-    (m) => m[1],
-  );
-  const tint = (c: string, k: number) =>
-    "#" +
-    [1, 3, 5]
-      .map((i) =>
-        Math.round(255 - (255 - parseInt(c.slice(i, i + 2), 16)) * k)
-          .toString(16)
-          .padStart(2, "0"),
-      )
-      .join("");
-
-  it("reads the fifteen piece colours and a rest tint", () => {
-    expect(colours).toHaveLength(15);
-    expect(js).toMatch(/const REST_TINT = 0.4;/);
-    expect(js).toContain("Math.max(p.c, outer ? REST_TINT : REST_TINT + 0.1)");
+  const graphics = read("graphics/rf-graphics.css");
+  // The wheel roles are typed once, in rf-graphics.css; the script reads them at mount (T17/T19 are e2e 88).
+  const role = (name: string) => {
+    const m = graphics.match(new RegExp(`--rf-wh-${name}:(#[0-9A-Fa-f]{6})`));
+    if (!m) throw new Error(`--rf-wh-${name} is not typed in rf-graphics.css`);
+    return m[1];
+  };
+  // ink, white and the focus role (var(--brand-copper)) all come from the palette file, never typed here (L-072)
+  const {
+    ink: INK,
+    white: WHITE,
+    copper: COPPER,
+  } = (
+    JSON.parse(
+      fs.readFileSync(
+        path.resolve(__dirname, "../../../../packages/types/brand/palette.json"),
+        "utf8",
+      ),
+    ) as { color: Record<string, string> }
+  ).color;
+  it("keeps the fifteen pieces and one resting focus piece", () => {
+    expect(js.match(/{ k: "[a-z]+", t: "/g)).toHaveLength(15);
+    expect(js).toMatch(/const REST_FOCUS = "payments";/);
+    expect(js).toContain("Math.max(p.w, w.d.k === REST_FOCUS ? restF : 0, focusI === w.i ? 1 : 0)");
   });
 
-  it("the navy label and icon stay AA on every piece at rest (outer 0.4, core 0.5)", () => {
-    colours.forEach((c, i) => {
-      expect(ratio("#0f1b2d", tint(c, i < 10 ? 0.4 : 0.5))).toBeGreaterThanOrEqual(4.5);
-    });
+  it("the icon stays readable on every tile at rest: ink on bone, white on ink, white on copper", () => {
+    for (const bone of [role("work"), role("work-2")]) {
+      expect(ratio(INK, bone)).toBeGreaterThanOrEqual(4.5);
+    }
+    for (const ink of [role("sell"), role("sell-2")]) {
+      expect(ratio(WHITE, ink)).toBeGreaterThanOrEqual(4.5);
+    }
+    // the canvas draws icons only, which need 3:1; the still's text labels need 4.5:1 (site-wheel-colours)
+    expect(ratio(WHITE, COPPER)).toBeGreaterThanOrEqual(3);
   });
 
-  it("the still dial (no script) paints the same tint", () => {
+  it("the still dial (no script) wears the same two tones a ring and the copper piece", () => {
     expect(js).toContain(
-      'style="fill:${pastel(d.c, inner ? 0.5 : 0.4)};stroke:${pastel(d.c, inner ? 0.5 : 0.4)}"',
+      'class="rfw-w ${inner ? "i" : "o"}${i % 2 ? " g" : ""}${d.k === REST_FOCUS ? " f" : ""}"',
     );
   });
 });
@@ -140,16 +163,17 @@ describe("life: the motion runs for everyone", () => {
 describe("the colour is decoration, not a new claim", () => {
   const home = read("home.html");
 
-  it("the use-case kicker is the same pill as the others: a tint, a dot, no bar", () => {
+  it("the use-case kicker is the same pill as the others: a fill, a dot, no bar", () => {
     const css = read("css/home-color.css");
     expect(css).not.toContain(".kick::after");
-    expect(css).toMatch(/#use-cases .kick{--k-bg:#[0-9a-f]{6};--k-ink:#[0-9a-f]{6};--k-dot:/);
+    expect(css).toContain(".home #use-cases .kick{");
+    expect(css).toContain(".home #use-cases .kick::before{");
   });
 
-  it("all twenty-two use-case cards carry their piece colour", () => {
-    const cards =
-      home.match(/<li class="inc-i" style="--pc:#[0-9a-f]{6};--pi:#[0-9a-f]{3,6}"/gi) ?? [];
-    expect(cards).toHaveLength(22);
+  it("all eleven use-case cards are there and the page sets no --pc/--pi anywhere (lane 2.3-home took them out)", () => {
+    const cards = home.match(/<li class="inc-i"[^>]*>/gi) ?? [];
+    expect(cards).toHaveLength(11);
+    expect(home).not.toMatch(/--p[ci]\s*:/);
   });
 
   it("the FAQ delivery van is hidden from assistive tech and holds only a question mark glyph", () => {
@@ -172,7 +196,9 @@ describe("the wash and the van stay out of the way", () => {
     expect(js).not.toContain("WASH");
     expect(js).not.toContain("washed(");
     expect(js).toContain("c.fillStyle = stageBg; c.fillRect(0, 0, W, H);");
-    expect(read("graphics/rf-wheel-up.css")).toMatch(/\.rfw-tile\{[^}]*background:#fff\}/);
+    expect(read("graphics/rf-wheel-up.css")).toMatch(
+      /\.rfw-tile\{[^}]*background:var\(--rf-white\)\}/,
+    );
   });
 
   it("the van's drive-in is clipped by its band, and it only takes the corner where the rows leave room", () => {

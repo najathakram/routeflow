@@ -80,6 +80,7 @@ const NUKE_MODELS = [
   "estimateItem",
   "vendorBillItem",
   "billPayment",
+  "purchaseOrderCharge", // SA-1268: ON DELETE RESTRICT to VendorBill (and self), so charges go before vendorBill
   "purchaseOrderItem",
   "returnItem",
   "recurringInvoiceItem",
@@ -121,6 +122,14 @@ const NUKE_MODELS = [
   "creditNote",
   "deliveryBatch",
 
+  // SA-1507 A2-1 (owner box B2): imported QuickBooks history, children first. LegacySalesLine and SourceItemAlias
+  // hold RESTRICT FKs into Product, so they go ahead of customer and product.
+  "legacySalesLine",
+  "legacySalesDocument",
+  "legacyImportIssue",
+  "legacyImportFile",
+  "legacyImportBatch",
+  "sourceItemAlias",
   // 3. Master data the user explicitly wants gone.
   "customer",
   // #2717 M2 (SA-594): Recipe/RecipeComponent hold RESTRICT FKs into Product — children first.
@@ -275,6 +284,8 @@ function buildWhere(modelName, tenantId) {
 async function nuke(tenantId) {
   const results = await prisma.$transaction(
     async (tx) => {
+      // SA-1507 A2-1: the import-history tenant guard reads this transaction-local setting.
+      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
       const out = [];
       for (const name of NUKE_MODELS) {
         const delegate = name === "returnRecord" ? tx.return : tx[name];

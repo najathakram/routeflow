@@ -299,6 +299,7 @@ model PlanDefinition {
   scansIncluded     Int? // null = unlimited (Enterprise)
   msgsIncluded      Int      @default(200)
   customersIncluded Int? // null = unlimited (Enterprise)
+  storesOnlineIncluded Int? // SA-1269 P-40b: null = no cap; no reader or writer yet
   featureFlags      String[] // subset of the 16 flag keys granted at this plan
   sortOrder         Int      @default(0)
 
@@ -775,7 +776,13 @@ model ImportExternalRef {
   externalId     String
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
+  // SA-1295 A2 (migration 20261126000000): the binding's confirmation stamp (nullable, no backfill; no old path sets it).
+  confirmedAt    DateTime?
+  confirmedById  String?
 
+  // Raw-SQL PARTIAL unique index, migration 20261126000100_import_external_ref_confirmed_unique (Prisma cannot declare it):
+  //   ImportExternalRef_confirmed_entity_key: (tenantId, externalSource, entityType, entityId) WHERE confirmedAt IS NOT NULL
+  //   -> one confirmed binding per entity and source. Precedent: sitting_b_bundle/migration.sql.
   @@unique([tenantId, externalSource, externalId, entityType])
   @@index([tenantId, entityType, entityId])
   @@index([tenantId, entityType])
@@ -1485,4 +1492,113 @@ model EmailBounceSourceState {
   lastSuccessAt  DateTime?
   lastErrorClass String?
   updatedAt      DateTime @updatedAt
+}
+
+// ─── SA-1295 A2: QuickBooks history import, Sitting 1 (platform) ──────────────
+// All three are guarded tables (legacy_import_tenant_guard, SA-1507 rule 1). Their FKs are composite (tenantId, id)
+// CASCADE, so the database keeps every child in its parent's tenant. No FK to Tenant or User: `createdById` and
+// every `*ById` are plain scalars.
+
+enum LegacyImportBatchStatus {
+  UPLOADED
+  PARSING
+  STAGED
+  CONFIRMED
+  DISCARDED
+  FAILED
+}
+
+enum LegacyImportFileKind {
+  SALES_LINES
+  OPEN_ITEMS
+  PAYMENTS
+  CREDIT_MEMOS
+  CUSTOMER_LIST
+  ITEM_LIST
+  API_PULL
+}
+
+enum LegacyImportIssueSeverity {
+  ERROR
+  WARNING
+}
+
+/// One import run for one business. `jobTokenHash` is the SHA-256 of the one-time job token (SA-1507 rule 5); it is
+/// cleared in the same transaction that writes a terminal status and never leaves the server.
+model LegacyImportBatch {
+  id                            String                  @id @default(uuid())
+  tenantId                      String
+  source                        MigrationSource
+  status                        LegacyImportBatchStatus @default(UPLOADED)
+  numberPrefix                  String?
+  cutoverDate                   DateTime?               @db.Date
+  rfGoLiveDate                  DateTime?               @db.Date
+  rfGoLiveConfirmedAt           DateTime?
+  rfGoLiveConfirmedById         String?
+  controlAsOfDate               DateTime?               @db.Date
+  receivablesFrozenAttestedAt   DateTime?
+  receivablesFrozenAttestedById String?
+  counts                        Json                    @default("{}")
+  progress                      Int                     @default(0)
+  createdById                   String
+  confirmedAt                   DateTime?
+  jobTokenHash                  String?
+  createdAt                     DateTime                @default(now())
+  updatedAt                     DateTime                @updatedAt
+
+  files     LegacyImportFile[]
+  issues    LegacyImportIssue[]
+  documents LegacySalesDocument[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status])
+}
+
+/// One uploaded file of a batch. `parseStatus` reuses the batch status enum.
+model LegacyImportFile {
+  id             String                  @id @default(uuid())
+  tenantId       String
+  batchId        String
+  kind           LegacyImportFileKind
+  adapterKey     String
+  adapterVersion Int
+  fileName       String
+  fileSha256     String
+  fileBytes      Int
+  storageKey     String?
+  parseStatus    LegacyImportBatchStatus @default(UPLOADED)
+  rowCount       Int                     @default(0)
+  createdAt      DateTime                @default(now())
+
+  batch     LegacyImportBatch     @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+  issues    LegacyImportIssue[]
+  documents LegacySalesDocument[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, batchId])
+  @@index([tenantId, fileSha256])
+}
+
+/// One row-level problem found while parsing a file.
+model LegacyImportIssue {
+  id                String                    @id @default(uuid())
+  tenantId          String
+  batchId           String
+  fileId            String
+  recordNo          Int?
+  physicalLine      Int
+  severity          LegacyImportIssueSeverity
+  code              String
+  message           String
+  sourceDocKey      String?
+  sourceCustomerKey String?
+  createdAt         DateTime                  @default(now())
+
+  batch LegacyImportBatch @relation(fields: [tenantId, batchId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+  file  LegacyImportFile  @relation(fields: [tenantId, fileId], references: [tenantId, id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([tenantId, batchId, severity])
+  // Surrogate id leads: serves the (tenantId, fileId) cascade delete, which a tenant-first index would not.
+  @@index([fileId, physicalLine])
 }

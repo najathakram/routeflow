@@ -125,7 +125,7 @@ export function normalizeCartLine<T extends CartLineShape>(l: T): T {
 /**
  * The most the line may count in its CURRENT unit (B1382): its piece total stays within BUYER_LINE_QTY_MAX, so a
  * Case line is bounded at floor(cap / pack) Cases and an Each line at the cap. Every cart write clamps to it
- * (`setLineCount`, `setLineUnit`); a repeat Add merging into a line clamps too (SA-1292); Undo restoring an absent line does not merge, so it restores exactly.
+ * (`setLineCount`, `setLineUnit`); a repeat Add merging into a line clamps too (SA-1292).
  */
 export function lineMaxCount(l: CartLineShape): number {
   const upb = packOf(l);
@@ -139,10 +139,8 @@ export function lineLimit(l: CartLineShape): { max: number; maxWord?: string } {
     : { max: lineMaxCount(l) };
 }
 
-/** The one limit sentence (shop stepper, cart row, Add): "The most you can order at once is 8,333 cases." */
-export function limitLine(max: number, word?: string): string {
-  return `The most you can order at once is ${max.toLocaleString("en-US")}${word ? ` ${word}` : ""}.`;
-}
+/** The one limit sentence (shop stepper, cart row, Add, edit grid): lives in @routeflow/pricing since B1395. */
+export { limitLine } from "@routeflow/pricing";
 
 /** Set the count in the line's CURRENT unit (what the stepper and its typed field mean). */
 export function setLineCount<T extends CartLineShape>(l: T, count: number): T {
@@ -268,6 +266,15 @@ export function mergeCartLinesChecked<T extends CartLineShape>(
   // B1382 (SA-1292): a repeat Add clamps too, or the create DTO answers 400 at checkout. The server fold stays uncapped.
   if (lineCount(merged) <= lineMaxCount(merged)) return { line: merged, clamped: false };
   return { line: setLineCount(merged, lineMaxCount(merged)), clamped: true };
+}
+
+/**
+ * B1409 (#4509 F4): a NEW line (no line of that product in the cart yet) is clamped like a merge, so an Order Again
+ * line over the cap never enters the cart for the create DTO to refuse at checkout.
+ */
+export function clampNewLine<T extends CartLineShape>(incoming: T): { line: T; clamped: boolean } {
+  if (lineCount(incoming) <= lineMaxCount(incoming)) return { line: incoming, clamped: false };
+  return { line: setLineCount(incoming, lineMaxCount(incoming)), clamped: true };
 }
 
 /**

@@ -474,6 +474,7 @@ export class AuthorizationsService {
       if (op.email && !op.email.startsWith("no-email+")) {
         await this.email
           .send({
+            tenantId: tenantId,
             to: op.email,
             subject: `${who} — ${subject}`,
             html: emailParagraph(escapeHtml(body)),

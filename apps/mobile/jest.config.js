@@ -62,8 +62,14 @@ module.exports = {
     // SA-767 L-2.4 D: the stock-count commit copy, same subpath trick (the package root is stubbed).
     "^@routeflow/types/stock-count-commit-copy$":
       "<rootDir>/../../packages/types/stock-count-commit-copy.ts",
+    // SA-1547 M1: the live-payments-off sentence (pure), same subpath trick (the package root is stubbed).
+    "^@routeflow/types/live-payments-off-copy$":
+      "<rootDir>/../../packages/types/live-payments-off-copy.ts",
     // SA-776: the shared read-only copy composer, same subpath trick (the package root is stubbed).
     "^@routeflow/types/read-only-copy$": "<rootDir>/../../packages/types/read-only-copy.ts",
+    // SA-1299 P4: the shared payment-refusal sentences (web + mobile), same subpath trick.
+    "^@routeflow/types/payment-refusal-copy$":
+      "<rootDir>/../../packages/types/payment-refusal-copy.ts",
     // CQ-06: the shared license-refusal sentence (it imports only the pure error-code constants), same subpath trick.
     "^@routeflow/types/regulated-auth-copy$":
       "<rootDir>/../../packages/types/regulated-auth-copy.ts",
@@ -84,6 +90,8 @@ module.exports = {
       "<rootDir>/../../packages/types/credit-over-limit-copy.ts",
     // I-120: the shared Counter sale / Store pickup / Complete at counter words (pure, no imports), same subpath trick.
     "^@routeflow/types/counter-copy$": "<rootDir>/../../packages/types/counter-copy.ts",
+    // W-1487: the one payment-terms table (pure, no imports), same subpath trick.
+    "^@routeflow/types/payment-terms$": "<rootDir>/../../packages/types/payment-terms.ts",
     // W-769: the shared no-longer-fits sentence (pure, no imports), same subpath trick.
     "^@routeflow/types/no-longer-fits-copy$":
       "<rootDir>/../../packages/types/no-longer-fits-copy.ts",

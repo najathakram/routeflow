@@ -15,6 +15,10 @@ export interface QtyTextInputProps extends Omit<
   emptyMeansZero?: boolean; // default true (blur on empty commits 0)
   /** Buyer boxes: a change that is not whole digits ("-5", "12.5", "1e9") is rejected whole, never stripped. */
   rejectNonDigits?: boolean;
+  /** B1395 F6: told when a buyer box rejects an entry, so the screen can say why ("Enter 1 or more.") instead of reverting in silence. */
+  onReject?: () => void;
+  /** B1395 F6: a 0 or an empty box left on blur calls this INSTEAD of reverting; the screen removes the line, with Undo. */
+  onZero?: () => void;
 }
 
 /**
@@ -30,6 +34,8 @@ export function QtyTextInput({
   max,
   emptyMeansZero = true,
   rejectNonDigits = false,
+  onReject,
+  onZero,
   style,
   ...rest
 }: QtyTextInputProps) {
@@ -44,6 +50,7 @@ export function QtyTextInput({
       onChangeText={(txt) => {
         if (rejectNonDigits && !isDigitsOnly(txt)) {
           setDraft(String(value)); // buyer box: "-5", "12.5", "1e9" leave the value as it was
+          onReject?.();
           return;
         }
         const clean = sanitizeIntInput(txt);
@@ -53,6 +60,12 @@ export function QtyTextInput({
         if (n >= min) onChangeQty(max != null ? Math.min(max, n) : n);
       }}
       onBlur={() => {
+        const clean = sanitizeIntInput(draft);
+        if (onZero && (clean === "" || parseInt(clean, 10) === 0)) {
+          setDraft(String(value));
+          onZero();
+          return;
+        }
         const committed = commitQtyDraft(draft, { min, max, emptyMeansZero });
         if (committed != null && committed !== value) onChangeQty(committed);
         setDraft(String(value)); // prop-sync effect corrects after parent updates

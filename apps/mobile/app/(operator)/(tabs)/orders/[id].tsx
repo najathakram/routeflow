@@ -39,6 +39,7 @@ import {
   preferredPhone,
   smsUrl,
   smtpFallbackNotice,
+  withCopyNote,
   type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { showToast } from "../../../../lib/toast";
@@ -636,8 +637,8 @@ export default function OrderDetailScreen() {
           // dead and that the From address changed. A toast is the wrong surface
           // for it (nowrap, 2.2s, and a no-op on iOS), so disclose it in the
           // single-button info dialog instead. Plain successes stay a toast.
-          if (notice) alertInfo("Invoice emailed", notice);
-          else showToast("Invoice emailed");
+          if (notice) alertInfo("Invoice emailed", withCopyNote(notice, res));
+          else showToast(withCopyNote("Invoice emailed", res));
           closeSendSheet();
         },
         onError: (e) => toastError(e),
@@ -1118,9 +1119,7 @@ export default function OrderDetailScreen() {
           ) : null}
 
           {/* W-1306: why there is no Out for delivery step on this order (the one helper). */}
-          {order.status === "CONFIRMED" && deliveryAbsentNote ? (
-            <Text style={styles.shipHint}>{deliveryAbsentNote}</Text>
-          ) : null}
+          {deliveryAbsentNote ? <Text style={styles.shipHint}>{deliveryAbsentNote}</Text> : null}
 
           {/* Status transitions */}
           {actions.length > 0 ? (

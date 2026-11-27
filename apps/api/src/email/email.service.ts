@@ -1,5 +1,12 @@
 import { logRecipient, redactAddresses } from "./redact-addresses";
 import {
+  MAIL_WALL_HOLD_CODE,
+  MAIL_WALL_UNCHECKED_CODE,
+  MAIL_WALL_WOULD_HOLD,
+  decideRecipientWall,
+  readMailWall,
+} from "./recipient-wall";
+import {
   DELIVERY_REF_HEADER,
   classifyFallbackReason,
   newDeliveryRefToken,
@@ -21,6 +28,7 @@ import {
 } from "./email-delivery.service";
 import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { BRAND } from "../common/brand";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 import {
   BRAND_NAVY,
@@ -272,6 +280,17 @@ export type EmailSendParams = {
   attachments?: { filename: string; content: Buffer; contentType?: string }[];
 };
 
+/** What a platform send resolves to. */
+export type PlatformSendResult = {
+  delivered: boolean;
+  transport: "smtp" | "resend" | "none";
+  route?: EmailRoute;
+  id?: string;
+  error?: string;
+  /** W-1464: set only when the mail wall held the send. */
+  holdCode?: typeof MAIL_WALL_HOLD_CODE | typeof MAIL_WALL_UNCHECKED_CODE;
+};
+
 /** What a send resolves to. */
 export type EmailSendResult = {
   delivered: boolean;
@@ -298,6 +317,8 @@ export type EmailSendResult = {
   route?: EmailRoute;
   /** C29: why a tenant-server send fell back, as a class only (never provider text). Set on the fallback's result. */
   fallbackReason?: EmailFallbackClass;
+  /** W-1464: set only when the mail wall held the send (a Test business, recipient not on its list). The web maps the code to its own words. */
+  holdCode?: typeof MAIL_WALL_HOLD_CODE | typeof MAIL_WALL_UNCHECKED_CODE;
 };
 
 @Injectable()
@@ -307,7 +328,7 @@ export class EmailService {
   /**
    * Platform-level SMTP (Google Workspace mailbox), set from SMTP_HOST/PORT/SECURE/
    * USER/PASS. This is the platform transport per the owner's 2026-09-16 ruling
-   * ("RouteFlow's mail is on Google, not Resend") — selected instead of Resend
+   * ("the platform's mail is on Google, not Resend") — selected instead of Resend
    * whenever SMTP_HOST is set; Resend remains an alternative for when it isn't.
    * The two are never both active for the same send (see constructor).
    */
@@ -351,14 +372,16 @@ export class EmailService {
     // — a guaranteed SPF/DKIM misalignment — so derive it from SMTP_USER instead.
     const rawEmailFrom = this.config.get<string>("EMAIL_FROM");
     if (smtpFullyConfigured && !rawEmailFrom) {
-      this.platformFrom = `RouteFlow <${smtpUser}>`;
+      this.platformFrom = `${BRAND.name} <${smtpUser}>`;
       this.logger.error(
         `EMAIL_FROM is not set while platform SMTP is configured — using the authenticated ` +
           `mailbox (${smtpUser}) as the sender so SPF/DKIM stay aligned. Set EMAIL_FROM ` +
-          "explicitly to control the display name.",
+          "explicitly to control the sender address.",
       );
     } else {
-      this.platformFrom = rawEmailFrom ?? "RouteFlow <invoices@send.routeflow.info>";
+      // The display name is the brand's; only the address comes from the env (a bare address or a
+      // `Name <address>` value both work), so the sender name can never drift from the brand.
+      this.platformFrom = `${BRAND.name} <${this.addressOf(rawEmailFrom ?? "invoices@send.routeflow.info")}>`;
     }
 
     if (smtpFullyConfigured) {
@@ -555,8 +578,8 @@ export class EmailService {
    * platform's `EMAIL_FROM` address here is exactly the SPF/DKIM/DMARC
    * misalignment those checks exist to catch (B452 followups (c) — this
    * used to fall back to the platform's verified address; before that, an
-   * even worse hard-coded "noreply@routeflow.app", a domain RouteFlow
-   * doesn't even own).
+   * even worse hard-coded noreply address on a domain the platform
+   * does not even own).
    *
    * B468: `smtpUser` is an SMTP AUTH username, not guaranteed to be an email
    * address (SendGrid's literal `"apikey"`, an AWS SES key id) — and even
@@ -583,7 +606,7 @@ export class EmailService {
 
   /**
    * The From header for a tenant's email sent via the PLATFORM SMTP transport:
-   * `"<Business Name> via RouteFlow" <authenticated platform mailbox>`. Unlike Resend,
+   * `"<Business Name> via <platform name>" <authenticated platform mailbox>`. Unlike Resend,
    * platform SMTP is a single authenticated Google Workspace mailbox — a tenant's
    * verified own-domain (Resend domains API) cannot be used here, only the display
    * name changes; the address is always the authenticated mailbox so SPF/DKIM/DMARC
@@ -597,19 +620,19 @@ export class EmailService {
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
     const businessName = cfg?.businessName ? this.sanitizeDisplayName(cfg.businessName) : "";
     return businessName
-      ? `${businessName} via RouteFlow <${this.addressOf(this.platformFrom)}>`
+      ? `${businessName} via ${BRAND.name} <${this.addressOf(this.platformFrom)}>`
       : this.platformFrom;
   }
 
   /**
-   * The tenant's display name for outbound email, "RouteFlow" when there's no
+   * The tenant's display name for outbound email, the platform's name when there's no
    * tenant context or no businessName configured. Public (N1) — EmailChannelProvider
    * (the messaging engine's EMAIL transport) calls this to brand order-status/POD
    * notification emails the same way invoice emails are branded, rather than
-   * hard-coding "RouteFlow" for every tenant.
+   * hard-coding the platform's name for every tenant.
    */
   async getTenantBusinessName(): Promise<string> {
-    return (await this.tenantNameOrNull()) ?? "RouteFlow";
+    return (await this.tenantNameOrNull()) ?? BRAND.name;
   }
 
   /** The tenant's configured name, or null (no tenant context, or none configured). */
@@ -621,7 +644,7 @@ export class EmailService {
   /**
    * The look of this tenant's own mail (W-1163): its name, its logo (through the public logo
    * route, so a mail client can load it without a login) and its brand colour. A tenant with no
-   * configured name, or no tenant context at all, gets the neutral look: never RouteFlow's.
+   * configured name, or no tenant context at all, gets the neutral look: never the platform's.
    * No logo when `API_PUBLIC_URL` is unset.
    */
   async tenantLook(): Promise<EmailLook> {
@@ -669,7 +692,7 @@ export class EmailService {
    * The layout guard (W-1163): html that reaches a transport outside the shared layout is logged
    * as an ERROR (the inventory spec keeps a sender from relying on this) and a bare fragment is
    * wrapped. A full document is left as built: re-wrapping would nest two headers and footers.
-   * A tenant-scoped send gets that tenant's look, any other a neutral one. Never RouteFlow's
+   * A tenant-scoped send gets that tenant's look, any other a neutral one. Never the platform's
    * name on a tenant's mail, not even when the tenant has no configured name.
    */
   private async ensureLayout<T extends { html: string; subject: string }>(
@@ -1025,6 +1048,7 @@ export class EmailService {
     });
     // send() is honest-by-result and never throws for a delivery/config problem.
     const result = await this.send({
+      tenantId: this.prisma.getTenantId() ?? null,
       to: toEmail,
       subject: `${businessName} — Test Email`,
       html,
@@ -1038,7 +1062,7 @@ export class EmailService {
       if (result.smtpFallbackReason) {
         return {
           success: true,
-          message: `Test email delivered via RouteFlow's mail service — but your own SMTP failed: ${result.smtpFallbackReason}`,
+          message: `Test email delivered via ${BRAND.name}'s mail service — but your own SMTP failed: ${result.smtpFallbackReason}`,
         };
       }
       return { success: true, message: "Test email sent successfully" };
@@ -1178,19 +1202,33 @@ export class EmailService {
     extraAttachments?: { filename: string; content: Buffer; contentType: string }[];
     /** W-1286 (SA-1202 C6): the other invoices this email is about (a completion email); each gets its own delivery row. */
     alsoInvoiceIds?: string[];
+    /**
+     * W-1443 (SA-1516): this is the PRIVATE copy to the staff member who sent the invoice (`to` = that member), not the
+     * customer's email: `sentTo` is the customer address it went to. Same body and attachments as the customer got.
+     */
+    staffCopy?: { sentTo: string };
   }) {
     const businessName = await this.getTenantBusinessName();
-    const subject = params.completion
+    const baseSubject = params.completion
       ? `Your order ${params.completion.orderNumber} is complete — invoice attached`
       : params.isReminder
         ? `Payment Reminder — Invoice ${params.invoiceNumber}`
         : `Invoice ${params.invoiceNumber}`;
+    const copyOf = params.staffCopy?.sentTo;
+    const subject = copyOf
+      ? headerSafeSubject(`Copy: ${baseSubject} (sent to ${copyOf})`)
+      : baseSubject;
 
-    const { html, text } = this.buildInvoiceEmail(params, businessName, await this.tenantLook());
+    const { html, text } = this.buildInvoiceEmail(
+      copyOf ? { ...params, staffCopyNote: `You sent this invoice to ${copyOf}.` } : params,
+      businessName,
+      await this.tenantLook(),
+    );
     // W-1286 (SA-1202 C6): the invoice email records its own delivery row (one per invoice it names), so a later bounce
     // finds it. No tenant in scope (a system caller) = nothing recorded, as before.
     const tenantId = this.prisma.getTenantId();
     return this.send({
+      tenantId: tenantId ?? null,
       to: params.to,
       subject,
       html,
@@ -1203,7 +1241,11 @@ export class EmailService {
         ? {
             delivery: {
               tenantId,
-              kind: params.isReminder ? ("INVOICE_REMINDER" as const) : ("INVOICE_SENT" as const),
+              kind: copyOf
+                ? ("INVOICE_STAFF_COPY" as const)
+                : params.isReminder
+                  ? ("INVOICE_REMINDER" as const)
+                  : ("INVOICE_SENT" as const),
               entityType: "Invoice",
               entityId: params.invoiceId,
               ...(params.alsoInvoiceIds?.length ? { alsoEntityIds: params.alsoInvoiceIds } : {}),
@@ -1244,6 +1286,77 @@ export class EmailService {
   }
 
   /**
+   * W-1464 (SA-1538 PR-A): the mail wall, beside `refuseSentinel` at both public send entries. A TEST-class
+   * business may mail only the addresses on its list (PlatformConfig). A platform-class caller that names no
+   * business (null) is never held; any other send falls back to the request's business; a send with no business
+   * field at all is held under its own code. A list that cannot be read holds (fail closed); a class that cannot be read holds too
+   * and logs an error. A TEST business with no list is the dark step: sends, logs once.
+   * Logs carry the recipient domain only (B911).
+   */
+  private async holdForTestBusiness(
+    tenantId: string | null | undefined,
+    to: string,
+  ): Promise<{
+    delivered: false;
+    transport: "none";
+    error: string;
+    holdCode: typeof MAIL_WALL_HOLD_CODE | typeof MAIL_WALL_UNCHECKED_CODE;
+  } | null> {
+    if (tenantId === undefined) {
+      // A path that should name its business and does not is a programming error: fail closed, loudly.
+      this.logger.error(
+        "mail wall: a send reached the wall with no business field; the send is held",
+      );
+      return {
+        delivered: false,
+        transport: "none",
+        error: "Not sent: the business could not be checked against its allowed list.",
+        holdCode: MAIL_WALL_UNCHECKED_CODE,
+      };
+    }
+    if (!tenantId) return null;
+    let klass: string | undefined;
+    try {
+      klass = (
+        await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { class: true } })
+      )?.class;
+    } catch {
+      // Fail closed: a business whose class cannot be read is held, never let through.
+      this.logger.error("mail wall: the business class could not be read; the send is held");
+      return {
+        delivered: false,
+        transport: "none",
+        error: "Not sent: the business could not be checked against its allowed list.",
+        holdCode: MAIL_WALL_HOLD_CODE,
+      };
+    }
+    if (klass !== "TEST") return null;
+    let list: Awaited<ReturnType<typeof readMailWall>>;
+    try {
+      list = await readMailWall(this.prisma, tenantId);
+    } catch {
+      list = { kind: "unreadable" };
+    }
+    const decision = decideRecipientWall({ klass, list, to });
+    if (decision === "would-hold") {
+      this.logger.warn(
+        `mail wall (dark): ${MAIL_WALL_WOULD_HOLD} a send to ${this.logRecipient(to)}: this test business has no allowed list yet`,
+      );
+      return null;
+    }
+    if (decision === "allow") return null;
+    this.logger.warn(
+      `mail wall: held a send to ${this.logRecipient(to)}: not on this test business's allowed list`,
+    );
+    return {
+      delivered: false,
+      transport: "none",
+      error: "Not sent: this is a test business and the recipient is not on its allowed list.",
+      holdCode: MAIL_WALL_HOLD_CODE,
+    };
+  }
+
+  /**
    * Send an email and return an HONEST result. NEVER throws for a delivery/config
    * problem — it returns `{delivered:false, …}` instead — so fire-and-forget callers
    * (auth password-reset, account-merge) are never turned into a 500 by an
@@ -1259,14 +1372,31 @@ export class EmailService {
    * recorded (every existing caller is unchanged).
    */
   async send(
-    params: EmailSendParams & { delivery?: EmailDeliveryContext },
+    params: EmailSendParams & {
+      delivery?: EmailDeliveryContext;
+      /**
+       * W-1464: the business this mail is on behalf of, named by the caller (never read off the request,
+       * which a cron or a public route does not have). `null` only where no business exists at all.
+       */
+      tenantId: string | null;
+    },
   ): Promise<EmailSendResult> {
     // B460: the one place a tenant-supplied subject becomes a header line (sendPlatform has its own).
     params = { ...params, subject: headerSafeSubject(params.subject) };
     // Sentinel guard (#2854 Opus B4 + r2): the public `send` is the one entry; a sentinel refuses
     // BEFORE any transport or delegation. With a delivery ctx the refusal records ONE masked
     // FAILED row (SA-615(3)); without a ctx nothing is recorded.
-    const refusedTo = this.refuseSentinel(params.to);
+    const refusedTo =
+      this.refuseSentinel(params.to) ??
+      (await this.holdForTestBusiness(
+        // A platform-class send names its business or none; any other send falls back to the request's.
+        params.senderClass === "platform"
+          ? params.tenantId
+          : params.tenantId === undefined
+            ? undefined
+            : (params.tenantId ?? this.prisma.getTenantId()),
+        params.to,
+      ));
     if (refusedTo) {
       const ctx = params.delivery;
       if (ctx) {
@@ -1353,7 +1483,8 @@ export class EmailService {
           `Email "${params.subject.slice(0, 60)}" asked for a platform send with ${params.layout ? "a layout spec" : "attachments"}, which the platform path drops. Build a platform email with email-layout.ts, or send tenant mail without senderClass "platform".`,
         );
       }
-      return this.sendPlatform(
+      // The wall already ran at the send entry (same business), so it does not run a second time here.
+      return this.deliverPlatform(
         {
           to: params.to,
           subject: params.subject,
@@ -1606,7 +1737,7 @@ export class EmailService {
    * (unlike `send()`, which tries the tenant's own mailbox first). For security/account
    * mail (verification, password reset, invites, account/role-change notices — N2 ground
    * rule 1) and billing-lifecycle mail (N3), the sender must always be the bare platform
-   * identity, never "<Business> via RouteFlow" — `send()` reads `prisma.getTenantId()` on
+   * identity, never "<Business> via <platform name>" — `send()` reads `prisma.getTenantId()` on
    * every in-request call, including a tenant admin's own authenticated action, so routing
    * either kind of notification through `send()` would leave from the ACTING TENANT's own
    * mailbox. Merge of N2's and N3's independent copies (both added this method on separate
@@ -1624,16 +1755,30 @@ export class EmailService {
       html: string;
       text?: string;
       replyTo?: string;
+      /** W-1464: the business this mail is about, or null for platform mail with none (owner alerts, demo booking). Required so the compiler finds every caller; never looked up from the recipient. */
+      tenantId: string | null;
     },
     /** W-1286 (SA-1202 C4'): the reference header value of a recorded send; absent = no header. */
     refToken?: string,
-  ): Promise<{
-    delivered: boolean;
-    transport: "smtp" | "resend" | "none";
-    route?: EmailRoute;
-    id?: string;
-    error?: string;
-  }> {
+  ): Promise<PlatformSendResult> {
+    const { tenantId, ...mail } = params;
+    // The wall (W-1464) runs here, beside the sentinel refusal that deliverPlatform also keeps.
+    const held = await this.holdForTestBusiness(tenantId, mail.to);
+    if (held) return held;
+    return this.deliverPlatform(mail, refToken);
+  }
+
+  /** The platform transport chain itself. The wall has already run: in sendPlatform, or at the send() entry. */
+  private async deliverPlatform(
+    params: {
+      to: string;
+      subject: string;
+      html: string;
+      text?: string;
+      replyTo?: string;
+    },
+    refToken?: string,
+  ): Promise<PlatformSendResult> {
     const refHeaders = refToken ? { headers: { [DELIVERY_REF_HEADER]: refToken } } : {};
     // B460: the same one-line subject rule as send(); billing and account mail enter here, not there.
     params = { ...params, subject: headerSafeSubject(params.subject) };
@@ -1788,6 +1933,8 @@ export class EmailService {
       completion?: { orderNumber: string };
       /** B1372 K2: see sendInvoice's doc; a reminder never passes it. */
       changedSinceSent?: string[];
+      /** W-1443: the one plain line above the body of a staff copy ("You sent this invoice to ..."). */
+      staffCopyNote?: string;
       /** Tenant's `invoice.hideOriginalPrice` — see sendInvoice's doc. */
       hideOriginalPrice?: boolean;
       /** Tenant's `invoice.hidePerPiece` — see sendInvoice's doc. */
@@ -1955,7 +2102,11 @@ export class EmailService {
                 <td style="padding:12px;font-size:16px;font-weight:700;color:#1D2A3D;text-align:right;">${fmt(params.total)}</td>
               </tr>`;
 
+    const staffNoteHtml = params.staffCopyNote
+      ? `<p style="margin:0 0 16px;font-size:13px;color:#6b7280;" data-staff-copy>${escapeHtml(params.staffCopyNote)}</p>`
+      : "";
     const bodyHtml = `
+          ${staffNoteHtml}
           ${reminderBanner}
           ${depositBanner}
           <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Dear ${escapeHtml(params.customerName)},</p>
@@ -2022,6 +2173,7 @@ export class EmailService {
     // Plain-text alternative — built from the same figures, not derived from the HTML
     // above, so a tag-stripping approximation can never silently drop a dollar figure.
     const bodyText: string[] = [];
+    if (params.staffCopyNote) bodyText.push(headerSafeSubject(params.staffCopyNote));
     if (params.isReminder) {
       bodyText.push(
         "Payment Reminder: This invoice is overdue. Please arrange payment at your earliest convenience.",
@@ -2128,7 +2280,7 @@ export class EmailService {
         params.verifyUrl,
         "This link expires in 24 hours. If you did not request this merge, you can safely ignore this email — your account will not be affected.",
       ],
-      footerNote: "RouteFlow Platform — this is an automated security email.",
+      footerNote: `${BRAND.name} Platform — this is an automated security email.`,
     });
 
     // Return the honest send result so the caller can avoid claiming the verification
@@ -2136,8 +2288,10 @@ export class EmailService {
     // Security review Phase 2: account-merge verification is security mail — platform sender
     // only, never a tenant's connected mailbox/SMTP.
     return this.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: params.to,
-      subject: "Confirm account merge — RouteFlow",
+      subject: `Confirm account merge — ${BRAND.name}`,
       html,
       text,
       senderClass: "platform",
@@ -2160,7 +2314,7 @@ export class EmailService {
       signInLine: string,
     ) => `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(greeting)}</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-      Your two RouteFlow buyer accounts have been successfully merged.
+      Your two ${escapeHtml(BRAND.name)} buyer accounts have been successfully merged.
     </p>
     <ul style="margin:0 0 16px;padding-left:20px;font-size:15px;color:#374151;">
       <li><strong>Active account:</strong> ${escapeHtml(params.primaryEmail)}</li>
@@ -2183,17 +2337,19 @@ export class EmailService {
       ),
       bodyText: [
         `Hi ${params.primaryName},`,
-        "Your two RouteFlow buyer accounts have been successfully merged.",
+        `Your two ${BRAND.name} buyer accounts have been successfully merged.`,
         `Active account: ${params.primaryEmail}`,
         `Deactivated account: ${params.secondaryEmail}`,
         `All your seller connections from the deactivated account have been transferred to your active account. You can now sign in with ${params.primaryEmail} to access everything in one place.`,
         "If you did not request this change, contact our support team immediately.",
       ],
-      footerNote: "RouteFlow Platform — automated notification.",
+      footerNote: `${BRAND.name} Platform — automated notification.`,
     });
     await this.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: params.primaryEmail,
-      subject: "Your accounts have been merged — RouteFlow",
+      subject: `Your accounts have been merged — ${BRAND.name}`,
       html: primary.html,
       text: primary.text,
     });
@@ -2209,17 +2365,19 @@ export class EmailService {
       ),
       bodyText: [
         "Hi,",
-        "Your two RouteFlow buyer accounts have been successfully merged.",
+        `Your two ${BRAND.name} buyer accounts have been successfully merged.`,
         `Active account: ${params.primaryEmail}`,
         `Deactivated account: ${params.secondaryEmail}`,
         `All your seller connections from the deactivated account have been transferred to your active account. Please use ${params.primaryEmail} to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
         "If you did not request this change, contact our support team immediately.",
       ],
-      footerNote: "RouteFlow Platform — automated notification.",
+      footerNote: `${BRAND.name} Platform — automated notification.`,
     });
     await this.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: params.secondaryEmail,
-      subject: "This account has been merged — RouteFlow",
+      subject: `This account has been merged — ${BRAND.name}`,
       html: secondary.html,
       text: secondary.text,
     });
@@ -2231,13 +2389,14 @@ export class EmailService {
    *  template — both hand the recipient the same single-use set-password link. */
   async sendSetPasswordEmail(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     setPasswordUrl: string;
     expiryHours: number;
   }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-      Your RouteFlow account is ready. Click below to set your password and finish signing in.
+      Your ${escapeHtml(BRAND.name)} account is ready. Click below to set your password and finish signing in.
     </p>
     ${renderBrandButton("Set your password", params.setPasswordUrl)}
     <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
@@ -2249,15 +2408,16 @@ export class EmailService {
       bodyHtml: body,
       bodyText: [
         `Hi ${params.username},`,
-        "Your RouteFlow account is ready. Set your password here to finish signing in:",
+        `Your ${BRAND.name} account is ready. Set your password here to finish signing in:`,
         params.setPasswordUrl,
         `This link expires in ${params.expiryHours} hours. If you weren't expecting this, contact your administrator.`,
       ],
-      footerNote: "RouteFlow Platform — this is an automated account email.",
+      footerNote: `${BRAND.name} Platform — this is an automated account email.`,
     });
     return this.sendPlatform({
       to: params.to,
-      subject: "Set your RouteFlow password",
+      tenantId: params.tenantId,
+      subject: `Set your ${BRAND.name} password`,
       html,
       text,
     });
@@ -2271,6 +2431,7 @@ export class EmailService {
    */
   async sendTenantWelcomeEmail(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     businessName: string;
     workspace: string;
@@ -2292,7 +2453,7 @@ export class EmailService {
     ${p('<span style="font-size:13px;color:#6b7280;">Sign in, then you\'ll go straight to billing.</span>')}`
       : "";
     const body = `${p(`Hi ${escapeHtml(params.username)},`)}
-    ${p(`Your RouteFlow workspace for <strong>${escapeHtml(params.businessName)}</strong> is ready.`)}
+    ${p(`Your ${escapeHtml(BRAND.name)} workspace for <strong>${escapeHtml(params.businessName)}</strong> is ready.`)}
     ${p(`<strong>Workspace:</strong> ${escapeHtml(params.workspace)}<br/><strong>Username:</strong> ${escapeHtml(params.username)}`)}
     ${p("Start by setting your password:")}
     ${renderBrandButton("Set your password", params.setPasswordUrl)}
@@ -2301,11 +2462,11 @@ export class EmailService {
     ${paySection}`;
     const { html, text } = renderBrandedEmail({
       headerHtml: brandHeaderHtml(),
-      heading: "Your RouteFlow workspace is ready",
+      heading: `Your ${BRAND.name} workspace is ready`,
       bodyHtml: body,
       bodyText: [
         `Hi ${params.username},`,
-        `Your RouteFlow workspace for ${params.businessName} is ready.`,
+        `Your ${BRAND.name} workspace for ${params.businessName} is ready.`,
         `Workspace: ${params.workspace}`,
         `Username: ${params.username}`,
         `Set your password (works once, expires in ${params.expiryHours} hours): ${params.setPasswordUrl}`,
@@ -2314,21 +2475,27 @@ export class EmailService {
           ? [`Pay now (sign in, then you'll go straight to billing): ${params.payUrl}`]
           : []),
       ],
-      footerNote: "RouteFlow Platform — this is an automated account email.",
+      footerNote: `${BRAND.name} Platform — this is an automated account email.`,
     });
     return this.sendPlatform({
       to: params.to,
-      subject: `Welcome to RouteFlow — your ${params.businessName} workspace is ready`,
+      tenantId: params.tenantId,
+      subject: `Welcome to ${BRAND.name} — your ${params.businessName} workspace is ready`,
       html,
       text,
     });
   }
 
   /** Notice to a user's OLD address after their login email is changed — never opt-out. */
-  async sendEmailChangedNotice(params: { to: string; username: string; newEmail: string }) {
+  async sendEmailChangedNotice(params: {
+    to: string;
+    tenantId: string | null;
+    username: string;
+    newEmail: string;
+  }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-      Your RouteFlow login email was changed to <strong>${escapeHtml(params.newEmail)}</strong>.
+      Your ${escapeHtml(BRAND.name)} login email was changed to <strong>${escapeHtml(params.newEmail)}</strong>.
     </p>
     <p style="margin:0;font-size:13px;color:#9ca3af;">
       If you didn't make this change, contact your administrator immediately.
@@ -2339,35 +2506,41 @@ export class EmailService {
       bodyHtml: body,
       bodyText: [
         `Hi ${params.username},`,
-        `Your RouteFlow login email was changed to ${params.newEmail}.`,
+        `Your ${BRAND.name} login email was changed to ${params.newEmail}.`,
         "If you didn't make this change, contact your administrator immediately.",
       ],
-      footerNote: "RouteFlow Platform — this is an automated account email.",
+      footerNote: `${BRAND.name} Platform — this is an automated account email.`,
     });
     return this.sendPlatform({
       to: params.to,
-      subject: "Your RouteFlow login email was changed",
+      tenantId: params.tenantId,
+      subject: `Your ${BRAND.name} login email was changed`,
       html,
       text,
     });
   }
 
   /** Confirmation to a user's NEW address once it becomes their login email. */
-  async sendEmailChangeConfirmation(params: { to: string; username: string }) {
+  async sendEmailChangeConfirmation(params: {
+    to: string;
+    tenantId: string | null;
+    username: string;
+  }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
     <p style="margin:0;font-size:15px;color:#374151;">
-      This address is now your RouteFlow login email.
+      This address is now your ${escapeHtml(BRAND.name)} login email.
     </p>`;
     const { html, text } = renderBrandedEmail({
       headerHtml: brandHeaderHtml(),
       heading: "This is now your login email",
       bodyHtml: body,
-      bodyText: [`Hi ${params.username},`, "This address is now your RouteFlow login email."],
-      footerNote: "RouteFlow Platform — this is an automated account email.",
+      bodyText: [`Hi ${params.username},`, `This address is now your ${BRAND.name} login email.`],
+      footerNote: `${BRAND.name} Platform — this is an automated account email.`,
     });
     return this.sendPlatform({
       to: params.to,
-      subject: "This is now your RouteFlow login email",
+      tenantId: params.tenantId,
+      subject: `This is now your ${BRAND.name} login email`,
       html,
       text,
     });
@@ -2379,13 +2552,14 @@ export class EmailService {
    */
   async sendEmailChangeLink(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     confirmUrl: string;
     expiryHours: number;
   }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-      A change was requested to use this address as the login email for your RouteFlow account. Confirm it to finish the change.
+      A change was requested to use this address as the login email for your ${escapeHtml(BRAND.name)} account. Confirm it to finish the change.
     </p>
     ${renderBrandButton("Confirm this address", params.confirmUrl)}
     <p style="margin:24px 0 0;font-size:13px;color:#9ca3af;">
@@ -2397,15 +2571,16 @@ export class EmailService {
       bodyHtml: body,
       bodyText: [
         `Hi ${params.username},`,
-        "A change was requested to use this address as the login email for your RouteFlow account. Confirm it to finish the change:",
+        `A change was requested to use this address as the login email for your ${BRAND.name} account. Confirm it to finish the change:`,
         params.confirmUrl,
         `This link works once and expires in ${params.expiryHours} hours. If you weren't expecting this, ignore this email and nothing changes.`,
       ],
-      footerNote: "RouteFlow Platform — this is an automated account email.",
+      footerNote: `${BRAND.name} Platform — this is an automated account email.`,
     });
     return this.sendPlatform({
       to: params.to,
-      subject: "Confirm your new RouteFlow login email",
+      tenantId: params.tenantId,
+      subject: `Confirm your new ${BRAND.name} login email`,
       html,
       text,
     });
@@ -2417,12 +2592,13 @@ export class EmailService {
    */
   async sendEmailChangeRequestedNotice(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     maskedNewEmail: string;
   }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-      A change of your RouteFlow login email to <strong>${escapeHtml(params.maskedNewEmail)}</strong> was requested. Your login email stays this address until the new one confirms.
+      A change of your ${escapeHtml(BRAND.name)} login email to <strong>${escapeHtml(params.maskedNewEmail)}</strong> was requested. Your login email stays this address until the new one confirms.
     </p>
     <p style="margin:0;font-size:13px;color:#9ca3af;">
       If you made or expected this change, you don't need to do anything. If you didn't, contact your administrator.
@@ -2433,14 +2609,15 @@ export class EmailService {
       bodyHtml: body,
       bodyText: [
         `Hi ${params.username},`,
-        `A change of your RouteFlow login email to ${params.maskedNewEmail} was requested. Your login email stays this address until the new one confirms.`,
+        `A change of your ${BRAND.name} login email to ${params.maskedNewEmail} was requested. Your login email stays this address until the new one confirms.`,
         "If you made or expected this change, you don't need to do anything. If you didn't, contact your administrator.",
       ],
-      footerNote: "RouteFlow Platform — this is an automated account email.",
+      footerNote: `${BRAND.name} Platform — this is an automated account email.`,
     });
     return this.sendPlatform({
       to: params.to,
-      subject: "A change to your RouteFlow login email was requested",
+      tenantId: params.tenantId,
+      subject: `A change to your ${BRAND.name} login email was requested`,
       html,
       text,
     });
@@ -2448,6 +2625,7 @@ export class EmailService {
   /** Notice to a user when an operator/admin changes their role — never opt-out. */
   async sendRoleChangedNotice(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     oldRole: string;
     newRole: string;
@@ -2455,7 +2633,7 @@ export class EmailService {
   }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
     <p style="margin:0;font-size:15px;color:#374151;">
-      Your RouteFlow role was changed from <strong>${escapeHtml(params.oldRole)}</strong> to
+      Your ${escapeHtml(BRAND.name)} role was changed from <strong>${escapeHtml(params.oldRole)}</strong> to
       <strong>${escapeHtml(params.newRole)}</strong> by ${escapeHtml(params.changedBy)}.
     </p>`;
     const { html, text } = renderBrandedEmail({
@@ -2464,13 +2642,14 @@ export class EmailService {
       bodyHtml: body,
       bodyText: [
         `Hi ${params.username},`,
-        `Your RouteFlow role was changed from ${params.oldRole} to ${params.newRole} by ${params.changedBy}.`,
+        `Your ${BRAND.name} role was changed from ${params.oldRole} to ${params.newRole} by ${params.changedBy}.`,
       ],
-      footerNote: "RouteFlow Platform — this is an automated account email.",
+      footerNote: `${BRAND.name} Platform — this is an automated account email.`,
     });
     return this.sendPlatform({
       to: params.to,
-      subject: "Your RouteFlow role was changed",
+      tenantId: params.tenantId,
+      subject: `Your ${BRAND.name} role was changed`,
       html,
       text,
     });
@@ -2479,15 +2658,16 @@ export class EmailService {
   // ─── F-10a: connected mailbox revoked (platform-sent, tenant-admin-facing) ─────
 
   /**
-   * Tells a tenant admin that RouteFlow can no longer send from their connected Gmail/Outlook
+   * Tells a tenant admin that the platform can no longer send from their connected Gmail/Outlook
    * mailbox (`MailboxAlertService`, once per revocation). ALWAYS the platform sender class: the
-   * mailbox this is about is exactly the one that can't send, and the notice is RouteFlow talking
+   * mailbox this is about is exactly the one that can't send, and the notice is the platform talking
    * to its own customer, not tenant-branded mail — so it never reaches the connected mailbox or
    * the tenant's SMTP, whatever tenant context is active. The words come from
    * `mailboxRevokedCopy`, the same source as the in-app notification. Never throws (`send()` is
    * honest-by-result).
    */
   async sendMailboxRevokedNotice(params: {
+    tenantId: string;
     to: string;
     username: string;
     accountEmail: string;
@@ -2507,9 +2687,10 @@ export class EmailService {
       heading: copy.heading,
       bodyHtml: body,
       bodyText: [`Hi ${params.username},`, ...copy.paragraphs, `${copy.cta}: ${settingsUrl}`],
-      footerNote: "RouteFlow Platform — automated notification.",
+      footerNote: `${BRAND.name} Platform — automated notification.`,
     });
     return this.send({
+      tenantId: params.tenantId,
       to: params.to,
       subject: copy.subject,
       html,
@@ -2534,18 +2715,16 @@ export class EmailService {
    * past one bad address.
    */
   async sendLowStockDigest(params: {
+    tenantId: string;
     to: string;
-    /** The tenant's configured name, or null: an unnamed tenant gets the neutral look, never RouteFlow's. */
+    /** The tenant's configured name, or null: an unnamed tenant gets the neutral look, never the platform's. */
     businessName: string | null;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
-  }): Promise<{
-    delivered: boolean;
-    transport: "mailbox" | "smtp" | "resend" | "none";
-    error?: string;
-  }> {
+  }): Promise<EmailSendResult> {
     const { html, text } = this.buildLowStockDigestEmail(params);
     const count = params.items.length;
     return this.send({
+      tenantId: params.tenantId,
       to: params.to,
       subject: `Low stock alert — ${count} item${count === 1 ? "" : "s"} below threshold`,
       html,

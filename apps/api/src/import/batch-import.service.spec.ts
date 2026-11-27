@@ -38,7 +38,7 @@ describe("BatchImportService", () => {
       ],
     }).compile();
     service = moduleRef.get(BatchImportService);
-    prisma.importBatch.findUnique.mockResolvedValue({ id: "b1" });
+    prisma.importBatch.findFirst.mockResolvedValue({ id: "b1" });
     prisma.importQueueItem.create.mockResolvedValue({ id: "i1" });
     prisma.importQueueItem.update.mockImplementation((args: any) =>
       Promise.resolve({ id: "i1", ...args.data }),
@@ -468,7 +468,7 @@ describe("BatchImportService", () => {
 
   describe("updateItemLines", () => {
     it("maps an unmatched line to a product, marks it reviewed, and flips to CLEAN once nothing else is pending", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -499,7 +499,7 @@ describe("BatchImportService", () => {
     });
 
     it("does not write a product mapping when the supplier name is missing", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -517,7 +517,7 @@ describe("BatchImportService", () => {
     });
 
     it("does not write a product mapping when the line has no extractedName", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -536,7 +536,7 @@ describe("BatchImportService", () => {
     });
 
     it("keeps a line custom (unmatched but reviewed) without blocking on that line again", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -560,7 +560,7 @@ describe("BatchImportService", () => {
     });
 
     it("links a supplier and clears supplierUnresolved", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -568,7 +568,7 @@ describe("BatchImportService", () => {
         duplicateOfInvoiceId: null,
         extractedPayload: { supplier: "Some Vendor", items: [{ matchedProductId: "p1" }] },
       });
-      prisma.supplier.findUnique.mockResolvedValue({ id: "sup-9", name: "Some Vendor Inc" });
+      prisma.supplier.findFirst.mockResolvedValue({ id: "sup-9", name: "Some Vendor Inc" });
 
       const result = await service.updateItemLines("i1", { supplierId: "sup-9" });
 
@@ -579,7 +579,7 @@ describe("BatchImportService", () => {
     });
 
     it("rejects a supplierId that doesn't exist in this tenant", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -587,7 +587,7 @@ describe("BatchImportService", () => {
         duplicateOfInvoiceId: null,
         extractedPayload: { items: [] },
       });
-      prisma.supplier.findUnique.mockResolvedValue(null);
+      prisma.supplier.findFirst.mockResolvedValue(null);
 
       await expect(service.updateItemLines("i1", { supplierId: "nope" })).rejects.toThrow(
         "Supplier not found",
@@ -595,7 +595,7 @@ describe("BatchImportService", () => {
     });
 
     it("rejects an already-POSTED item", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({ id: "i1", status: "POSTED" });
+      prisma.importQueueItem.findFirst.mockResolvedValue({ id: "i1", status: "POSTED" });
       await expect(
         service.updateItemLines("i1", { lines: [{ index: 0, keepCustom: true }] }),
       ).rejects.toThrow("Item already posted.");
@@ -604,7 +604,7 @@ describe("BatchImportService", () => {
 
   describe("resolveItem", () => {
     it("promotes a NEEDS_REVIEW item to CLEAN when there's nothing pending", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -616,7 +616,7 @@ describe("BatchImportService", () => {
     });
 
     it("blocks resolution while a line has never been reviewed — no silent skip-to-CLEAN", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -629,7 +629,7 @@ describe("BatchImportService", () => {
     });
 
     it("allows resolution once an unmatched line was explicitly reviewed (kept custom)", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -645,7 +645,7 @@ describe("BatchImportService", () => {
     });
 
     it("blocks resolution while a detected supplier is still unlinked", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "NEEDS_REVIEW",
@@ -657,7 +657,7 @@ describe("BatchImportService", () => {
     });
 
     it("rejects resolving a DUPLICATE item", async () => {
-      prisma.importQueueItem.findUnique.mockResolvedValue({
+      prisma.importQueueItem.findFirst.mockResolvedValue({
         id: "i1",
         batchId: "b1",
         status: "DUPLICATE",

@@ -115,12 +115,13 @@ import { resolvePendingMirror } from "./pending-mirror";
 import { assertOrderReviewed, hasOpenReviewBlock } from "../orders/offline/order-review-gate";
 import {
   guardedEmail,
-  invoiceFingerprintOf,
+  recheckEmailedFingerprint,
   recordInvoiceEmailed,
   assertOrderInvoiceUnlockedFor,
   changedSinceSentNumbers,
   type SendEmailArgs,
 } from "./invoice-send-state";
+import { sendInvoiceStaffCopy } from "./invoice-staff-copy";
 import { resolveInvoiceVariant } from "./invoice-stage";
 import { fingerprintOfSnapshot, readSendSnapshot, runSendCredits } from "./invoice-send-snapshot";
 import { orderShipmentFields, writeInvoiceTracking } from "./order-shipment-fields";
@@ -213,6 +214,8 @@ import { rebuildKeptItems } from "./kept-invoice-lines";
 import { assertSalesNotLockedForEdit } from "../regulated/filing-lock";
 import {
   applyPartialPriceFollow,
+  hasLiveOrderInvoice,
+  noFollow,
   planPartialPriceFollow,
   type FollowDeps,
 } from "./partial-price-follow";
@@ -236,6 +239,7 @@ import {
 } from "./invoice-partition";
 import { loadResyncInputs } from "./resync-plan";
 import { issueDateStamp, addCalendarDays, startOfCalendarDay } from "../common/calendar-date";
+import { termDays } from "./payment-terms"; // W-1487: one table (Net 7/90/custom Net N)
 import { calendarFieldStamp, dueDateStamps, dueStamp, numberYear } from "./invoice-due-dates";
 import { counterPay, type CounterPayOpts, type TillUser } from "./counter-payment-guard";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -284,8 +288,8 @@ import {
   lockInvoiceRow,
   lockInvoicesForPayment,
   nextSentStatus,
-  paymentRefusal,
-  standalonePaymentRefusal,
+  assertPayable,
+  assertStandalonePayable,
   sendRefusal,
   voidRefusal,
   externalPaidOn,
@@ -306,14 +310,6 @@ import {
   isPostDeliveryOrderStatus,
   isTerminalOrderStatus,
 } from "../common/terminal-order-statuses";
-
-export const TERM_DAYS: Record<string, number> = {
-  "Due on Receipt": 0,
-  "Net 15": 15,
-  "Net 30": 30,
-  "Net 45": 45,
-  "Net 60": 60,
-};
 
 /** #2293: round a nullable money field; `null` (clear) and `undefined` (leave as is) pass through. */
 const roundMoneyOrNull = (v: number | null | undefined) => (v == null ? v : roundMoney(v));
@@ -399,16 +395,16 @@ export class InvoicesService {
         customer?.defaultDepositPercent != null ? Number(customer.defaultDepositPercent) : null;
       if (customer?.defaultPaymentTerms) {
         terms = customer.defaultPaymentTerms;
-        dueDays = TERM_DAYS[terms] ?? 30;
+        dueDays = termDays(terms) ?? 30;
       } else {
         const stored = await this.systemConfig.get("invoice.defaultTerms");
         terms = stored || "Net 30";
-        dueDays = TERM_DAYS[terms] ?? 30;
+        dueDays = termDays(terms) ?? 30;
       }
     } else {
       const stored = await this.systemConfig.get("invoice.defaultTerms");
       terms = stored || "Net 30";
-      dueDays = TERM_DAYS[terms] ?? 30;
+      dueDays = termDays(terms) ?? 30;
     }
     // Customer wins when SET: >0 = their percent, 0 = explicit opt-out.
     // null/undefined = inherit the tenant default (if any).
@@ -1494,18 +1490,15 @@ export class InvoicesService {
 
   /**
    * SA-760 Q-760-1: DRAFT partials follow a staff order edit's PRICE changes; issued partials never do and
-   * are returned for the edit response. Under the R-1 lock order (own tx unless one is passed).
+   * are returned for the edit response. Under the R-1 lock order (own tx unless one is passed). B1461: the
+   * ledger funnel is bound HERE, under the locks, for the apply only (plan mode never gets a writer).
    */
   async followPartialPrices(orderId: string, tx?: any) {
-    if (!tx) {
-      // most edits touch an order with no invoice at all: no transaction for that
-      const live = await this.prisma.forTenant().invoice.count({
-        where: { orderId, status: { not: InvoiceStatus.VOID } },
-      });
-      if (live === 0) return { issuedPartialsUnchanged: [], followed: [] as string[] };
-    }
+    if (!tx && !(await hasLiveOrderInvoice(this.prisma.forTenant(), orderId))) return noFollow();
     return inOrderBillingTx(this.prisma, tx, orderId, (db) =>
-      applyPartialPriceFollow(this.followDeps(), db, orderId),
+      applyPartialPriceFollow(this.followDeps(), db, orderId, (id, items) =>
+        this.resyncInvoiceLedger(id, orderId, items, db),
+      ),
     );
   }
 
@@ -2486,7 +2479,7 @@ export class InvoicesService {
     let dueDays = 30;
     if ((customerForTax as any)?.defaultPaymentTerms) {
       defaultTerms = (customerForTax as any).defaultPaymentTerms;
-      dueDays = TERM_DAYS[defaultTerms] ?? 30;
+      dueDays = termDays(defaultTerms) ?? 30;
     } else if (tenantId) {
       const cfg = await this.prisma.systemConfig.findFirst({
         where: { tenantId, key: "invoice.defaultTerms" },
@@ -2494,7 +2487,7 @@ export class InvoicesService {
       });
       if (cfg?.value) {
         defaultTerms = cfg.value;
-        dueDays = TERM_DAYS[defaultTerms] ?? 30;
+        dueDays = termDays(defaultTerms) ?? 30;
       }
     }
 
@@ -3570,29 +3563,10 @@ export class InvoicesService {
     // Mark as SENT. P5-13: SENT flip + oldest-first credit auto-apply are ONE atomic
     // operation. PDF/email I/O above stays OUTSIDE the tx (a retry never re-sends the email).
     const { updated, auto } = await this.markSent(id, inv.orderId, true);
-    // SA-860: verify after the commit. The money truth is the real tx; if the live invoice no longer hashes to what was
-    // emailed (a concurrent credit or edit between the dry run and the commit), append ONE correction record with fp null
-    // (the newest row decides: "emailed, changes can't be checked"). Never refuse and never roll back: the email has gone.
-    // Best-effort: the email went and the money committed, so a failed re-read must not turn this into a 500 or skip the
-    // emit and the notification below; the record then simply stays the snapshot's.
-    try {
-      const live = await invoiceFingerprintOf(this.prisma, this.featureConfig, id, stage);
-      if (live !== fingerprint) {
-        await recordInvoiceEmailed(this.prisma, {
-          id,
-          actorId,
-          to: recipientEmail,
-          fingerprint: null,
-          variant,
-          kind: opts?.kind, // I-120: a completion email's correction keeps its kind
-          note: "the copy emailed may not match the credits applied",
-        });
-      }
-    } catch (err) {
-      this.logger.warn(
-        `invoice ${id}: the post-send fingerprint check failed (${err instanceof Error ? err.message : String(err)})`,
-      );
-    }
+    // SA-860: verify after the commit; best-effort, never refuses (invoice-send-state.ts).
+    const to = recipientEmail;
+    const recheck = { id, actorId, to, stage, fingerprint, variant, kind: opts?.kind };
+    await recheckEmailedFingerprint(this.prisma, this.featureConfig, recheck);
     this.gateway.emitInvoiceUpdated(this.prisma.getTenantId(), {
       invoiceId: updated.id,
       invoiceNumber: updated.invoiceNumber,
@@ -3616,6 +3590,13 @@ export class InvoicesService {
         })
         .catch(() => {});
     }
+    // W-1443 (R-239 M1/M5): LAST, after the SENT flip, the audit and the emit; only the route's explicit copyActorId (never
+    // the audit actor) can earn a copy, and it never throws.
+    const { prisma, emailService, logger } = this;
+    const copy = await sendInvoiceStaffCopy(
+      { prisma, emailService, logger },
+      { emailPayload, actorId: opts?.copyActorId ?? null, customerTo: recipientEmail },
+    );
     // Non-blocking: the send succeeded (Resend rescued a failing tenant SMTP attempt),
     // but the operator's own mailbox is still broken and nobody else will tell them —
     // surface it as a warning, not a failure (the invoice really was emailed). The From
@@ -3624,6 +3605,7 @@ export class InvoicesService {
     return {
       success: true,
       sentTo: recipientEmail,
+      ...(copy.copiedTo ? { copiedTo: copy.copiedTo } : {}),
       ...(sendResult.smtpFallbackReason ? { warning: sendResult.smtpFallbackReason } : {}),
       ...(sendResult.fromAddress ? { fromAddress: sendResult.fromAddress } : {}),
     };
@@ -4001,10 +3983,8 @@ export class InvoicesService {
     // could never become OVERDUE and never aged. A label that cannot drive a date is dropped WITH the date,
     // so `paymentTermsLabel` and `dueDate` always agree (finance.prisma invariant).
     const sourceTerms = String((inv as any).paymentTermsLabel ?? "").trim();
-    const termDays = Object.prototype.hasOwnProperty.call(TERM_DAYS, sourceTerms)
-      ? TERM_DAYS[sourceTerms]
-      : null;
-    const dueDate = termDays != null ? addCalendarDays(issueDate, termDays) : null;
+    const sourceDays = termDays(sourceTerms);
+    const dueDate = sourceDays != null ? addCalendarDays(issueDate, sourceDays) : null;
 
     try {
       // B100/F16b: the number is reserved in reserveNext's OWN short transaction,
@@ -4136,8 +4116,7 @@ export class InvoicesService {
         include: { payments: { where: { status: { not: "VOID" } } } },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
-      const refusal = paymentRefusal(inv.status); // #2472 (4): VOID and WRITTEN_OFF, like the others
-      if (refusal) throw new BadRequestException(`Cannot record payment on ${refusal} invoice`);
+      assertPayable(inv.status); // B1396: DRAFT, VOID, WRITTEN_OFF (the one refusal)
       if (inv.orderId) await assertOrderReviewed(tx, inv.orderId); // SA-1124 PR-1b: staff money waits for the price review
 
       const total = Number(inv.total);
@@ -4919,8 +4898,7 @@ export class InvoicesService {
           });
           if (!invoice)
             throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
-          const refused = standalonePaymentRefusal(invoice.status, opts?.source); // SA-404f F1 + B1385: LOCKED row
-          if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
+          assertStandalonePayable(invoice.status, alloc.invoiceId, opts?.source); // B1396: LOCKED row
           // SA-1124 PR-1b: staff money waits for the price review; money that already moved at the processor never does
           if (opts?.source !== "STRIPE_SETTLE" && invoice.orderId)
             await assertOrderReviewed(tx, invoice.orderId);

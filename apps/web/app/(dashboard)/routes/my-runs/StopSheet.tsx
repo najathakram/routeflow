@@ -368,7 +368,6 @@ export function StopSheet({
           ? `${stop.customerAddress.line1}, ${stop.customerAddress.city}, ${stop.customerAddress.state}`
           : undefined
       }
-      scroll
       footer={
         <div className="flex w-full flex-col gap-2">
           {open && runOpen && !refusing && (

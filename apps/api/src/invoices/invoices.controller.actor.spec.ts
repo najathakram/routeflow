@@ -49,3 +49,27 @@ describe("InvoicesController — the acting user reaches create/update (H3b)", (
     });
   });
 });
+
+/** W-1443 (R-239 M1): the private copy goes to the person who pressed Send, never in a support session. */
+describe("InvoicesController.sendEmail - copyActorId (W-1443)", () => {
+  const service = { sendEmail: jest.fn() };
+  const controller = new InvoicesController(service as never, {} as never);
+  beforeEach(() => jest.clearAllMocks());
+
+  it("names the sender as copyActorId", async () => {
+    await controller.sendEmail("inv-1", {}, { sub: "u-ops" } as JwtPayload);
+    expect(service.sendEmail).toHaveBeenCalledWith("inv-1", undefined, undefined, "u-ops", {
+      copyActorId: "u-ops",
+    });
+  });
+
+  it("a support session (impersonatedBy set) gets no copy, even though sub is a real admin", async () => {
+    await controller.sendEmail("inv-1", {}, {
+      sub: "u-admin",
+      impersonatedBy: "sa-1",
+    } as JwtPayload);
+    expect(service.sendEmail).toHaveBeenCalledWith("inv-1", undefined, undefined, "u-admin", {
+      copyActorId: null,
+    });
+  });
+});

@@ -17,6 +17,7 @@ import { isAccountAdmin } from "@/lib/auth";
 import { useAuth } from "@/lib/auth-context";
 import { LowStockDigestToggle } from "./LowStockDigestToggle";
 import { StaffOrderEmailCard } from "./StaffOrderEmailCard";
+import { InvoiceCopyCard } from "./InvoiceCopyCard";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 import { MiniSwitch } from "./MiniSwitch";
 import { NotificationRulesCard } from "./NotificationRulesCard";
@@ -157,6 +158,8 @@ export function NotificationsSettingsTab() {
       <QuietHoursCard settings={data.settings} isAdmin={isAdmin} />
 
       {isAdmin && <StaffOrderEmailCard />}
+
+      <InvoiceCopyCard />
 
       {getsLowStockDigest && <LowStockDigestToggle />}
 

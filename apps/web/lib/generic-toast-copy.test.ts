@@ -1,7 +1,12 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { handleMutationError } from "./mutation-error-toast";
-import { API_ERROR_CODES, INVOICE_TAX_STATE_STALE_COPY } from "@routeflow/types";
+import {
+  API_ERROR_CODES,
+  INVOICE_STATUS_VALUES,
+  INVOICE_TAX_STATE_STALE_COPY,
+} from "@routeflow/types";
+import { INVOICE_NOT_PAYABLE_COPY } from "@routeflow/types/payment-refusal-copy";
 import { PROMOTIONS_OFF_COPY, codedToastCopy, genericToastCopy } from "./generic-toast-copy";
 
 /**
@@ -1044,5 +1049,78 @@ describe("genericToastCopy: UXG B14 stops without a map position", () => {
     expect(genericToastCopy(err(400))).toBe(
       "Some details aren't valid. Check what you entered and try again.",
     );
+  });
+});
+
+describe("genericToastCopy: SA-1299 P4 payment refusals (B1396, B1385)", () => {
+  it.each([
+    [
+      "DRAFT",
+      "This invoice is still a draft. Send it to the customer first, then record the payment.",
+    ],
+    ["VOID", "This invoice is void, so it can't take a payment."],
+    ["WRITTEN_OFF", "This invoice was written off, so it can't take a payment."],
+  ])("INVOICE_NOT_PAYABLE (%s) shows its own sentence", (reason, sentence) => {
+    expect(genericToastCopy(err(400, { code: API_ERROR_CODES.INVOICE_NOT_PAYABLE, reason }))).toBe(
+      sentence,
+    );
+  });
+
+  // L-072: the refusal words are keyed by the shared InvoiceStatus, never a hand-typed status list.
+  it("every INVOICE_NOT_PAYABLE sentence is keyed by a real InvoiceStatus", () => {
+    const keys = Object.keys(INVOICE_NOT_PAYABLE_COPY);
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) expect(INVOICE_STATUS_VALUES).toContain(key);
+  });
+
+  it("INVOICE_NOT_PAYABLE with no or an unknown reason never claims a status", () => {
+    const copy = genericToastCopy(err(400, { code: API_ERROR_CODES.INVOICE_NOT_PAYABLE }));
+    expect(copy).toBe("This invoice can't take a payment right now.");
+    expect(
+      genericToastCopy(err(400, { code: API_ERROR_CODES.INVOICE_NOT_PAYABLE, reason: "PAID" })),
+    ).toBe(copy);
+  });
+
+  it("DRAFT_PAYMENT_HAS_EXCESS and ADVANCE_NOT_AVAILABLE each show their own sentence, not the generic 400", () => {
+    expect(genericToastCopy(err(400, { code: API_ERROR_CODES.DRAFT_PAYMENT_HAS_EXCESS }))).toBe(
+      "A draft payment can't be more than the invoices it pays. Allocate the full amount, or save it as paid.",
+    );
+    expect(genericToastCopy(err(400, { code: API_ERROR_CODES.ADVANCE_NOT_AVAILABLE }))).toBe(
+      "This advance comes from a payment that isn't confirmed yet, so it can't be applied. Once that payment is confirmed, you can apply it.",
+    );
+  });
+});
+
+describe("genericToastCopy: SA-1547 M1 live-payments wall", () => {
+  it("LIVE_PAYMENTS_OFF maps to the test-business sentence, not the neutral 409", () => {
+    const copy = genericToastCopy(err(409, { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF }));
+    expect(copy).toBe("This is a test business. Payments are switched off.");
+    expect(copy).not.toBe(NEUTRAL_409);
+  });
+});
+
+describe("genericToastCopy: B1415 M1b reused adjustment key", () => {
+  const conflict = (reason?: string) =>
+    Object.assign(new Error("Request failed"), {
+      response: {
+        status: 409,
+        data: { code: "IDEMPOTENCY_KEY_CONFLICT", reason, message: "server text" },
+      },
+    });
+
+  it("an adjustment key reused for a different adjustment says the first one was saved", () => {
+    expect(genericToastCopy(conflict("ADJUSTMENT_MISMATCH"))).toBe(
+      "Your earlier adjustment was saved. Check the stock before you save again.",
+    );
+  });
+
+  it("another key conflict never reads as an adjustment, and the server text is never shown", () => {
+    for (const reason of ["CART_MISMATCH", undefined]) {
+      const copy = genericToastCopy(conflict(reason));
+      expect(copy).not.toBe(
+        "Your earlier adjustment was saved. Check the stock before you save again.",
+      );
+      expect(copy).not.toBe("server text");
+    }
   });
 });

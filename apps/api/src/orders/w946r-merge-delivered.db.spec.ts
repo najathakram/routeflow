@@ -325,7 +325,10 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
   /** M1-1: y's stock 90 less its 2 sold; M1-2b: a stale merge choice with no target creates a new order; M1-k: the KNOWN 409. */
   const OBSERVED_M11_STOCK_Y = [90, 88];
   const OBSERVED_M12B = { created: true };
-  const OBSERVED_MK = { status: 409, code: "ORDER_EDIT_DELIVERED_LINES" };
+  // SA-1536 (ae): the head answers a full list on a reopened order that holds a delivered line with LINES_REPLACE_AFTER_DELIVERY
+  // SA-1544 (ax) / P-5: the buyer's window is closed while the order holds a live delivered line, so the buyer is
+  // refused at the write gate (403, the change-request sentence) before the merge ever sees the unlisted line.
+  const OBSERVED_MK = { status: 403, code: undefined };
   const F1_G1_RULED = { q: 13, d: 13 };
   const F1_G2_RULED = { q: 12, d: 12 };
   const F1_G3_RULED = { q: 10, d: 0 };
@@ -401,7 +404,7 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
     return { o, x, path, line: o.lineItems[0] };
   }
 
-  it("M1-0 (entry, observed): the writers reach PENDING with x {q13, d12} and no evidence row", async () => {
+  it("M1-0 (entry, observed): the writers reach CONFIRMED (PR-1a: no revert to PENDING) with x {q13, d12} and no evidence row", async () => {
     const r = await reopened(await newCustomer());
     expect(r.path).toBe(OBSERVED_M10_PATH);
     const [l] = await rows(r.o.id);
@@ -410,7 +413,7 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
       q: Number(l.qty),
       d: Number(l.deliveredQty),
     }).toEqual({
-      status: "PENDING",
+      status: "CONFIRMED",
       q: 13,
       d: 12,
     });
@@ -524,13 +527,15 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
       )
       .then(() => "resolved")
       .catch((e: any) => ({ status: e?.status, code: e?.response?.code }));
-    expect(outcome).toEqual(OBSERVED_MK); // KNOWN (the LOW row): the unlisted delivered line is refused, not preserved
+    expect(outcome).toEqual(OBSERVED_MK); // the buyer window is closed (P-5); the LOW row cannot be reached by a buyer
     expect(await snapshot(o.id)).toEqual(before);
   }, 120_000);
 
   it("M1-3: a display read (no forMerge) still shows the order; the merge searches agree with checkout", async () => {
     const cust = await newCustomer();
     const r = await reopened(cust);
+    // PR-1a keeps a reopened order CONFIRMED after an edit (M1-0); the cart state this pin is about (PENDING) is seeded
+    await raw.order.update({ where: { id: r.o.id }, data: { status: "PENDING" } });
     const shown = await tenantCtx.run(tenantId, () => orders.findActiveOrder(cust));
     expect(shown?.id).toBe(r.o.id);
     expect(await mergeSearch(cust, BUYER_MERGE)).toBeNull();
@@ -559,7 +564,7 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
     expect(await ids(b.id)).toHaveLength(1);
   }, 60_000);
 
-  it("M1-5 (server half): a buyer full list on that order: 409 ORDER_EDIT_DELIVERED_LINES, nothing written", async () => {
+  it("M1-5 (server half): a buyer full list on that order: 403 (the window is closed while it holds a delivered line, P-5), nothing written", async () => {
     const r = await reopened(customerId);
     const before = await snapshot(r.o.id);
     const buyerUser = {
@@ -576,7 +581,10 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
           { buyerLineIds: true },
         ),
       ),
-    ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_DELIVERED_LINES" } });
+    ).rejects.toMatchObject({
+      status: 403,
+      response: { message: expect.stringMatching(/Send a change request instead/) },
+    }); // SA-1544 (ax): was 409 LINES_REPLACE_AFTER_DELIVERY before the window closed
     expect(await snapshot(r.o.id)).toEqual(before);
   }, 60_000);
 
@@ -596,12 +604,12 @@ describeDb("W-946r merge and floor (SA-1149 round 2), real Postgres", () => {
     expect((await mergeSearch(cust, BUYER_MERGE))?.id).toBe(o.id);
   }, 60_000);
 
-  it("M1-g3 (guard): a staff replaceAll on that order: 409 ORDER_EDIT_DELIVERED_LINES", async () => {
+  it("M1-g3 (guard): a staff replaceAll on that order: 409 LINES_REPLACE_AFTER_DELIVERY", async () => {
     const r = await reopened(await newCustomer());
     const y = await product("g3");
     await expect(
       edit(r.o.id, { items: [{ productId: y, qty: 2, unitPrice: 1 }], replaceAll: true }),
-    ).rejects.toMatchObject({ status: 409, response: { code: "ORDER_EDIT_DELIVERED_LINES" } });
+    ).rejects.toMatchObject({ status: 409, response: { code: "LINES_REPLACE_AFTER_DELIVERY" } });
   }, 60_000);
 
   it("M1-g4 (guard): a PENDING order with a live unit-aware line is still not a merge target (the AND keeps both)", async () => {

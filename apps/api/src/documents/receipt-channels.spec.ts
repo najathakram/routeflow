@@ -40,7 +40,7 @@ describe("receipt channels (SA-751r)", () => {
       delivery: { tenantId: "t", kind: "RECEIPT" as const, entityType: "Order", entityId: "o" },
     };
     await expect(RECEIPT_CHANNELS.email({ email: ok as never }, args)).resolves.toBeUndefined();
-    expect(ok.send).toHaveBeenCalledWith(args);
+    expect(ok.send).toHaveBeenCalledWith({ ...args, tenantId: "t" });
     const bad = { send: jest.fn().mockResolvedValue({ delivered: false, transport: "none" }) };
     await expect(RECEIPT_CHANNELS.email({ email: bad as never }, args)).rejects.toThrow();
   });

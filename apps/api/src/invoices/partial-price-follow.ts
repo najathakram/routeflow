@@ -8,6 +8,7 @@ import type { DiscountTaxBase } from "@routeflow/pricing";
 import { discountModeOf } from "../common/discount-tax-mode";
 import { sumInvoiceTotalsStrict } from "../common/money-invariants.util";
 import { UnitLineSplitError } from "../orders/unit-line-split";
+import type { InvoicesService } from "./invoices.service";
 
 const logger = new Logger("PartialPriceFollow");
 
@@ -44,6 +45,29 @@ export interface FollowDeps {
   /** InvoicesService.applyMsrpSnapshots, bound (stamps each rebuilt line's MSRP like every other builder). */
   applyMsrp(db: any, customerId: string, items: any[]): Promise<void>;
   tenantId: string | null;
+}
+
+/** B1461: the ONE regulated-ledger funnel's own signature (INVOICE_BILLED -> syncInvoiceEntries). */
+type ResyncInvoiceLedger = InvoicesService["resyncInvoiceLedger"];
+/**
+ * B1461, apply-only (plan mode never gets a writer): `resyncInvoiceLedger` bound by the caller to the order
+ * and the transaction INSIDE `inOrderBillingTx`, under the Order -> Invoices locks. A DRAFT partial books SALE
+ * rows at creation (SA-962 row 721), so a followed price must reach them.
+ */
+export type FollowLedgerResync = (
+  invoiceId: string,
+  items: Parameters<ResyncInvoiceLedger>[2],
+) => ReturnType<ResyncInvoiceLedger>;
+
+/** Nothing to follow (no live invoice on the order). */
+export const noFollow = () => ({
+  issuedPartialsUnchanged: [] as FollowPlan["issuedPartialsUnchanged"],
+  followed: [] as string[],
+});
+
+/** Most edits touch an order with no live invoice at all: the caller opens no transaction for that. */
+export async function hasLiveOrderInvoice(db: any, orderId: string): Promise<boolean> {
+  return (await db.invoice.count({ where: { orderId, status: { not: InvoiceStatus.VOID } } })) > 0;
 }
 
 export interface FollowDraftPlan {
@@ -230,6 +254,7 @@ export async function applyPartialPriceFollow(
   deps: FollowDeps,
   db: any,
   orderId: string,
+  resyncLedger: FollowLedgerResync,
 ): Promise<{ issuedPartialsUnchanged: FollowPlan["issuedPartialsUnchanged"]; followed: string[] }> {
   const plan = await planPartialPriceFollow(deps, db, orderId);
   for (const d of plan.drafts) {
@@ -251,6 +276,13 @@ export async function applyPartialPriceFollow(
       where: { id: d.invoiceId },
       data: { subtotal: d.subtotal, taxAmount: d.taxAmount, total: d.total, pdfUrl: null },
     });
+    // B1461: re-sync the draft's ledger rows from its FULL rows as now stored (the planner's select lacks the
+    // tracked category and the pack the ledger lines need). The line ids stayed put, so only a re-priced
+    // regulated line writes a REVERSAL + SALE pair; the draft's live returns stand.
+    await resyncLedger(
+      d.invoiceId,
+      await db.invoiceItem.findMany({ where: { invoiceId: d.invoiceId } }),
+    );
   }
   return {
     issuedPartialsUnchanged: plan.issuedPartialsUnchanged,

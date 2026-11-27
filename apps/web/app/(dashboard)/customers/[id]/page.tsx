@@ -182,6 +182,7 @@ import { paymentKeyScope, usePaymentSubmitKey } from "@/lib/payment-submit-key";
 import { usePaymentStatusCheck } from "@/lib/use-payment-status-check";
 import { PaymentStatusCheck } from "@/components/PaymentStatusCheck";
 import { PAYMENT_STATUS_COPY } from "@routeflow/types/payment-submit-key";
+import { PaymentTermsSelect } from "@/components/PaymentTermsSelect";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -399,6 +400,7 @@ function AddressFormModal({
 
   return (
     <Modal
+      scroll={false} // B1444: CLIP
       open={isOpen}
       onClose={onClose}
       title={mode === "add" ? "Add Address" : "Edit Address"}
@@ -896,18 +898,6 @@ function ContactPersonModal({
 
 // ── Special Prices Tab ────────────────────────────────────────────────────────
 
-// Same VALID_TERMS list as the API DTO (update-customer.dto.ts) and the invoice
-// pages' TERMS_OPTIONS — "" clears the override and falls back to the tenant
-// default from Settings → Invoicing.
-const CUSTOMER_TERMS_OPTIONS = [
-  { value: "", label: "Use tenant default" },
-  { value: "Due on Receipt", label: "Due on Receipt" },
-  { value: "Net 15", label: "Net 15" },
-  { value: "Net 30", label: "Net 30" },
-  { value: "Net 45", label: "Net 45" },
-  { value: "Net 60", label: "Net 60" },
-];
-
 function SpecialPricesTab({ customerId }: { customerId: string }) {
   const { data: customer } = useCustomer(customerId);
   const updateCustomer = useUpdateCustomer();
@@ -1088,19 +1078,14 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             </p>
           </div>
           {isOperator ? (
-            <select
+            <PaymentTermsSelect
               value={customer?.defaultPaymentTerms ?? ""}
-              onChange={(e) => {
-                updateCustomer.mutate({ id: customerId, defaultPaymentTerms: e.target.value });
+              emptyLabel="Use tenant default"
+              aria-label="Default payment terms"
+              onChange={(label) => {
+                updateCustomer.mutate({ id: customerId, defaultPaymentTerms: label });
               }}
-              className="rounded border border-surface-border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            >
-              {CUSTOMER_TERMS_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            />
           ) : (
             <p className="text-sm font-semibold text-navy">
               {customer?.defaultPaymentTerms || "Tenant default"}
@@ -1341,6 +1326,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
 
       {/* Add / Edit modal */}
       <Modal
+        scroll={false} // B1444: CLIP
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title={editingPrice ? "Edit tier override" : "Add tier override"}
@@ -1627,6 +1613,7 @@ function DocumentViewer({ doc, onClose }: { doc: CustomerDocument | null; onClos
   const isPdf = doc.mimeType === "application/pdf";
   return (
     <Modal
+      scroll={false} // B1444: LAYOUT
       open={!!doc}
       onClose={onClose}
       title={doc.originalName}

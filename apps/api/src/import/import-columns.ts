@@ -5,6 +5,7 @@ import {
 } from "./import-column-aliases";
 import { parseImportMoney, parseImportNumber } from "./parse-import-number";
 import { roundUnitCost } from "@routeflow/pricing";
+import { netLabel, termDays } from "../invoices/payment-terms"; // W-1487: one parser for the invoice terms labels
 
 /**
  * B858 + B859 — pure column-registry module (FIX1, cause-ruling.md §2.A / SA-284).
@@ -165,6 +166,9 @@ const boolParser: CellParser = withBlankGuard((raw) => {
 
 const DUE_ON_RECEIPT_RE = /^(due on receipt|due upon receipt|cod|0)$/i;
 const NET_TERMS_RE = /^(net ?(15|30|45|60)|n(15|30|45|60)|(15|30|45|60))$/i;
+/** W-1487: an exact-shape "Net N" label, kept (canonical) only when the shared parser reads it; never guessed. */
+// R-345d N4: no leading zero ("Net 07" stays a bad cell, as termDays reads it), at most three digits.
+const NET_LABEL_RE = /^net ([1-9]\d{0,2})$/i;
 /** SA-305 (1): a Zoho payment-terms integer with no exact label (7, 10, 90, …) — bare digits only. */
 const BARE_INTEGER_RE = /^-?\d+$/;
 
@@ -186,6 +190,12 @@ const termsParser: CellParser = withBlankGuard((raw) => {
     const days = netMatch[2] || netMatch[3] || netMatch[4];
     return { ok: true, value: `Net ${days}` };
   }
+  // W-1487: a "Net N" label the invoice code reads (Net 7, Net 90, a custom Net 21) is kept, canonical. Anything else
+  // (Net 0, Net 366, Net 7.5) falls through to today's handling unchanged.
+  const label = v.match(NET_LABEL_RE);
+  const canonical = label ? netLabel(Number(label[1])) : null;
+  // Round-trip through termDays so a label is kept only when the invoice code reads it the same way.
+  if (canonical && termDays(canonical) !== null) return { ok: true, value: canonical };
   if (BARE_INTEGER_RE.test(v)) {
     return {
       ok: true,

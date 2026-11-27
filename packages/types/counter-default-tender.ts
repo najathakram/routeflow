@@ -5,7 +5,7 @@
  *
  * Due on Receipt (and Net 0) means the money is owed now: CASH. Any Net N above zero means the customer is billed later:
  * ON_ACCOUNT. A walk-in, or no customer at all, has no account to charge: CASH. A term this function cannot read is priced
- * like the server prices it (`TERM_DAYS[terms] ?? 30`): thirty days, so ON_ACCOUNT.
+ * like the server prices it (`termDays(terms) ?? 30`): thirty days, so ON_ACCOUNT.
  *
  * It is only a default: the clerk's own tender choice always wins, and the screen never applies it over a restored sale.
  */

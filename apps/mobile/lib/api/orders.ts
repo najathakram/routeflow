@@ -17,6 +17,7 @@ import type {
   LineComponentView,
   OrderTrackingResponse,
   UnitAwareLineInput,
+  BuyerEditClosedReason,
 } from "@routeflow/types";
 export type {
   ActiveOrderSummary,
@@ -140,7 +141,11 @@ export interface Order {
   /** P5-09 post-dispatch change requests on this order, newest first. */
   changeRequests?: ChangeRequest[]; // NEW
   /** P5-08 edit-window gate — direct PATCH /items vs. change-request flow. */
-  editWindow?: { editable: boolean; editableUntil: string | null; closedReason: string | null }; // NEW
+  editWindow?: {
+    editable: boolean;
+    editableUntil: string | null;
+    closedReason: BuyerEditClosedReason | null;
+  }; // NEW
   /**
    * Order-scoped credit-note INTENTS (server: `OrderCreditNote`). `amount` is the
    * requested dollars — null means "up to the credit's remaining balance". Applied

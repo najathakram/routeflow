@@ -4,21 +4,12 @@
  * arithmetic. Mirrors mobile's `apps/mobile/lib/invoice-terms.ts`.
  */
 
+import { termDays } from "@routeflow/types/payment-terms";
+
+/** Days for a term label, or null when it cannot drive a date: ONE shared table (W-1487), also read by mobile and the API
+ *  literal. "Due on Receipt" is 0, "Net N" is N for a whole N from 1 to 365. */
 export function getDaysForTerms(terms: string): number | null {
-  switch (terms) {
-    case "Due on Receipt":
-      return 0;
-    case "Net 15":
-      return 15;
-    case "Net 30":
-      return 30;
-    case "Net 45":
-      return 45;
-    case "Net 60":
-      return 60;
-    default:
-      return null;
-  }
+  return termDays(terms);
 }
 
 /** Add calendar days to a YYYY-MM-DD date, in UTC end to end. `new Date(iso)`

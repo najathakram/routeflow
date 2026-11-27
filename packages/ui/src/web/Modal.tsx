@@ -47,15 +47,16 @@ export interface ModalProps {
    */
   onKeyDownCapture?: React.KeyboardEventHandler<HTMLDivElement>;
   /**
-   * Opt-in: cap the dialog at 92vh, pin the header (with its X) and the footer, and scroll only the
-   * body. Without it the dialog is centred with `-translate-y-1/2` and no max height, so one taller
-   * than the viewport spills off BOTH edges and its X and footer buttons become unreachable (body
-   * scroll is locked). Off by default so existing dialogs are untouched.
+   * On by default (B1444, SA-1414): the dialog is capped at 92vh, the header (with its X) and the
+   * footer are pinned, and only the body scrolls. Without the cap the dialog is centred with
+   * `-translate-y-1/2` and no max height, so one taller than the viewport spills off BOTH edges and
+   * its X and footer buttons become unreachable (body scroll is locked).
    *
-   * DO NOT enable it on a dialog whose body contains absolutely-positioned children, such as an
-   * inline typeahead or dropdown list (`absolute … top-full`): the body becomes a scroll container,
-   * which CLIPS them (and adds a scrollbar just for the open list). Portal those first, or leave
-   * `scroll` off. Prove any dialog you opt in at a short viewport.
+   * Pass `scroll={false}` only for a body with an inline absolutely-positioned list (`absolute ...
+   * top-full`, which a scroll body CLIPS), its own height cap (two scroll boxes would nest), or a
+   * full-height layout, and give the reason on the same line (`// B1444: CLIP | OWN-SCROLL |
+   * LAYOUT`). Every opt-out is pinned in apps/web/lib/modal-scroll-optout.census.test.ts; prefer
+   * moving the list to a portalled AnchoredList over adding one.
    */
   scroll?: boolean;
   /** Extra classes for the header X (e.g. a 44 px tap target on a touch screen). */
@@ -85,7 +86,7 @@ export const Modal = ({
   onOpenAutoFocus,
   onCloseAutoFocus,
   onKeyDownCapture,
-  scroll = false,
+  scroll = true,
   closeClassName,
   headerActions,
   anchor = "center",

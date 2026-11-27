@@ -311,7 +311,13 @@ describe("W-861 + W-871: a paid walk-in sale and a post-delivery replace are ref
     });
 
     it("a staff replace-all on a CONFIRMED (pre-delivery) order is not refused by this rule", async () => {
-      seed("CONFIRMED", false, false);
+      // A genuinely pre-delivery order: no line is delivered (a delivered line makes the edit post-delivery, SA-1506 B4).
+      prisma.order.findUnique.mockResolvedValue({
+        ...orderWith("CONFIRMED", false),
+        lineItems: [{ ...SOLD, deliveredQty: 0 }],
+      });
+      prisma.orderItem.findMany.mockResolvedValue([{ ...SOLD, deliveredQty: 0 }]);
+      prisma.invoicePayment.findFirst.mockResolvedValue(null);
       const err = await service.updateOrderItems("ord-1", replaceAll, operator).catch((e) => e);
       expect(err?.response?.code).not.toBe("LINES_REPLACE_AFTER_DELIVERY");
     });

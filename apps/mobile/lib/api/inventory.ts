@@ -18,13 +18,6 @@ export interface StockItem {
   costingMethod?: string;
 }
 
-export interface StockAdjustmentDto {
-  productId: string;
-  quantity: number; // positive = add, negative = remove
-  notes?: string;
-  reference?: string;
-}
-
 export interface StockPurchaseDto {
   productId: string;
   /**
@@ -129,14 +122,6 @@ export function useRecomputeCosts() {
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
-
-export function useRecordAdjustment() {
-  const qc = useQueryClient();
-  return useMutation<unknown, Error, StockAdjustmentDto>({
-    mutationFn: (dto) => apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory"] }),
-  });
-}
 
 export function useRecordPurchase() {
   const qc = useQueryClient();

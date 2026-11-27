@@ -127,6 +127,9 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ORDER_STATUS_VALUES", "OrderStatus"],
   // SA-1124 PR-0: brand-new Prisma enum, mirrored immediately — see the triage tripwire below.
   ["ORDER_REVIEW_FLAG_KIND_VALUES", "OrderReviewFlagKind"],
+  // SA-1215 set 4 (P-85): two brand-new Prisma enums, mirrored immediately (123 -> 125).
+  ["PURCHASE_ORDER_CHARGE_KIND_VALUES", "PurchaseOrderChargeKind"],
+  ["PURCHASE_ORDER_CHARGE_BASIS_VALUES", "PurchaseOrderChargeBasis"],
   ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
   ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
   ["HANDOFF_REALM_VALUES", "HandoffRealm"],
@@ -177,6 +180,17 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["USER_STATUS_VALUES", "UserStatus"],
   ["BUYER_ACCOUNT_STATUS_VALUES", "BuyerAccountStatus"],
   ["CUSTOMER_LINK_STATUS_VALUES", "CustomerLinkStatus"],
+  // SA-1295 A2: six brand-new Prisma enums of the QuickBooks history import, mirrored immediately; the existing
+  // InvoiceItemSystemKind row above gains IMPORTED_SUMMARY (a value, not an enum). See the triage tripwire below.
+  ["LEGACY_IMPORT_BATCH_STATUS_VALUES", "LegacyImportBatchStatus"],
+  ["LEGACY_IMPORT_FILE_KIND_VALUES", "LegacyImportFileKind"],
+  ["LEGACY_IMPORT_ISSUE_SEVERITY_VALUES", "LegacyImportIssueSeverity"],
+  ["LEGACY_SALES_DOCUMENT_KIND_VALUES", "LegacySalesDocumentKind"],
+  ["LEGACY_SALES_LINE_KIND_VALUES", "LegacySalesLineKind"],
+  ["LEGACY_ITEM_MATCH_METHOD_VALUES", "LegacyItemMatchMethod"],
+
+  // SA-1304 PR-2: BillingCycle, an EXISTING enum (no count change) whose union was hand-typed in four client files.
+  ["BILLING_CYCLE_VALUES", "BillingCycle"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -315,7 +329,16 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // folder adds BAD_DEBT to the existing OperatorPermissionGroup (a value, not an enum, so no count change from it).
 // Triage for OrderReviewFlagKind (SA-1124 PR-0, migration 20261110000000_order_review_flags_offline): a brand-new Prisma
 // enum, mirrored as `ORDER_REVIEW_FLAG_KIND_VALUES` + its `ENUM_TABLE` row above (122 → 123).
-const PINNED_PRISMA_ENUM_COUNT = 123;
+// Triage for PurchaseOrderChargeKind and PurchaseOrderChargeBasis (SA-1215 set 4, migration 20261124000200_po_charges): two
+// brand-new Prisma enums, mirrored as `PURCHASE_ORDER_CHARGE_KIND_VALUES` / `PURCHASE_ORDER_CHARGE_BASIS_VALUES` + their
+// `ENUM_TABLE` rows above (123 -> 125).
+// Triage for LegacyImportBatchStatus, LegacyImportFileKind, LegacyImportIssueSeverity, LegacySalesDocumentKind,
+// LegacySalesLineKind, LegacyItemMatchMethod (SA-1295 A2, migration 20261126000000_legacy_import_stage1): six brand-new
+// Prisma enums, all MIRRORED as LEGACY_IMPORT_BATCH_STATUS_VALUES … LEGACY_ITEM_MATCH_METHOD_VALUES + their ENUM_TABLE
+// rows (the web import screen shows batch status, file kind, issue severity, document kind, line kind and match method)
+// (125 → 131). IMPORTED_SUMMARY is a value on an existing enum, mirrored in INVOICE_ITEM_SYSTEM_KIND_VALUES; it does not
+// move the count.
+const PINNED_PRISMA_ENUM_COUNT = 131;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
@@ -672,5 +695,19 @@ describe("regression: apps/mobile's @routeflow/types stub stays pinned to Prisma
     const canonical = (SHARED as Record<string, unknown>)["CHECK_TRANSITIONS"];
     expect(canonical).toBeDefined();
     expect(MOBILE_STUB["CHECK_TRANSITIONS"]).toEqual(canonical);
+  });
+});
+
+// SA-1304 PR-2 (test 18): the four client files that hand-typed the billing-cycle union now derive it from
+// BILLING_CYCLE_VALUES (packages/types/api/enums.ts), which the ENUM_TABLE row above pins to @prisma/client.
+describe("regression: the billing-cycle union is derived, never hand-typed (L-072, SA-1304)", () => {
+  it.each([
+    "packages/types/api/billing.ts",
+    "packages/types/api/onboarding.ts",
+    "packages/types/api/rf-invoices.ts",
+    "apps/web/lib/api/billing.ts",
+  ])("%s declares no literal MONTHLY | ANNUAL union", (relPath) => {
+    const text = fs.readFileSync(path.join(REPO_ROOT, relPath), "utf8");
+    expect(text).not.toMatch(/"MONTHLY"\s*\|\s*"ANNUAL"|"ANNUAL"\s*\|\s*"MONTHLY"/);
   });
 });

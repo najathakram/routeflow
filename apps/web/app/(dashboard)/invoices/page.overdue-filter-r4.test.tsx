@@ -69,8 +69,10 @@ describe("InvoicesPage — Overdue tab uses the derived overdue set (R4)", () =>
     mockGet.mockResolvedValue({ data: { data: [], meta: { total: 0 } } });
     renderWithProviders(<InvoicesPage />);
     fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
-    await waitFor(() => expect(mockGet).toHaveBeenCalled());
-    const [url, config] = mockGet.mock.calls[0];
+    // The page also reads the tenant's zone (GET /settings) for the status words; the export is the other call.
+    const exportCall = () => mockGet.mock.calls.find(([u]) => u !== "/settings");
+    await waitFor(() => expect(exportCall()).toBeDefined());
+    const [url, config] = exportCall()!;
     expect(url).toBe("/invoices");
     expect(config.params.isOverdue).toBe(true);
     expect(config.params.status).toBeUndefined();

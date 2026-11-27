@@ -119,8 +119,10 @@ describe("InvoicesPage: To collect (SA-1026)", () => {
     mockGet.mockResolvedValue({ data: { data: [], meta: { total: 0 } } });
     renderWithProviders(<InvoicesPage />);
     fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
-    await waitFor(() => expect(mockGet).toHaveBeenCalled());
-    expect(mockGet.mock.calls[0][1].params).toEqual(
+    // The page also reads the tenant's zone (GET /settings) for the status words; the export is the other call.
+    const exportCall = () => mockGet.mock.calls.find(([url]) => url !== "/settings");
+    await waitFor(() => expect(exportCall()).toBeDefined());
+    expect(exportCall()![1].params).toEqual(
       expect.objectContaining({ toCollect: true, customerId: "c1" }),
     );
   });

@@ -41,6 +41,19 @@ export function isPayingRow(
   );
 }
 
+/**
+ * REG-743-N5 / SA-1539: the one rule for a paying-set row's price class, shared by computeOverview() (its payingTenants /
+ * unpricedActiveTenants / zeroPricedActiveTenants counters) and the super admin business tabs (bucket paying vs
+ * not_billed with subscribed_zero). A row counts as paying ONLY when it actually contributes money, so "N paying
+ * tenants" and "$0" are never both true for one row.
+ */
+export type PayingPriceClass = "paying" | "unpriced" | "zero_priced";
+
+export function payingPriceClass(rowPrice: number, basePriceSnapshot: unknown): PayingPriceClass {
+  if (rowPrice > 0) return "paying";
+  return basePriceSnapshot == null ? "unpriced" : "zero_priced";
+}
+
 export interface MrrPlanRow {
   planKey: string;
   tenants: number;
@@ -277,10 +290,11 @@ export class MrrService {
       // tenant pays" — a null snapshot or a full discount prices it $0. Count it as paying
       // ONLY when it actually contributes money, so "N paying tenants" and "$0" are never
       // both true for the same row.
-      if (rowPrice > 0) {
+      const priceClass = payingPriceClass(rowPrice, s.basePriceSnapshot);
+      if (priceClass === "paying") {
         payingTenants += 1;
         row.tenants += 1;
-      } else if (s.basePriceSnapshot == null) {
+      } else if (priceClass === "unpriced") {
         // Missing a snapshot AND add-ons didn't rescue it above $0 — genuinely unpriced.
         unpricedActiveTenants += 1;
       } else {
@@ -316,6 +330,33 @@ export class MrrService {
       zeroPricedActiveTenants,
       activeWithoutSubscription,
     };
+  }
+
+  /**
+   * SA-1539: the price class of each given paying-set row, in ONE add-on read for all of them. The business tabs call this
+   * with the rows where isPayingRow is true; each row is priced by priceSubscription() (the formula computeOverview() and
+   * priceTenant() use) and classed by payingPriceClass(). No pricing arithmetic lives anywhere else.
+   */
+  async payingPriceClasses(
+    rows: Array<{ tenantId: string; basePriceSnapshot: unknown; discount?: unknown }>,
+  ): Promise<Map<string, PayingPriceClass>> {
+    const out = new Map<string, PayingPriceClass>();
+    if (rows.length === 0) return out;
+    const addons = await this.prisma.tenantAddon.findMany({
+      where: billableAddonWhere({ active: true, tenantId: { in: rows.map((r) => r.tenantId) } }),
+      select: { tenantId: true, priceSnapshot: true, quantity: true },
+    });
+    const byTenant = new Map<string, { priceSnapshot: unknown; quantity: number }[]>();
+    for (const a of addons) {
+      const list = byTenant.get(a.tenantId) ?? [];
+      list.push(a);
+      byTenant.set(a.tenantId, list);
+    }
+    for (const r of rows) {
+      const price = this.priceSubscription(r, byTenant.get(r.tenantId) ?? []);
+      out.set(r.tenantId, payingPriceClass(price, r.basePriceSnapshot));
+    }
+    return out;
   }
 
   /**

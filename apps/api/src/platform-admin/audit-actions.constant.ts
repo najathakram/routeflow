@@ -133,9 +133,14 @@ export const AdminAuditAction = {
   APP_LINKS_UPDATED: "APP_LINKS_UPDATED",
   // AI limits PR-1: a super admin set, changed or cleared one business's monthly AI allowance; meta = { from, to } (whole USD or null).
   TENANT_AI_CAP_CHANGED: "TENANT_AI_CAP_CHANGED",
+  // W-1464 (mail wall): a super admin replaced one Test business's allowed mail addresses; meta = { count } only, never an address.
+  MAIL_WALL_CHANGED: "MAIL_WALL_CHANGED",
   // SA-789 F1: a regulated return or credit note could not be booked on the ledger (its sold line resolves
   // nowhere); meta = ids only. The return / credit note itself went through.
   REGULATED_REVERSAL_UNBOOKED: "REGULATED_REVERSAL_UNBOOKED",
+  // R-2 (SA-1297): a super admin recorded a staff refund of a tenant's yearly payment (a record only; nothing moved). Written in
+  // the same transaction as the refund.staff BillingEvent; meta = { invoiceId, providerRef, refundDate, message }.
+  TENANT_STAFF_REFUND_RECORDED: "TENANT_STAFF_REFUND_RECORDED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -215,7 +220,9 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   FEATURE_CONFIG_CLEARED: "Feature setting cleared",
   APP_LINKS_UPDATED: "Mobile app links updated",
   TENANT_AI_CAP_CHANGED: "AI allowance changed",
+  MAIL_WALL_CHANGED: "Allowed mail addresses changed",
   REGULATED_REVERSAL_UNBOOKED: "Regulated reversal not booked (support to resolve)",
+  TENANT_STAFF_REFUND_RECORDED: "Staff refund recorded",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

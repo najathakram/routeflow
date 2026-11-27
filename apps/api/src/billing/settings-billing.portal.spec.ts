@@ -1,8 +1,9 @@
-import { BadRequestException, HttpException } from "@nestjs/common";
+import { BadRequestException, ConflictException, HttpException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { RolesGuard } from "../auth/guards/roles.guard";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { SettingsBillingController } from "./settings-billing.controller";
 
 /**
@@ -67,6 +68,21 @@ describe("SettingsBillingController.createPortal (B4: admin-only portal)", () =>
     expect(subscription.openInvoiceUrl).toHaveBeenCalledWith("t1");
   });
 
+  it("SA-1547 S2: the wall's 409 on the portal withholds the hosted invoice URL too (a Stripe payment page)", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(
+        new ConflictException({
+          code: API_ERROR_CODES.LIVE_PAYMENTS_OFF,
+          message: "This is a test business. Payments are switched off.",
+        }),
+      ),
+    });
+    await expect(controller.createPortal({ tenantId: "t1" } as any)).rejects.toMatchObject({
+      status: 409,
+      response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
+    });
+  });
+
   it("a portal failure does NOT lose the pay link", async () => {
     const { controller } = make({ portal: jest.fn().mockRejectedValue(new Error("stripe")) });
     expect(await controller.createPortal({ tenantId: "t1" } as any)).toEqual({
@@ -94,6 +110,22 @@ describe("SettingsBillingController.createPortal (B4: admin-only portal)", () =>
     expect(err).toBeInstanceOf(HttpException);
     expect(err.getStatus()).toBe(400);
     expect(err.getResponse().code).toBe("BILLING_PORTAL_UNAVAILABLE");
+  });
+
+  // W-1464 PR-B: the live-payments wall's own coded 409 reaches the caller; it is not a Stripe outage
+  it("a business that is not PRODUCTION gets the wall's coded 409, not the retryable 503", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(
+        new ConflictException({
+          code: "LIVE_PAYMENTS_OFF",
+          message: "Payments are switched off.",
+        }),
+      ),
+      pay: jest.fn().mockResolvedValue(null),
+    });
+    const err: any = await controller.createPortal({ tenantId: "t1" } as any).catch((e) => e);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse().code).toBe("LIVE_PAYMENTS_OFF");
   });
 
   it("both fail on a Stripe outage: a coded 503 (retryable), never a bare 500", async () => {
@@ -147,5 +179,44 @@ describe("SettingsBillingController.getSubscription - role-trimmed view (B4 S3)"
       role: "TENANT_ADMIN",
     } as any);
     expect(out).toEqual(view);
+  });
+});
+
+describe("SettingsBillingController.createPortal refusal narrowing (SA-1547 L4)", () => {
+  const wall = () =>
+    new ConflictException({
+      code: API_ERROR_CODES.LIVE_PAYMENTS_OFF,
+      message: "This is a test business. Payments are switched off.",
+    });
+
+  it("a NON-wall 409 from the portal is the retryable 503, not passed through", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(new ConflictException("some other conflict")),
+      pay: jest.fn().mockResolvedValue(null),
+    });
+    await expect(controller.createPortal({ tenantId: "t1" } as any)).rejects.toMatchObject({
+      status: 503,
+    });
+  });
+
+  it("the wall's 409 still reaches the caller when no pay link exists", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(wall()),
+      pay: jest.fn().mockResolvedValue(null),
+    });
+    await expect(controller.createPortal({ tenantId: "t1" } as any)).rejects.toMatchObject({
+      status: 409,
+      response: { code: API_ERROR_CODES.LIVE_PAYMENTS_OFF },
+    });
+  });
+
+  it("a NON-wall 409 with a pay link available keeps the pay link (S2 narrowing)", async () => {
+    const { controller } = make({
+      portal: jest.fn().mockRejectedValue(new ConflictException("some other conflict")),
+    });
+    expect(await controller.createPortal({ tenantId: "t1" } as any)).toEqual({
+      portalUrl: null,
+      hostedInvoiceUrl: "https://invoice.example/i/1",
+    });
   });
 });

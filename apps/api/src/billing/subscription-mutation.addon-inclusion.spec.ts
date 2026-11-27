@@ -130,7 +130,7 @@ function make(
   };
   const prisma: any = {
     tenantSubscription: { findUnique: jest.fn(async () => ({ ...db.sub })) },
-    tenant: { findUnique: jest.fn().mockResolvedValue({ plan: "TEAM" }) },
+    tenant: { findUnique: jest.fn().mockResolvedValue({ plan: "TEAM", class: "PRODUCTION" }) },
     tenantAddon: {
       findUnique: jest.fn(async ({ where }: any) => {
         const hit = db.addons.find((r) => r.id === where.id);

@@ -1,7 +1,7 @@
 import {
   deliveredBasisByLine,
+  evidenceOrigin,
   deliveredQtyFromBasis,
-  isEvidenceRow,
 } from "../invoices/delivered-basis-by-line";
 
 const EPS = 0.0005;
@@ -23,13 +23,26 @@ export interface RouteHeldLine {
  * same `deliveredBasisByLine` basis the invoice reads. `delivered` is the rows' sum (rows beat the column), capped at qty.
  */
 export async function routeHeldLines(tx: any, orderId: string): Promise<RouteHeldLine[]> {
-  const routeRows: Array<{ orderItemId: string | null; type: string; quantityDelivered: unknown }> =
-    await tx.deliveryMutation.findMany({
-      where: { orderId, routeRunStopId: { not: null } },
-      select: { orderItemId: true, type: true, quantityDelivered: true },
-    });
+  const rows: Array<{
+    orderItemId: string | null;
+    type: string;
+    quantityDelivered: unknown;
+    routeRunStopId: string | null;
+    driverId: string | null;
+  }> = await tx.deliveryMutation.findMany({
+    where: { orderId },
+    select: {
+      orderItemId: true,
+      type: true,
+      quantityDelivered: true,
+      routeRunStopId: true,
+      driverId: true,
+    },
+  });
   const routeLineIds = new Set(
-    routeRows.filter(isEvidenceRow).flatMap((m) => (m.orderItemId ? [m.orderItemId] : [])),
+    rows
+      .filter((m) => evidenceOrigin(m) === "route")
+      .flatMap((m) => (m.orderItemId ? [m.orderItemId] : [])),
   );
   if (routeLineIds.size === 0) return [];
   const lines: Array<{ id: string; qty: unknown; deliveredQty: unknown }> =

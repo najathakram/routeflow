@@ -93,7 +93,8 @@ import { SendingDomainCard } from "./_components/SendingDomainCard";
 import { MailboxCard } from "./_components/MailboxCard";
 import { StripeConnectCard } from "./_components/StripeConnectCard";
 import { InvoiceLayoutCard } from "./_components/InvoiceLayoutCard";
-import { InvoiceNumberingCard, INVOICE_TERMS_OPTIONS } from "./_components/InvoiceNumberingCard";
+import { InvoiceNumberingCard } from "./_components/InvoiceNumberingCard";
+import { PaymentTermsSelect } from "@/components/PaymentTermsSelect";
 import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import { FulfillmentSettingsTab } from "./_components/FulfillmentSettingsTab";
 import { useFulfilmentSettings } from "@/lib/api/fulfilment-settings";
@@ -2847,20 +2848,14 @@ function InvoicingTab() {
             </div>
             <div className="flex-1 space-y-1">
               <p className="text-sm font-semibold text-navy">Payment terms</p>
-              <select
+              <PaymentTermsSelect
                 className="w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 id="invoice-default-terms"
                 aria-label="Payment terms"
                 value={shownTerms}
-                onChange={(e) => handleTermsChange(e.target.value)}
+                onChange={handleTermsChange}
                 disabled={isLoading || updateSettings.isPending}
-              >
-                {INVOICE_TERMS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
           </div>
 

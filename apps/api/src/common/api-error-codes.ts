@@ -166,6 +166,8 @@ export const API_ERROR_CODES = {
   ORDER_BILLING_CHANGED: "ORDER_BILLING_CHANGED",
   UNVOID_ORDER_CANCELLED: "UNVOID_ORDER_CANCELLED",
   ORDER_EDIT_WOULD_OVERPAY: "ORDER_EDIT_WOULD_OVERPAY",
+  /** SA-1506 AD-3: an edit that would leave an invoiced order with no live line. 409; the step is Void invoice. */
+  ORDER_EDIT_EMPTIES_INVOICE: "ORDER_EDIT_EMPTIES_INVOICE",
   FULFIL_METHOD_NOT_OFFERED: "FULFIL_METHOD_NOT_OFFERED",
   ORDER_WITH_CARRIER_NO_CANCEL: "ORDER_WITH_CARRIER_NO_CANCEL",
   ORDER_WITH_CARRIER_NO_REDUCE: "ORDER_WITH_CARRIER_NO_REDUCE",
@@ -379,6 +381,7 @@ export const API_ERROR_CODES = {
   CHECKOUT_SLOT_UNAVAILABLE: "CHECKOUT_SLOT_UNAVAILABLE",
   CHECKOUT_PAYMENT_IN_PROGRESS: "CHECKOUT_PAYMENT_IN_PROGRESS",
   CHECKOUT_LINK_NOT_EXPIRED: "CHECKOUT_LINK_NOT_EXPIRED",
+  LIVE_PAYMENTS_OFF: "LIVE_PAYMENTS_OFF",
   CHOOSE_PLAN_AT_CHECKOUT: "CHOOSE_PLAN_AT_CHECKOUT",
   PAYMENT_OVERDUE: "PAYMENT_OVERDUE",
   PAYMENT_STATE_UNKNOWN: "PAYMENT_STATE_UNKNOWN",
@@ -394,6 +397,8 @@ export const API_ERROR_CODES = {
   ADVANCE_NOT_AVAILABLE: "ADVANCE_NOT_AVAILABLE",
   /** B1385: a DRAFT payment cannot carry a leftover; it would become spendable credit (invoices). 400. */
   DRAFT_PAYMENT_HAS_EXCESS: "DRAFT_PAYMENT_HAS_EXCESS",
+  /** SA-1299 P4 (B1396): money lands only on an issued invoice; 400 from the invoices.service writers and advance apply; the ledger writer (bookkeeping) still takes a DRAFT, B1454, body carries `reason` (DRAFT, VOID or WRITTEN_OFF). Nothing was written (invoices). */
+  INVOICE_NOT_PAYABLE: "INVOICE_NOT_PAYABLE",
   PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
   UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
   INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",
@@ -542,6 +547,12 @@ export const API_ERROR_CODES = {
    * Thrown by the server and matched by the clients (`isPaymentKeyConflict`) through this ONE constant.
    */
   PAYMENT_MISMATCH: "PAYMENT_MISMATCH",
+  /**
+   * The `reason` of the 409 IDEMPOTENCY_KEY_CONFLICT that POST /inventory/movements/adjustment sends when its
+   * Idempotency-Key already recorded a DIFFERENT stock adjustment (B1415 M1b, SA-1504 R4): the key's first call landed.
+   * Thrown by the server and matched by the clients (`isAdjustmentKeyReused`) through this ONE constant.
+   */
+  ADJUSTMENT_MISMATCH: "ADJUSTMENT_MISMATCH",
   /**
    * 409 from every InvoicePayment writer that carries a typed reference (row 498, SA-837): a non-VOID payment of the
    * same customer, method, NORMALISED reference (trim, uppercase, no spaces or dashes) and amount already exists, with
@@ -755,6 +766,7 @@ export const API_ERROR_CODES = {
   ACCOUNT_IDENTIFIER_IN_USE: "ACCOUNT_IDENTIFIER_IN_USE",
   /** Create Tenant (platform-admin): startMode "trial" was sent without trialLengthDays (400). Nothing was written. */
   TENANT_TRIAL_DAYS_REQUIRED: "TENANT_TRIAL_DAYS_REQUIRED",
+  TENANT_BUCKET_SCAN_CAP_EXCEEDED: "TENANT_BUCKET_SCAN_CAP_EXCEEDED",
   RF_INVOICE_PAID_AT_TOO_OLD: "RF_INVOICE_PAID_AT_TOO_OLD",
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /**
@@ -929,6 +941,14 @@ export const API_ERROR_CODES = {
   DRIVER_VIA_DRIVERS_PAGE: "DRIVER_VIA_DRIVERS_PAGE",
   /** 409 from PATCH /users/:id: the person is a driver with an open run, so their role cannot move off Driver yet. Nothing was written (B862, SA-1171 K4). */
   DRIVER_HAS_OPEN_RUN: "DRIVER_HAS_OPEN_RUN",
+  /** 404 from the staff-refund routes (R-2, SA-1297): the business has no yearly payment on record to refund. Nothing was written. */
+  STAFF_REFUND_NO_YEARLY_PAYMENT: "STAFF_REFUND_NO_YEARLY_PAYMENT",
+  /** 409 from POST /platform-admin/tenants/:id/staff-refunds: the refund date is more than 14 days after the yearly payment (R-2, SA-1297). Nothing was written. */
+  STAFF_REFUND_WINDOW_PASSED: "STAFF_REFUND_WINDOW_PASSED",
+  /** 409 from POST /platform-admin/tenants/:id/staff-refunds: a staff refund is already recorded for this yearly payment; body carries the existing row's `createdAt`, `providerRef`, `actorName` and `refundDate` (R-2, SA-1297). */
+  STAFF_REFUND_ALREADY_RECORDED: "STAFF_REFUND_ALREADY_RECORDED",
+  /** 400 from a buyer's order edit, a CUSTOMER change request or a CUSTOMER order template: a line's piece total would pass BUYER_LINE_QTY_MAX (rise-only: a line already above it may stay). Body carries `productIds`. Nothing was written (B1386, SA-1285). */
+  BUYER_LINE_QTY_OVER_MAX: "BUYER_LINE_QTY_OVER_MAX",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

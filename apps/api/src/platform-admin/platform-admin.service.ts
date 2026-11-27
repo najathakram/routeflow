@@ -78,7 +78,7 @@ import {
   unbilledSelfServeSkus,
   withAddonLocks,
 } from "../billing/manual-activation-addons";
-import type { ManualActivationAddons } from "@routeflow/types";
+import type { ManualActivationAddons, TenantBucket } from "@routeflow/types";
 import { roundMoney } from "@routeflow/pricing";
 import {
   buildPlanPriceImpact,
@@ -124,6 +124,8 @@ import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
 import { UpdateTenantPriceDto } from "./dto/update-tenant-price.dto";
 import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
 import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
+import { classifyRows, listTenantsByBucket, tenantBucketWire } from "./tenant-bucket-list";
+import type { TenantBucketResult } from "../billing/tenant-bucket";
 import { AuditService } from "../audit/audit.service";
 import {
   AdminAuditAction,
@@ -150,6 +152,7 @@ import { activationClaimRefusal } from "../billing/catchup-claim";
 import { API_BILLING_PORTAL_RETURN_PATH } from "../billing/billing-return-paths";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
+import { normalizeMailWallEntry, readMailWall, writeMailWall } from "../email/recipient-wall";
 import { assertValidTenantTimeZone } from "../system-config/tenant-timezone.writer";
 import { STAFF_ACCESS_AUDIENCE } from "../auth/session-token";
 
@@ -261,14 +264,12 @@ export class PlatformAdminService {
       sortKey?: string | null;
       sortDir?: "asc" | "desc" | null;
       includeDeleted?: boolean;
+      buckets?: TenantBucket[] | null;
+      attention?: boolean;
     } = {},
   ) {
-    const skip = (page - 1) * limit;
-
+    // Search and plan only; status, deleted and bucket are applied over the classified scan (tenant-bucket-list.ts).
     const where: Record<string, unknown> = {};
-    // Cancelled/soft-deleted tenants are hidden unless explicitly requested.
-    if (!filters.includeDeleted) where.deletedAt = null;
-    if (filters.status) where.status = filters.status;
     if (filters.plan) {
       // SA-1: filter by the REAL billing plan (subscription.planKey) — the one every list row
       // displays — not the legacy Tenant.plan enum, which drifts (B556). A tenant with no
@@ -328,36 +329,35 @@ export class PlatformAdminService {
         orderBy = { createdAt: dir };
     }
 
-    const [tenants, total, deletedCount] = await Promise.all([
-      this.prisma.tenant.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy,
-        include: {
-          config: {
-            select: { businessName: true, primaryColor: true, logoKey: true },
-          },
-          subscription: {
-            // planKey added (SA-140/B556) — _formatTenant()'s planKey field needs it; this
-            // select previously omitted it, so every list row silently fell back to the legacy
-            // Tenant.plan enum (L-169).
-            select: { currentPlan: true, periodEnd: true, cancelAtPeriodEnd: true, planKey: true },
-          },
-          _count: {
-            select: { users: true, customers: true, orders: true },
-          },
+    // SA-1535: one slim scan classifies every business (tab counts), then the open tab's page is fetched by id.
+    const { tenants, meta, verdicts } = await listTenantsByBucket(this.prisma, this.mrrService, {
+      scopeWhere: where,
+      orderBy,
+      page,
+      limit,
+      status: filters.status ?? null,
+      includeDeleted: filters.includeDeleted === true,
+      buckets: filters.buckets ?? null,
+      attention: filters.attention === true,
+      include: {
+        config: {
+          select: { businessName: true, primaryColor: true, logoKey: true },
         },
-      }),
-      this.prisma.tenant.count({ where }),
-      // Total soft-deleted tenants, independent of the current filter, so the
-      // "Show deleted (N)" affordance has a real count even when they're hidden.
-      this.prisma.tenant.count({ where: { deletedAt: { not: null } } }),
-    ]);
+        subscription: {
+          // planKey added (SA-140/B556) — _formatTenant()'s planKey field needs it; this
+          // select previously omitted it, so every list row silently fell back to the legacy
+          // Tenant.plan enum (L-169). UNCHANGED by SA-1535: the classifier reads the slim scan, never this wire select.
+          select: { currentPlan: true, periodEnd: true, cancelAtPeriodEnd: true, planKey: true },
+        },
+        _count: {
+          select: { users: true, customers: true, orders: true },
+        },
+      },
+    });
 
     return {
-      data: tenants.map((t) => this._formatTenant(t)),
-      meta: { total, page, limit, pages: Math.ceil(total / limit), deletedCount },
+      data: tenants.map((t) => this._formatTenant(t, verdicts.get(t.id))),
+      meta,
     };
   }
 
@@ -395,7 +395,10 @@ export class PlatformAdminService {
     ]);
     if (!tenant) throw new NotFoundException(`Tenant ${id} not found`);
     return {
-      ...this._formatTenant(tenant),
+      ...this._formatTenant(
+        tenant,
+        (await classifyRows(this.mrrService, [tenant as never], new Date())).get(tenant.id),
+      ),
       orders30d,
       estMrrUsd,
     };
@@ -560,6 +563,7 @@ export class PlatformAdminService {
         ? `${webBase}/login?redirect=${encodeURIComponent(API_BILLING_PORTAL_RETURN_PATH)}`
         : null;
     const welcomeEmail = await this.sendWelcomeEmail({
+      tenantId: result.tenant.id,
       userId: result.user.id,
       to: adminEmail,
       username: adminUsername,
@@ -608,6 +612,7 @@ export class PlatformAdminService {
 
   /** #2439: never throws — tenant creation must not fail over email; the outcome is returned. */
   private async sendWelcomeEmail(p: {
+    tenantId: string;
     userId: string;
     to: string;
     username: string;
@@ -630,6 +635,7 @@ export class PlatformAdminService {
     try {
       const link = await issueSetPasswordLink(this.prisma, p.userId, p.webBase);
       const r = await this.emailService.sendTenantWelcomeEmail({
+        tenantId: p.tenantId,
         to: p.to,
         username: p.username,
         businessName: p.businessName,
@@ -3087,7 +3093,7 @@ export class PlatformAdminService {
     return normalizePlanKey(t.subscription?.planKey) ?? planKeyFromEnum(t.plan);
   }
 
-  private _formatTenant(t: any) {
+  private _formatTenant(t: any, verdict?: TenantBucketResult) {
     return {
       id: t.id,
       slug: t.slug,
@@ -3113,6 +3119,9 @@ export class PlatformAdminService {
       zip: t.config?.zip ?? null,
       country: t.config?.country ?? null,
       phone: t.config?.phone ?? null,
+      // SA-1535: class, bucket, attention and trialDaysLeft are the server's verdict; the web only prints them.
+      // (over the scan cap the page is not classified: class only, and meta.truncated says so)
+      ...(verdict ? tenantBucketWire(t, verdict) : { class: t.class }),
       subscription: t.subscription ?? null,
       counts: t._count ?? null,
     };
@@ -3164,6 +3173,36 @@ export class PlatformAdminService {
       from: tenant.aiMonthlyCapUsd,
       to: cap,
     });
+  }
+
+  /** W-1464: a business's mail-wall list. `state` is none (dark for a Test business), list, or unreadable (holds everything). */
+  async getMailWall(tenantId: string) {
+    await this._findOrThrow(tenantId);
+    const [tenant, read] = await Promise.all([
+      this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { class: true } }),
+      readMailWall(this.prisma, tenantId),
+    ]);
+    return {
+      class: tenant?.class ?? null,
+      state: read.kind === "list" ? "list" : read.kind === "absent" ? "none" : "unreadable",
+      addresses: read.kind === "list" ? read.entries : [],
+    };
+  }
+
+  /** W-1464: replace the whole list. A bad entry is a 400 that names its position; an empty list clears the row. */
+  async setMailWall(tenantId: string, addresses: string[], actorId: string | null) {
+    await this._findOrThrow(tenantId);
+    const bad = addresses.findIndex((a) => normalizeMailWallEntry(a) === null);
+    if (bad >= 0) {
+      throw new BadRequestException(
+        `Entry ${bad + 1} is not allowed: use name@domain or name+*@domain (a whole mail domain is never allowed).`,
+      );
+    }
+    const stored = await writeMailWall(this.prisma, tenantId, addresses);
+    await this.recordAdminAction(tenantId, actorId, AdminAuditAction.MAIL_WALL_CHANGED, {
+      count: stored.length,
+    });
+    return this.getMailWall(tenantId);
   }
 
   // ─── Tenant admin management ──────────────────────────────────────────────────
@@ -3237,6 +3276,7 @@ export class PlatformAdminService {
     let emailSent = false;
     try {
       const sendResult = await this.emailService.send({
+        tenantId: tenantId,
         to: dto.email,
         ...routeflowNotice({
           subject: `Your RouteFlow admin account for ${tenant?.name ?? tenantId}`,

@@ -163,7 +163,7 @@ export class SettingsController {
     }
     if (dto.paymentDueDays !== undefined) {
       throw new BadRequestException(
-        "paymentDueDays is not saved by PATCH /settings. Payment terms are the invoice default terms: set defaultTerms via PATCH /settings/invoice (Due on Receipt, Net 15, Net 30, Net 45, Net 60).",
+        "paymentDueDays is not saved by PATCH /settings. Payment terms are the invoice default terms: set defaultTerms via PATCH /settings/invoice (Due on Receipt, Net 7, Net 15, Net 30, Net 45, Net 60, Net 90, or a custom Net N of 1 to 365 days).",
       );
     }
     // SA-1209: the sidebar layout has its own TENANT_ADMIN route; this FINANCE-level write must not be a second way in.
@@ -554,6 +554,8 @@ export class SettingsController {
       await tx.orderCreditNote.deleteMany({ where: { creditNote: { tenantId } } });
       await tx.creditNote.deleteMany({ where: { tenantId } });
 
+      // SA-1268: PurchaseOrderCharge.vendorBillId is ON DELETE RESTRICT, so charges go before bills.
+      await tx.purchaseOrderCharge.deleteMany({ where: { po: { tenantId } } });
       await tx.billPayment.deleteMany({ where: { vendorBill: { tenantId } } });
       await tx.vendorBillItem.deleteMany({ where: { vendorBill: { tenantId } } });
       await tx.vendorBill.deleteMany({ where: { tenantId } });

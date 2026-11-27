@@ -43,6 +43,9 @@ import { BadRequestException } from "@nestjs/common";
 import { lockRowsNoWait } from "../common/db-locks";
 
 const LOCKED = { response: { code: "LINE_ALREADY_DELIVERED" }, status: 409 };
+// SA-1544 (ap): a delivered line that appears between the pre-tx read and the Order lock changes the routing input; every
+// role is answered 409 ORDER_CHANGED_DURING_EDIT (the retry the web page offers), nothing written.
+const CHANGED = { response: { code: "ORDER_CHANGED_DURING_EDIT" }, status: 409 };
 
 const operator = {
   sub: "user-op",
@@ -460,7 +463,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
           { items: [{ id: "li-a", action: "UPDATE", qty: 2 }] } as any,
           operator,
         ),
-      ).rejects.toMatchObject(LOCKED);
+      ).rejects.toMatchObject(CHANGED);
       nothingWritten();
     });
 
@@ -507,7 +510,7 @@ describe("B1234: delivered lines of a PARTIALLY_DELIVERED order are locked (upda
           { items: [{ id: "li-a", action: "UPDATE", qty: 2 }] } as any,
           operator,
         ),
-      ).rejects.toMatchObject(LOCKED);
+      ).rejects.toMatchObject(CHANGED);
       expect(ownConnectionWrites()).toHaveLength(0); // master: 1 (the pre-tx revert, committed)
       // SA-833: refuse first, write after - the in-tx revert never ran either
       expect(

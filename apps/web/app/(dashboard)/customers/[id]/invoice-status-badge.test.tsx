@@ -15,10 +15,10 @@ describe("renderInvoiceStatus: the tenant's day, not the browser's (row 325)", (
   beforeEach(() => jest.useFakeTimers({ now: new Date("2026-10-24T12:00:00Z") }));
   afterEach(() => jest.useRealTimers());
 
-  it("counts days past due on the tenant's calendar day (due the 25th, tenant on the 26th: 1d)", () => {
+  it("counts days past due on the tenant's calendar day (due the 25th, tenant on the 26th: 1 day)", () => {
     expect(
       text(renderInvoiceStatus("SENT", DUE_25, { isOverdue: true, tenantDay: "2026-10-26" })),
-    ).toBe("Overdue by 1d");
+    ).toBe("Overdue by 1 day");
   });
 
   it("the server's flag decides overdue: a SENT invoice not flagged is not red even if the browser clock says it is late", () => {
@@ -28,22 +28,22 @@ describe("renderInvoiceStatus: the tenant's day, not the browser's (row 325)", (
     ).toBe("Due today");
   });
 
-  it("a PARTIAL due on the tenant's today is 'Due today' (the browser's day would say due in 1d)", () => {
+  it("a PARTIAL due on the tenant's today is 'Due today' (the browser's day would say due in 1 day)", () => {
     expect(
       text(renderInvoiceStatus("PARTIAL", DUE_25, { isOverdue: false, tenantDay: "2026-10-25" })),
     ).toBe("Partial · Due today");
   });
 
-  it("a PARTIAL due tomorrow on the tenant's calendar: 'Due in 1d'", () => {
+  it("a PARTIAL due tomorrow on the tenant's calendar: 'Due in 1 day'", () => {
     expect(
       text(renderInvoiceStatus("PARTIAL", DUE_25, { isOverdue: false, tenantDay: "2026-10-24" })),
-    ).toBe("Partial · Due in 1d");
+    ).toBe("Partial · Due in 1 day");
   });
 
-  it("a past-due PARTIAL the server flags is orange 'Partial · Overdue by Nd'", () => {
+  it("a past-due PARTIAL the server flags is red 'Partial · Overdue by N days'", () => {
     expect(
       text(renderInvoiceStatus("PARTIAL", DUE_25, { isOverdue: true, tenantDay: "2026-10-28" })),
-    ).toBe("Partial · Overdue by 3d");
+    ).toBe("Partial · Overdue by 3 days");
   });
 
   it("while the zone is unknown it claims no day count: a flagged invoice is plain 'Overdue', others their plain status", () => {

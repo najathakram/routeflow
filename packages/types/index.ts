@@ -148,6 +148,7 @@ export * from "./unvoid-amended-period";
 
 export * from "./order-line-backorder";
 export * from "./invoice-line-code";
+export * from "./invoice-status-tone"; // W-1470: the one invoice status table (tone, staff word, buyer word, legend)
 export * from "./piece-synonyms";
 export * from "./api/enums";
 export * from "./api/invoice-account"; // SA-1197: the invoice account block rows + its one label map
@@ -155,6 +156,7 @@ export * from "./api/payment-receipt"; // SA-1208 D1: the read-only receipt view
 export * from "./api/product-count";
 export * from "./api/billing";
 export * from "./api/billing-status";
+export * from "./api/tenant-bucket";
 export * from "./api/platform-admin-activation";
 export * from "./api/orders";
 export * from "./api/payment-key";
@@ -194,6 +196,7 @@ export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
 export * from "./api/buyer-reorder";
 export * from "./api/line-order";
+export * from "./api/line-edit-mode";
 export * from "./api/selling-restrictions";
 export * from "./api/messaging-matrix";
 export * from "./api/messaging-delivery";
@@ -233,6 +236,8 @@ export * from "./api/rf-invoices";
 export * from "./api/tenant-zone";
 export * from "./api/permissions";
 export * from "./api/staff-capabilities";
+export * from "./payment-terms";
+export * from "./api/surface-access";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

@@ -100,3 +100,27 @@ describe("UpdateOrderItemsDto — items[].orderItemId (row 352)", () => {
     );
   });
 });
+
+/**
+ * SA-1533 (s): `deliveredTo` is an admin's explicit "nothing was delivered" on a take-off. PR-1a accepts the number 0 only
+ * (the cross-field rule, only with CANCEL / DELETE, is `assertDeliveredToShape`); anything else is refused by the DTO.
+ */
+describe("UpdateOrderItemsDto: items[].deliveredTo (SA-1533 (s))", () => {
+  const deliveredToError = async (deliveredTo: unknown) => {
+    const dto = plainToInstance(UpdateOrderItemsDto, {
+      items: [{ id: "li-1", action: "CANCEL", deliveredTo }],
+    });
+    const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+    const itemErrors = errors[0]?.children?.[0]?.children ?? [];
+    return itemErrors.find((e) => e.property === "deliveredTo");
+  };
+
+  it("accepts 0 and an absent field", async () => {
+    expect(await deliveredToError(0)).toBeUndefined();
+    expect(await deliveredToError(undefined)).toBeUndefined();
+  });
+
+  it.each([3, -1, 0.5, "0", true])("refuses %p", async (value) => {
+    expect((await deliveredToError(value))?.constraints).toHaveProperty("isIn");
+  });
+});

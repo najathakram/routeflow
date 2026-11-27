@@ -5,9 +5,12 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useState } from "react";
 import { apiClient } from "../api-client";
+import { singleFlight } from "./single-flight";
 import type { ImageUploadFile } from "../product-image";
 import { nextProductPage, type PaginationMeta } from "../product-search-params";
+import { adjustmentRequest } from "../adjust-stock-request";
 
 /** Rows per page for the catalogue pickers. */
 export const PRODUCT_PAGE_SIZE = 50;
@@ -271,14 +274,29 @@ export function useDeleteProductImage() {
   });
 }
 
+type AdjustStockDto = {
+  productId: string;
+  quantity: number;
+  notes?: string;
+  reference?: string;
+  /** B1415 M1b: the sheet's attempt key; sent as the Idempotency-Key header, never in the body. */
+  idempotencyKey?: string;
+};
+
 export function useAdjustProductStock() {
   const qc = useQueryClient();
-  return useMutation<
-    unknown,
-    Error,
-    { productId: string; quantity: number; notes?: string; reference?: string }
-  >({
-    mutationFn: (dto) => apiClient.post("/inventory/movements/adjustment", dto).then((r) => r.data),
+  // B1415 (SA-1404 M1a): a double tap of Save is ONE adjustment (see singleFlight). One guard per mounted form.
+  // M1b: the attempt key rides in the args, so two taps with the same key still collapse here.
+  const [post] = useState(() =>
+    singleFlight((dto: AdjustStockDto) => {
+      const { body, config } = adjustmentRequest(dto);
+      return apiClient
+        .post("/inventory/movements/adjustment", body, config)
+        .then((r) => r.data as unknown);
+    }),
+  );
+  return useMutation<unknown, Error, AdjustStockDto>({
+    mutationFn: post,
     onSuccess: (_, { productId }) => {
       qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["products", productId] });

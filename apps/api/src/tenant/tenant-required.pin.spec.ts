@@ -95,10 +95,12 @@ const EXPECTED_PLATFORM_WRITES: string[] = [
   "POST /api/v1/platform-admin/tenants/:id/impersonate PlatformAdminController#impersonate",
   "POST /api/v1/platform-admin/tenants/:id/reset-admin-password PlatformAdminController#resetAdminPassword",
   "POST /api/v1/platform-admin/tenants/:id/rf-invoices/issue RfInvoicesController#issueForTenant",
+  "POST /api/v1/platform-admin/tenants/:id/staff-refunds StaffRefundController#record",
   "PUT /api/v1/platform-admin/app-links PlatformAdminController#updateAppLinks",
   "PUT /api/v1/platform-admin/entitlements/config-snapshot PlatformAdminController#setConfigSnapshotFlag",
   "PUT /api/v1/platform-admin/entitlements/mode PlatformAdminController#setEntitlementsMode",
   "PUT /api/v1/platform-admin/tenants/:id/feature-config/:key FeatureConfigController#setState",
+  "PUT /api/v1/platform-admin/tenants/:id/mail-wall PlatformAdminController#setMailWall",
 ];
 
 describe("W-767: the @PlatformScoped() write routes (TenantRequiredInterceptor's allow-list)", () => {

@@ -13,7 +13,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar, NavBackButton, NavAction } from "@routeflow/ui/mobile/ios";
 import { useCreatePartialInvoiceFromOrder } from "../lib/api/invoices";
-import { TERM_DAYS, TERM_OPTIONS, todayPlusDays } from "../lib/invoice-terms";
+import {
+  TERM_OPTIONS,
+  commitCustomDays,
+  customTermsFromInput,
+  daysForTerms,
+  clearCustomFor,
+  settleDraftsForCreate,
+  todayPlusDays,
+} from "../lib/invoice-terms";
 import { showToast } from "../lib/toast";
 // RN Alert.alert is a no-op for multi-button alerts on Expo Web; alertInfo
 // routes through the cross-platform confirm modal instead.
@@ -91,10 +99,13 @@ function makeDraft(defaultTerms: string): DraftInvoice {
     id: `draft-${Date.now()}-${draftSeq}`,
     qtyById: {},
     terms: defaultTerms,
-    dueDate: todayPlusDays(TERM_DAYS[defaultTerms] ?? 30),
+    dueDate: todayPlusDays(daysForTerms(defaultTerms)),
     send: false,
   };
 }
+
+/** The days of a "Net N" label ("Net 21" -> "21"), for the custom-days box; empty for any other text. */
+const daysText = (terms: string): string => (/^Net \d+$/.test(terms) ? terms.slice(4) : "");
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -136,6 +147,9 @@ export function SplitInvoiceScreen({
   // attempt that partially fails is recoverable (we skip already-saved ones).
   const [createdDraftIds, setCreatedDraftIds] = useState<Set<string>>(new Set());
   const [bulkPending, setBulkPending] = useState(false);
+  // The custom-days box keeps its own typed text and error per draft (W-1487); a preset pill clears them.
+  const [customText, setCustomText] = useState<Record<string, string | undefined>>({});
+  const [customError, setCustomError] = useState<Record<string, string | null | undefined>>({});
   const createPartial = useCreatePartialInvoiceFromOrder();
 
   // One-shot flag: pre-fill the first draft with all billable items at full
@@ -224,7 +238,19 @@ export function SplitInvoiceScreen({
   };
 
   const setTerms = (draftId: string, terms: string) => {
-    updateDraft(draftId, { terms, dueDate: todayPlusDays(TERM_DAYS[terms] ?? 30) });
+    updateDraft(draftId, { terms, dueDate: todayPlusDays(daysForTerms(terms)) });
+  };
+
+  // One commit per focus session (the ProductForm pattern): native fires onEndEditing AND onBlur, Expo web fires
+  // onBlur only (#3470 review), so both are wired and the first to arrive commits.
+  const pendingCustomRef = useRef<Set<string>>(new Set());
+  const commitCustom = (draft: { id: string; terms: string }) => {
+    if (!pendingCustomRef.current.delete(draft.id)) return;
+    const { terms, error } = commitCustomDays(
+      customText[draft.id] ?? daysText(draft.terms),
+      draft.terms,
+    );
+    if (!error && terms !== draft.terms) setTerms(draft.id, terms);
   };
 
   const removeDraft = (draftId: string) => {
@@ -264,8 +290,18 @@ export function SplitInvoiceScreen({
       );
       return;
     }
+    // R-345 F1: settle each draft's custom-days text here, not only on end-editing (Expo web has no onEndEditing,
+    // and a NavBar tap does not end editing). A valid typed value becomes the draft's terms and due date; an
+    // invalid one blocks create, so no request goes out with the old or a partial term.
+    const settled = settleDraftsForCreate(submitable, customText);
+    if (settled.blocked) {
+      alertInfo("Check the terms", "Enter a whole number of days from 1 to 365, or pick a term.");
+      return;
+    }
+    for (const d of settled.changed) updateDraft(d.id, { terms: d.terms, dueDate: d.dueDate });
+    const ready = settled.ready;
     // Validate each draft has a usable due date.
-    for (const d of submitable) {
+    for (const d of ready) {
       if (!d.dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(d.dueDate)) {
         alertInfo(
           "Bad due date",
@@ -278,7 +314,7 @@ export function SplitInvoiceScreen({
     setBulkPending(true);
     let lastInvoiceId: string | null = null;
     try {
-      for (const d of submitable) {
+      for (const d of ready) {
         const chosen = billable
           .map((it) => ({ orderItemId: it.id, qty: Number(d.qtyById[it.id] ?? 0) }))
           .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
@@ -301,7 +337,7 @@ export function SplitInvoiceScreen({
         });
         lastInvoiceId = invoice.id;
       }
-      showToast(`Created ${submitable.length} invoice${submitable.length === 1 ? "" : "s"}`);
+      showToast(`Created ${ready.length} invoice${ready.length === 1 ? "" : "s"}`);
       if (lastInvoiceId) onCreated(lastInvoiceId);
     } catch (err: any) {
       const msg = err?.response?.data?.message ?? err?.message ?? "One or more invoices failed.";
@@ -539,7 +575,11 @@ export function SplitInvoiceScreen({
                         <Pressable
                           key={t}
                           style={[styles.termPill, active && styles.termPillActive]}
-                          onPress={() => setTerms(draft.id, t)}
+                          onPress={() => {
+                            setCustomText((prev) => ({ ...prev, [draft.id]: undefined }));
+                            setCustomError((prev) => ({ ...prev, [draft.id]: null }));
+                            setTerms(draft.id, t);
+                          }}
                           disabled={created}
                         >
                           <Text style={[styles.termPillText, active && styles.termPillTextActive]}>
@@ -549,10 +589,36 @@ export function SplitInvoiceScreen({
                       );
                     })}
                   </View>
+                  <TextInput
+                    value={customText[draft.id] ?? daysText(draft.terms)}
+                    onChangeText={(v) => {
+                      // Typing only edits the text and its error; the draft's terms change on end-editing.
+                      setCustomText((prev) => ({ ...prev, [draft.id]: v }));
+                      setCustomError((prev) => ({
+                        ...prev,
+                        [draft.id]: customTermsFromInput(v).error,
+                      }));
+                    }}
+                    onFocus={() => pendingCustomRef.current.add(draft.id)}
+                    onEndEditing={() => commitCustom(draft)}
+                    onBlur={() => commitCustom(draft)}
+                    placeholder="Custom: number of days (1-365)"
+                    keyboardType="number-pad"
+                    style={styles.dueInput}
+                    editable={!created}
+                  />
+                  {customError[draft.id] ? (
+                    <Text style={styles.draftFooterLabel}>{customError[draft.id]}</Text>
+                  ) : null}
                   <Text style={styles.draftFooterLabel}>Due date</Text>
                   <TextInput
                     value={draft.dueDate}
-                    onChangeText={(v) => updateDraft(draft.id, { dueDate: v, terms: "" })}
+                    onChangeText={(v) => {
+                      // R-345d N1: a typed date clears the term and the custom box, as a preset pill does.
+                      setCustomText((prev) => clearCustomFor(prev, draft.id));
+                      setCustomError((prev) => clearCustomFor(prev, draft.id));
+                      updateDraft(draft.id, { dueDate: v, terms: "" });
+                    }}
                     placeholder="YYYY-MM-DD"
                     style={styles.dueInput}
                     editable={!created}
