@@ -65,6 +65,8 @@ module.exports = {
     // SA-1547 M1: the live-payments-off sentence (pure), same subpath trick (the package root is stubbed).
     "^@routeflow/types/live-payments-off-copy$":
       "<rootDir>/../../packages/types/live-payments-off-copy.ts",
+    // SA-1547 PR-5a: the plan-pick refusal sentences (pure), same subpath trick.
+    "^@routeflow/types/plan-pick-copy$": "<rootDir>/../../packages/types/plan-pick-copy.ts",
     // SA-776: the shared read-only copy composer, same subpath trick (the package root is stubbed).
     "^@routeflow/types/read-only-copy$": "<rootDir>/../../packages/types/read-only-copy.ts",
     // SA-1299 P4: the shared payment-refusal sentences (web + mobile), same subpath trick.

@@ -1099,6 +1099,20 @@ describe("genericToastCopy: SA-1547 M1 live-payments wall", () => {
   });
 });
 
+describe("genericToastCopy: SA-1547 PR-5a plan-pick refusals (SA-C)", () => {
+  it.each([
+    [
+      409,
+      API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
+      "To pay for a new plan, ask us for a payment link.",
+    ],
+  ])("%i %s maps to its sentence, never the server message", (status, code, sentence) => {
+    const copy = genericToastCopy(err(status, { code }));
+    expect(copy).toBe(sentence);
+    expect(copy).not.toContain(RAW);
+  });
+});
+
 describe("genericToastCopy: B1415 M1b reused adjustment key", () => {
   const conflict = (reason?: string) =>
     Object.assign(new Error("Request failed"), {
