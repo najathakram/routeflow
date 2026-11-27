@@ -1001,6 +1001,8 @@ export const API_ERROR_CODES = {
   ACCOUNT_IDENTIFIER_IN_USE: "ACCOUNT_IDENTIFIER_IN_USE",
   /** Create Tenant (platform-admin): startMode "trial" was sent without trialLengthDays (400). Nothing was written. */
   TENANT_TRIAL_DAYS_REQUIRED: "TENANT_TRIAL_DAYS_REQUIRED",
+  // SA-1535: the tenant list has more businesses than the bucket scan can classify; a bucket or attention filter is refused, never a partial page.
+  TENANT_BUCKET_SCAN_CAP_EXCEEDED: "TENANT_BUCKET_SCAN_CAP_EXCEEDED",
   RF_INVOICE_PAID_AT_TOO_OLD: "RF_INVOICE_PAID_AT_TOO_OLD",
   RF_INVOICE_PAID_AT_IN_FUTURE: "RF_INVOICE_PAID_AT_IN_FUTURE",
   /** Back office: an ACTIVE tenant cannot be moved to TRIAL (extend-trial or the status PATCH). 409. */
