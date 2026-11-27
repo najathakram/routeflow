@@ -12,6 +12,13 @@
 
 ## process
 
+### L-417 · 2026-11-27 · process · a count pin that two branches both raised by the same amount merges with no conflict and the wrong value; recount from the merged tree (#4544, #4555)
+
+- **Symptom:** two PRs each added DB specs and raised the ND3 count pin in `scripts/ci-lanes.self-test.mjs` (553 to 556, and 553 to 559). Master moved the same pin to 554 between them. A text merge keeps one side's number, and the pin then fails on the merged tree or, worse, matches a count that is no longer true.
+- **Root cause:** the pin is a number about the whole tree, written as an edit of one line. Two branches that edit that line by a delta do not conflict when the deltas hide behind an equal base, and git cannot add them. Each branch's own green is true only for its own tree.
+- **Lesson:** **A count pin is never merged by choosing a side. After a merge that touches it, count the spec files in the merged tree (the lane's own listing), write that number, and say how it was counted in the PR body. A squash that lands behind another count raise needs the sum, not either value.**
+- **Guard:** the pin itself fails Verify on the merged tree (`ci-lanes.self-test.mjs`, "ND3 count pin"); the merge desk reads it on the merge with current master, as [[L-390]] does for the size ratchet.
+
 ### L-412 · 2026-11-25 · process · a post to a shared board runs only inside `if leak-check | grep -q clean`; chaining the two commands with `;` posts anyway
 
 - **Symptom:** a board post went out although the leak check had refused it. The check printed its refusal and exited non-zero, and the post ran next.
@@ -91,7 +98,7 @@
 - **Lesson:** **Drop the odd trailing byte before any utf16le decode. A guard hook prints a refusal and exits non-zero for every exit code that is not 0 or its own refusal code, so a runtime crash reads as a blocked push with a reason. Run the hook self-test under `sh -e`, the way git runs it, not under a forgiving shell.**
 - **Guard:** #4563 (merged 2026-11-26, `8e183d480a`) carries the odd-byte drop, the hook refusal on an unexpected exit code and the `sh -e` self-test; the crash was PC-only and a retry changed nothing.
 
-### L-402 · 2026-11-22 · tooling · a gate that kills a long child on a time cap reports the timeout as a timeout, never as a genuine failure; the cap is overridable and sized for a loaded host (#4427)
+· 2026-11-22 · tooling · a gate that kills a long child on a time cap reports the timeout as a timeout, never as a genuine failure; the cap is overridable and sized for a loaded host (#4427)
 
 - **Symptom:** the forced `turbo run test --force` in `campaign-check` had a fixed 15-minute cap. On a loaded host the api suite ran longer, `spawnSync` returned `ETIMEDOUT`, and the gate printed "genuine failure"; two pushes were refused on 2026-11-22, each after a 40 to 60 minute verify.
 - **Root cause:** the gate read any non-success child result as a test failure. A killed child has no exit status of its own, so a slow run and a red suite looked the same.
@@ -321,7 +328,7 @@
 - **Lesson:** **Redact at the place the error is stored for the screen, not only in the log line, and give each transport branch its own test that asserts the staff-visible text. A transport added later with its own catch is a new unredacted exit unless a test names it.**
 - **Guard:** `email/email.tenant-smtp-error-redact.w1289.spec.ts` (tenant fail with and without a platform transport, the statement 400, the log line).
 
-### L-399 · 2026-11-21 · security · when a storage key is renamed, the reader drops the old key and logout clears it once; a fallback read keeps a signed-out person signed in (#4371)
+· 2026-11-21 · security · when a storage key is renamed, the reader drops the old key and logout clears it once; a fallback read keeps a signed-out person signed in (#4371)
 
 - **Symptom:** a buyer who signed in with Google and then signed out was read as signed in again, and revisiting the portal showed it.
 - **Root cause:** the Google callback still wrote the pre-namespacing `buyerAccessToken` key, the token reader fell back to it, and logout cleared only the namespaced keys. A second page read yet another key (`buyerToken`) that nothing writes, so its request went out with no Authorization header.
@@ -379,7 +386,7 @@
 - **Lesson:** **Keep ONE played-list for every reveal path. A trigger reached at rest (inside a refresh, from an anchor, on the print return) is pushed to it at once and leaves its content as it is; only a callback from a scroll update plays. Never use `once` as the record.**
 - **Guard:** `apps/web/e2e/85-site-proof-pages.spec.ts` T1 (same trigger count as a fresh load after print) and T2 (no heading waits for a scroll), and its replay cell, which asserts the at-rest precondition before it measures. Cf. [[L-377]].
 
-### L-376 · 2026-11-12 · web · a text field inside a closing dialog is not a typing target; one predicate decides it for every guard that asks "is a person typing" (#4303)
+· 2026-11-12 · web · a text field inside a closing dialog is not a typing target; one predicate decides it for every guard that asks "is a person typing" (#4303)
 
 - **Symptom:** at the till, a scan that started 100-150 ms after Escape in a dialog's text box lost its leading digits and looked up a suffix. A 1-3 digit suffix is a quantity: the next correct scan could ring up x31.
 - **Root cause:** a Radix dialog stays mounted with `data-state="closed"` for its 150 ms exit animation and keeps focus in its text box. The refocus and the key redirect both read a focused text box as "a person is typing" and stood down, so the keys died with the unmount.
@@ -394,6 +401,20 @@
 - **Guard:** `apps/web/lib/scan-run.test.ts`, `scan-run.structure.test.ts` (the module reads no clock, no second spelling of the rule), `CreateOrderModal.scan-destination.test.tsx`, `CounterSaleScreen.sa1067.test.tsx`.
 
 ## deploy
+
+### L-418 · 2026-11-27 · deploy · a post-merge job that is cancelled at its time cap every run is no signal; PR checks show the E2E job as skipped, so a red there goes unseen
+
+- **Symptom:** for about two weeks (sampled runs from 2026-11-12 to 2026-11-27) every sampled master run whose `E2E (Playwright)` job actually started ended `cancelled` at 45 minutes and 15 seconds. Site PRs merged with their E2E red and nobody saw it, because on a PR the E2E jobs are `skipped` and the run reads green.
+- **Root cause:** `ci.yml` starts E2E on Railway's `deployment_status`, not on the PR, and the job's `timeout-minutes` is 45. The suite had grown past the cap, so the job was killed before it reported. A cancelled run is neither red nor green, and a freshness gate that skips E2E reports a green run too, so no check ever turned red.
+- **Lesson:** **Read the E2E job's own conclusion and duration, never the run's. A duration at the cap means no E2E evidence at all, not a pass. A change to the site, or any page E2E covers, is proven by the local E2E lane on the tree, and the PR body says so; a merge does not wait on a signal that cannot arrive.**
+- **Guard:** none yet (the lead reads the job rows by hand); owed: a check that fails when the E2E job ends cancelled at its cap. Cf. [[L-367]], [[L-388]].
+
+### L-419 · 2026-11-27 · deploy · `npm run post-deploy-check` defaults to `http://localhost:3000`; a green run is not evidence about production unless `SMOKE_BASE_URL` names it
+
+- **Symptom:** a deploy runbook step and the `regression` script both end with `post-deploy-check`, and the run printed a pass. Nothing said which API it had asked.
+- **Root cause:** `scripts/post-deploy-check.mjs` reads `SMOKE_BASE_URL` and falls back to `http://localhost:3000` (and the `e2e-routeflow` test business). `local:validate` runs it against the local stack on purpose, so the same command is a local proof in one place and silently the same in the deploy runbook.
+- **Lesson:** **A smoke script's target is part of its result. Print the base URL first and name it in the report; production proof sets `SMOKE_BASE_URL` to the deployed API and says so, and a pass without that line counts as local only.**
+- **Guard:** none automatic. Cf. [[L-360]], [[L-393]].
 
 ### L-367 · 2026-10-31 · deploy · a hosted job's timeout is sized from its measured stages with headroom; a cancelled run is read by its annotation, and a local verify red mid-chain hides every later step
 

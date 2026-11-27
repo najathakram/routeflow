@@ -4990,3 +4990,12 @@ citations, closed-out with its own post-init assertion guard).
 ### L-387
 
 ### L-389
+
+## Archived 2026-11-27 (bookkeeping for the 2026-11-27 merges) — real test or spec guards, no live entry cites them; headroom for L-417 to L-419
+
+### L-376
+
+### L-399
+
+### L-402
+
