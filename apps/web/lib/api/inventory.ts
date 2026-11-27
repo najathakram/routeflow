@@ -2,11 +2,7 @@ import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tansta
 import * as React from "react";
 import { apiClient } from "../api-client";
 import { singleFlight } from "./single-flight";
-import {
-  ADJUSTMENT_KEY_REUSED_COPY,
-  createAttemptKeyHolder,
-  isAdjustmentKeyReused,
-} from "@routeflow/types/sale-attempt";
+import { createAttemptKeyHolder } from "@routeflow/types/sale-attempt";
 import { invalidateSupplierLists } from "./suppliers";
 import type {
   InventoryValuation,
@@ -95,12 +91,8 @@ export function useRecordAdjustment() {
         attempt.keys.settle(key, { ok: true });
         return out;
       } catch (error) {
+        // a reused key's 409 (the first call landed) is worded by the app-wide toast's genericToastCopy, by code
         attempt.keys.settle(key, { ok: false, error });
-        if (isAdjustmentKeyReused(error)) {
-          // the first call landed: say so plainly (the app-wide toast reads `response.data.message`)
-          (error as { response: { data: { message?: string } } }).response.data.message =
-            ADJUSTMENT_KEY_REUSED_COPY;
-        }
         throw error;
       }
     },

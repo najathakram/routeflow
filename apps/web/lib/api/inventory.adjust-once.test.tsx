@@ -1,6 +1,7 @@
 import * as React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { genericToastCopy } from "../generic-toast-copy";
 import { useRecordAdjustment } from "./inventory";
 
 /**
@@ -149,7 +150,9 @@ describe("REG-B1415 useRecordAdjustment: one Idempotency-Key per attempt", () =>
     const err: any = await act(async () =>
       result.current.mutateAsync({ ...body, quantity: 5 }).catch((e) => e),
     );
-    expect(err.response.data.message).toBe(
+    // the hook leaves the body alone (B986 ratchet); the app-wide toast words the reused key by code and reason
+    expect(err.response.data.message).toBe("server text");
+    expect(genericToastCopy(err)).toBe(
       "Your earlier adjustment was saved. Check the stock before you save again.",
     );
     await act(async () => void (await result.current.mutateAsync({ ...body, quantity: 5 })));
