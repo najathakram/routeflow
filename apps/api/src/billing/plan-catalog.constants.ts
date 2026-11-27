@@ -368,8 +368,23 @@ export const BILLING_EVENTS = {
   // (or stopped being) $0 by discounts. Emitted ONLY by billing/coupon-state.ts (the single writer).
   COUPON_UNBILLED: "coupon.unbilled",
   COUPON_BILLED: "coupon.billed",
+  /**
+   * R-2 (SA-1297): a super admin recorded a staff refund of the tenant's yearly payment (a record only; nothing moved).
+   * `amountDelta` is ALWAYS null (every MRR reader skips null, so the run-rate cannot move) and the type has exactly ONE
+   * writer, `platform-admin/staff-refund.service.ts`, under `lockTenantForLedger`. Pinned by `staff-refund.service.spec.ts`.
+   */
+  STAFF_REFUND_RECORDED: "refund.staff",
 } as const;
 export type BillingEventType = (typeof BILLING_EVENTS)[keyof typeof BILLING_EVENTS];
+
+/**
+ * Staff-facing label per event type, applied on READ by the billing-events list (the web keeps no map of its own).
+ * PARTIAL on purpose: only the types a label was ruled for are named; every other type reads `label: null` and the web
+ * shows its raw type. Naming the rest is LATER (R-2, SA-1297).
+ */
+export const BILLING_EVENT_LABELS: Readonly<Partial<Record<BillingEventType, string>>> = {
+  [BILLING_EVENTS.STAFF_REFUND_RECORDED]: "Staff refund",
+};
 
 /**
  * Map the legacy TenantPlan enum → the current planKey source of truth. TEAM maps

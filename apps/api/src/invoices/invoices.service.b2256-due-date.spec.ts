@@ -329,5 +329,29 @@ describe("InvoicesService — #2256 due dates are the literal calendar day", () 
       expect(data.dueDate).toEqual(day25);
       expect(data.depositDueDate).toEqual(day25);
     });
+
+    // W-1487 B-5: a Net 7 customer used to fall through TERM_DAYS to the 30-day default.
+    it.each([
+      ["Net 7", "2026-03-08"],
+      ["Net 90", "2026-05-30"],
+      ["Net 21", "2026-03-22"],
+    ])("a customer on %s, issued 2026-03-01, stores dueDate %s", async (terms, due) => {
+      jest.spyOn(service as any, "resolveTenantInvoiceDefaults").mockResolvedValue(nyDefaults);
+      jest.spyOn(service as any, "generateInvoiceNumber").mockResolvedValue("INV-1487");
+      prisma.customer.findFirst.mockResolvedValue({ defaultPaymentTerms: terms });
+      prisma.order.findUnique.mockResolvedValue({
+        ...order,
+        orderDate: new Date("2026-03-01T00:00:00.000Z"),
+      });
+      prisma.invoice.create.mockImplementation((args: any) =>
+        Promise.resolve({ ...args.data, items: [], payments: [], customer: {} }),
+      );
+
+      await service.createInvoiceFromOrder("ord-2256");
+
+      const data = prisma.invoice.create.mock.calls[0][0].data;
+      expect(data.dueDate).toEqual(new Date(due + "T00:00:00.000Z"));
+      expect(data.paymentTermsLabel).toBe(terms);
+    });
   });
 });

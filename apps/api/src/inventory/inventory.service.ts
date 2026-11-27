@@ -9,6 +9,14 @@ import { productNameViolation } from "../common/text-cell-guards";
 import { IdempotencyService } from "../common/idempotency.service";
 import { createPurchaseOrderGuarded } from "./po-create-guard";
 import {
+  ADJUSTMENT_KEY_SCOPE,
+  adjustmentBodyHash,
+  normalizeAdjustmentKey,
+  replayOf,
+  warnNoAdjustmentKey,
+  type StoredAdjustment,
+} from "./adjustment-idempotency";
+import {
   BadRequestException,
   ConflictException,
   Injectable,
@@ -26,7 +34,13 @@ import {
 } from "../products/product-parent";
 import type { ProductCountResult, PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
-import { AdjustmentReason, CostingMethod, MovementType, Prisma } from "@prisma/client";
+import {
+  AdjustmentReason,
+  CostingMethod,
+  MovementType,
+  Prisma,
+  type StockMovement,
+} from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import {
@@ -438,13 +452,19 @@ export class InventoryService {
     return result;
   }
 
-  async recordAdjustment(dto: RecordAdjustmentDto, performedById: string) {
+  /**
+   * B1415 M1b: `idempotencyKey` (the route's `Idempotency-Key` header) makes a retried adjustment apply once. The key is
+   * locked, read and saved INSIDE the stock tx (see adjustment-idempotency.ts); no header applies as before, with a warn.
+   */
+  async recordAdjustment(dto: RecordAdjustmentDto, performedById: string, idempotencyKey?: string) {
+    const key = normalizeAdjustmentKey(idempotencyKey); // R2: over 200 characters is a 400, before anything runs
     assertStockReferenceFree(dto.reference); // B640
     const product = await this.prisma
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException("Product not found");
     assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
+    if (!key) warnNoAdjustmentKey(dto.productId); // R5
 
     const qty = new Prisma.Decimal(dto.quantity);
     // SA-804(3), legacy door: installed mobile builds post no reason. Accepted (stored null) until a
@@ -454,18 +474,38 @@ export class InventoryService {
         `recordAdjustment would refuse: no reason (product ${dto.productId}, reference ${dto.reference ?? "none"})`,
       );
     }
-    // Row 563: a person-chosen date before a filed period's close is refused (409), never clamped.
-    const effectiveDate = await stockWriteDate(this.prisma.forTenant(), {
-      tenantId: this.prisma.getTenantId(),
-      productIds: [dto.productId],
-      raw: dto.effectiveDate,
-    });
+    const tenantId = this.prisma.getTenantId();
+    const bodyHash = adjustmentBodyHash(dto);
 
     // SA-767 L-2: lock the product, then read the average the movement and the new lot are stamped
     // with INSIDE the tx (a purchase committing since the read above has moved it). The whole tx
     // re-runs on a 40P01 / 40001 / P2034; nothing is captured across attempts.
-    const result = await retryStockTx("inventory.recordAdjustment", () =>
-      this.stockTx(async (tx) => {
+    const { movement: result, replayed } = await retryStockTx("inventory.recordAdjustment", () =>
+      this.stockTx(async (tx): Promise<{ movement: StockMovement; replayed: boolean }> => {
+        // B1415 M1b R1: the key lock (fails closed), then the read, BEFORE any stock write; a replay returns the
+        // stored response and writes nothing (R3), a different body under the key is refused (R4).
+        if (key && this.idempotency) {
+          // SA-767 R6: the advisory lock is this tx's first lock, so its wait is bounded first (a default, set once)
+          await setStockLockTimeout(tx);
+          await this.idempotency.acquireLock(
+            this.idempotency.hashFor(key, tenantId, ADJUSTMENT_KEY_SCOPE),
+            tx,
+          );
+          const hit = await this.idempotency.check<StoredAdjustment>(
+            key,
+            tenantId,
+            ADJUSTMENT_KEY_SCOPE,
+            tx,
+          );
+          if (hit) return { movement: replayOf<StockMovement>(hit, bodyHash), replayed: true };
+        }
+        // Row 563: a person-chosen date before a filed period's close is refused (409), never clamped. The gate runs
+        // AFTER the key read, so a replay whose month was filed since still returns (R3).
+        const effectiveDate = await stockWriteDate(tx, {
+          tenantId,
+          productIds: [dto.productId],
+          raw: dto.effectiveDate,
+        });
         // SA-927 §1: the helper locks and reads under the lock; the average the lot is stamped with is
         // the one it read. Quantity-only adjustments never move the average ("keep").
         let lockedAverage: Prisma.Decimal | null = null;
@@ -522,11 +562,21 @@ export class InventoryService {
           });
         }
 
-        return movement;
+        if (key && this.idempotency) {
+          // the same tx as the movement: the row and its key commit or roll back together (R1)
+          await this.idempotency.save(
+            key,
+            tenantId,
+            ADJUSTMENT_KEY_SCOPE,
+            { bodyHash, response: movement } satisfies StoredAdjustment,
+            tx,
+          );
+        }
+        return { movement, replayed: false };
       }),
     );
 
-    if (qty.gt(0)) this.fireStockAlerts([dto.productId]);
+    if (qty.gt(0) && !replayed) this.fireStockAlerts([dto.productId]);
     return result;
   }
 

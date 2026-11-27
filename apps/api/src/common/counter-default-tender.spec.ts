@@ -1,5 +1,5 @@
 import { defaultCounterTender } from "@routeflow/types";
-import { TERM_DAYS } from "../invoices/invoices.service";
+import { PAYMENT_TERM_PRESETS, termDays } from "../invoices/payment-terms";
 
 /**
  * SA-933 / W-822(a): the counter's DEFAULT tender follows the customer's EFFECTIVE payment terms, by the same one rule the
@@ -111,22 +111,28 @@ describe("defaultCounterTender", () => {
  * Parity with the server: the default follows the SAME term table `resolveDefaultTerms()` prices a due date from. Every term the
  * server knows is CASH when it is due on receipt (0 days) and ON_ACCOUNT otherwise; a term it cannot price is billed as 30 days.
  */
-describe("defaultCounterTender: parity with the server's TERM_DAYS", () => {
+describe("defaultCounterTender: parity with the server's termDays", () => {
   it("knows every term the server prices (the table is not empty)", () => {
-    expect(Object.keys(TERM_DAYS).length).toBeGreaterThanOrEqual(5);
+    expect(PAYMENT_TERM_PRESETS.length).toBeGreaterThanOrEqual(5);
   });
 
-  it.each(Object.entries(TERM_DAYS))("%s (%i days)", (terms, days) => {
-    const expected = days > 0 ? "ON_ACCOUNT" : "CASH";
-    // as the customer's own terms, and as the tenant default for a customer with none
-    expect(defaultCounterTender({ customer: { defaultPaymentTerms: terms } })).toBe(expected);
-    expect(
-      defaultCounterTender({ customer: { defaultPaymentTerms: null }, tenantDefaultTerms: terms }),
-    ).toBe(expected);
-  });
+  it.each(PAYMENT_TERM_PRESETS.map((t) => [t, termDays(t)] as const))(
+    "%s (%i days)",
+    (terms, days) => {
+      const expected = (days ?? 0) > 0 ? "ON_ACCOUNT" : "CASH";
+      // as the customer's own terms, and as the tenant default for a customer with none
+      expect(defaultCounterTender({ customer: { defaultPaymentTerms: terms } })).toBe(expected);
+      expect(
+        defaultCounterTender({
+          customer: { defaultPaymentTerms: null },
+          tenantDefaultTerms: terms,
+        }),
+      ).toBe(expected);
+    },
+  );
 
   it("a term the server cannot price is thirty days there, so ON_ACCOUNT here", () => {
-    expect(TERM_DAYS["Net 7 (special)"] ?? 30).toBe(30);
+    expect(termDays("Net 7 (special)") ?? 30).toBe(30);
     expect(defaultCounterTender({ customer: { defaultPaymentTerms: "Net 7 (special)" } })).toBe(
       "ON_ACCOUNT",
     );

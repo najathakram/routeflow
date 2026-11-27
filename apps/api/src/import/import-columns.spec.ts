@@ -319,6 +319,36 @@ describe("import-columns (FIX1 pins)", () => {
       },
     );
 
+    it.each([
+      ["Net 7", "Net 7"],
+      ["Net 90", "Net 90"],
+      ["Net 21", "Net 21"],
+      ["net 21", "Net 21"],
+      ["Net 365", "Net 365"],
+      ["Net 15", "Net 15"],
+      ["Net 30", "Net 30"],
+      ["Net 45", "Net 45"],
+      ["Net 60", "Net 60"],
+      ["Due on Receipt", "Due on Receipt"],
+    ])('W-1487: label "%s" is kept as "%s"', (raw, expected) => {
+      const r = col().parse(raw);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.value).toBe(expected);
+        expect(r.warning).toBeUndefined();
+      }
+    });
+
+    it.each(["Net 0", "Net 366", "Net 7.5", "Net 1000", "Net 07", "Net 007"])(
+      'W-1487: an out-of-range or fractional label "%s" is refused as before (never guessed)',
+      (raw) => {
+        expect(col().parse(raw)).toEqual({
+          ok: false,
+          reason: "must be a recognized payment term",
+        });
+      },
+    );
+
     it("a genuinely unrecognized (non-integer) term is still a bad cell", () => {
       const r = col().parse("whenever works");
       expect(r.ok).toBe(false);

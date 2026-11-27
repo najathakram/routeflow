@@ -5,15 +5,89 @@
  * Pure (no RN imports) so __tests__/invoice-terms.test.ts can lock the math.
  */
 
-export const TERM_DAYS: Record<string, number> = {
-  "Due on Receipt": 0,
-  "Net 15": 15,
-  "Net 30": 30,
-  "Net 45": 45,
-  "Net 60": 60,
-};
+import { PAYMENT_TERM_PRESETS, netLabel, termDays } from "@routeflow/types/payment-terms";
 
-export const TERM_OPTIONS = Object.keys(TERM_DAYS);
+/** Days for a term label, 30 when it cannot drive a date (as web does). One shared table: W-1487. */
+export const daysForTerms = (terms: string): number => termDays(terms) ?? 30;
+
+/** A typed number of days (custom Net N): the label to store, or an inline error for 0, 366, 7.5 and non-numbers. */
+export function customTermsFromInput(text: string): { label: string | null; error: string | null } {
+  const t = text.trim();
+  if (t === "") return { label: null, error: null };
+  const label = /^\d+$/.test(t) ? netLabel(Number(t)) : null;
+  return label
+    ? { label, error: null }
+    : { label: null, error: "Enter a whole number of days from 1 to 365." };
+}
+
+/** The custom box on commit: a valid number gives its label, anything else keeps the current terms and shows the error. */
+export function commitCustomDays(
+  text: string,
+  currentTerms: string,
+): { terms: string; error: string | null } {
+  const { label, error } = customTermsFromInput(text);
+  return { terms: label ?? currentTerms, error };
+}
+
+/** True when the custom box holds text that is not a whole 1-365 (create must not send the old or a partial term). */
+export function customDaysBlocksCreate(text: string | undefined): boolean {
+  return text !== undefined && customTermsFromInput(text).error !== null;
+}
+
+/**
+ * R-345 F1: settle a draft's custom-days box at Create, so a typed value never depends on an end-editing event
+ * (Expo web has no onEndEditing, and a NavBar tap does not end editing). No text: the draft as it is. A valid whole
+ * 1-365 that differs from the draft's terms: that label and its due date. Anything invalid blocks Create.
+ */
+export function settlePendingCustomTerms(
+  text: string | undefined,
+  draft: { terms: string; dueDate: string },
+): { blocked: true } | { blocked: false; terms: string; dueDate: string } {
+  if (text === undefined) return { blocked: false, terms: draft.terms, dueDate: draft.dueDate };
+  const { terms, error } = commitCustomDays(text, draft.terms);
+  if (error) return { blocked: true };
+  if (terms === draft.terms) return { blocked: false, terms: draft.terms, dueDate: draft.dueDate };
+  // the same date the chips set (setTerms): today plus the term's days
+  return { blocked: false, terms, dueDate: todayPlusDays(daysForTerms(terms)) };
+}
+
+/**
+ * R-345d N3: what Create sends. Every draft's typed custom days are settled (settlePendingCustomTerms); one invalid
+ * box blocks the whole Create, so no request goes out with an old or partial term. `changed` lists the drafts whose
+ * terms or due date moved, for the screen to write back.
+ */
+export function settleDraftsForCreate<D extends { id: string; terms: string; dueDate: string }>(
+  drafts: readonly D[],
+  customText: Readonly<Record<string, string | undefined>>,
+): { blocked: true } | { blocked: false; ready: D[]; changed: D[] } {
+  const ready: D[] = [];
+  const changed: D[] = [];
+  for (const d of drafts) {
+    const x = settlePendingCustomTerms(customText[d.id], d);
+    if (x.blocked) return { blocked: true };
+    if (x.terms === d.terms && x.dueDate === d.dueDate) {
+      ready.push(d);
+    } else {
+      const next = { ...d, terms: x.terms, dueDate: x.dueDate };
+      ready.push(next);
+      changed.push(next);
+    }
+  }
+  return { blocked: false, ready, changed };
+}
+
+/**
+ * R-345d N1: a hand-typed due date clears the draft's term AND its custom-days box (text and error), as a preset pill
+ * does, so Create never replaces the typed date with today plus stale custom days.
+ */
+export function clearCustomFor<T>(
+  map: Readonly<Record<string, T>>,
+  draftId: string,
+): Record<string, T | undefined> {
+  return { ...map, [draftId]: undefined };
+}
+
+export const TERM_OPTIONS: string[] = [...PAYMENT_TERM_PRESETS];
 export const TERM_CHIPS = TERM_OPTIONS.map((label) => ({ label }));
 export const DEFAULT_TERMS = "Net 30";
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -26,7 +100,7 @@ export function todayPlusDays(days: number): string {
 
 /** Due date = issue date (today when blank) + the term's day count, as web does. */
 export function dueDateFor(issueDate: string, terms: string): string {
-  const days = TERM_DAYS[terms] ?? 30;
+  const days = daysForTerms(terms);
   if (!ISO_DATE.test(issueDate)) return todayPlusDays(days);
   const d = new Date(`${issueDate}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);

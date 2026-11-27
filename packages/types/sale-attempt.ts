@@ -87,6 +87,65 @@ export function mintSaleKey(): string {
   });
 }
 
+/** The plain message both clients show when the server refuses a reused adjustment key (the first call landed). */
+export const ADJUSTMENT_KEY_REUSED_COPY =
+  "Your earlier adjustment was saved. Check the stock before you save again.";
+
+/**
+ * True for the 409 of POST /inventory/movements/adjustment when its Idempotency-Key already recorded a DIFFERENT
+ * adjustment (the key's first call landed): `IDEMPOTENCY_KEY_CONFLICT` with reason `ADJUSTMENT_MISMATCH`. The reason
+ * keeps an order-scoped CONFLICT from ever being read as an adjustment. The reason is `API_ERROR_CODES.ADJUSTMENT_MISMATCH`;
+ * the code string is the existing literal the clients already match (`isPaymentKeyConflict`, buyer-order-conflict).
+ */
+export function isAdjustmentKeyReused(err: unknown): boolean {
+  const res = (
+    err as { response?: { status?: unknown; data?: { code?: unknown; reason?: unknown } } }
+  )?.response;
+  return (
+    res?.status === 409 &&
+    res.data?.code === "IDEMPOTENCY_KEY_CONFLICT" &&
+    res.data?.reason === API_ERROR_CODES.ADJUSTMENT_MISMATCH
+  );
+}
+
+/**
+ * B1415 M1b (SA-1504): the key holder of a plain write that is not a sale (a stock adjustment on the web form and the
+ * mobile sheet). Mirrors `createSaleKeyHolder`, minus the committed-record bookkeeping.
+ *  - `keyFor(fingerprint)`: the held key while the body is unchanged (two taps, a retry), and, while the outcome is
+ *    UNKNOWN (network, timeout, 5xx: the call may have landed), whatever the body: an edit sends the old key and the
+ *    server refuses it (409 IDEMPOTENCY_KEY_CONFLICT, reason ADJUSTMENT_MISMATCH) instead of applying a second, different adjustment. A new key
+ *    otherwise (a changed body after a known outcome, or after a settled attempt).
+ *  - `settle(key, outcome)`: only for the key still held (a slow older call cannot clear a newer attempt). A success
+ *    clears the key; so does the key-conflict 409 (it proves the first call landed) and, when the outcome was known, a
+ *    definitive refusal. After an unknown outcome a refusal proves nothing, so the key stays; any other failure marks
+ *    the outcome unknown.
+ */
+export function createAttemptKeyHolder(mint: () => string = mintSaleKey) {
+  let held: HeldSaleKey | null = null;
+  let unknown = false;
+  return {
+    keyFor(fingerprint: string): string {
+      held = unknown && held ? held : saleAttemptKey(held, fingerprint, mint);
+      return held.key;
+    },
+    settle(key: string, outcome: { ok: true } | { ok: false; error: unknown }): void {
+      if (!held || held.key !== key) return;
+      if (outcome.ok || isAdjustmentKeyReused(outcome.error)) {
+        held = null;
+        unknown = false;
+      } else if (isDefinitiveSaleRefusal(outcome.error)) {
+        if (!unknown) held = null;
+      } else {
+        unknown = true;
+      }
+    },
+    /** The key currently held, or null once a success or a clearing refusal dropped it. */
+    peek(): string | null {
+      return held ? held.key : null;
+    },
+  };
+}
+
 /** What an UNKNOWN sale outcome names, if anything: the committed order and/or invoice (row 466). */
 export interface UnknownSale {
   invoiceId: string | null;
