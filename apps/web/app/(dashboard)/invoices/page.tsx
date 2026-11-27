@@ -42,7 +42,13 @@ import { usePrintInvoice } from "@/lib/use-print-invoice";
 import { apiClient } from "@/lib/api-client";
 import { invoiceListStatusParams } from "@/lib/invoice-list-filter";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
-import { fmt, fmtCalendarDate, calendarDaysUntil } from "@/lib/formatting";
+import { fmt, fmtCalendarDate } from "@/lib/formatting";
+import { useTenantToday } from "@/lib/tenant-timezone";
+import {
+  CustomerInvoiceStatusText,
+  InvoiceStatusLegend,
+  InvoiceStatusText,
+} from "@/lib/invoice-status-display";
 import { useAuth } from "@/lib/auth-context";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
@@ -134,90 +140,6 @@ const DUE_CHIPS: { key: DueChipKey; label: string }[] = [
   { key: "tomorrow", label: "Due tomorrow" },
   { key: "7d", label: "Next 7 days" },
 ];
-
-// ─── Contextual status display (Zoho-style) ───────────────────────────────────
-
-function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.ReactNode {
-  if (status === "PAID") {
-    return <span className="text-xs font-semibold text-success">Paid</span>;
-  }
-  if (status === "VOID") {
-    return <span className="text-xs font-semibold text-navy/40">Void</span>;
-  }
-  if (status === "WRITTEN_OFF") {
-    return <span className="text-xs font-semibold text-navy/50">Written off</span>;
-  }
-  if (status === "DRAFT") {
-    return <span className="text-xs font-semibold text-navy/50">Draft</span>;
-  }
-  if (status === "SENT") {
-    return <span className="text-xs font-semibold text-brand-600">Sent</span>;
-  }
-  if (status === "VIEWED") {
-    return <span className="text-xs font-semibold text-brand-700">Viewed</span>;
-  }
-
-  // For PARTIAL / OVERDUE — compute days to add context
-  const diffDays = calendarDaysUntil(dueDate);
-  if (diffDays !== null) {
-    if (status === "OVERDUE" || diffDays < 0) {
-      const overdueDays = Math.abs(diffDays);
-      if (status === "PARTIAL") {
-        return (
-          <span className="text-xs font-semibold text-danger">
-            Partial · Overdue
-            {overdueDays > 0 ? ` by ${overdueDays} day${overdueDays !== 1 ? "s" : ""}` : ""}
-          </span>
-        );
-      }
-      return (
-        <span className="text-xs font-semibold text-danger">
-          Overdue{overdueDays > 0 ? ` by ${overdueDays} day${overdueDays !== 1 ? "s" : ""}` : ""}
-        </span>
-      );
-    }
-
-    if (diffDays === 0) {
-      if (status === "PARTIAL") {
-        return <span className="text-xs font-semibold text-warning">Partial · Due today</span>;
-      }
-      return <span className="text-xs font-semibold text-warning">Due today</span>;
-    }
-
-    if (status === "PARTIAL") {
-      return (
-        <span className="text-xs font-semibold text-warning">
-          Partial · Due in {diffDays} day{diffDays !== 1 ? "s" : ""}
-        </span>
-      );
-    }
-
-    return (
-      <span className="text-xs font-semibold text-brand-600">
-        Due in {diffDays} day{diffDays !== 1 ? "s" : ""}
-      </span>
-    );
-  }
-
-  // No dueDate fallback
-  const labels: Record<string, string> = {
-    SENT: "Sent",
-    VIEWED: "Viewed",
-    PARTIAL: "Partial",
-    OVERDUE: "Overdue",
-  };
-  const colors: Record<string, string> = {
-    SENT: "text-brand-600",
-    VIEWED: "text-brand-700",
-    PARTIAL: "text-warning",
-    OVERDUE: "text-danger",
-  };
-  return (
-    <span className={cn("text-xs font-semibold", colors[status] ?? "text-navy/50")}>
-      {labels[status] ?? status}
-    </span>
-  );
-}
 
 // ─── Stat tile (Ledger idiom: overline · value · hint) ─────────────────────────
 
@@ -438,6 +360,10 @@ export default function InvoicesPage() {
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   const isCustomer = user?.role === "CUSTOMER";
+  // W-1470: the status word counts days on the TENANT's day (undefined while the zone loads: no count claimed).
+  // GET /settings is staff-only: a CUSTOMER on this list never asks for the tenant day (no 403 per visit).
+  const tenantDay = useTenantToday(!isCustomer);
+  const [statusKeyOpen, setStatusKeyOpen] = React.useState(false);
   React.useEffect(() => {
     setTitle("Invoices");
   }, [setTitle]);
@@ -957,6 +883,20 @@ export default function InvoicesPage() {
             </div>
           </div>
         </FiltersDisclosure>
+        {/* R-356 F1: the staff legend; a CUSTOMER sees the list as on master, with no key */}
+        {!isCustomer && (
+          <div className="mt-2">
+            <button
+              type="button"
+              aria-expanded={statusKeyOpen}
+              onClick={() => setStatusKeyOpen((v) => !v)}
+              className="text-xs font-medium text-navy/60 underline-offset-2 hover:underline"
+            >
+              Status key
+            </button>
+            {statusKeyOpen && <InvoiceStatusLegend className="mt-1.5" />}
+          </div>
+        )}
       </div>
 
       {/* Phone cards — below md; the table below takes over from md up. Same balance helper and
@@ -975,7 +915,16 @@ export default function InvoicesPage() {
               subtitle={inv.customer?.businessName ?? "—"}
               badges={
                 <>
-                  {renderStatus(inv.status, inv.dueDate)}
+                  {isCustomer ? (
+                    <CustomerInvoiceStatusText status={inv.status} dueDate={inv.dueDate} />
+                  ) : (
+                    <InvoiceStatusText
+                      status={inv.status}
+                      dueDate={inv.dueDate}
+                      isOverdue={inv.isOverdue}
+                      tenantDay={tenantDay}
+                    />
+                  )}
                   {!isCustomer && <ToCollectChip state={inv.toCollect} />}
                 </>
               }
@@ -1143,7 +1092,16 @@ export default function InvoicesPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col items-start gap-1">
-                          {renderStatus(inv.status, inv.dueDate)}
+                          {isCustomer ? (
+                            <CustomerInvoiceStatusText status={inv.status} dueDate={inv.dueDate} />
+                          ) : (
+                            <InvoiceStatusText
+                              status={inv.status}
+                              dueDate={inv.dueDate}
+                              isOverdue={inv.isOverdue}
+                              tenantDay={tenantDay}
+                            />
+                          )}
                           {!isCustomer && <ToCollectChip state={inv.toCollect} />}
                         </div>
                       </td>
