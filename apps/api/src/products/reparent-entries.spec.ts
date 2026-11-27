@@ -63,7 +63,10 @@ describe("every reparent entry names its door (SA-823 R11)", () => {
       isTobacco: false,
     };
     const products = { create: jest.fn().mockResolvedValue({ id: "v1" }) };
-    const prisma = { forTenant: () => ({ product: { findUnique: async () => parent } }) };
+    const prisma = {
+      getTenantId: () => "t-1",
+      forTenant: () => ({ product: { findFirst: async () => parent } }),
+    };
     const service = new VariantResolutionService(prisma as never, products as never, {} as never);
     await service.createVariant({ parentProductId: "p1", variantName: "Grape" });
     expect(products.create).toHaveBeenCalledWith(
