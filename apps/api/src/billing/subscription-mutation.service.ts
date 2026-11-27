@@ -127,6 +127,11 @@ import { isLinkPending } from "./link-pending";
 import { expireOpenCheckoutSessions } from "./open-checkout-session";
 import { planGateRefusal, selfServePlanGate, type PlanGateOp } from "./self-serve-plan-gate";
 import { beginStripeFirstPlanChange, planChangeArgs } from "./plan-change-flow";
+import {
+  assertTenantLivePaymentsAllowed,
+  isLivePaymentsRefusal,
+  recordLivePaymentsHeld,
+} from "./live-payments-wall";
 
 export interface SubscribeInput {
   planKey: string;
@@ -884,7 +889,6 @@ export class SubscriptionMutationService {
           periodStart: now,
           periodEnd,
           basePriceSnapshot: newBase,
-          trialConvertedAt: wasTrial ? now : null,
         },
         update: {
           planKey: input.planKey,
@@ -896,9 +900,18 @@ export class SubscriptionMutationService {
           cancelAtPeriodEnd: false,
           downgradeToPlanKey: null,
           downgradeEffectiveAt: null,
-          trialConvertedAt: wasTrial ? now : undefined,
         },
       });
+      // SA-1547 round 3 (same shape as the checkout completion's stamp): the conversion is a CONDITIONAL write, so a
+      // webhook that stamped first leaves this one matching no row, and only the winner emits TRIAL_CONVERTED.
+      let converted = false;
+      if (wasTrial) {
+        const stamped = await tx.tenantSubscription.updateMany({
+          where: { tenantId, trialConvertedAt: null },
+          data: { trialConvertedAt: now },
+        });
+        converted = stamped.count === 1;
+      }
       // The ONE path to ACTIVE (SA-733r2 N5): it nulls the stale "trial_cancelled"/"trial_expired" reason (RO-1 ships
       // it to the client) and clears the dunning clock + pause in this tx.
       const toActive = await transitionToActiveTx(tx, tenantId, {
@@ -948,7 +961,7 @@ export class SubscriptionMutationService {
       }
 
       // ── Events (MRR = signed CHANGE) inside the same transaction ──
-      if (wasTrial) {
+      if (converted) {
         await this.events.emit(
           tenantId,
           BILLING_EVENTS.TRIAL_CONVERTED,
@@ -2095,6 +2108,9 @@ export class SubscriptionMutationService {
         select: { status: true, readOnlyReason: true },
       });
       if (tenant?.status === "ACTIVE") {
+        // W-1464 R-305 m2: resuming turns renewal charges back on, so it is walled (a request path: the coded 409).
+        // Cancelling (cancel_at_period_end: true) only reduces what is charged and stays unwalled.
+        await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
         try {
           await this.stripe.updateSubscription(sub.stripeSubId, { cancel_at_period_end: false });
         } catch (err) {
@@ -2685,6 +2701,20 @@ export class SubscriptionMutationService {
         );
         changed = changed || adopted;
       } catch (err) {
+        // W-1464: the wall holds the change for a business that is not PRODUCTION. A webhook never throws that 409
+        // (Stripe would retry an event that cannot succeed): it is recorded as held and acknowledged.
+        if (isLivePaymentsRefusal(err)) {
+          await recordLivePaymentsHeld(
+            { prisma: this.prisma, logger: this.logger },
+            {
+              tenantId,
+              entityType: "stripe_checkout_session",
+              entityId: ctx.sessionId ?? null,
+              what: `checkout add-on ${sku} quantity change`,
+            },
+          );
+          continue;
+        }
         firstError ??= err instanceof Error ? err : new Error(String(err));
         this.logger.error(
           `Checkout add-on "${sku}" tenant ${tenantId}: adoption failed (the webhook is retried): ${(err as Error).message}`,
@@ -2936,6 +2966,9 @@ export class SubscriptionMutationService {
     // brought to the row's quantity first (Stripe-first, prorated — a raise bills, a reduce credits),
     // exactly the billed quantity-change path; a failure fails the webhook with nothing written.
     if (keep.quantity !== row.quantity) {
+      // W-1464 R-282 M2: raising or cutting a billed item changes what the subscription charges. Not a test business,
+      // before the Stripe call and outside the try below.
+      await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
       try {
         await this.stripe.client.subscriptionItems.update(keep.itemId, {
           quantity: row.quantity,
@@ -4004,6 +4037,9 @@ export class SubscriptionMutationService {
       prorationDate?: Date;
     } = {},
   ): Promise<{ itemId: string; createdItemId: string | null }> {
+    // W-1464 R-282 M2: adopting an orphan item (a quantity update) and creating one both change what the subscription
+    // charges; adoptOrphanItem is reached only through here. Not a test business, before the first Stripe call.
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
     const adopted = await this.adoptOrphanItem(tenantId, sku, subId, qty);
     if (adopted) return { itemId: adopted, createdItemId: null };
     try {
@@ -4115,6 +4151,9 @@ export class SubscriptionMutationService {
       }
       // What is already pending for this item BEFORE the change (B1110): this call's own lines are the
       // ones that appear after it.
+      // W-1464 R-282 M2: a quantity change on a billed item changes what the subscription charges. Not a test business,
+      // before the first Stripe call and outside the try below.
+      await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
       const priorLines = await this.pendingProrationIds(sub, existing.stripeItemId);
       try {
         await this.stripe.client.subscriptionItems.update(existing.stripeItemId, {

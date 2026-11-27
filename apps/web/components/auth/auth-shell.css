@@ -8,7 +8,7 @@
   width: min(480px, 100% - 32px);
   margin-inline: auto;
   padding: 40px 0 72px;
-  color: var(--ink);
+  color: var(--rf-text);
   font-size: 1rem;
   line-height: 1.5;
 }
@@ -20,7 +20,7 @@
   padding: 36px;
   border-radius: var(--rf-r-card);
   background: #fff;
-  box-shadow: var(--rf-sh-card);
+  box-shadow: var(--rf-ring);
 }
 .rf-auth .rf-kicker {
   display: block;
@@ -35,11 +35,11 @@
   letter-spacing: -0.034em;
   line-height: 1.08;
   margin: 8px 0 14px;
-  color: var(--ink);
+  color: var(--rf-text);
 }
 .rf-auth-card > p,
 .rf-auth-lead {
-  color: var(--ink-2);
+  color: var(--rf-text-2);
   font-size: 1rem;
   margin: 0 0 24px;
 }
@@ -52,12 +52,12 @@
   gap: 7px;
   font-size: 0.9375rem;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--rf-text);
 }
 .rf-auth small,
 .rf-auth .rf-legal-note {
   font-size: 0.875rem;
-  color: var(--ink-3);
+  color: var(--rf-text-2);
   font-weight: 400;
 }
 /* Longhands only: the padding and border shorthands would out-specify the Tailwind utilities the
@@ -71,15 +71,15 @@
   border-color: #b9c2d0;
   border-radius: 14px;
   background: #fff;
-  color: var(--ink);
+  color: var(--rf-text);
   padding-block: 12px;
   padding-inline-start: 14px;
 }
 .rf-auth input:not([type="checkbox"]):not([type="radio"]):hover {
-  border-color: var(--ink-3);
+  border-color: var(--rf-text-2);
 }
 .rf-auth input:not([type="checkbox"]):not([type="radio"]):focus {
-  border-color: var(--b500);
+  border-color: var(--rf-text);
 }
 .rf-auth input[aria-invalid="true"]:not([type="checkbox"]):not([type="radio"]),
 .rf-auth input.border-danger:not([type="checkbox"]):not([type="radio"]) {
@@ -87,7 +87,7 @@
   background: #fff7f6;
 }
 .rf-auth input::placeholder {
-  color: var(--ink-3);
+  color: var(--rf-text-2);
 }
 .rf-auth .rf-btn {
   display: inline-flex;
@@ -98,7 +98,7 @@
   border-radius: 999px;
   min-height: 52px;
   padding: 0 26px;
-  background: var(--b700);
+  background: var(--rf-btn);
   color: #fff;
   font: inherit;
   font-size: 1.0625rem;
@@ -108,18 +108,18 @@
   transition: background 0.18s;
 }
 .rf-auth .rf-btn:hover {
-  background: var(--b800);
+  background: var(--rf-btn-press);
 }
 .rf-auth .rf-btn:active {
   transform: scale(0.97);
 }
 .rf-auth .rf-btn.secondary {
   background: #fff;
-  color: var(--b700);
+  color: var(--rf-text);
   box-shadow: inset 0 0 0 1px #b9c2d0;
 }
 .rf-auth .rf-btn.secondary:hover {
-  background: var(--tint);
+  background: var(--rf-soft);
 }
 .rf-auth .rf-btn:disabled {
   opacity: 0.55;
@@ -140,7 +140,7 @@
 .rf-auth-cross a:hover,
 .rf-auth .rf-legal-note a:hover,
 .rf-auth-card a.rf-link:hover {
-  color: var(--b800);
+  color: var(--rf-text);
 }
 .rf-auth-footer {
   display: flex;
@@ -151,7 +151,7 @@
   margin-top: 24px;
   padding-inline: 8px;
   font-size: 0.9375rem;
-  color: var(--ink-2);
+  color: var(--rf-text-2);
 }
 .rf-auth-footer a {
   display: inline-flex;
@@ -172,7 +172,7 @@
 .rf-auth-success {
   padding: 24px;
   border-radius: var(--rf-r-inner);
-  background: var(--rf-mint-soft);
+  background: var(--rf-paid-bg);
 }
 .rf-auth-success h2 {
   font-size: 1.5rem;
@@ -223,5 +223,5 @@
   color: var(--rf-link);
 }
 .rf-auth-card a:not(.rf-btn):hover {
-  color: var(--b800);
+  color: var(--rf-text);
 }

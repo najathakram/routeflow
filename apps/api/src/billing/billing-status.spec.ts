@@ -408,6 +408,8 @@ describe("BillingStatusAction: the kind union is exactly the SA-1146 B-5 shape",
         return "Change card";
       case "choose_plan":
         return "Choose a plan";
+      case "pay_now":
+        return "Pay now";
       default: {
         const unreachable: never = a;
         return String(unreachable);
@@ -415,14 +417,21 @@ describe("BillingStatusAction: the kind union is exactly the SA-1146 B-5 shape",
     }
   };
 
-  it("names the four kinds in the words C7 uses", () => {
+  it("names the five kinds in the words C7 uses (plus SA-1547 Pay now)", () => {
     const actions: BillingStatusAction[] = [
       { kind: "pay", target: "hosted_invoice" },
       { kind: "add_card", target: "checkout" },
       { kind: "change_card", target: "portal" },
       { kind: "choose_plan", target: "choose_plan" },
+      { kind: "pay_now", target: "self_checkout" },
     ];
-    expect(actions.map(label)).toEqual(["Pay", "Add card", "Change card", "Choose a plan"]);
+    expect(actions.map(label)).toEqual([
+      "Pay",
+      "Add card",
+      "Change card",
+      "Choose a plan",
+      "Pay now",
+    ]);
   });
 
   it("S15: the pair is discriminated (a nonsense pair does not compile)", () => {

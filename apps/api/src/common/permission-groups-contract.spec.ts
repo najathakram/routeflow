@@ -94,12 +94,18 @@ describe("OPERATOR_DEFAULT_DENIED_GROUPS (SA-1050 A-5)", () => {
 });
 
 describe("PERMISSION_ROUTE_MAP + permissionForPath", () => {
-  it("is non-empty and every entry is well formed (leading slash, no trailing slash, known groups)", () => {
+  it("is non-empty and every entry is well formed (leading slash, no trailing slash, known groups or BASE/ADMIN)", () => {
     expect(PERMISSION_ROUTE_MAP.length).toBeGreaterThan(10);
     for (const entry of PERMISSION_ROUTE_MAP) {
       expect(entry.prefix).toMatch(/^\/[a-z-]+(\/[a-z-]+)*$/);
-      expect(entry.anyOf.length).toBeGreaterThan(0);
-      for (const g of entry.anyOf) expect(OPERATOR_PERMISSION_GROUP_VALUES).toContain(g);
+      // The entry is a union: a group gate (anyOf) or an explicit group-free level (access), never both or neither.
+      expect("anyOf" in entry !== "access" in entry).toBe(true);
+      if ("anyOf" in entry) {
+        expect(entry.anyOf.length).toBeGreaterThan(0);
+        for (const g of entry.anyOf) expect(OPERATOR_PERMISSION_GROUP_VALUES).toContain(g);
+      } else {
+        expect(["BASE", "ADMIN"]).toContain(entry.access);
+      }
     }
     const prefixes = PERMISSION_ROUTE_MAP.map((e) => e.prefix);
     expect(new Set(prefixes).size).toBe(prefixes.length);

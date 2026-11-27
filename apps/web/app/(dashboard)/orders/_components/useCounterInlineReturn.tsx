@@ -8,8 +8,6 @@
 import * as React from "react";
 import { roundMoney } from "@routeflow/pricing";
 import type { InlineReturnLinesRequest } from "@routeflow/types";
-import { useHasAddon } from "@/lib/api/tobacco";
-import { ORDERS_INLINE_RETURNS_ADDON } from "@/lib/api/addons";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
@@ -82,16 +80,9 @@ export function CounterReturnsMount({
     "ref" | "setCredit" | "refusalMessage" | "refusalReturn"
   >;
 }) {
-  const hasReturns = useHasAddon(ORDERS_INLINE_RETURNS_ADDON);
-  if (walkIn) {
-    return hasReturns ? (
-      <p className="text-sm text-navy/70" data-testid="counter-return-walkin-note">
-        A walk-in return is refunded, not credited. Choose a customer to take a return with this
-        sale.
-      </p>
-    ) : null;
-  }
-  if (!customerId) return null;
+  // B1466: a walk-in has no return in progress here (a return rides only a named customer's sale), so there is nothing to say:
+  // the Return door beside Today's sales is the way to take one back.
+  if (walkIn || !customerId) return null;
   return (
     <OrderInlineReturnsSection
       key={customerId}

@@ -74,7 +74,11 @@ function PODetailRow({
     <tr>
       <td colSpan={8} className="px-6 py-4 bg-surface-raised/40">
         <div className="space-y-3">
-          <PurchaseOrderReadOnlyLines items={po.items ?? []} catalogById={catalogById} />
+          <PurchaseOrderReadOnlyLines
+            items={po.items ?? []}
+            catalogById={catalogById}
+            status={po.status}
+          />
 
           {/* Notes */}
           {po.notes && (

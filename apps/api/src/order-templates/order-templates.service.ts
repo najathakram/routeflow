@@ -32,11 +32,14 @@ import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
 import {
+  buyerLinePieces,
   categoryTaxSnapshotOf,
   computeCategoryTax,
   computeLineSubtotal,
   roundMoney,
 } from "@routeflow/pricing";
+import { assertBuyerLinesWithinCap } from "../orders/buyer-line-cap";
+import { loadLiveUnitsPerBoxByProduct } from "../orders/live-pack-map";
 import type { CategoryTaxType, CustomerLayerPrice } from "@routeflow/pricing";
 import type { BuyerReorderSkippedLine, RestrictionAck } from "@routeflow/types";
 import { taxRateFractionFrom } from "../common/tax-rate";
@@ -273,6 +276,7 @@ export class OrderTemplatesService {
         customer.id,
         (dto.items ?? []).map((i) => i.productId),
       );
+      await this.assertBuyerTemplateCap(dto.items ?? [], []); // B1386
       const created = await this.create(dto, { role: user.role, userId: user.sub });
       return this.findOneForUser(created.id, user); // the buyer-filtered read (row 479)
     }
@@ -286,15 +290,52 @@ export class OrderTemplatesService {
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
-      if (dto.items)
+      if (dto.items) {
         await this.assertBuyerMayList(
           customer.id,
           dto.items.map((i) => i.productId),
         );
+        await this.assertBuyerTemplateCap(dto.items, template.items ?? []); // B1386
+      }
     }
     const updated = await this.update(id, dto, { role: user.role, userId: user.sub });
     // A buyer's answer is the buyer-filtered read, never the staff-shaped write result (row 479).
     return user.role === "CUSTOMER" ? this.findOneForUser(id, user) : updated;
+  }
+
+  /**
+   * B1386 (SA-1285 section 4): a buyer's template quantity counts packs (generation reads qty x unitsPerBox) and is
+   * capped on its piece total, rise-only. Template items carry no line id, so each product's new items are matched
+   * one-to-one with its stored items, largest to largest: a second item never borrows a stored item another one
+   * already kept. The pack is the live one.
+   */
+  private async assertBuyerTemplateCap(
+    items: ReadonlyArray<{ productId: string; qty: number }>,
+    stored: ReadonlyArray<{ productId: string | null; qty: unknown }>,
+  ): Promise<void> {
+    const packs = await loadLiveUnitsPerBoxByProduct(
+      this.prisma.forTenant(),
+      items.map((i) => i.productId),
+    );
+    const heldQty = (productId: string) =>
+      stored
+        .filter((s) => s.productId === productId)
+        .map((s) => Number(s.qty ?? 0))
+        .sort((a, b) => b - a);
+    const lines = [...new Set(items.map((i) => i.productId))].flatMap((productId) => {
+      const upb = packs.get(productId) ?? 0;
+      const held = heldQty(productId);
+      return items
+        .filter((i) => i.productId === productId)
+        .map((i) => Number(i.qty))
+        .sort((a, b) => b - a)
+        .map((qty, k) => ({
+          productId,
+          pieces: buyerLinePieces(qty, false, upb),
+          storedPieces: buyerLinePieces(held[k] ?? 0, false, upb),
+        }));
+    });
+    assertBuyerLinesWithinCap(lines);
   }
 
   async removeForUser(id: string, user: JwtPayload) {

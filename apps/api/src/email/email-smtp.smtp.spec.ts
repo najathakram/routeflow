@@ -176,7 +176,7 @@ describeSmtp("EmailService over real SMTP (mailpit) — STARTTLS + AUTH + delive
       const subject = subjectToken("invoice INV-0001");
       const html = `<h1>Invoice INV-0001</h1><p>Total <strong>$12.34</strong></p>`;
 
-      const res = await makeService().send({ to: RECIPIENT, subject, html });
+      const res = await makeService().send({ tenantId: null, to: RECIPIENT, subject, html });
 
       expect(res).toMatchObject({ delivered: true, transport: "smtp" });
       expect(res.id).toEqual(expect.any(String));
@@ -201,6 +201,7 @@ describeSmtp("EmailService over real SMTP (mailpit) — STARTTLS + AUTH + delive
       const subject = subjectToken("password reset");
 
       const res = await makeService().send({
+        tenantId: null,
         to: RECIPIENT,
         subject,
         html: "<p>Reset your password</p>",
@@ -222,6 +223,7 @@ describeSmtp("EmailService over real SMTP (mailpit) — STARTTLS + AUTH + delive
       const subject = subjectToken("bad password");
 
       const res = await makeService({ ...TARGET, pass: "not-the-password" }).send({
+        tenantId: null,
         to: RECIPIENT,
         subject,
         html: "<p>should never arrive</p>",
@@ -239,6 +241,7 @@ describeSmtp("EmailService over real SMTP (mailpit) — STARTTLS + AUTH + delive
       const subject = subjectToken("closed port");
 
       const res = await makeService({ ...TARGET, port: 1 }).send({
+        tenantId: null,
         to: RECIPIENT,
         subject,
         html: "<p>should never arrive</p>",
@@ -257,6 +260,7 @@ describeSmtp("EmailService over real SMTP (mailpit) — STARTTLS + AUTH + delive
       // fail-fast connectionTimeout — the assertion is on the honest error, not on elapsed time.
       // (Blackhole-less networks answer ENETUNREACH/EHOSTUNREACH at once: still a real failure.)
       const res = await makeService({ ...TARGET, host: "192.0.2.1" }).send({
+        tenantId: null,
         to: RECIPIENT,
         subject,
         html: "<p>should never arrive</p>",

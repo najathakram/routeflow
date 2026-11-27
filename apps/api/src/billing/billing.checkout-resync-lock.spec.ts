@@ -11,6 +11,7 @@ jest.mock("../common/db-locks", () => ({
 }));
 
 import { ConflictException, Logger } from "@nestjs/common";
+import { assertLivePaymentsAllowed } from "./live-payments-wall";
 import { BillingService } from "./billing.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { fakeStripeProducts } from "../testing/fake-stripe-products";
@@ -184,5 +185,77 @@ describe("resyncPriceAfterCheckout holds the tenant price lock (M1)", () => {
     const err: any = await svc.resyncPriceAfterCheckout("t1", session).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toMatchObject({ code: "CONCURRENT_UPDATE" });
+  });
+});
+
+// W-1464 R-305 M1: a wall refusal must never reach Stripe as a 500 (a multi-day retry storm for an event that can
+// never succeed). Handler level: held row, handler resolves. Dispatcher level: the same for any handler.
+describe("live-payments wall in the checkout and webhook paths (R-305 M1)", () => {
+  function refusal(): unknown {
+    try {
+      assertLivePaymentsAllowed("TEST");
+    } catch (e) {
+      return e;
+    }
+    throw new Error("the wall did not refuse");
+  }
+  const heldRows = (prisma: any) =>
+    prisma.auditLog.create.mock.calls
+      .map((c: any[]) => c[0].data)
+      .filter((d: any) => d.action === "LIVE_PAYMENTS_HELD");
+
+  it("a refused price re-sync after checkout is held and acknowledged, and the coupon sync still runs", async () => {
+    const { svc, prisma } = make();
+    mockWithAdvisoryLock.mockImplementation(async (_o: unknown, fn: () => Promise<unknown>) => ({
+      acquired: true,
+      value: await fn(),
+    }));
+    jest.spyOn(svc, "syncStripeSubscriptionPrice").mockRejectedValue(refusal());
+    const coupon = jest.spyOn(svc, "syncCoupon").mockResolvedValue(undefined);
+    await expect(svc.resyncPriceAfterCheckout("t1", session, "sub_1")).resolves.toBeUndefined();
+    expect(heldRows(prisma)).toHaveLength(1);
+    expect(heldRows(prisma)[0]).toMatchObject({ tenantId: "t1", entityId: "cs_1" });
+    expect(coupon).toHaveBeenCalledTimes(1);
+  });
+
+  it("a non-refusal error from the re-sync still throws (redelivery stays)", async () => {
+    const { svc, prisma } = make();
+    mockWithAdvisoryLock.mockImplementation(async (_o: unknown, fn: () => Promise<unknown>) => ({
+      acquired: true,
+      value: await fn(),
+    }));
+    jest.spyOn(svc, "syncStripeSubscriptionPrice").mockRejectedValue(new Error("stripe down"));
+    await expect(svc.resyncPriceAfterCheckout("t1", session)).rejects.toThrow("stripe down");
+    expect(heldRows(prisma)).toHaveLength(0);
+  });
+
+  it.each([
+    ["checkout.session.completed", "onCheckoutCompleted"],
+    ["invoice.upcoming", "onInvoiceUpcoming"],
+    ["invoice.payment_succeeded", "onPaymentSucceeded"],
+  ])(
+    "a refusal escaping the %s handler is held and acknowledged at the dispatcher",
+    async (type, handler) => {
+      const { svc, prisma } = make();
+      jest.spyOn(svc, handler).mockRejectedValue(refusal());
+      await expect(
+        svc.handleWebhookEvent({ id: "evt_1", type, data: { object: {} } }),
+      ).resolves.toBeUndefined();
+      expect(heldRows(prisma)).toHaveLength(1);
+      expect(heldRows(prisma)[0]).toMatchObject({ tenantId: null, entityId: "evt_1" });
+    },
+  );
+
+  it("any other error from a handler still propagates through the dispatcher", async () => {
+    const { svc, prisma } = make();
+    jest.spyOn(svc, "onCheckoutCompleted").mockRejectedValue(new Error("db down"));
+    await expect(
+      svc.handleWebhookEvent({
+        id: "evt_1",
+        type: "checkout.session.completed",
+        data: { object: {} },
+      }),
+    ).rejects.toThrow("db down");
+    expect(heldRows(prisma)).toHaveLength(0);
   });
 });

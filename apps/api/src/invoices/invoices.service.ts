@@ -216,6 +216,8 @@ import { rebuildKeptItems } from "./kept-invoice-lines";
 import { assertSalesNotLockedForEdit } from "../regulated/filing-lock";
 import {
   applyPartialPriceFollow,
+  hasLiveOrderInvoice,
+  noFollow,
   planPartialPriceFollow,
   type FollowDeps,
 } from "./partial-price-follow";
@@ -284,8 +286,8 @@ import {
   lockInvoiceRow,
   lockInvoicesForPayment,
   nextSentStatus,
-  paymentRefusal,
-  standalonePaymentRefusal,
+  assertPayable,
+  assertStandalonePayable,
   sendRefusal,
   voidRefusal,
   externalPaidOn,
@@ -1487,18 +1489,15 @@ export class InvoicesService {
 
   /**
    * SA-760 Q-760-1: DRAFT partials follow a staff order edit's PRICE changes; issued partials never do and
-   * are returned for the edit response. Under the R-1 lock order (own tx unless one is passed).
+   * are returned for the edit response. Under the R-1 lock order (own tx unless one is passed). B1461: the
+   * ledger funnel is bound HERE, under the locks, for the apply only (plan mode never gets a writer).
    */
   async followPartialPrices(orderId: string, tx?: any) {
-    if (!tx) {
-      // most edits touch an order with no invoice at all: no transaction for that
-      const live = await this.prisma.forTenant().invoice.count({
-        where: { orderId, status: { not: InvoiceStatus.VOID } },
-      });
-      if (live === 0) return { issuedPartialsUnchanged: [], followed: [] as string[] };
-    }
+    if (!tx && !(await hasLiveOrderInvoice(this.prisma.forTenant(), orderId))) return noFollow();
     return inOrderBillingTx(this.prisma, tx, orderId, (db) =>
-      applyPartialPriceFollow(this.followDeps(), db, orderId),
+      applyPartialPriceFollow(this.followDeps(), db, orderId, (id, items) =>
+        this.resyncInvoiceLedger(id, orderId, items, db),
+      ),
     );
   }
 
@@ -4241,8 +4240,7 @@ export class InvoicesService {
         include: { payments: { where: { status: { not: "VOID" } } } },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
-      const refusal = paymentRefusal(inv.status); // #2472 (4): VOID and WRITTEN_OFF, like the others
-      if (refusal) throw new BadRequestException(`Cannot record payment on ${refusal} invoice`);
+      assertPayable(inv.status); // B1396: DRAFT, VOID, WRITTEN_OFF (the one refusal)
       if (inv.orderId) await assertOrderReviewed(tx, inv.orderId); // SA-1124 PR-1b: staff money waits for the price review
 
       const total = Number(inv.total);
@@ -5024,8 +5022,7 @@ export class InvoicesService {
           });
           if (!invoice)
             throw new NotFoundException(`Invoice ${alloc.invoiceId} not found for customer`);
-          const refused = standalonePaymentRefusal(invoice.status, opts?.source); // SA-404f F1 + B1385: LOCKED row
-          if (refused) throw new BadRequestException(`Invoice ${alloc.invoiceId} is ${refused}`);
+          assertStandalonePayable(invoice.status, alloc.invoiceId, opts?.source); // B1396: LOCKED row
           // SA-1124 PR-1b: staff money waits for the price review; money that already moved at the processor never does
           if (opts?.source !== "STRIPE_SETTLE" && invoice.orderId)
             await assertOrderReviewed(tx, invoice.orderId);

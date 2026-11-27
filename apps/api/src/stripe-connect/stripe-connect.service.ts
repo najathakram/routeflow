@@ -1,5 +1,9 @@
 import { randomUUID } from "crypto";
 import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
+import {
+  assertLivePaymentsAllowed,
+  assertTenantLivePaymentsAllowed,
+} from "../billing/live-payments-wall";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { UserRole } from "@prisma/client";
@@ -149,6 +153,7 @@ export class StripeConnectService {
         "Stripe Connect is not configured on this platform yet (STRIPE_SECRET_KEY / STRIPE_CONNECT_CLIENT_ID).",
       );
     }
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId); // W-1464: no link for a non-PRODUCTION business
     const jti = randomUUID();
     const state = await this.jwt.signAsync(
       { purpose: "stripe-connect", tid: tenantId, by: startedByName ?? null, jti },
@@ -258,9 +263,10 @@ export class StripeConnectService {
 
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { id: true, slug: true, status: true },
+      select: { id: true, slug: true, status: true, class: true },
     });
     if (!tenant) throw new BadRequestException("tenant_not_found");
+    assertLivePaymentsAllowed(tenant.class); // W-1464: before any Stripe call, so no grant is created
 
     // The signed state was minted while the workspace accepted changes; its status may
     // have moved since. Re-read it live and refuse BEFORE the code exchange, so a

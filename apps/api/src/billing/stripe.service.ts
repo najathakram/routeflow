@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { AppConfig } from "../config/configuration";
 import { STRIPE_API_VERSION, stripeInvoiceSubscriptionId } from "./stripe-period";
 import { assertBillingReturnUrl } from "./billing-return-paths";
+import { stripeKeyModeOf, type StripeKeyMode } from "./live-payments-wall";
 import type { InvoiceFacts } from "./catchup-claim";
 import { COUPON_SYNC_EXPAND, COUPON_SYNC_REQUEST, isInvoiceUpcomingNone } from "./coupon-unbilled";
 
@@ -39,6 +40,11 @@ export class StripeService implements OnModuleInit {
   /** Returns true when a valid API key is configured. */
   get isConfigured(): boolean {
     return this.stripe !== null;
+  }
+
+  /** SA-1547 S5: "live" | "test" | "none", from the configured secret key's prefix (anything else fails closed). */
+  get keyMode(): StripeKeyMode {
+    return stripeKeyModeOf(this.config.get<AppConfig["stripe"]>("stripe")?.secretKey);
   }
 
   /** Get the underlying Stripe instance (throws if not configured). */

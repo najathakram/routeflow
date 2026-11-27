@@ -34,6 +34,11 @@ import {
   stripeRefId,
 } from "./stripe-period";
 import { StripeService } from "./stripe.service";
+import {
+  assertTenantLivePaymentsAllowed,
+  isLivePaymentsRefusal,
+  recordLivePaymentsHeld,
+} from "./live-payments-wall";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -372,8 +377,24 @@ export class CatchupClaimService {
 
     // Stripe work, OUTSIDE the lock.
     let invoiceId = advanced.catchupInvoiceId;
-    if (!invoiceId) invoiceId = await this.ensureSettlingInvoice(tenantId, session, subId);
-    else await this.ensureStubItem(tenantId, session, invoiceId, subId); // a redelivery: the draft must carry its item
+    try {
+      if (!invoiceId) invoiceId = await this.ensureSettlingInvoice(tenantId, session, subId);
+      else await this.ensureStubItem(tenantId, session, invoiceId, subId); // a redelivery: the draft must carry its item
+    } catch (err) {
+      // W-1464: the wall holds the stub invoice and item for a business that is not PRODUCTION. A webhook never
+      // throws that 409 (Stripe would retry an event that cannot succeed): recorded as held, event acknowledged.
+      if (!isLivePaymentsRefusal(err)) throw err;
+      await recordLivePaymentsHeld(
+        { prisma: this.prisma, logger: this.logger },
+        {
+          tenantId,
+          entityType: "stripe_checkout_session",
+          entityId: session.id ?? null,
+          what: "catch-up stub invoice",
+        },
+      );
+      return;
+    }
     if (!invoiceId) return; // settles on the first paid invoice (see onInvoicePaid)
 
     const facts = await this.stripe.getInvoiceFacts(invoiceId);
@@ -404,6 +425,8 @@ export class CatchupClaimService {
     }
     const stubCents = Number(meta[CATCHUP_META.stubCents] ?? 0);
     if (meta[CATCHUP_META.shape] === "trial" && Number.isInteger(stubCents) && stubCents > 0) {
+      // W-1464 R-282 M2: a stub invoice is a charge. Not a test business, before the first Stripe call.
+      await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
       const sub = await this.stripe.getSubscription(subId);
       const finalizeAt = this.stubFinalizeAt(session, meta);
       const draft = await this.stripe.client.invoices.create(
@@ -481,6 +504,8 @@ export class CatchupClaimService {
     // coupon lowers amountDue, and a redelivery after the idempotency key expired (24 h) would add a SECOND stub.
     const items = await this.stripe.listInvoiceItems(invoiceId);
     if (items.some((i) => i?.metadata?.catchup_for === session.id)) return;
+    // W-1464 R-282 M2: the stub item is a charge. Not a test business, before the Stripe write (the listing above only reads).
+    await assertTenantLivePaymentsAllowed(this.prisma, tenantId);
     const sub = await this.stripe.getSubscription(subId);
     await this.stripe.client.invoiceItems.create(
       {

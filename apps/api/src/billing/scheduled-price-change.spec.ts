@@ -87,8 +87,14 @@ function row(over: Partial<SubRow> = {}): SubRow {
   };
 }
 
-function make(rows: SubRow[] = [row()], items: any[] = [baseItem()]) {
+function make(
+  rows: SubRow[] = [row()],
+  items: any[] = [baseItem()],
+  tenantClass: string | null = "PRODUCTION",
+) {
   const prisma: any = {
+    // W-1464: the live-payments wall reads the business class (PRODUCTION unless a case says otherwise).
+    tenant: { findUnique: jest.fn(async () => ({ class: tenantClass })) },
     tenantSubscription: {
       findUnique: jest.fn(
         async ({ where }: any) => rows.find((r) => r.tenantId === where.tenantId) ?? null,
@@ -305,6 +311,22 @@ describe("restoreAfterScheduleCleared (Keep current plan after the lower price w
     await fee.svc.restoreAfterScheduleCleared("t1", "STARTER");
     expect(resched.stripe.updateSubscription).not.toHaveBeenCalled();
     expect(fee.stripe.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  // W-1464 R-305 m3: a wall refusal is a hold (one held row), not a drift to reconcile.
+  it("a wall refusal is recorded as HELD, not as needs_reconcile, and nothing is pushed", async () => {
+    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const { svc, stripe, prisma } = make([kept()], [baseItem({ unit_amount: 5900 })], "TEST");
+    prisma.auditLog = { create: jest.fn().mockResolvedValue({}) };
+    await expect(svc.restoreAfterScheduleCleared("t1", "STARTER")).resolves.toBeUndefined();
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(error.mock.calls.map((c) => String(c[0])).join("\n")).not.toContain("needs_reconcile");
+    const actions = prisma.auditLog.create.mock.calls.map((c: any[]) => c[0].data.action);
+    expect(actions).toEqual(["LIVE_PAYMENTS_HELD"]);
+    expect(warn).toHaveBeenCalled();
+    error.mockRestore();
+    warn.mockRestore();
   });
 
   it("a failure is ALERTED and never thrown to the tenant whose resume already committed", async () => {
@@ -605,6 +627,19 @@ describe("the backup sweep (applyDue)", () => {
     expect(await svc.applyDue(NOW)).toEqual({ pushed: 1, held: 1 });
     error.mockRestore();
   });
+
+  // W-1464 R-305 m4: a business the wall holds is expected, not a fault: logged at warn, never at error.
+  it("a held (non-PRODUCTION) business is logged at warn, not error, and counted held", async () => {
+    const error = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+    const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+    const { svc, stripe } = make([row({ downgradeEffectiveAt: at(48) })], [baseItem()], "TEST");
+    expect(await svc.applyDue(NOW)).toEqual({ pushed: 0, held: 1 });
+    expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toContain("held back");
+    error.mockRestore();
+    warn.mockRestore();
+  });
 });
 
 describe("the invoice.upcoming webhook", () => {
@@ -636,9 +671,14 @@ describe("the invoice.upcoming webhook", () => {
     jest.useRealTimers();
   });
 
-  function wire(rows: SubRow[] = [row()], items: any[] = [baseItem()]) {
-    const m = make(rows, items);
+  function wire(
+    rows: SubRow[] = [row()],
+    items: any[] = [baseItem()],
+    tenantClass: string | null = "PRODUCTION",
+  ) {
+    const m = make(rows, items, tenantClass);
     const billingPrisma: any = {
+      auditLog: { create: jest.fn().mockResolvedValue({}) },
       tenantSubscription: {
         findFirst: jest.fn(async ({ where }: any) => {
           const r = rows.find((x) => x.stripeSubId === where.stripeSubId);
@@ -677,6 +717,23 @@ describe("the invoice.upcoming webhook", () => {
     });
     return { ...m, billing, evt };
   }
+
+  // W-1464 R-305 M1: through the real webhook entry point (not svc.apply), a business the wall holds must be
+  // acknowledged (the handler resolves, so the controller answers 200), leave a held row, and charge nothing.
+  it.each([["TEST"], ["DEMO"], ["INTERNAL"], [null], ["SOMETHING_NEW"]])(
+    "invoice.upcoming for a %s business is held and acknowledged, never thrown to Stripe",
+    async (cls) => {
+      const { billing, evt, stripe } = wire([row()], [baseItem()], cls as string | null);
+      await expect(billing.handleWebhookEvent(evt())).resolves.toBeUndefined();
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+      const audit = (billing as any).prisma.auditLog.create;
+      expect(audit).toHaveBeenCalledTimes(1);
+      expect(audit.mock.calls[0][0].data.action).toBe("LIVE_PAYMENTS_HELD");
+      // n2: the Stripe event id, with the subscription id in meta (the upcoming invoice has no id yet)
+      expect(audit.mock.calls[0][0].data.entityId).toBe("evt_up_1");
+      expect(audit.mock.calls[0][0].data.meta.stripeSubId).toBe("sub_1");
+    },
+  );
 
   it("a scheduled downgrade is pushed once when Stripe announces the renewal", async () => {
     const { billing, evt, stripe } = wire();
@@ -734,4 +791,34 @@ describe("the invoice.upcoming webhook", () => {
       billing.handleWebhookEvent({ id: "e", type: "invoice.upcoming", data: { object: {} } }),
     ).resolves.toBeUndefined();
   });
+});
+
+// W-1464 R-282 M2: pushing or restoring a scheduled price changes what the subscription charges.
+describe("the live-payments wall (W-1464)", () => {
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "class %p: apply() is refused with the coded 409 before any Stripe write",
+    async (tenantClass) => {
+      const { svc, stripe } = make([row()], [baseItem()], tenantClass);
+      await expect(svc.apply("t1", NOW)).rejects.toMatchObject({
+        status: 409,
+        response: { code: "LIVE_PAYMENTS_OFF" },
+      });
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["TEST", "DEMO", "INTERNAL", null])(
+    "class %p: the restore of an earlier push is refused with the coded 409 before any Stripe write",
+    async (tenantClass) => {
+      const { svc, stripe } = make(
+        [row({ downgradeToPlanKey: null, downgradeEffectiveAt: null })],
+        [baseItem({ unit_amount: 5900 })],
+        tenantClass,
+      );
+      await expect(
+        svc.restoreIfPushedLocked("t1", "STARTER", { mustBeCleared: true }),
+      ).rejects.toMatchObject({ status: 409, response: { code: "LIVE_PAYMENTS_OFF" } });
+      expect(stripe.updateSubscription).not.toHaveBeenCalled();
+    },
+  );
 });

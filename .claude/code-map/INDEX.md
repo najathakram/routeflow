@@ -89,11 +89,6 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Product labels/categories, credit-limit guard | [`api`](api/catchup-2026-09-21-src.md) → `product-labels/`, `orders/credit-limit-guard.ts` |
 | Tenant config snapshots (restore on re-upgrade) | [`api`](api/catchup-2026-09-21-src.md) → `billing/tenant-config-snapshot*.ts` → web admin `ConfigSnapshotsTab` |
 | Scanning engine (shared), verify-turbo, release-health | [`packages`](packages.md) → `scanning`; [`api`](api/catchup-2026-09-21-scripts-schema.md) → `scripts/` |
-| Marketing site print/motion, pin ledger, spec 85 | [`web`](web/landing-2026-11-13-bk-fixes.md) → `public/site/js/{home-up,site}.js`, `e2e/85-site-proof-pages.spec.ts` |
-| Staff menu, active entry, g shortcuts | [`web`](web/landing-2026-11-21-w38.md) → `app/(dashboard)/_components/nav-index.ts`, `lib/nav-shortcuts.ts` |
-| Invoice layout switches, open balance block | [`api`](api/landing-2026-11-21-w38.md) → `invoices/invoice-layout.ts`, `customers/invoice-account-balance.ts` |
-| Sent-invoice edit confirm (ackSentRevert) | [`api`](api/landing-2026-11-21-w38.md) → `invoices/order-edit-revert-set.ts`, `orders/orders.service.ts` |
-| Import skips a gated column | [`api`](api/landing-2026-11-21-w38.md) → `import/import-gated-columns.ts` |
 | One writer for the Driver row | [`api`](api/landing-2026-11-21-w38.md) → `drivers/drivers.service.ts` `ensureDriverRow` |
 | Email delivery route, ref token, bounce tables | [`api`](api/landing-2026-11-21-w38.md) → `email/email-delivery.service.ts`, `email/bounces/` |
 | Purchase orders: create, receive, edit, close | [`api`](api/codemap-refresh-2026-11-22.md#purchase-orders-inventory) → `inventory/inventory.service.ts` `receivePurchaseOrder` |
@@ -104,17 +99,12 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Billing catch-up: claim, plan, checkout | [`api`](api/codemap-refresh-2026-11-22.md#billing-catchup) → `billing/catchup-claim.ts`, `catchup-plan.ts`, `catchup-checkout.service.ts` |
 | Inventory dialog panel (scroll, keep Save in view) | [`web`](web/landing-2026-11-23-w39.md) → `inventory/_components/modal-panel.ts` |
 | Returned items and one word for credit (counter) | [`api`](api/landing-2026-11-23-w40.md) → `orders/counter-sale/counter-return-read.ts`, `common/credit-words.ts` |
-| Generated-dirs list for cross-workspace scans | [`api`](api/landing-2026-11-23-w40.md) → `scripts/lib/generated-dirs.cjs` |
 | Create PO scan bar | [`web`](web/landing-2026-11-23-w40.md) → `inventory/_components/PurchaseOrderScanBar.tsx` |
 | Sidebar order and hidden (F-2) | [`web`](web/landing-2026-11-23-w40.md) → `_components/nav-layout.ts` |
 | PO lot lines in whole packs (create, edit, receive) | [`api`](api/landing-2026-11-23-w41.md) → `vendor-bills/bill-line-identity.ts` |
 | Available credit, one helper for every statement surface | [`api`](api/landing-2026-11-23-w41.md) → `customers/available-credit.ts` |
-| Buyer statement credit total and list | [`api`](api/landing-2026-11-23-w41.md) → `buyer/buyer-statement-view.ts` |
 | Counter tender intent and on-account button | [`web`](web/landing-2026-11-23-w41.md) → `lib/counter-part-pay.ts` |
-| Buyer portal credit tile | [`web`](web/landing-2026-11-23-w41.md) → `app/buyer/portal/[seller]/finances/page.tsx` |
 | Receipt screen, View receipt link and toast | [`web`](web/landing-2026-11-23-w42.md) → `app/(dashboard)/finance/payments/[id]/page.tsx` |
-| Buyer invoice account rows, one renderer | [`web`](web/landing-2026-11-23-w42.md) → `components/InvoiceAccountRows.tsx` |
-| Buyer payment status word | [`web`](web/landing-2026-11-23-w42.md) → `lib/check-badge.ts` |
 | Ops board comments and rf inbox | [`api`](api/landing-2026-11-23-w42.md) → `tools/ops-monitor/lib/inbox.mjs` |
 | Group receipt card (receipt fields vs this payment) | [`web`](web/landing-2026-11-24-w43.md) → `app/(dashboard)/finance/payments/[id]/page.tsx` |
 | Buyer portal home landing (0 orders to Invoices) | [`web`](web/landing-2026-11-24-w43.md) → `app/buyer/portal/[seller]/page.tsx` |
@@ -141,6 +131,16 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Buyer line quantity bound (100,000) | [`packages`](packages/landing-2026-11-25-w48.md) → `pricing/src/unit-price-limit.ts`, `unit-line-count.ts` |
 | Price label naming the box | [`packages`](packages/landing-2026-11-25-w48.md) → `pricing/src/priced-per-label.ts` |
 | Edit leave guard, one-flight save | [`web`](web/landing-2026-11-25-w48.md) → `orders/[id]/edit-leave-guard.tsx`, `lib/api/single-flight.ts` |
+| Buyer edit grid steps by the box | [`packages`](packages/landing-2026-11-26-w49.md) → `pricing/src/buyer-edit-line.ts` |
+| History import, pure parts (parse, adapters, match, bind) | [`api`](api/landing-2026-11-26-w49.md) → `src/legacy-import/` |
+| Subscribe refuses a yearly cycle | [`api`](api/landing-2026-11-26-w49.md) → `src/billing/subscribe-cycle-guard.ts` |
+| Far-from-list price note | [`web`](web/landing-2026-11-26-w49.md) → `lib/far-from-list.ts` |
+| Brand seam (mail and layout name, origin, logo) | [`api`](api/landing-2026-11-26-w49.md) → `src/common/brand.ts` |
+| Payments wall (no Stripe session for a non-PRODUCTION business) | [`api`](api/landing-2026-11-27-w50.md) → `src/billing/live-payments-wall.ts` |
+| Mail wall (recipient list for test businesses) | [`api`](api/landing-2026-11-27-w50.md) → `src/email/recipient-wall.ts` |
+| Self-serve Pay now eligibility | [`api`](api/landing-2026-11-27-w50.md) → `src/billing/self-checkout-eligibility.ts` |
+| Landed-cost allocation and three-way split | [`packages`](packages/landing-2026-11-27-w50.md) → `pricing/src/landed-cost.ts` |
+| Payment refusal on an invoice not payable | [`api`](api/landing-2026-11-27-w50.md) → `src/invoices/invoice-send-guard.ts` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →

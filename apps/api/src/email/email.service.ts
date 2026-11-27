@@ -1,5 +1,12 @@
 import { logRecipient, redactAddresses } from "./redact-addresses";
 import {
+  MAIL_WALL_HOLD_CODE,
+  MAIL_WALL_UNCHECKED_CODE,
+  MAIL_WALL_WOULD_HOLD,
+  decideRecipientWall,
+  readMailWall,
+} from "./recipient-wall";
+import {
   DELIVERY_REF_HEADER,
   classifyFallbackReason,
   newDeliveryRefToken,
@@ -273,6 +280,17 @@ export type EmailSendParams = {
   attachments?: { filename: string; content: Buffer; contentType?: string }[];
 };
 
+/** What a platform send resolves to. */
+export type PlatformSendResult = {
+  delivered: boolean;
+  transport: "smtp" | "resend" | "none";
+  route?: EmailRoute;
+  id?: string;
+  error?: string;
+  /** W-1464: set only when the mail wall held the send. */
+  holdCode?: typeof MAIL_WALL_HOLD_CODE | typeof MAIL_WALL_UNCHECKED_CODE;
+};
+
 /** What a send resolves to. */
 export type EmailSendResult = {
   delivered: boolean;
@@ -299,6 +317,8 @@ export type EmailSendResult = {
   route?: EmailRoute;
   /** C29: why a tenant-server send fell back, as a class only (never provider text). Set on the fallback's result. */
   fallbackReason?: EmailFallbackClass;
+  /** W-1464: set only when the mail wall held the send (a Test business, recipient not on its list). The web maps the code to its own words. */
+  holdCode?: typeof MAIL_WALL_HOLD_CODE | typeof MAIL_WALL_UNCHECKED_CODE;
 };
 
 @Injectable()
@@ -1028,6 +1048,7 @@ export class EmailService {
     });
     // send() is honest-by-result and never throws for a delivery/config problem.
     const result = await this.send({
+      tenantId: this.prisma.getTenantId() ?? null,
       to: toEmail,
       subject: `${businessName} — Test Email`,
       html,
@@ -1194,6 +1215,7 @@ export class EmailService {
     // finds it. No tenant in scope (a system caller) = nothing recorded, as before.
     const tenantId = this.prisma.getTenantId();
     return this.send({
+      tenantId: tenantId ?? null,
       to: params.to,
       subject,
       html,
@@ -1247,6 +1269,77 @@ export class EmailService {
   }
 
   /**
+   * W-1464 (SA-1538 PR-A): the mail wall, beside `refuseSentinel` at both public send entries. A TEST-class
+   * business may mail only the addresses on its list (PlatformConfig). A platform-class caller that names no
+   * business (null) is never held; any other send falls back to the request's business; a send with no business
+   * field at all is held under its own code. A list that cannot be read holds (fail closed); a class that cannot be read holds too
+   * and logs an error. A TEST business with no list is the dark step: sends, logs once.
+   * Logs carry the recipient domain only (B911).
+   */
+  private async holdForTestBusiness(
+    tenantId: string | null | undefined,
+    to: string,
+  ): Promise<{
+    delivered: false;
+    transport: "none";
+    error: string;
+    holdCode: typeof MAIL_WALL_HOLD_CODE | typeof MAIL_WALL_UNCHECKED_CODE;
+  } | null> {
+    if (tenantId === undefined) {
+      // A path that should name its business and does not is a programming error: fail closed, loudly.
+      this.logger.error(
+        "mail wall: a send reached the wall with no business field; the send is held",
+      );
+      return {
+        delivered: false,
+        transport: "none",
+        error: "Not sent: the business could not be checked against its allowed list.",
+        holdCode: MAIL_WALL_UNCHECKED_CODE,
+      };
+    }
+    if (!tenantId) return null;
+    let klass: string | undefined;
+    try {
+      klass = (
+        await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { class: true } })
+      )?.class;
+    } catch {
+      // Fail closed: a business whose class cannot be read is held, never let through.
+      this.logger.error("mail wall: the business class could not be read; the send is held");
+      return {
+        delivered: false,
+        transport: "none",
+        error: "Not sent: the business could not be checked against its allowed list.",
+        holdCode: MAIL_WALL_HOLD_CODE,
+      };
+    }
+    if (klass !== "TEST") return null;
+    let list: Awaited<ReturnType<typeof readMailWall>>;
+    try {
+      list = await readMailWall(this.prisma, tenantId);
+    } catch {
+      list = { kind: "unreadable" };
+    }
+    const decision = decideRecipientWall({ klass, list, to });
+    if (decision === "would-hold") {
+      this.logger.warn(
+        `mail wall (dark): ${MAIL_WALL_WOULD_HOLD} a send to ${this.logRecipient(to)}: this test business has no allowed list yet`,
+      );
+      return null;
+    }
+    if (decision === "allow") return null;
+    this.logger.warn(
+      `mail wall: held a send to ${this.logRecipient(to)}: not on this test business's allowed list`,
+    );
+    return {
+      delivered: false,
+      transport: "none",
+      error: "Not sent: this is a test business and the recipient is not on its allowed list.",
+      holdCode: MAIL_WALL_HOLD_CODE,
+    };
+  }
+
+  /**
    * Send an email and return an HONEST result. NEVER throws for a delivery/config
    * problem — it returns `{delivered:false, …}` instead — so fire-and-forget callers
    * (auth password-reset, account-merge) are never turned into a 500 by an
@@ -1262,14 +1355,31 @@ export class EmailService {
    * recorded (every existing caller is unchanged).
    */
   async send(
-    params: EmailSendParams & { delivery?: EmailDeliveryContext },
+    params: EmailSendParams & {
+      delivery?: EmailDeliveryContext;
+      /**
+       * W-1464: the business this mail is on behalf of, named by the caller (never read off the request,
+       * which a cron or a public route does not have). `null` only where no business exists at all.
+       */
+      tenantId: string | null;
+    },
   ): Promise<EmailSendResult> {
     // B460: the one place a tenant-supplied subject becomes a header line (sendPlatform has its own).
     params = { ...params, subject: headerSafeSubject(params.subject) };
     // Sentinel guard (#2854 Opus B4 + r2): the public `send` is the one entry; a sentinel refuses
     // BEFORE any transport or delegation. With a delivery ctx the refusal records ONE masked
     // FAILED row (SA-615(3)); without a ctx nothing is recorded.
-    const refusedTo = this.refuseSentinel(params.to);
+    const refusedTo =
+      this.refuseSentinel(params.to) ??
+      (await this.holdForTestBusiness(
+        // A platform-class send names its business or none; any other send falls back to the request's.
+        params.senderClass === "platform"
+          ? params.tenantId
+          : params.tenantId === undefined
+            ? undefined
+            : (params.tenantId ?? this.prisma.getTenantId()),
+        params.to,
+      ));
     if (refusedTo) {
       const ctx = params.delivery;
       if (ctx) {
@@ -1356,7 +1466,8 @@ export class EmailService {
           `Email "${params.subject.slice(0, 60)}" asked for a platform send with ${params.layout ? "a layout spec" : "attachments"}, which the platform path drops. Build a platform email with email-layout.ts, or send tenant mail without senderClass "platform".`,
         );
       }
-      return this.sendPlatform(
+      // The wall already ran at the send entry (same business), so it does not run a second time here.
+      return this.deliverPlatform(
         {
           to: params.to,
           subject: params.subject,
@@ -1627,16 +1738,30 @@ export class EmailService {
       html: string;
       text?: string;
       replyTo?: string;
+      /** W-1464: the business this mail is about, or null for platform mail with none (owner alerts, demo booking). Required so the compiler finds every caller; never looked up from the recipient. */
+      tenantId: string | null;
     },
     /** W-1286 (SA-1202 C4'): the reference header value of a recorded send; absent = no header. */
     refToken?: string,
-  ): Promise<{
-    delivered: boolean;
-    transport: "smtp" | "resend" | "none";
-    route?: EmailRoute;
-    id?: string;
-    error?: string;
-  }> {
+  ): Promise<PlatformSendResult> {
+    const { tenantId, ...mail } = params;
+    // The wall (W-1464) runs here, beside the sentinel refusal that deliverPlatform also keeps.
+    const held = await this.holdForTestBusiness(tenantId, mail.to);
+    if (held) return held;
+    return this.deliverPlatform(mail, refToken);
+  }
+
+  /** The platform transport chain itself. The wall has already run: in sendPlatform, or at the send() entry. */
+  private async deliverPlatform(
+    params: {
+      to: string;
+      subject: string;
+      html: string;
+      text?: string;
+      replyTo?: string;
+    },
+    refToken?: string,
+  ): Promise<PlatformSendResult> {
     const refHeaders = refToken ? { headers: { [DELIVERY_REF_HEADER]: refToken } } : {};
     // B460: the same one-line subject rule as send(); billing and account mail enter here, not there.
     params = { ...params, subject: headerSafeSubject(params.subject) };
@@ -2139,6 +2264,8 @@ export class EmailService {
     // Security review Phase 2: account-merge verification is security mail — platform sender
     // only, never a tenant's connected mailbox/SMTP.
     return this.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: params.to,
       subject: `Confirm account merge — ${BRAND.name}`,
       html,
@@ -2195,6 +2322,8 @@ export class EmailService {
       footerNote: `${BRAND.name} Platform — automated notification.`,
     });
     await this.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: params.primaryEmail,
       subject: `Your accounts have been merged — ${BRAND.name}`,
       html: primary.html,
@@ -2221,6 +2350,8 @@ export class EmailService {
       footerNote: `${BRAND.name} Platform — automated notification.`,
     });
     await this.send({
+      // a buyer account is global: it belongs to no business.
+      tenantId: null,
       to: params.secondaryEmail,
       subject: `This account has been merged — ${BRAND.name}`,
       html: secondary.html,
@@ -2234,6 +2365,7 @@ export class EmailService {
    *  template — both hand the recipient the same single-use set-password link. */
   async sendSetPasswordEmail(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     setPasswordUrl: string;
     expiryHours: number;
@@ -2260,6 +2392,7 @@ export class EmailService {
     });
     return this.sendPlatform({
       to: params.to,
+      tenantId: params.tenantId,
       subject: `Set your ${BRAND.name} password`,
       html,
       text,
@@ -2274,6 +2407,7 @@ export class EmailService {
    */
   async sendTenantWelcomeEmail(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     businessName: string;
     workspace: string;
@@ -2321,6 +2455,7 @@ export class EmailService {
     });
     return this.sendPlatform({
       to: params.to,
+      tenantId: params.tenantId,
       subject: `Welcome to ${BRAND.name} — your ${params.businessName} workspace is ready`,
       html,
       text,
@@ -2328,7 +2463,12 @@ export class EmailService {
   }
 
   /** Notice to a user's OLD address after their login email is changed — never opt-out. */
-  async sendEmailChangedNotice(params: { to: string; username: string; newEmail: string }) {
+  async sendEmailChangedNotice(params: {
+    to: string;
+    tenantId: string | null;
+    username: string;
+    newEmail: string;
+  }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
       Your ${escapeHtml(BRAND.name)} login email was changed to <strong>${escapeHtml(params.newEmail)}</strong>.
@@ -2349,6 +2489,7 @@ export class EmailService {
     });
     return this.sendPlatform({
       to: params.to,
+      tenantId: params.tenantId,
       subject: `Your ${BRAND.name} login email was changed`,
       html,
       text,
@@ -2356,7 +2497,11 @@ export class EmailService {
   }
 
   /** Confirmation to a user's NEW address once it becomes their login email. */
-  async sendEmailChangeConfirmation(params: { to: string; username: string }) {
+  async sendEmailChangeConfirmation(params: {
+    to: string;
+    tenantId: string | null;
+    username: string;
+  }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
     <p style="margin:0;font-size:15px;color:#374151;">
       This address is now your ${escapeHtml(BRAND.name)} login email.
@@ -2370,6 +2515,7 @@ export class EmailService {
     });
     return this.sendPlatform({
       to: params.to,
+      tenantId: params.tenantId,
       subject: `This is now your ${BRAND.name} login email`,
       html,
       text,
@@ -2382,6 +2528,7 @@ export class EmailService {
    */
   async sendEmailChangeLink(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     confirmUrl: string;
     expiryHours: number;
@@ -2408,6 +2555,7 @@ export class EmailService {
     });
     return this.sendPlatform({
       to: params.to,
+      tenantId: params.tenantId,
       subject: `Confirm your new ${BRAND.name} login email`,
       html,
       text,
@@ -2420,6 +2568,7 @@ export class EmailService {
    */
   async sendEmailChangeRequestedNotice(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     maskedNewEmail: string;
   }) {
@@ -2443,6 +2592,7 @@ export class EmailService {
     });
     return this.sendPlatform({
       to: params.to,
+      tenantId: params.tenantId,
       subject: `A change to your ${BRAND.name} login email was requested`,
       html,
       text,
@@ -2451,6 +2601,7 @@ export class EmailService {
   /** Notice to a user when an operator/admin changes their role — never opt-out. */
   async sendRoleChangedNotice(params: {
     to: string;
+    tenantId: string | null;
     username: string;
     oldRole: string;
     newRole: string;
@@ -2473,6 +2624,7 @@ export class EmailService {
     });
     return this.sendPlatform({
       to: params.to,
+      tenantId: params.tenantId,
       subject: `Your ${BRAND.name} role was changed`,
       html,
       text,
@@ -2491,6 +2643,7 @@ export class EmailService {
    * honest-by-result).
    */
   async sendMailboxRevokedNotice(params: {
+    tenantId: string;
     to: string;
     username: string;
     accountEmail: string;
@@ -2513,6 +2666,7 @@ export class EmailService {
       footerNote: `${BRAND.name} Platform — automated notification.`,
     });
     return this.send({
+      tenantId: params.tenantId,
       to: params.to,
       subject: copy.subject,
       html,
@@ -2537,18 +2691,16 @@ export class EmailService {
    * past one bad address.
    */
   async sendLowStockDigest(params: {
+    tenantId: string;
     to: string;
     /** The tenant's configured name, or null: an unnamed tenant gets the neutral look, never the platform's. */
     businessName: string | null;
     items: { name: string; sku: string | null; currentStock: number; reorderPoint: number }[];
-  }): Promise<{
-    delivered: boolean;
-    transport: "mailbox" | "smtp" | "resend" | "none";
-    error?: string;
-  }> {
+  }): Promise<EmailSendResult> {
     const { html, text } = this.buildLowStockDigestEmail(params);
     const count = params.items.length;
     return this.send({
+      tenantId: params.tenantId,
       to: params.to,
       subject: `Low stock alert — ${count} item${count === 1 ? "" : "s"} below threshold`,
       html,
