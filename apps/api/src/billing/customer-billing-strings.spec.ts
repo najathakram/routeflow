@@ -33,7 +33,7 @@ describe("customer-facing catch-up and plan strings", () => {
     );
   });
 
-  it("the plan product name is 'RouteFlow {plan}' for both intervals", async () => {
+  it("the plan product name is the plan name alone for both intervals (SA-1547 Q3)", async () => {
     const pricing = {
       resolveTenantPricing: jest.fn().mockResolvedValue({
         planKey: "ENTERPRISE",
@@ -52,7 +52,8 @@ describe("customer-facing catch-up and plan strings", () => {
     // W-810: one shared, named plan product - the name lives on it, not on the line.
     expect(month.product).toBe("rf_plan_enterprise");
     expect(year.product).toBe(month.product);
-    expect(stripe.table.get(month.product)?.name).toBe("RouteFlow Enterprise");
+    expect(stripe.table.get(month.product)?.name).toBe("Enterprise");
+    expect(stripe.table.get(month.product)?.name).not.toMatch(DASH);
     expect(month.recurring).toEqual({ interval: "month" });
     expect(year.recurring).toEqual({ interval: "year" });
   });
