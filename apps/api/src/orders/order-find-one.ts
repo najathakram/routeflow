@@ -29,6 +29,7 @@ import * as rGate from "./order-restriction-gate";
 import * as flags from "./offline/review-flags";
 import * as carrierGuard from "./order-carrier-guard";
 import { editRevertedInvoicesFor, seesSentRevertConfirm } from "../invoices/order-edit-revert-set";
+import { attachLineEditModes } from "./delivered-line-facts";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { OrdersService } from "./orders.service";
 
@@ -156,7 +157,7 @@ export async function findOneImpl(self: OrdersService, id: string, user: JwtPayl
   // P5-08 edit window (G7): free editing is open until the order's run dispatches.
   // `editableUntil` (the soft cutoff countdown) stays null until the per-weekday
   // routes-cutoff config lands — the HARD close is dispatch, which is authoritative.
-  (order as any).editWindow = computeEditWindow(order, user.role);
+  (order as any).editWindow = computeEditWindow(order, user.role, order.lineItems);
   // B1083: the web disables Cancel from this (one server predicate, never re-derived client-side).
   Object.assign(order, {
     cancelBlockedReason: await carrierGuard.carrierBlocked(self, order),
@@ -173,6 +174,8 @@ export async function findOneImpl(self: OrdersService, id: string, user: JwtPayl
   await attachInvoicesNeedReview(self.prisma.forTenant(), order, user); // B1116 (staff only)
   await attachOrderToCollect(self.prisma.forTenant(), order, user); // SA-1026 (staff only)
   await attachLinesRearranged(self.prisma.forTenant(), order, user); // W-1187 (staff only)
+
+  await attachLineEditModes(self, order as any, user); // SA-1506 C1: each delivered line's edit mode (staff only)
 
   stampHandedOverBy(order, user); // row 342: staff only; the display name is built once, here
   return orderFor(user, order); // customer-facing fields only for the customer

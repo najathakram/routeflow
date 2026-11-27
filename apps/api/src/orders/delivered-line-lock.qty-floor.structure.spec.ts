@@ -109,9 +109,19 @@ describe("replace-all refusal and line-delete pins (SA-1149 P-a..P-e)", () => {
       "orders/orders.service.ts": 1,
       "orders/merge-lock-recheck.ts": 2,
     });
+    // SA-1506 PR-1a: the decider, its facts loader and the stamp read the SAME predicate (never a copy). SA-1544: the
+    // correction glue and the routing rule read it through the one `holdsLiveDeliveredLine` defined beside it.
     expect(countAcross("isLiveDeliveredLine")).toEqual({
-      "orders/delivered-line-lock.ts": 1,
+      "orders/delivered-line-edit-mode.ts": 2,
+      "orders/delivered-line-facts.ts": 1,
+      "orders/delivered-line-lock.ts": 3,
       "orders/delivered-stamp.ts": 1,
+    });
+    expect(
+      text("orders/delivered-line-lock.ts").match(/export const holdsLiveDeliveredLine/g),
+    ).toHaveLength(1);
+    expect(countAcross("export const holdsLiveDeliveredLine")).toEqual({
+      "orders/delivered-line-lock.ts": 1,
     });
   });
 

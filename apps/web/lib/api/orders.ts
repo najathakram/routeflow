@@ -18,6 +18,8 @@ import type {
   ToCollectState,
   PriceType,
   OrderCancelBlockedReason,
+  BuyerEditClosedReason,
+  LineEditModeFields,
 } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 import type {
@@ -156,7 +158,7 @@ export interface Order {
   editWindow?: {
     editable: boolean;
     editableUntil: string | null;
-    closedReason: "DISPATCHED" | "STATUS" | null;
+    closedReason: BuyerEditClosedReason | null;
   };
   /** B1116: STAFF-ONLY — whether the order's invoices need review (absent on buyer/driver reads and older API). */
   invoicesNeedReview?: OrderInvoicesNeedReview;
@@ -194,7 +196,7 @@ export interface OrderRevision {
 }
 
 /** Row 510: a STAFF read also carries the override stamp (and may carry the resolved name); a buyer read never does. */
-export interface OrderItem extends Partial<OverrideStampView> {
+export interface OrderItem extends Partial<OverrideStampView>, Partial<LineEditModeFields> {
   restrictionOverrideByName?: string | null;
   id: string;
   /** Null for unlisted (ad-hoc, non-catalog) lines — `name` carries the label instead. */
@@ -545,6 +547,10 @@ export interface ItemUpdate {
    *  Cases) — never expanded to base pieces client-side, and boxes/pieces must be
    *  omitted (assertUnitLabelNamed refuses an unnamed qty/price edit of a unit line). */
   qty?: number;
+  /** SA-1533 (s): an admin's take-off of a delivered line (CANCEL / DELETE) says nothing was delivered. 0 only. */
+  deliveredTo?: 0;
+  /** SA-1546 M2: the admin's opt-in to the server's delivered-line correction of a quantity change (server derives the figure). */
+  correctDelivered?: true;
   /** Boxed split so the server prorates by BOX price (unitPrice is the box price).
    *  Omit for non-boxed lines — the server then charges unitPrice * qty. Never send
    *  alongside unitLabel (units_v1 lines are count + label only). */

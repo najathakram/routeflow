@@ -9,6 +9,13 @@ import {
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { withOrderBillingLock } from "../invoices/order-billing-lock";
 import { shouldSkipInPlaceResync } from "./merge-idempotency";
+import {
+  CORRECT_OVERPAY_MESSAGE,
+  UNPROJECTED_ADDING_MESSAGE,
+  UNPROJECTED_CUTTING_MESSAGE,
+  fill,
+  lockedCopy,
+} from "./delivered-line-copy";
 
 /**
  * SA-763r P-3 (M4 + M5): an order edit can never create an overpayment, judged PER INVOICE under the invoice
@@ -37,7 +44,21 @@ export interface OverpayJudgeScope {
   partials: boolean;
   /** SA-956: the Order row's total before this edit wrote, read in-tx under the Order lock (the fallback judges a CUT only). */
   priorOrderTotal?: number;
+  /**
+   * SA-1506 PR-1a (B6): the edit is routed in place BY A HELD LIVE DELIVERED LINE (a reopened order), or carries a
+   * CORRECT entry. Then a live invoice the projection cannot reach (a manual line, lost provenance) is a 409 inside
+   * this transaction: the restatement bails after commit otherwise, with stock already moved.
+   */
+  requireFullProjection?: boolean;
+  /** SA-1506 PR-1a (B6): the in-place routing is new (held-line routing): a WRITTEN_OFF invoice is never rewritten. */
+  refuseWrittenOff?: boolean;
+  /** SA-1506 PR-1a: the words of the overpay refusal when an admin correction is the edit (SA-C change 3). */
+  overpayMessage?: string;
 }
+
+const OVERPAY_MESSAGE =
+  "This change would leave an invoice paid beyond its new total. If the goods came back, " +
+  "record a return instead of cutting the order.";
 
 export async function assertEditCannotOverpay(
   deps: {
@@ -61,9 +82,10 @@ export async function assertEditCannotOverpay(
         "built with the real InvoicesService (Nest DI does) or a complete fake (orders/testing/invoice-edit-stubs.ts).",
     );
   await withOrderBillingLock(tx, deps.tenantId, orderId);
+  if (scope.resync && scope.refuseWrittenOff) await assertNoWrittenOffInvoice(tx, orderId);
   const projected = await deps.invoices.projectEditedInvoiceTotals(tx, orderId, scope);
   if (scope.resync)
-    await assertOrderTotalCoversUnprojected(tx, orderId, projected, scope.priorOrderTotal);
+    await assertOrderTotalCoversUnprojected(tx, orderId, projected, scope.priorOrderTotal, scope);
   if (projected.length === 0) return;
   const payments: Array<{ invoiceId: string; amount: unknown }> = await tx.invoicePayment.findMany({
     where: {
@@ -82,15 +104,27 @@ export async function assertEditCannotOverpay(
     if (paid > projectedTotal + OVERPAID_EPSILON)
       throw new ConflictException({
         code: API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY,
-        message:
-          "This change would leave an invoice paid beyond its new total. If the goods came back, " +
-          "record a return instead of cutting the order.",
+        message: scope.overpayMessage ?? OVERPAY_MESSAGE,
         invoiceId: p.invoiceId,
         paid,
         projectedTotal,
         excess: roundMoney(paid - projectedTotal),
       });
   }
+}
+
+/** SA-1506 PR-1a (B6): an edit routed in place by a held delivered line never rewrites a WRITTEN_OFF invoice (every role). */
+async function assertNoWrittenOffInvoice(tx: any, orderId: string): Promise<void> {
+  const off: { invoiceNumber: string } | null = await tx.invoice.findFirst({
+    where: { orderId, status: InvoiceStatus.WRITTEN_OFF },
+    select: { invoiceNumber: true },
+    orderBy: { id: "asc" },
+  });
+  if (off)
+    throw new ConflictException({
+      code: API_ERROR_CODES.INVOICE_ALREADY_WRITTEN_OFF,
+      message: lockedCopy("WRITTEN_OFF", { invoiceNumber: off.invoiceNumber }),
+    });
 }
 
 /**
@@ -108,14 +142,29 @@ async function assertOrderTotalCoversUnprojected(
   orderId: string,
   projected: ReadonlyArray<{ invoiceId: string }>,
   priorOrderTotal: number | undefined,
+  scope: Pick<OverpayJudgeScope, "requireFullProjection" | "overpayMessage"> = {},
 ): Promise<void> {
-  const live: Array<{ id: string }> = await tx.invoice.findMany({
+  const live: Array<{ id: string; invoiceNumber?: string }> = await tx.invoice.findMany({
     where: { orderId, status: { not: InvoiceStatus.VOID } },
-    select: { id: true },
+    select: { id: true, invoiceNumber: true },
     orderBy: { id: "asc" },
   });
   const covered = new Set(projected.map((p) => p.invoiceId));
   if (live.every((i) => covered.has(i.id))) return;
+  if (scope.requireFullProjection) {
+    // SA-1415 table: the sentence follows the direction of the edit (adding vs cutting what is billed).
+    const now = await tx.order.findUnique({ where: { id: orderId }, select: { total: true } });
+    const adding =
+      priorOrderTotal != null &&
+      Number.isFinite(priorOrderTotal) &&
+      roundMoney(Number(now?.total ?? 0)) > priorOrderTotal + OVERPAID_EPSILON;
+    throw new ConflictException({
+      code: API_ERROR_CODES.ORDER_INVOICES_NEED_REVIEW,
+      message: fill(adding ? UNPROJECTED_ADDING_MESSAGE : UNPROJECTED_CUTTING_MESSAGE, {
+        invoiceNumber: live.find((i) => !covered.has(i.id))?.invoiceNumber,
+      }),
+    });
+  }
   const payments: Array<{ invoiceId: string; amount: unknown }> = await tx.invoicePayment.findMany({
     where: {
       invoiceId: { in: live.map((i) => i.id) },
@@ -138,9 +187,7 @@ async function assertOrderTotalCoversUnprojected(
     );
     throw new ConflictException({
       code: API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY,
-      message:
-        "This change would leave an invoice paid beyond its new total. If the goods came back, " +
-        "record a return instead of cutting the order.",
+      message: scope.overpayMessage ?? OVERPAY_MESSAGE,
       invoiceId: (uncovered ?? live[0]).id,
       paid,
       projectedTotal,
@@ -165,6 +212,10 @@ export async function judgeEditTail(
     role: string | undefined;
     /** SA-956: the Order's total before the edit wrote (read by `lockEditedOrder`). */
     priorOrderTotal?: number;
+    /** SA-1506 PR-1a (B4/B6): routed in place by a held live delivered line, not by status or the carrier. */
+    routedByHeldLines?: boolean;
+    /** SA-1506 PR-1a: the edit carries a CORRECT entry. */
+    hasCorrectEntry?: boolean;
   },
 ): Promise<boolean> {
   const skip = edit.postDeliveryEdit && shouldSkipInPlaceResync(edit.heldItems);
@@ -176,6 +227,12 @@ export async function judgeEditTail(
     // the SAME predicate the writer uses (reconcileOrderAfterEdit's `rebuilt`), so the scope is a superset.
     partials: staffEdit,
     priorOrderTotal: edit.priorOrderTotal,
+    // Only set when true, so an ordinary edit hands the judge exactly the scope it always did.
+    ...(edit.routedByHeldLines === true || edit.hasCorrectEntry === true
+      ? { requireFullProjection: true }
+      : {}),
+    ...(edit.routedByHeldLines === true ? { refuseWrittenOff: true } : {}),
+    overpayMessage: edit.hasCorrectEntry === true ? CORRECT_OVERPAY_MESSAGE : undefined,
   });
   return skip;
 }

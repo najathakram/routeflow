@@ -4,6 +4,11 @@ import { InvoiceStatus, UserRole } from "@prisma/client";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { lockRowsNoWait } from "../common/db-locks";
 import { carrierEditGuard, resyncsInPlace, type CarrierOrder } from "../orders/order-carrier-guard";
+import { holdsLiveDeliveredLine } from "../orders/delivered-line-lock";
+/** SA-1506 PR-1a (B4): the held lines the routing rule reads; REQUIRED so no caller can leave them out. */
+type HeldLinesForRouting = {
+  lineItems: ReadonlyArray<{ status?: unknown; deliveredQty?: unknown }>;
+};
 import { isTerminalOrderStatus } from "../common/terminal-order-statuses";
 
 /**
@@ -148,10 +153,18 @@ export async function quoteExcludedInvoiceIds(
   orderId: string,
   featureConfig: Parameters<typeof carrierEditGuard>[0]["featureConfig"],
 ): Promise<string[]> {
-  const order: (CarrierOrder & { id: string; status: string }) | null = await db.order.findFirst({
-    where: { id: orderId, customerId },
-    select: { id: true, status: true, fulfillPath: true, shippedAt: true, tenantId: true },
-  });
+  const order: (CarrierOrder & { id: string; status: string } & HeldLinesForRouting) | null =
+    await db.order.findFirst({
+      where: { id: orderId, customerId },
+      select: {
+        id: true,
+        status: true,
+        fulfillPath: true,
+        shippedAt: true,
+        tenantId: true,
+        lineItems: { select: { status: true, deliveredQty: true } },
+      },
+    });
   if (!order) {
     throw new BadRequestException({
       code: API_ERROR_CODES.SOURCE_SALE_INVALID,
@@ -189,14 +202,14 @@ export function sentRevertNeedsAck(
 
 export async function editRevertedInvoicesFor(
   db: RevertSetDb,
-  order: CarrierOrder & { id: string; status: string },
+  order: CarrierOrder & { id: string; status: string } & HeldLinesForRouting,
   featureConfig: Parameters<typeof carrierEditGuard>[0]["featureConfig"],
 ): Promise<EditRevertCandidate[]> {
   const guard = await carrierEditGuard(
     { featureConfig, prisma: { forTenant: () => db } as any },
     order,
   );
-  if (resyncsInPlace(order.status, guard)) return [];
+  if (resyncsInPlace(order.status, guard, holdsLiveDeliveredLine(order.lineItems))) return [];
   return selectEditRevertedInvoices(db, order.id);
 }
 

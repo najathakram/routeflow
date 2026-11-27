@@ -288,6 +288,9 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.DAY_CLOSED_FOR_PAYMENT_DATE]: DAY_CLOSED_FOR_PAYMENT_DATE_COPY,
   // P-4: the one overpay copy (order-overpay.ts); a surface with the structured numbers uses orderOverpayCopy.
   [API_ERROR_CODES.ORDER_EDIT_WOULD_OVERPAY]: ORDER_OVERPAY_GENERIC_COPY,
+  // SA-1506 AD-3 placeholder until SA-C words it.
+  [API_ERROR_CODES.ORDER_EDIT_EMPTIES_INVOICE]:
+    "This would leave the invoice with nothing on it. To bill nothing for this order, void the invoice.",
   HANDOFF_CODE_INVALID: "This sign-in link is invalid or has expired. Sign in again.",
   // SA-733r5 (billing go-live): a manual-pay account completes card setup through its RouteFlow contact, and a card
   // checkout already in progress blocks a second one. Fixed sentences; no ids.

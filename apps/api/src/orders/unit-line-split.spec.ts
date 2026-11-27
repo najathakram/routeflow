@@ -106,8 +106,12 @@ describe("the edit path reads a pieces-only split as a split (SA-1097 A-6, revie
   it("updateOrderItems' wasBoxSplit gate is boxes OR pieces, like the at-door gate and packForLineEdit", () => {
     const fs = require("fs") as typeof import("fs");
     const path = require("path") as typeof import("path");
-    const src = fs.readFileSync(path.resolve(__dirname, "orders.service.ts"), "utf8");
+    // SA-1506 PR-1 prefactor: the gate moved verbatim into edited-line-qty.ts (the helper updateOrderItems calls)
+    const src = fs.readFileSync(path.resolve(__dirname, "edited-line-qty.ts"), "utf8");
     expect(src).toContain("const wasBoxSplit = li.boxes != null || li.pieces != null;");
+    expect(fs.readFileSync(path.resolve(__dirname, "orders.service.ts"), "utf8")).toContain(
+      "resolveEditedLineQty(",
+    );
     expect(src).not.toMatch(/const wasBoxSplit = li\.boxes != null;/);
   });
 });

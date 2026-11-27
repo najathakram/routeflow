@@ -75,10 +75,9 @@ import { mergeIntoStoredLine, pickHeldMergeTarget } from "./stored-line-merge";
 import {
   loadLiveUnitsPerBoxByProduct,
   noPackEditQty,
-  packForLineEdit,
-  storedLineEditShape,
   storedLinePackForEdit,
 } from "./live-pack-map";
+import { resolveEditedLineQty } from "./edited-line-qty";
 import {
   oldestFirst,
   resolveSaleDelivery,
@@ -120,11 +119,10 @@ import * as cancelledLines from "./order-edit-cancelled";
 import * as driverAccess from "./driver-edit-access";
 import { assertRemovalsNameALine, writeLineRemoval, writeLineUpdate } from "./order-line-removal";
 import {
-  assertDeliveredLinesUntouched,
   assertQtyNotBelowDelivered,
   ORDER_HAS_NO_LIVE_DELIVERED_LINE,
-  reduceDeliveredLineEntries,
 } from "./delivered-line-lock";
+import { confirmedEditReverts, deliveredLineEdit } from "./delivered-line-correction";
 import { lockEditedOrder, editGuards } from "./replace-after-delivery";
 import { assertBuyerEditInput } from "./buyer-edit-input";
 import { CANCELLABLE_FROM, assertOrderStatusTransition } from "./order-status-transitions";
@@ -144,7 +142,7 @@ import {
   stampOrderIdempotencyKey,
   type IdempotencyLookupDeps,
 } from "./merge-idempotency";
-import { BUYER_EDIT_CLOSED_STATUSES } from "./edit-window";
+import { buyerEditClosed } from "./edit-window";
 import { linePositionAllocator, replaceSlotPlanner, settleReplaceSlots } from "./line-position";
 import { reorderOrderLines } from "./order-line-order";
 import type { ReorderLinesDto } from "./dto/reorder-lines.dto";
@@ -2041,7 +2039,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // ownership check below already gives them on every other status — otherwise
     // an authenticated buyer could read another customer's order status off the
     // response body. The extra read only runs on the path about to throw anyway.
-    if (user?.role === UserRole.CUSTOMER && BUYER_EDIT_CLOSED_STATUSES.includes(order.status)) {
+    if (user?.role === UserRole.CUSTOMER && buyerEditClosed(order, order.lineItems)) {
       // REG-B131: `deletedAt: null` — a removed customer's still-valid token resolves to no
       // owner and takes the bare 403 below, never the dispatch-state message.
       const owner = await this.prisma
@@ -2051,7 +2049,15 @@ export class OrdersService implements OnApplicationBootstrap {
       throw new ForbiddenException(await carrierGuard.buyerEditClosedMessage(this, order)); // B1135
     }
 
-    assertDeliveredLinesUntouched(order, order.lineItems ?? [], dto, user, isDiffPayload); // B1234: before any side effect
+    const dl = deliveredLineEdit({
+      deps: this,
+      order,
+      dto,
+      user,
+      isDiffPayload,
+      prisma: this.prisma,
+    });
+    await dl.assertPre(); // B1234: before any side effect (SA-1506: the decider's CORRECT / LOCKED)
     const { carrier, postDeliveryEdit } = await editGuards(this, order, user, dto, isDiffPayload); // B1083 D2, B215, W-861, W-871
     // Lane R: a banned product added by this edit warns / refuses BEFORE the invoice revert and any write; a draft is
     // judged at its promotion UNLESS it has a live (non-VOID) linked invoice: the reconcile after this edit copies the
@@ -2178,7 +2184,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // inventory error, not just a lost update. The row lock makes the
         // second writer wait; heldItems is then read post-lock and BEFORE any
         // orderItem write below, so it is the true pre-edit state.
-        await inlineReturn.lockInlineReturnCustomer(tx, inlineRet, order.customerId); // advisory FIRST
+        await dl.lockFirst(tx, inlineRet, order.customerId); // advisory FIRST (SA-1506 M5: + the returns lock for the lock class)
         const priorOrderTotal = await lockEditedOrder(tx, orderId, this.prisma.getTenantId()); // Order row (+ invoices: walk-in); SA-944 recheck; SA-956 total
         await assertRevisionCurrent(tx, orderId, dto.expectedRevisionNumber); // row 372: stale -> 409, nothing written
         let lineIdentity: "stable" | "recreated" = "stable"; // B1050: deleteMany + re-create flips it
@@ -2193,28 +2199,10 @@ export class OrdersService implements OnApplicationBootstrap {
         await assertNoMirrorAppearedUnderLock(tx, orderId, judgeEdit, order.status); // DRAFT edit vs a concurrent bill
         await driverAccess.assertDriverMayEditOrder(tx, orderId, user); // SA-429: re-derived under the Order lock
         cancelledLines.assertHeldCancelledLines(heldItems, dto.items, user, isDiffPayload); // SA-422
-        // B1234 / SA-814: the binding check. Applicability comes from the status read UNDER the Order lock (a delivery
-        // can flip the order to PARTIALLY_DELIVERED after the pre-tx read), never from `order.status`.
-        const lockedStatus = await tx.order.findUnique({
-          where: { id: orderId },
-          select: { status: true },
-        });
-        assertDeliveredLinesUntouched(
-          { status: lockedStatus?.status ?? order.status },
-          heldItems,
-          dto,
-          user,
-          isDiffPayload,
-        ); // B1234: the locked lines
-        // B1234: a delivered line's entry that the guard let through (it restated qty / price / split / unit)
-        // is cut to its note / reason / rename NOW, so the write loop below never reprices a delivered line
-        // from live promotions, the live product or the live ladder. Replaces the items in place: every later
-        // read of `dto.items` (the unit resolution below included) sees the reduced entries.
-        dto.items = reduceDeliveredLineEntries(
-          { status: lockedStatus?.status ?? order.status },
-          heldItems,
-          dto.items,
-        ) as typeof dto.items;
+        // B1234 / SA-814 / SA-1506: the binding check on the LOCKED lines and status, then the restated entries are cut
+        // to note / reason / rename so the write loop never reprices a delivered line (a CORRECT line's real change passes).
+        const modes = await dl.assertLocked(tx, heldItems);
+        dto.items = dl.reduce(modes, heldItems, dto.items) as typeof dto.items;
 
         // units_v1 (A1, #1102 precedent): the pre-lock resolution above can go stale under a
         // concurrent edit of the SAME line — re-run it against the just-locked, authoritative
@@ -3060,66 +3048,19 @@ export class OrdersService implements OnApplicationBootstrap {
                   await unitEdit.updateUnitLine(uctx, item.id!, p, unitRow, item, false, li.qty);
                   continue;
                 }
-                // A zero boxes+pieces payload is "not using box entry", not "zero
-                // quantity" (see create()) — a POSITIVE check keeps it from
-                // silently discarding a real item.qty typed alongside it (the
-                // `if (editHasSplit)` branch below ignores item.qty entirely).
-                const editHasSplit = (item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0;
-                const wasBoxSplit = li.boxes != null || li.pieces != null;
-                // Resolve the box size for a catalog line even on a qty-ONLY edit. A STORED split line reads the
-                // pack it was sold in, never today's product pack; one that can't be read is refused (SA-1097, L-332).
-                const {
-                  pack: unitsPerBox,
-                  soldWithNoPack,
-                  stored,
-                } = await packForLineEdit(tx as any, li, editHasSplit);
-                const upb = Number(unitsPerBox ?? 0);
-
-                // Resolve qty + the box/piece split, PRESERVING the line's denomination:
-                //  - an explicit boxes/pieces edit wins;
-                //  - else a box-split line re-derives its split from the new qty (box
-                //    price prorated, stale boxes/pieces refreshed);
-                //  - else a selling-unit / non-boxed line keeps boxes/pieces null.
-                let qty: number;
-                let boxes: number | null;
-                let pieces: number | null;
-                if (stored) {
-                  // SA-1097: a stored split line is edited at the pack it was sold in, never today's (live-pack-map.ts).
-                  ({ qty, boxes, pieces } = storedLineEditShape(
-                    item,
-                    li.qty,
-                    unitsPerBox,
-                    soldWithNoPack,
-                  ));
-                } else if (editHasSplit) {
-                  this.warnSplit("orders.update", { ...item, productId: li.productId }, upb);
-                  const split = normalizeBoxesPieces({
-                    boxes: item.boxes,
-                    pieces: item.pieces,
-                    qty: item.qty ?? Number(li.qty),
-                    unitsPerBox: upb,
-                  });
-                  qty = split.qty;
-                  boxes = split.boxes;
-                  pieces = split.pieces;
-                } else if (wasBoxSplit && upb > 1) {
-                  const split = normalizeBoxesPieces({
-                    qty: item.qty ?? Number(li.qty),
-                    unitsPerBox: upb,
-                  });
-                  qty = split.qty;
-                  boxes = split.boxes;
-                  pieces = split.pieces;
-                } else {
-                  qty = item.qty ?? Number(li.qty);
-                  boxes = null;
-                  pieces = null;
-                }
+                // qty + box/piece split, denomination preserved (edited-line-qty.ts: SA-1097, L-332)
+                const { qty, boxes, pieces, upb } = await resolveEditedLineQty(
+                  tx as any,
+                  li,
+                  item,
+                  (u) => this.warnSplit("orders.update", { ...item, productId: li.productId }, u),
+                );
                 if (qty <= 0) continue;
                 assertQtyNotBelowDelivered(
                   flooredDelivered.get(li.id) ?? li.deliveredQty,
                   li.qty,
                   qty,
+                  modes.get(li.id),
                 ); // SA-1149 D2: after normalizeBoxesPieces
 
                 const existingUnitPrice = Number(li.unitPrice);
@@ -3335,6 +3276,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // OUT_FOR_DELIVERY orders too (R1 allows editing them) — a qty
         // increase there means more goods physically went out, symmetric with
         // create()'s decrement at order time.
+        const corrected = await dl.applyCorrections(tx, modes, heldItems); // SA-1506: after the line writes, before the settle
         let creditGate: (() => Promise<void>) | null = null; // re-run after an inline return (SA-221)
         if (order.status !== "DRAFT") {
           const settleHeld = heldFloored; // SA-763r: input only; the same read as the per-line floor (SA-1149 F1)
@@ -3343,6 +3285,7 @@ export class OrdersService implements OnApplicationBootstrap {
             blockCredits: carrierLocked,
             lineIdentity,
             markerCarry,
+            correctedDelivered: corrected,
           });
           creditGate = () =>
             assertWithinCreditLimit(
@@ -3374,8 +3317,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // editing their own (pre-dispatch) CONFIRMED order still forces re-confirmation.
         // DRIVER edits never revert (drivers don't own the pick list).
         const runDispatched = order.routeRun != null && order.routeRun.status !== "SCHEDULED";
-        const shouldRevert =
-          order.status === "CONFIRMED" && !runDispatched && user?.role !== UserRole.DRIVER;
+        const shouldRevert = confirmedEditReverts(order, runDispatched, user, postDeliveryEdit);
         const revertNote = shouldRevert
           ? `\n[${new Date().toLocaleDateString()} – items edited, reverted to PENDING]`
           : undefined;
@@ -3406,8 +3348,15 @@ export class OrdersService implements OnApplicationBootstrap {
           { invoices: this.invoicesService, tenantId: this.prisma.getTenantId() },
           tx,
           orderId,
-          { heldItems, postDeliveryEdit, role: user?.role, priorOrderTotal },
+          {
+            heldItems,
+            postDeliveryEdit,
+            role: user?.role,
+            priorOrderTotal,
+            ...dl.judgeFlags(heldItems, order.status, carrier),
+          },
         );
+        await dl.restateInvoices(tx, corrected); // SA-1536 (ab): a correction restates in this tx; SA-1544 (aq) no catch
         // B215: the merge's replay key commits in THIS transaction, atomically with the fold —
         // never a second, later commit that a crash or a post-commit throw can split off.
         if (opts?.idempotency) {
@@ -3434,8 +3383,9 @@ export class OrdersService implements OnApplicationBootstrap {
       },
       // Headroom over Prisma's 5s default: the merge branch issues per-line
       // queries inside the transaction (same shape as create()'s in-tx per-line work).
-      { timeout: 15_000 },
+      dl.txOptions(), // SA-1544 (as): 20 s for the correction lock class, 15 s otherwise
     );
+    dl.flushAfterCommit(); // SA-1536 (ab): the in-tx invoice rebuild's emits
     inlineReturn.emitInlineReturnCredit(inlineRet, this.prisma.getTenantId(), inlineMinted);
 
     // R1b SAFETY (two adversarial-review catches): a PARTIALLY-invoiced order must NOT
@@ -3473,7 +3423,7 @@ export class OrdersService implements OnApplicationBootstrap {
       orderId,
       order.customerId,
       isStaffCreditEdit ? dto.appliedCreditNotes : undefined,
-      { postDeliveryEdit, skipInPlaceResync },
+      { postDeliveryEdit, skipInPlaceResync, restatedInTx: dl.restatedInTx() }, // SA-1544 (ar)
       user?.sub ?? null,
       isStaffCreditEdit,
     );
@@ -3515,7 +3465,7 @@ export class OrdersService implements OnApplicationBootstrap {
     orderId: string,
     customerId: string,
     appliedCreditNotes: AppliedCreditNoteDto[] | undefined,
-    routing: { postDeliveryEdit: boolean; skipInPlaceResync: boolean },
+    routing: { postDeliveryEdit: boolean; skipInPlaceResync: boolean; restatedInTx?: boolean },
     actor: string | null = null, // SA-763r P-3: the editing user, for the revision audit rows
     staffEdit = false, // SA-760 Q-760-1: only a staff edit re-prices DRAFT partials
   ): Promise<{

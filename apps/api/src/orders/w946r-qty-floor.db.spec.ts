@@ -457,8 +457,8 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
   const DELIVERED_LINES = {
     status: 409,
     response: {
-      code: "ORDER_EDIT_DELIVERED_LINES",
-      message: expect.stringContaining("Change each line instead"),
+      code: "LINES_REPLACE_AFTER_DELIVERY", // SA-1536 (ae): the head's answer for every sender of a full list
+      message: expect.stringContaining("Change its lines one at a time"),
     },
   };
   const driver = () => principal("DRIVER", driverUserId);
@@ -466,7 +466,7 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     edit(orderId, { replaceAll: true, items }, who);
   const full = (productId: string, qty: number) => ({ productId, qty, unitPrice: "1.00" });
 
-  it("D2-13 (B1167 re-pin a): a reopened (CONFIRMED) order, line {10, d10}, staff replace-all to [6] is 409 ORDER_EDIT_DELIVERED_LINES, nothing written, stock 90", async () => {
+  it("D2-13 (B1167 re-pin a): a reopened (CONFIRMED) order, line {10, d10}, staff replace-all to [6] is 409 LINES_REPLACE_AFTER_DELIVERY, nothing written, stock 90", async () => {
     const p = await product("d213b");
     const o = await delivered(p, 10, 10, "CONFIRMED");
     const before = await snapshot(o.id);
@@ -494,7 +494,7 @@ describeDb("W-946r quantity floor (SA-1149 D2), real Postgres", () => {
     });
   }, 120_000);
 
-  it("D2-15: a PENDING (reopened) route order with a delivered line, the driver's full list is 409 ORDER_EDIT_DELIVERED_LINES", async () => {
+  it("D2-15: a PENDING (reopened) route order with a delivered line, the driver's full list is 409 LINES_REPLACE_AFTER_DELIVERY", async () => {
     const p = await product("d215");
     const o = await delivered(p, 10, 4, "PENDING");
     const route = await raw.route.create({ data: { name: `d215 ${run}`, tenantId } as any });

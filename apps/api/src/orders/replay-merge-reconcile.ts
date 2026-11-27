@@ -1,6 +1,7 @@
 import { ConflictException, ForbiddenException, Logger } from "@nestjs/common";
 import { InvoiceStatus } from "@prisma/client";
 import * as carrierGuard from "./order-carrier-guard";
+import { holdsLiveDeliveredLine } from "./delivered-line-lock";
 import { IDEMPOTENCY_REPLAY_NEEDS_RECONCILE, shouldSkipInPlaceResync } from "./merge-idempotency";
 import type { AppliedCreditNoteDto } from "./dto/create-order.dto";
 
@@ -34,7 +35,7 @@ export async function replayMergeReconcile(
     select: {
       status: true,
       ...{ id: true, tenantId: true, fulfillPath: true, shippedAt: true }, // #3219 S4: carrier routing
-      lineItems: { select: { qty: true, invoicedQty: true } },
+      lineItems: { select: { qty: true, invoicedQty: true, deliveredQty: true, status: true } },
     },
   });
   if (!order) {
@@ -45,7 +46,13 @@ export async function replayMergeReconcile(
   // CURRENT state. That matches the fold's routing unless the state moved in between (a ship /
   // unmark after the fold committed changes `withCarrier`); then the current state decides.
   const carrierNow = await carrierGuard.carrierEditGuard(deps, order); // #3219 S4: as the fold routed
-  const postDeliveryEdit = carrierGuard.resyncsInPlace(order.status, carrierNow);
+  // SA-1506 PR-1a (B4): the same third input the fold read (a held live delivered line routes in place); SA-1149 keeps
+  // such orders out of merges, so for a merge replay it only matters when the status already routes in place.
+  const postDeliveryEdit = carrierGuard.resyncsInPlace(
+    order.status,
+    carrierNow,
+    holdsLiveDeliveredLine(order.lineItems),
+  );
   let skipInPlaceResync = false;
   if (postDeliveryEdit) {
     // Same BILLABLE filter the predicate itself applies (`shouldSkipInPlaceResync`,

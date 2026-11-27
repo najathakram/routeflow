@@ -23,6 +23,7 @@ export function deliveredSoFarFindManyArgs(orderIds: string[]) {
       orderId: true,
       orderItemId: true,
       routeRunStopId: true,
+      driverId: true,
       type: true,
       quantityDelivered: true,
     },
@@ -33,6 +34,8 @@ export interface RawEvidenceRowWithStop {
   orderId: string;
   orderItemId: string | null;
   routeRunStopId: string | null;
+  /** Who wrote the row (NULL = the office); needed by `isCorrectionRow`. Optional: older callers build rows without it. */
+  driverId?: string | null;
   type: string;
   quantityDelivered: unknown;
 }

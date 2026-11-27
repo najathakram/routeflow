@@ -70,6 +70,34 @@ export function isEvidenceRow(m: { type: string; quantityDelivered: unknown }): 
   );
 }
 
+/**
+ * SA-1506 A2 (NEW-M1): the ONE test of who wrote an evidence row. A row is "route" when it is evidence and a stop or a
+ * driver wrote it (`routeRunStopId != null || driverId != null`); every other row is "office". Callers filter
+ * `isEvidenceRow` first. No other file tests those two columns on a DeliveryMutation (structure pin:
+ * `evidence-origin.pin.spec.ts`).
+ */
+export function evidenceOrigin(m: {
+  type: string;
+  quantityDelivered: unknown;
+  routeRunStopId?: string | null;
+  driverId?: string | null;
+}): "office" | "route" {
+  return isEvidenceRow(m) && writtenOnRoute(m) ? "route" : "office";
+}
+
+/**
+ * SA-1546 (be): a different question from `evidenceOrigin`: did a stop or a driver write this row, whatever its type and
+ * whether or not it carries a delivered quantity? The at-door change-request merge writes ADD_ON / REFUSED rows with a
+ * stop or driver set and no `quantityDelivered`; an order a driver changed at the door is a route order, so the route
+ * lock reads this over every row of the order (no new query). The ONLY other place the two columns are tested.
+ */
+export function writtenOnRoute(m: {
+  routeRunStopId?: string | null;
+  driverId?: string | null;
+}): boolean {
+  return m.routeRunStopId != null || m.driverId != null;
+}
+
 export async function deliveredBasisByLine(
   db: TxOrClient,
   orderId: string,
@@ -78,6 +106,17 @@ export async function deliveredBasisByLine(
     where: { orderId },
     select: { orderItemId: true, type: true, quantityDelivered: true },
   });
+  return basisFromRows(mutations);
+}
+
+/** The pure fold of `deliveredBasisByLine`: callers that already read the order's evidence rows fold them, no second query. */
+export function basisFromRows(
+  mutations: ReadonlyArray<{
+    orderItemId: string | null;
+    type: string;
+    quantityDelivered: unknown;
+  }>,
+): DeliveredBasis {
   const qualifying = mutations.filter(isEvidenceRow);
   const byLineId = new Map<string, number>();
   for (const m of qualifying) {

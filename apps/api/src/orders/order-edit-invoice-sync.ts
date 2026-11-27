@@ -11,7 +11,7 @@ import { RECONCILE_PARTIALS } from "../invoices/invoice-partition";
 export async function syncInvoicesAfterEdit(
   invoices: InvoicesService,
   orderId: string,
-  routing: { postDeliveryEdit: boolean; skipInPlaceResync: boolean },
+  routing: { postDeliveryEdit: boolean; skipInPlaceResync: boolean; restatedInTx?: boolean },
   actor: string | null,
   staffEdit: boolean,
 ): Promise<Array<{ invoiceId: string; invoiceNumber: string | null }>> {
@@ -24,7 +24,11 @@ export async function syncInvoicesAfterEdit(
   //    lines at order basis, KEEP payments, recompute status/balance, and re-sync
   //    the regulated ledger — so the invoice tracks the correction and simply shows
   //    the new balance. Never blocks (bails on an unclean partition).
-  if (routing.postDeliveryEdit) {
+  if (routing.restatedInTx) {
+    // SA-1544 (ar) / A9 9.3 item 10: the edit transaction already restated every invoice (a correction), and queued the
+    // emits: neither the post-commit resync nor the price follow runs for it.
+    rebuilt = true;
+  } else if (routing.postDeliveryEdit) {
     if (!routing.skipInPlaceResync) {
       const resynced = await (actor
         ? invoices.resyncOrderInvoicesForEdit(orderId, undefined, undefined, actor)
