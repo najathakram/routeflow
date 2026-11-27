@@ -567,6 +567,7 @@ export function CustomerFormModal({
 
   return (
     <Modal
+      scroll={false} // B1444: CLIP
       open={isOpen}
       onClose={onClose}
       title={mode === "add" ? "Add Customer" : "Edit Customer"}

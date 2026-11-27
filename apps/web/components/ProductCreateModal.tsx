@@ -1,11 +1,12 @@
 "use client";
 
+import { useCatalogWhenOpen } from "@/lib/api/catalog-when-open";
 import * as React from "react";
 import { ImagePlus, X as XIcon } from "lucide-react";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { pricedPerLabel, unitWords, validateSetPrice } from "@routeflow/pricing";
 import type { SavePricesRequest } from "@routeflow/types";
-import { useCreateProduct, useProducts, uploadProductImages } from "@/lib/api/products";
+import { useCreateProduct, uploadProductImages } from "@/lib/api/products";
 import { apiClient } from "@/lib/api-client";
 import { fetchPriceGrid } from "@/lib/api/usePriceGrid";
 import { usePricesV2Enabled } from "@/lib/api/units-v2";
@@ -154,7 +155,7 @@ export function ProductCreateModal({
 
   // Every standalone product, for the "Variant of" picker — fetched here so
   // callers don't need to load/pass the full catalog themselves.
-  const { data: allProductsData } = useProducts({ limit: 0 });
+  const { data: allProductsData } = useCatalogWhenOpen(isOpen);
   const allProducts: any[] = allProductsData?.data ?? [];
   const parentCandidates = allProducts.filter((p) => !p.parentProductId);
   // Only once the catalog has loaded: while it is on its way "no products" would be a claim, not a fact.
@@ -564,7 +565,6 @@ export function ProductCreateModal({
       open={isOpen}
       onClose={onClose}
       title="New product"
-      scroll
       className="max-w-lg"
       // Pinned to the top, fade-in only: rows that change height must not recentre the form.
       anchor="top"

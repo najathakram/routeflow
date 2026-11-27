@@ -231,7 +231,6 @@ export function ParkedSalesDialog({
         }}
         closeClassName="min-h-11 min-w-11 flex items-center justify-center"
         title="Parked sales"
-        scroll
         className="max-w-2xl"
       >
         <div className="space-y-3">

@@ -12,6 +12,7 @@ import {
   TENANT_PRICE_LOCK_SELF_SERVE_WAIT_MS,
   TENANT_PRICE_LOCK_WAIT_MS,
 } from "./price-lock";
+import { assertTenantLivePaymentsAllowed } from "./live-payments-wall";
 import {
   checkoutStartFromSession,
   checkoutUiMode,
@@ -203,6 +204,8 @@ export async function openCheckoutSession(
   return underSlotLock(
     a.tenantId,
     async () => {
+      // W-1464: under the tenant-price lock, before the first Stripe call (the list, the expire, the create)
+      await assertTenantLivePaymentsAllowed(d.prisma, a.tenantId);
       const sessions = await tenantSessions(d, a.tenantId, a.customerId);
       if (hasUnapplied(sessions, await readRow(d, a.tenantId))) throw inProgress();
       const { terms, params } = await a.readOffer(); // the ONLY term read, under the lock

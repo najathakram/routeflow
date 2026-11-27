@@ -5,6 +5,7 @@ import { resolveZone } from "../common/tenant-time-zone";
 import { SubscriptionService } from "./subscription.service";
 import { seesBillingMoney } from "./subscription-billing-extras";
 import { PaymentDueService } from "./payment-due.service";
+import { selfPayForViewer } from "./self-checkout-eligibility";
 import { billingStatusOf, hasStaleDunningMarker, hasTwoPaySources } from "./billing-status";
 
 /** The warn-once sets are bounded like the existing caches: past this the OLDEST tenant is forgotten (it may warn again). */
@@ -33,6 +34,8 @@ export class BillingStatusService {
     tenantId: string,
     role: string | undefined,
     now = new Date(),
+    /** A support session (the token's `impersonatedBy`): the checkout route refuses it, so no Pay now is offered. */
+    impersonated = false,
   ): Promise<BillingStatusView> {
     // The FULL subscription view (an operator's trimmed one omits the amounts the sentence names); the role rule is
     // applied by `billingStatusOf`, so no amount is read from a trimmed copy.
@@ -42,7 +45,12 @@ export class BillingStatusService {
       resolveZone(this.prisma, { tenantId }),
     ]);
     const input = {
-      subscription,
+      subscription: subscription.selfPay
+        ? {
+            ...subscription,
+            selfPay: selfPayForViewer(subscription.selfPay, { role, impersonated }),
+          }
+        : subscription,
       paymentDue,
       now,
       timeZone: zone.zone,

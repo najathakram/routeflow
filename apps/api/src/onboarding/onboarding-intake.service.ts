@@ -26,6 +26,7 @@ import { StorageService } from "../storage/storage.service";
 import { ProrationService } from "../billing/proration.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
+import { BRAND } from "../common/brand";
 import { hashSignedToken, mintSignedToken, verifySignedToken } from "../common/signed-token";
 import {
   ADMIN_AUDIT_ENTITY,
@@ -159,13 +160,14 @@ export class OnboardingIntakeService {
     let emailed = false;
     if (send) {
       const r = await this.email.sendPlatform({
+        tenantId: c.tenantId,
         to: c.contactEmail,
         ...routeflowFragmentMail({
-          subject: "Your RouteFlow order and setup questionnaire",
+          subject: `Your ${BRAND.name} order and setup questionnaire`,
           heading: "Your setup page",
           bodyHtml: linkEmailHtml(c.contactName, c.companyName, expiresAt),
           cta: { label: "Open your setup page", url },
-          why: "You are getting this because RouteFlow set up an order for your company and sent you its setup page.",
+          why: `You are getting this because ${BRAND.name} set up an order for your company and sent you its setup page.`,
         }),
       });
       emailed = r.delivered;
@@ -486,12 +488,13 @@ export class OnboardingIntakeService {
     });
     if (action === "request_changes") {
       const r = await this.email.sendPlatform({
+        tenantId: c.tenantId,
         to: c.contactEmail,
         ...routeflowFragmentMail({
           subject: `A few questions about your ${SECTION_LABEL[key]} answers`,
           heading: "A few questions about your answers",
           bodyHtml: sentBackEmailHtml(c.contactName, SECTION_LABEL[key], note!),
-          why: "You are getting this because you sent in your RouteFlow setup answers.",
+          why: `You are getting this because you sent in your ${BRAND.name} setup answers.`,
         }),
       });
       if (!r.delivered)
@@ -773,7 +776,7 @@ function acceptanceView(
 }
 
 function webUrl(): string {
-  return (process.env.WEB_URL || "https://www.routeflow.info").replace(/\/+$/, "");
+  return (process.env.WEB_URL || BRAND.origin).replace(/\/+$/, "");
 }
 
 function firstName(name: string): string {
@@ -783,7 +786,7 @@ function firstName(name: string): string {
 function linkEmailHtml(contactName: string, companyName: string, expiresAt: Date): string {
   const expires = escapeHtml(expiresAt.toISOString().slice(0, 10));
   return `<p>Hi ${escapeHtml(firstName(contactName))},</p>
-<p>Here’s your secure link to review your RouteFlow order for ${escapeHtml(companyName)} and fill in the setup questionnaire.</p>
+<p>Here’s your secure link to review your ${escapeHtml(BRAND.name)} order for ${escapeHtml(companyName)} and fill in the setup questionnaire.</p>
 <p>The link works until ${expires}. Please don’t forward it, and never put passwords or bank details into the form. We’ll ask for those separately.</p>`;
 }
 

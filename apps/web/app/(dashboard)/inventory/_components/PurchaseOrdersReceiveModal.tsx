@@ -3,7 +3,7 @@
 import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
-import { linePack, normalizeBoxesPieces } from "@routeflow/pricing";
+import { formatQtySplit, linePack, normalizeBoxesPieces } from "@routeflow/pricing";
 import { unitsLabel } from "@/lib/stock-label";
 import { useReceivePurchaseOrder } from "@/lib/api/inventory";
 import type { POItem, PurchaseOrder } from "./purchase-orders-shared";
@@ -61,26 +61,45 @@ export function ReceivePOModal({
     ),
   );
 
+  /** What the clerk has typed for a line, as one piece total (a boxed line's Boxes + Pieces, normalised). */
+  const receivingQtyOf = (item: POItem) => {
+    const upb = unitsPerBoxFor(item);
+    if (upb > 1) {
+      const split = receivedSplits[item.id] ?? { boxes: "0", pieces: "0" };
+      const boxes = Math.max(0, Math.trunc(Number(split.boxes) || 0));
+      const pieces = Math.max(0, Math.trunc(Number(split.pieces) || 0));
+      // Sent as a piece total via `receivedQty` (the API accepts an
+      // equivalent `boxes`/`pieces` split too). Quantity is the only thing
+      // that converts: this line's `unitCost` is already per piece from
+      // creation (CreatePOModal's resolvePOLine) and receiving never
+      // re-scales it.
+      return normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb }).qty;
+    }
+    return Number(receivedQtys[item.id] ?? 0);
+  };
+  /** The warning for a line that takes in more than is still to come, or null. The API refuses such a
+   *  receipt (409/400 "only N outstanding"), so Confirm stays off until it is fixed. */
+  const overReceiptOf = (item: POItem): string | null => {
+    const qty = receivingQtyOf(item);
+    const outstanding = outstandingOf(item);
+    if (!(qty > outstanding)) return null;
+    const upb = unitsPerBoxFor(item);
+    const say = (n: number) =>
+      upb > 1
+        ? (() => {
+            const s = normalizeBoxesPieces({ qty: n, unitsPerBox: upb });
+            return formatQtySplit({ qty: s.qty, boxes: s.boxes, pieces: s.pieces });
+          })()
+        : String(n);
+    const tail = outstanding === Number(item.qtyOrdered ?? 0) ? "ordered" : "still to come";
+    return `${say(qty)} is more than the ${say(outstanding)} ${tail}.`;
+  };
+  const anyOverReceipt = po.items.some((item) => overReceiptOf(item) !== null);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const items = po.items.map((item) => {
-      const upb = unitsPerBoxFor(item);
-      if (upb > 1) {
-        const split = receivedSplits[item.id] ?? { boxes: "0", pieces: "0" };
-        const boxes = Math.max(0, Math.trunc(Number(split.boxes) || 0));
-        const pieces = Math.max(0, Math.trunc(Number(split.pieces) || 0));
-        // Sent as a piece total via `receivedQty` (the API accepts an
-        // equivalent `boxes`/`pieces` split too). Quantity is the only thing
-        // that converts: this line's `unitCost` is already per piece from
-        // creation (CreatePOModal's resolvePOLine) and receiving never
-        // re-scales it.
-        return {
-          id: item.id,
-          receivedQty: normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb }).qty,
-        };
-      }
-      return { id: item.id, receivedQty: Number(receivedQtys[item.id] ?? 0) };
-    });
+    if (anyOverReceipt) return;
+    const items = po.items.map((item) => ({ id: item.id, receivedQty: receivingQtyOf(item) }));
     receivePO.mutate(
       { id: po.id, items },
       {
@@ -186,6 +205,22 @@ export function ReceivePOModal({
                               className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
                             />
                           )}
+                          {isBoxed && (
+                            <p
+                              data-testid="receive-line-total"
+                              className="mt-1 text-center text-[11px] text-navy/70"
+                            >
+                              = {receivingQtyOf(item).toLocaleString("en-US")} pcs
+                            </p>
+                          )}
+                          {overReceiptOf(item) && (
+                            <p
+                              role="alert"
+                              className="mt-1 text-center text-[11px] font-medium text-danger"
+                            >
+                              {overReceiptOf(item)}
+                            </p>
+                          )}
                         </td>
                       </tr>
                     );
@@ -198,7 +233,7 @@ export function ReceivePOModal({
             <Button variant="secondary" onClick={onClose} type="button">
               Cancel
             </Button>
-            <Button type="submit" loading={receivePO.isPending}>
+            <Button type="submit" loading={receivePO.isPending} disabled={anyOverReceipt}>
               Confirm receipt
             </Button>
           </div>

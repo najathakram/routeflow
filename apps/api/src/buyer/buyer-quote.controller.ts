@@ -4,6 +4,8 @@ import { Throttle } from "@nestjs/throttler";
 import { OrdersService } from "../orders/orders.service";
 import { quoteForBuyer, type BuyerCartQuote } from "../orders/order-quote";
 import { PrismaService } from "../prisma/prisma.service";
+import { assertBuyerCreateItemsWithinCap } from "../orders/buyer-line-cap";
+import { loadLiveUnitsPerBoxByProduct } from "../orders/live-pack-map";
 import { assertBuyerQtySplit } from "./buyer-qty-split";
 import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
 import { makePseudoUser } from "./buyer.controller";
@@ -42,6 +44,14 @@ export class BuyerQuoteController {
     @Body() dto: BuyerCreateOrderDto,
     @CurrentBuyerCustomer() ctx: any,
   ): Promise<BuyerCartQuote> {
+    // B1386: the same piece-total cap as POST /buyer/orders, so a cart that cannot be ordered is not quoted.
+    assertBuyerCreateItemsWithinCap(
+      dto.items,
+      await loadLiveUnitsPerBoxByProduct(
+        this.prisma.forTenant(),
+        dto.items.map((i) => i.productId),
+      ),
+    );
     await assertBuyerQtySplit(this.prisma.forTenant(), dto.items, "buyer.cartQuote", ctx.tenantId);
     return quoteForBuyer(this.ordersService, dto.items, dto.fulfillPath, makePseudoUser(ctx));
   }

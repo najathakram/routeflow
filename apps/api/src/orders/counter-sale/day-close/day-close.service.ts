@@ -550,6 +550,7 @@ export class CounterDayCloseService {
         });
         for (const address of to) {
           const result = await this.email.send({
+            tenantId: tenantId,
             to: address,
             // subject, html, text: built and escaped in z-report-email.ts (which the html-interpolation guard scans)
             ...mail,

@@ -159,6 +159,258 @@ const pages = () => fs.readdirSync(SITE).filter((f) => f.endsWith(".html"));
 const html = (f: string) => fs.readFileSync(path.join(SITE, f), "utf8");
 const num = (s: string) => Number(s.replace(/,/g, ""));
 
+/**
+ * SA-1287 A1: the regulated-items fee claim is a contract, not a free sentence.
+ *  - Every element that states the fee carries data-claim="regulated-fee", and its text must EQUAL one of the texts
+ *    allowedFeeTexts() derives from the catalog (plan order, included-at plan, add-on price).
+ *  - A sweep over every site page fails any fee sentence outside a carrier.
+ *  - At least one carrier must exist on the site.
+ */
+const FEE_MARK = 'data-claim="regulated-fee"';
+type FeePlan = { planKey: string; name: string };
+
+const listNames = (n: string[]) =>
+  n.length < 2 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+
+function allowedFeeTexts(
+  plans: ReadonlyArray<FeePlan>,
+  includedAt: string | null | undefined,
+  monthly: unknown,
+) {
+  const i = plans.findIndex((p) => p.planKey === includedAt);
+  if (i < 0) throw new Error(`includedAtPlan ${String(includedAt)} is not a catalog plan`);
+  if (i === 0) throw new Error("the add-on is free on every plan; there is no fee to state");
+  const waivedNames = plans.slice(i).map((p) => p.name);
+  const waived = listNames(waivedNames);
+  const charged = listNames(plans.slice(0, i).map((p) => p.name));
+  // the price is written the way the page writes it (prices.js groups thousands: "1,000")
+  const price = typeof monthly === "number" ? monthly.toLocaleString("en-US") : String(monthly);
+  const texts = [
+    `$${price} a month on ${charged}. No fee on ${waived}.`,
+    `${waived} also get regulated items at no fee.`,
+  ];
+  // "the largest plans" is plural: true only while at least two plans waive the fee
+  if (waivedNames.length >= 2) texts.push(`$${price} a month, and no fee on the largest plans.`);
+  return texts;
+}
+
+const ENTITY: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+};
+function normalizeText(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#([0-9]+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&([a-z]+);/gi, (m, n) => ENTITY[n.toLowerCase()] ?? m)
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\s+/g, " ")
+    .replace(/\$ (\d)/g, "$$$1")
+    .replace(/ ([.,!?])/g, "$1")
+    .trim();
+}
+
+/** The carriers' text and the page without them. The scan counts nested tags of the same name: a plain
+ *  non-greedy match stops at the first closing tag and breaks on the price span inside a carrier. */
+function splitCarriers(page: string): { texts: string[]; rest: string } {
+  const texts: string[] = [];
+  let rest = "";
+  let pos = 0;
+  for (;;) {
+    const at = page.indexOf(FEE_MARK, pos);
+    if (at < 0) break;
+    const open = page.lastIndexOf("<", at);
+    const tag = /^<([a-z0-9]+)/i.exec(page.slice(open))?.[1].toLowerCase();
+    if (!tag) throw new Error("a fee marker sits outside an element");
+    const innerStart = page.indexOf(">", at) + 1;
+    const re = new RegExp(`<(/?)${tag}\\b[^>]*>`, "gi");
+    re.lastIndex = innerStart;
+    let depth = 1;
+    let innerEnd = -1;
+    let end = -1;
+    for (let m = re.exec(page); m; m = re.exec(page)) {
+      depth += m[1] ? -1 : 1;
+      if (depth === 0) {
+        innerEnd = m.index;
+        end = m.index + m[0].length;
+        break;
+      }
+    }
+    if (end < 0) throw new Error(`an unclosed <${tag}> fee carrier`);
+    texts.push(normalizeText(page.slice(innerStart, innerEnd)));
+    rest += `${page.slice(pos, open)} `;
+    pos = end;
+  }
+  return { texts, rest: rest + page.slice(pos) };
+}
+
+const SWEEP_BREAK =
+  /<\/?(?:p|li|ul|ol|td|th|tr|table|h[1-6]|div|section|article|header|footer|nav|main|aside|figure|figcaption|summary|details|dt|dd|br|button|a|label|blockquote|title)\b[^>]*>/gi;
+
+function feeSentences(rest: string): string[] {
+  const body = rest
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "\n")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "\n")
+    .replace(/<!--[\s\S]*?-->/g, "\n")
+    .replace(SWEEP_BREAK, "\n");
+  const out: string[] = [];
+  for (const chunk of body.split("\n")) {
+    const text = normalizeText(chunk);
+    for (const sentence of text.split(/(?<=[.!?])\s+/)) if (sentence) out.push(sentence);
+  }
+  return out;
+}
+
+/** The backstop (SA-1287 A1 (ii), kept by A2): fee phrasings that name neither the add-on nor a plan. */
+function feeSweepPatterns(plans: ReadonlyArray<FeePlan>): RegExp[] {
+  return [
+    /no fee on/i,
+    /free on/i,
+    /largest plans/i,
+    /a month on/i,
+    ...plans.map((p) => new RegExp(`\\b${p.name}\\b[^.!?]*\\bfee\\b`, "i")),
+  ];
+}
+
+/**
+ * SA-1287 A2: the SUBJECT CENSUS. A sentence is in the census when it names the add-on (the word "regulated",
+ * any case) or a catalog plan (its name as a whole word, case-sensitive). It looks at every page's visible text
+ * with the carriers removed, plus the values of alt, aria-label, title and the meta descriptions. Each census
+ * sentence must be inside a marked carrier or be an exact [page, sentence] entry of NON_FEE_SENTENCES, and the
+ * list must equal the census both ways: a new or edited sentence is "unclassified", a gone one is "stale".
+ */
+function subjectPatterns(plans: ReadonlyArray<FeePlan>): RegExp[] {
+  return [/\bregulated\b/i, ...plans.map((p) => new RegExp(`\\b${p.name}\\b`))];
+}
+
+/** The value of one attribute in a tag: double-quoted, single-quoted or unquoted. */
+function attrValue(tag: string, name: string): string | undefined {
+  const m = new RegExp(
+    String.raw`(?:^|[\s"'/<])${name}\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>=]+))`,
+    "i",
+  ).exec(tag);
+  return m ? (m[1] ?? m[2] ?? m[3]) : undefined;
+}
+
+/** Meta tags whose content is public text: the descriptions, the titles and the share-image text. */
+const META_TEXT =
+  /^(?:description|og:description|twitter:description|og:title|twitter:title|og:image:alt|twitter:image:alt)$/i;
+
+function attributeSentences(page: string): string[] {
+  const values: string[] = [];
+  for (const tag of page.matchAll(/<[a-z][^>]*>/gi)) {
+    for (const name of ["alt", "aria-label", "title", "placeholder"]) {
+      const v = attrValue(tag[0], name);
+      if (v !== undefined) values.push(v);
+    }
+    if (/^<meta[ \t\r\n/>]/i.test(tag[0])) {
+      const key = attrValue(tag[0], "name") ?? attrValue(tag[0], "property");
+      const content = attrValue(tag[0], "content");
+      if (key && META_TEXT.test(key) && content !== undefined) values.push(content);
+    }
+  }
+  const out: string[] = [];
+  for (const v of values)
+    for (const sentence of normalizeText(v).split(/(?<=[.!?])\s+/))
+      if (sentence) out.push(sentence);
+  return out;
+}
+
+/** The census of one page: the subject sentences outside carriers, in page order, without repeats. */
+function subjectSentences(page: string, plans: ReadonlyArray<FeePlan>): string[] {
+  const { rest } = splitCarriers(page);
+  const subjects = subjectPatterns(plans);
+  const all = [...feeSentences(rest), ...attributeSentences(page)];
+  return [...new Set(all.filter((sentence) => subjects.some((re) => re.test(sentence))))];
+}
+
+type NonFeeEntry = readonly [page: string, sentence: string];
+
+/** Every [page, sentence] on the site that names the add-on or a plan and states no fee. Reviewed one by one;
+ *  an entry is added only after a reader confirms the sentence states no fee. No patterns, no wildcards. */
+const NON_FEE_SENTENCES: ReadonlyArray<NonFeeEntry> = [
+  ["does-and-doesnt.html", "Sell regulated items Goods like tobacco, with extra legal rules."],
+  ["does-and-doesnt.html", "Regulated items."],
+  ["getting-started.html", "The trial is on the Starter plan, and it's free."],
+  ["home.html", "Starter"],
+  ["home.html", "Growth"],
+  ["home.html", "Scale"],
+  ["home.html", "Enterprise"],
+  ["home.html", "Every trial starts on Starter, 14 days free."],
+  ["home.html", "Need more than Scale?"],
+  ["home.html", "about Enterprise."],
+  ["home.html", "Every trial starts on Starter."],
+  ["home.html", "Starter is $99 a month, Growth is $249, and Scale is $499."],
+  ["home.html", "Every trial starts on Starter and runs for 14 days."],
+  ["home.html", "for Starter, Growth, and Scale before you start."],
+  ["company.html", "for Starter, Growth, and Scale before you start."],
+  ["pricing.html", "Regulated items We turn it on for you."],
+  ["pricing.html", "Starter"],
+  ["pricing.html", "Growth"],
+  ["pricing.html", "Everything in Starter, plus:"],
+  ["pricing.html", "Scale"],
+  ["pricing.html", "Everything in Growth, plus:"],
+  ["pricing.html", "Enterprise"],
+  ["pricing.html", "Everything in Scale, plus:"],
+  ["pricing.html", "Every trial starts on Starter and lasts 14 days."],
+  ["pricing.html", "Starter is $99 a month, Growth is $249, and Scale is $499."],
+  ["pricing.html", "Every trial starts on Starter and runs for 14 days."],
+  ["pricing.html", "Starter, Growth, Scale, and Enterprise."],
+  ["product.html", "Sell regulated items Goods like tobacco, with extra legal rules."],
+  ["product.html", "Drivers can't complete a stop with regulated items."],
+  ["product.html", "Sell regulated items"],
+  ["product.html", "100 Starter"],
+  ["product.html", "250 Growth"],
+  ["product.html", "500 Scale"],
+];
+
+/** Every problem with the fee claim across the given pages (throws when the catalog leaves no fee to state). */
+function feeClaimProblems(
+  pages: Record<string, string>,
+  plans: ReadonlyArray<FeePlan>,
+  includedAt: string | null | undefined,
+  monthly: unknown,
+  nonFee: ReadonlyArray<NonFeeEntry>,
+): string[] {
+  const allowed = allowedFeeTexts(plans, includedAt, monthly);
+  const listed = new Set(nonFee.map(([pg, sentence]) => `${pg}\n${sentence}`));
+  const seen = new Set<string>();
+  const feeWords = feeSweepPatterns(plans);
+  const problems: string[] = [];
+  let carriers = 0;
+  for (const [name, page] of Object.entries(pages)) {
+    const { texts, rest } = splitCarriers(page);
+    carriers += texts.length;
+    for (const t of texts)
+      if (!allowed.includes(t)) problems.push(`${name}: carrier mismatch: "${t}"`);
+    for (const sentence of subjectSentences(page, plans)) {
+      seen.add(`${name}\n${sentence}`);
+      if (!listed.has(`${name}\n${sentence}`)) {
+        problems.push(`${name}: unclassified sentence names the add-on or a plan: "${sentence}"`);
+      }
+    }
+    for (const sentence of [...feeSentences(rest), ...attributeSentences(page)]) {
+      if (feeWords.some((re) => re.test(sentence))) {
+        problems.push(`${name}: sweep: unmarked fee sentence: "${sentence}"`);
+      }
+    }
+  }
+  for (const [pg, sentence] of nonFee) {
+    if (!seen.has(`${pg}\n${sentence}`)) {
+      problems.push(`${pg}: stale allow-list entry: "${sentence}"`);
+    }
+  }
+  if (carriers === 0) problems.push(`no carrier: no element carries ${FEE_MARK}`);
+  return problems;
+}
+
 describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})`, () => {
   const catalog = catalogOnSale();
   const site = sitePrices();
@@ -232,9 +484,237 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
     }
   });
 
-  it("the regulated-items fee line follows the catalog's included-at plan", () => {
-    expect(sku("REGULATED_ITEMS")?.includedAtPlan).toBe("SCALE");
-    expect(html("pricing.html")).toMatch(/No fee on Scale and Enterprise\./);
+  const feePlans = () => catalog.plans as unknown as FeePlan[];
+  const feeAt = () => sku("REGULATED_ITEMS")?.includedAtPlan as string | null | undefined;
+  const feeMonthly = () => sku("REGULATED_ITEMS")?.monthlyPrice;
+
+  it("the regulated-items fee claim is marked, equals the catalog's text, and appears nowhere unmarked", () => {
+    expect(feeAt()).toBe("SCALE"); // kept tripwire: a catalog move re-opens SA-1287
+    const byPage: Record<string, string> = {};
+    for (const f of pages()) byPage[f] = html(f);
+    expect(feeClaimProblems(byPage, feePlans(), feeAt(), feeMonthly(), NON_FEE_SENTENCES)).toEqual(
+      [],
+    );
+    const carriers = Object.values(byPage).reduce((n, h) => n + splitCarriers(h).texts.length, 0);
+    expect(carriers).toBeGreaterThanOrEqual(1);
+  });
+
+  describe("the fee claim guard, on planted pages (SA-1287 A1)", () => {
+    const price = '$<span data-addon="REGULATED" data-field="monthly">39</span>';
+    const mark = (inner: string, tag = "span") => `<${tag} ${FEE_MARK}>${inner}</${tag}>`;
+    const T1 = `${price} a month on Starter and Growth. No fee on Scale and Enterprise.`;
+    const T3 = `${price} a month, and no fee on the largest plans.`;
+    const T2 = "Scale and Enterprise also get regulated items at no fee.";
+    const TRIAL = "The trial is on the Starter plan, and it's free.";
+    const run = (
+      html: string,
+      at: string | null | undefined = "SCALE",
+      monthly = 39,
+      nonFee: ReadonlyArray<NonFeeEntry> = [],
+    ) => feeClaimProblems({ "planted.html": html }, feePlans(), at, monthly, nonFee);
+    const unclassified = (text: string) =>
+      `planted.html: unclassified sentence names the add-on or a plan: "${text}"`;
+    const stale = (text: string) => `planted.html: stale allow-list entry: "${text}"`;
+    const mismatch = (text: string) => `planted.html: carrier mismatch: "${text}"`;
+    const unmarked = (text: string) => `planted.html: sweep: unmarked fee sentence: "${text}"`;
+    const valid = `<li>${mark(T3)}</li>`;
+
+    it.each([
+      ["master wording (T1)", `<li>We turn it on for you. ${mark(T1)}</li>`],
+      ["the one-line wording (T3)", valid],
+      ["the home wording (T2) after a lead-in", `<p>The plans differ. ${mark(T2)}</p>`],
+      [
+        "a true trial sentence beside a valid carrier",
+        `<p>The trial is on the Starter plan, and it's free.</p>${valid}`,
+      ],
+    ])("green: %s", (_n, page) => {
+      expect(run(page, "SCALE", 39, page.includes(TRIAL) ? [["planted.html", TRIAL]] : [])).toEqual(
+        [],
+      );
+    });
+
+    it("green: a lowercase word that is a plan name's stem is not in the census", () => {
+      expect(run(`<p>The growth of your business. Grow it.</p>${valid}`)).toEqual([]);
+    });
+
+    // each red case asserts the WHOLE problem list: it names its own planted text and nothing else
+    it.each([
+      [
+        "F1 an extra waiver",
+        mark(`${price} a month on Starter. No fee on Growth. No fee on Scale and Enterprise.`),
+        [mismatch("$39 a month on Starter. No fee on Growth. No fee on Scale and Enterprise.")],
+      ],
+      [
+        "F2 the wrong charge side",
+        mark(`${price} a month on Starter, Growth and Scale. No fee on Scale and Enterprise.`),
+        [mismatch("$39 a month on Starter, Growth and Scale. No fee on Scale and Enterprise.")],
+      ],
+      [
+        "F3a a plan the catalog lacks",
+        mark(`${T3} No fee on Pro.`),
+        [mismatch("$39 a month, and no fee on the largest plans. No fee on Pro.")],
+      ],
+      [
+        "F3b an every-plan claim",
+        mark(`${T3} Free on every plan.`),
+        [mismatch("$39 a month, and no fee on the largest plans. Free on every plan.")],
+      ],
+      [
+        "F3c a negated sentence",
+        mark(`${price} a month, and not: No fee on Scale and Enterprise.`),
+        [mismatch("$39 a month, and not: No fee on Scale and Enterprise.")],
+      ],
+      [
+        "F4 a second fee line, marked (only the bad one is reported)",
+        `${valid}<li ${FEE_MARK}>No fee on Growth and Scale.</li>`,
+        [mismatch("No fee on Growth and Scale.")],
+      ],
+      [
+        "L1 the home line names the wrong plans",
+        `<p>${mark("Growth, Scale and Enterprise also get regulated items at no fee.")}</p>`,
+        [mismatch("Growth, Scale and Enterprise also get regulated items at no fee.")],
+      ],
+    ])("red: %s", (_n, page, expected) => {
+      expect(run(page)).toEqual(expected);
+    });
+
+    it("red: F4 a second fee line, unmarked, is unclassified and fails the backstop", () => {
+      expect(run(`${valid}<li>No fee on Growth and Scale.</li>`)).toEqual([
+        unclassified("No fee on Growth and Scale."),
+        unmarked("No fee on Growth and Scale."),
+      ]);
+    });
+
+    it("red: L1 today's product sentence, unmarked, is flagged twice over (census and backstop)", () => {
+      const product = `<p>We turn it on for you. It's ${price} a month on Starter and Growth. There's no fee on Scale and Enterprise.</p>`;
+      expect(run(`${valid}${product}`)).toEqual([
+        unclassified("It's $39 a month on Starter and Growth."),
+        unclassified("There's no fee on Scale and Enterprise."),
+        unmarked("It's $39 a month on Starter and Growth."),
+        unmarked("There's no fee on Scale and Enterprise."),
+      ]);
+    });
+
+    it("red: R1 one waiver makes the plural line false", () => {
+      expect(run(`<li>${mark(T3)}</li>`, "ENTERPRISE")).toEqual([
+        mismatch("$39 a month, and no fee on the largest plans."),
+      ]);
+    });
+
+    it.each([
+      ["R-162 a", "Growth includes regulated items at no charge."],
+      ["R-162 b", "Regulated items are free for Scale and Enterprise."],
+      ["R-162 c", "We waive it on Growth."],
+    ])("red: %s, an unmarked wording, is unclassified", (_n, sentence) => {
+      expect(run(`<p>${sentence}</p>${valid}`)).toEqual([unclassified(sentence)]);
+    });
+
+    it("red: an edited allowed sentence is unclassified (and the old entry is stale)", () => {
+      const edited = `${TRIAL} Regulated items are free on it.`;
+      expect(run(`<p>${edited}</p>${valid}`, "SCALE", 39, [["planted.html", TRIAL]])).toEqual([
+        unclassified("Regulated items are free on it."),
+        unmarked("Regulated items are free on it."),
+      ]);
+    });
+
+    it("red: an allow-list entry no longer on its page is stale", () => {
+      expect(run(valid, "SCALE", 39, [["planted.html", TRIAL]])).toEqual([stale(TRIAL)]);
+    });
+
+    it("red: a claim in an aria-label is unclassified, and the backstop sees it too", () => {
+      const label = "Regulated items are free on Scale";
+      expect(run(`<svg role="img" aria-label="${label}"></svg>${valid}`)).toEqual([
+        unclassified(label),
+        unmarked(label),
+      ]);
+    });
+
+    it("red: a claim in a meta description is unclassified", () => {
+      const text = "Growth includes regulated items at no charge.";
+      const meta = `<meta name="description" content="${text}">`;
+      expect(run(`${meta}${valid}`)).toEqual([unclassified(text)]);
+    });
+
+    it.each([
+      [
+        "a single-quoted aria-label",
+        "<svg aria-label='Growth includes regulated items at no charge.'></svg>",
+      ],
+      ["an unquoted alt", "<img alt=Scale>"],
+      ["a title attribute", '<a title="Growth includes regulated items at no charge.">x</a>'],
+      ["a placeholder", '<input placeholder="Growth includes regulated items at no charge.">'],
+      [
+        "og:title",
+        '<meta property="og:title" content="Growth includes regulated items at no charge.">',
+      ],
+      [
+        "twitter:title",
+        '<meta name="twitter:title" content="Growth includes regulated items at no charge.">',
+      ],
+      [
+        "og:image:alt",
+        '<meta property="og:image:alt" content="Growth includes regulated items at no charge.">',
+      ],
+      [
+        "a single-quoted meta",
+        "<meta property='og:description' content='Growth includes regulated items at no charge.'>",
+      ],
+    ])("red: %s is read and unclassified", (_n, markup) => {
+      const text = markup.includes("alt=Scale")
+        ? "Scale"
+        : "Growth includes regulated items at no charge.";
+      expect(run(`${markup}${valid}`)).toEqual([unclassified(text)]);
+    });
+
+    it.each([
+      ["a decimal entity", "<p>Growth includes &#114;egulated items at no charge.</p>"],
+      ["a hex entity", "<p>Growth includes &#x72;egulated items at no charge.</p>"],
+    ])("red: %s cannot hide the add-on word", (_n, markup) => {
+      expect(run(`${markup}${valid}`)).toEqual([
+        unclassified("Growth includes regulated items at no charge."),
+      ]);
+    });
+
+    it("red: a plan name written with a numeric entity is still found", () => {
+      expect(run(`<p>&#71;rowth is great.</p>${valid}`)).toEqual([
+        unclassified("Growth is great."),
+      ]);
+    });
+
+    it("red: the backstop catches a fee sentence that names neither the add-on nor a plan", () => {
+      expect(run(`<p>No fee on the largest plans.</p>${valid}`)).toEqual([
+        unmarked("No fee on the largest plans."),
+      ]);
+    });
+
+    it("the allow-list has no repeated entry", () => {
+      const keys = NON_FEE_SENTENCES.map(([pg, sentence]) => `${pg}\n${sentence}`);
+      expect(keys.length - new Set(keys).size).toBe(0);
+    });
+
+    it("a price of 1,000 or more is written with its thousands separator", () => {
+      const big = '$<span data-addon="REGULATED" data-field="monthly">1,000</span>';
+      const t3 = `${big} a month, and no fee on the largest plans.`;
+      expect(run(`<li>${mark(t3)}</li>`, "SCALE", 1000)).toEqual([]);
+      const plain = t3.replace("1,000", "1000");
+      expect(run(`<li>${mark(plain)}</li>`, "SCALE", 1000)).toEqual([
+        mismatch("$1000 a month, and no fee on the largest plans."),
+      ]);
+    });
+
+    it("red: R2 the fee is not stated when every plan waives it", () => {
+      expect(() => run(valid, "STARTER")).toThrow(/free on every plan/);
+    });
+
+    it("red: R3 the included-at plan must be a catalog plan", () => {
+      expect(() => run(valid, "PRO")).toThrow(/not a catalog plan/);
+    });
+
+    it("red: no carrier anywhere", () => {
+      expect(run(`<p>${TRIAL}</p>`, "SCALE", 39, [["planted.html", TRIAL]])).toEqual([
+        `no carrier: no element carries ${FEE_MARK}`,
+      ]);
+    });
   });
 
   it("every data-bound price span holds the value prices.js gives it", () => {
@@ -252,7 +732,8 @@ describe(`the public prices match the plan catalog on sale (v${ON_SALE_VERSION})
         }
       }
     }
-    expect(seen).toBe(42); // exact: 51 on master, minus the nine yearly spans (SA-1282 item 3)
+    // exact, as on master: the pricing page keeps its plan cards and table (R-210 M2)
+    expect(seen).toBe(42);
     expect(bad).toEqual([]);
   });
 

@@ -12,6 +12,8 @@ import { BillingStatusService } from "./billing-status.service";
 interface AuthUser {
   tenantId: string | null;
   role?: string;
+  /** The platform admin's id in a support session. */
+  impersonatedBy?: string;
 }
 
 /**
@@ -35,6 +37,6 @@ export class BillingStatusController {
     if (!user.tenantId) {
       throw new ForbiddenException("This billing view requires a tenant context.");
     }
-    return this.status.get(user.tenantId, user.role);
+    return this.status.get(user.tenantId, user.role, undefined, Boolean(user.impersonatedBy));
   }
 }

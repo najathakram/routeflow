@@ -20,7 +20,7 @@ jest.mock("../storage/compress.util", () => ({
 import { BadRequestException, Logger } from "@nestjs/common";
 import { componentUnitPrice4 } from "@routeflow/pricing";
 import { InvoicesService } from "./invoices.service";
-import { planPartialPriceFollow } from "./partial-price-follow";
+import { applyPartialPriceFollow, planPartialPriceFollow } from "./partial-price-follow";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { SplitInvoiceFakeDb, fakeOrderLine } from "./testing/split-invoice-fake-db";
 import { buildSplitInvoicesService } from "./testing/split-invoice-service";
@@ -36,6 +36,7 @@ describe("SA-760 Q-760-1: a DRAFT partial follows order price edits (price only)
   };
 
   beforeEach(async () => {
+    mockLedger.settleRegulatedLedger.mockClear(); // shared across tests: B1461 reads its calls
     prisma = createMockPrisma();
     db = new SplitInvoiceFakeDb();
     db.install(prisma);
@@ -280,6 +281,78 @@ describe("SA-760 Q-760-1: a DRAFT partial follows order price edits (price only)
     const out = await service.followPartialPrices("ord-1");
     expect(out.issuedPartialsUnchanged).toEqual([]);
     expect(db.invoiceUpdateCalls).toHaveLength(0);
+  });
+
+  describe("B1461: the follow re-syncs a DRAFT partial's tax ledger through the one funnel", () => {
+    /** The line nets the ledger was last told for `invoiceId` (creation books once; a follow must re-tell it). */
+    const toldNets = (invoiceId: string) => {
+      const calls = mockLedger.settleRegulatedLedger.mock.calls
+        .map((c) => c[1])
+        .filter((e) => e.kind === "INVOICE_BILLED" && e.invoiceId === invoiceId);
+      return calls.length ? calls[calls.length - 1].lines.map((l: any) => l.netSales) : null;
+    };
+
+    it("REG-B1461: the DRAFT partial's ledger is told the followed net (180), not the old one (169.20)", async () => {
+      const created = await partialA(72);
+      expect(toldNets(created.id)).toEqual([169.2]); // booked at creation (SA-962 row 721)
+      repriceA();
+      await service.followPartialPrices("ord-1");
+      expect(toldNets(created.id)).toEqual([180]); // master: [169.2], the follow never called the ledger
+    });
+
+    it("REG-B1461: two partials of one line, the DRAFT's ledger follows to 120 (master 112.80)", async () => {
+      const first = await partialA(72);
+      const second = await partialA(48);
+      db.invoices.find((i) => i.id === first.id)!.status = "SENT";
+      repriceA();
+      await service.followPartialPrices("ord-1");
+      expect(toldNets(second.id)).toEqual([120]); // master: [112.8] (282 - 169.20 at creation)
+    });
+
+    it("pin: an issued (SENT) partial is never re-synced by the follow", async () => {
+      const created = await partialA(72);
+      db.invoices.find((i) => i.id === created.id)!.status = "SENT";
+      mockLedger.settleRegulatedLedger.mockClear();
+      repriceA();
+      await service.followPartialPrices("ord-1");
+      expect(mockLedger.settleRegulatedLedger).not.toHaveBeenCalled();
+    });
+
+    it("the apply-only re-sync gets the draft's re-read rows, once per followed draft", async () => {
+      const created = await partialA(72);
+      repriceA();
+      const resyncLedger = jest.fn().mockResolvedValue({ written: 0, amendedPeriod: null });
+      await applyPartialPriceFollow(
+        (service as any).followDeps(),
+        (prisma as any).forTenant(),
+        "ord-1",
+        resyncLedger,
+      );
+      expect(
+        resyncLedger.mock.calls.map((c) => [
+          c[0],
+          c[1].map((r: any) => [r.id, Number(r.subtotal)]),
+        ]),
+      ).toEqual([[created.id, [[created.items[0].id, 180]]]]); // master: [] (never called)
+    });
+
+    it("plan mode is handed no ledger writer (the deps carry none)", () => {
+      expect(Object.keys((service as any).followDeps()).sort()).toEqual(
+        ["applyMsrp", "buildItem", "taxRateOf", "tenantId"].sort(),
+      );
+    });
+
+    it("projecting (plan mode) tells the ledger nothing", async () => {
+      await partialA(72);
+      mockLedger.settleRegulatedLedger.mockClear();
+      repriceA();
+      await service.projectEditedInvoiceTotals(
+        { ...(prisma as any).forTenant(), $executeRaw: jest.fn() },
+        "ord-1",
+        { resync: false, partials: true },
+      );
+      expect(mockLedger.settleRegulatedLedger).not.toHaveBeenCalled();
+    });
   });
 
   it("projectEditedInvoiceTotals({partials}) reports exactly the total the follow then writes", async () => {

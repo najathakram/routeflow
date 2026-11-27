@@ -51,9 +51,11 @@ export function useCustomerListbox<C extends CustomerMatch>(
         e.preventDefault();
         setClosed(false);
         setActive((i) => (i <= 0 ? matches.length - 1 : i - 1));
-      } else if (e.key === "Enter" && open && active >= 0 && matches[active]) {
+      } else if (e.key === "Enter" && open && matches[active >= 0 ? active : 0]) {
+        // B1469: the hint says "Enter to pick", so Enter with nothing highlighted picks the first row. (Customer search only:
+        // items are scanned in their own field, so a scanner's Enter never lands here.)
         e.preventDefault();
-        onPick(matches[active]);
+        onPick(matches[active >= 0 ? active : 0]);
       } else if (e.key === "Escape" && open) {
         e.preventDefault();
         setClosed(true);

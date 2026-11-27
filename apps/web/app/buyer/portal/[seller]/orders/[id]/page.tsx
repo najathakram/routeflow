@@ -36,10 +36,17 @@ import {
 import {
   billedChargeLines,
   computeLineSubtotal,
+  editRowCount,
+  editRowLimitLine,
+  editRowMax,
   invoiceLineQtyText,
   normalizeBoxesPieces,
   packFromOwnSplit,
   roundMoney,
+  seedEditRowUnit,
+  setEditRowCount,
+  type EditRow,
+  type EditRowUnit,
 } from "@routeflow/pricing";
 import { buyerEditPayloadItems } from "@/lib/buyer-edit-payload";
 import {
@@ -88,9 +95,16 @@ interface BuyerEditLine {
   qty: number;
   unitsPerBox?: number | null;
   boxSplit?: boolean;
+  /** B1395: the unit the row counts in (boxes, pieces or packs), decided once at seed and kept for the edit session. */
+  editUnit?: EditRowUnit;
   /** BUY_N_GET_M snapshot on the loaded line + the whole-unit count it was earned at. */
   promoFreeUnits?: number | null;
   promoBaseUnits?: number | null;
+}
+
+/** B1395: the row as the one pricing helper reads it (step, typed count and limit all go through it). */
+function editRowOf(i: BuyerEditLine): EditRow {
+  return { orderItemId: i.orderItemId, qty: i.qty, unitsPerBox: i.unitsPerBox, unit: i.editUnit };
 }
 
 /** A row's identity: its stored line, else (a row added in this session) its product. */
@@ -643,6 +657,8 @@ export default function BuyerOrderDetailPage() {
   // Row 380: the revision the editor LOADED when edit mode opened; a background refetch never moves it.
   const openedRevision = React.useRef<number | undefined>(undefined);
   const [stale, setStale] = React.useState(false);
+  // B1395: the row whose count just hit the limit, so its limit line shows under the stepper.
+  const [limitKey, setLimitKey] = React.useState<string | null>(null);
   const [editItems, setEditItems] = React.useState<
     Array<
       BuyerEditLine & {
@@ -735,6 +751,13 @@ export default function BuyerOrderDetailPage() {
         unitPrice: Number(li.unitPrice),
         unitsPerBox: li.product!.unitsPerBox ?? null,
         boxSplit: li.boxes != null || li.pieces != null,
+        editUnit: seedEditRowUnit({
+          orderItemId: li.id,
+          qty: Number(li.qty),
+          boxes: li.boxes,
+          pieces: li.pieces,
+          unitsPerBox: li.product!.unitsPerBox ?? null,
+        }),
         // BUY_N_GET_M snapshot + the whole-unit count it was earned at, so the
         // preview keeps the reduced subtotal the read-only row already shows.
         promoFreeUnits: li.promoFreeUnits ?? null,
@@ -744,6 +767,17 @@ export default function BuyerOrderDetailPage() {
       })),
     );
     setEditMode(true);
+  };
+
+  /** B1395: set a row's count in its OWN unit (a box on a box line); the qty sent stays pieces. Never below 1. */
+  const setRowCount = (item: BuyerEditLine & { productId: string }, count: number) => {
+    const n = Math.max(1, Math.trunc(Number(count)) || 1);
+    setLimitKey(n > editRowMax(editRowOf(item)) ? editRowKey(item) : null);
+    setEditItems((prev) =>
+      prev.map((i) =>
+        editRowKey(i) === editRowKey(item) ? { ...i, qty: setEditRowCount(editRowOf(i), n) } : i,
+      ),
+    );
   };
 
   const handleSaveEdit = async () => {
@@ -1118,15 +1152,7 @@ export default function BuyerOrderDetailPage() {
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
                             <button
-                              onClick={() =>
-                                setEditItems((prev) =>
-                                  prev.map((i) =>
-                                    editRowKey(i) === editRowKey(item)
-                                      ? { ...i, qty: Math.max(1, i.qty - 1) }
-                                      : i,
-                                  ),
-                                )
-                              }
+                              onClick={() => setRowCount(item, editRowCount(editRowOf(item)) - 1)}
                               disabled={stale}
                               className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center disabled:opacity-40"
                             >
@@ -1135,34 +1161,24 @@ export default function BuyerOrderDetailPage() {
                             <input
                               type="number"
                               min={1}
-                              value={item.qty}
-                              onChange={(e) => {
-                                const v = Math.max(1, Number(e.target.value));
-                                setEditItems((prev) =>
-                                  prev.map((i) =>
-                                    editRowKey(i) === editRowKey(item) ? { ...i, qty: v } : i,
-                                  ),
-                                );
-                              }}
+                              value={editRowCount(editRowOf(item))}
+                              onChange={(e) => setRowCount(item, Number(e.target.value))}
                               disabled={stale}
                               className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy max-lg:h-11 disabled:opacity-40"
                             />
                             <button
-                              onClick={() =>
-                                setEditItems((prev) =>
-                                  prev.map((i) =>
-                                    editRowKey(i) === editRowKey(item)
-                                      ? { ...i, qty: i.qty + 1 }
-                                      : i,
-                                  ),
-                                )
-                              }
+                              onClick={() => setRowCount(item, editRowCount(editRowOf(item)) + 1)}
                               disabled={stale}
                               className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy max-lg:inline-flex max-lg:min-h-11 max-lg:min-w-11 max-lg:items-center max-lg:justify-center disabled:opacity-40"
                             >
                               <Plus className="h-3.5 w-3.5" />
                             </button>
                           </div>
+                          {limitKey === editRowKey(item) && (
+                            <p role="status" className="mt-1 text-right text-xs text-navy/70">
+                              {editRowLimitLine(editRowOf(item), { unit: item.unit })}
+                            </p>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right text-sm text-navy/70 max-sm:hidden">
                           {item.unitPrice ? fmt(item.unitPrice) : "—"}
@@ -1288,6 +1304,9 @@ export default function BuyerOrderDetailPage() {
                             name: p.name,
                             unit: p.unit,
                             unitPrice: p.buyerPrice,
+                            // a new row counts packs (SA-601); the pack bounds it. Money is unchanged: no split, so qty x price.
+                            unitsPerBox: p.unitsPerBox ?? null,
+                            editUnit: "PACK",
                           },
                         ]);
                         setAddSearch("");

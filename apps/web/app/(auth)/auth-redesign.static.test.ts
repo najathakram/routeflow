@@ -68,7 +68,7 @@ describe("components/auth/auth-shell.css — T2c (R5)", () => {
   it.each([
     // The shell sits inside the site frame and uses the site's own tokens.
     "var(--rf-r-card)",
-    "var(--b700)",
+    "var(--rf-btn)",
     "max-width: 520px",
     "prefers-reduced-motion",
     // Longhands: the `padding`/`border` shorthands out-specify `pr-10`/`border-danger`.

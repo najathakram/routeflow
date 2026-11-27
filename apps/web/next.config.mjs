@@ -1,8 +1,298 @@
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildContentSecurityPolicy } from "./csp.mjs";
+import { listAppRoutes, placeStays } from "./lib/app-route-paths.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// The ready-made pages (public/site/<page>.html) and the address each is served at: the one list the
+// rewrites and the raw-path redirects below read. lib/static-site-page.ts keeps the same list for
+// the route (static-site.test.ts pins that the two agree).
+export const SITE_PAGES = {
+  home: "/",
+  pricing: "/pricing",
+  product: "/product",
+  landing: "/landing",
+  "getting-started": "/getting-started",
+  "does-and-doesnt": "/does-and-doesnt",
+  "data-in-and-out": "/data-in-and-out",
+  security: "/security",
+  company: "/company",
+  contact: "/contact",
+};
+
+// A page that carries {{brand:key}} tokens is complete only after app/site-page has filled them, so
+// its raw file address must not serve it: it redirects to the clean address (307, like the other
+// temporary redirects here). site-raw-path-redirect.static.test.ts fails when a page gains tokens
+// without being listed, which is derived here from the file itself.
+const tokenisedPages = Object.keys(SITE_PAGES).filter((page) =>
+  /\{\{brand:/i.test(readFileSync(path.join(__dirname, "public", "site", `${page}.html`), "utf8")),
+);
+
+// The two addresses of the site, read from the brand seam (packages/types/brand/brand.json), the one
+// place a host is typed. This file cannot import TypeScript, so it reads the JSON itself.
+export function readSiteHosts() {
+  const brand = JSON.parse(
+    readFileSync(
+      path.join(__dirname, "..", "..", "packages", "types", "brand", "brand.json"),
+      "utf8",
+    ),
+  );
+  return {
+    // The site's main address is the overlay's origin (SA-1178 A6). With no overlay, or one equal to
+    // oldOrigin, the two hosts are equal and no host rule of any kind exists (the rollback).
+    origin: brand.site?.origin ?? brand.origin,
+    oldOrigin: brand.oldOrigin,
+    // Optional: the alias hosts (each a bare or www origin). Absent or empty means no alias rule.
+    ...(Array.isArray(brand.aliasOrigins) && brand.aliasOrigins.length
+      ? { aliasOrigins: brand.aliasOrigins }
+      : {}),
+  };
+}
+
+// The installed phone app's web view only allows the old host; it must never be sent to another one.
+// Its user-agent token is the shell marker (packages/ui shell-bridge.ts SHELL_UA_PRODUCT). Next
+// anchors a header value as a whole-string pattern, hence the dots.
+const SHELL_USER_AGENT = ".*RouteFlowShell.*";
+
+// A signed-in visitor's presence cookies (lib/presence-cookies.ts OP_PRESENCE_COOKIE and
+// BUYER_PRESENCE_COOKIE; this file cannot import TypeScript, so the test pins these two names to
+// the imported constants). A visitor who has one stays on the old host, where "/" serves the home
+// page for everyone (middleware.ts) and the header offers "Open dashboard". One list for every host rule.
+const PRESENCE_COOKIES = ["rf-op-auth", "rf-buyer-auth"];
+
+/** The `missing` list every host rule carries: not the phone shell, not signed in. */
+function hostRuleMissing() {
+  return [
+    { type: "header", key: "user-agent", value: SHELL_USER_AGENT },
+    ...PRESENCE_COOKIES.map((key) => ({ type: "cookie", key })),
+  ];
+}
+
+// Public addresses: the ready-made pages plus the two React pages (privacy, terms). Sign-in, sign-up
+// and the reset pages are not here on purpose: they keep working on the old host.
+const PUBLIC_PATHS = [...Object.values(SITE_PAGES), "/privacy", "/terms"];
+
+/**
+ * Temporary redirects from the old host to the same address on the new one, for the public addresses
+ * only, never for the shell. They exist only while the two hosts differ; with one host a rule would
+ * redirect to itself and loop. A legacy alias that ends on a public page gets its own rule to the
+ * final page on the new host (one hop), placed before the same-host alias.
+ * @param {{ origin: string, oldOrigin: string }} hosts
+ * @param {Array<{ source: string, destination: string }>} aliases
+ */
+export function buildSiteHostRedirects({ origin, oldOrigin }, aliases) {
+  const to = new URL(origin);
+  const from = new URL(oldOrigin);
+  if (to.host === from.host) return [];
+  const rule = (source, destPath) => ({
+    source,
+    has: [{ type: "host", value: from.hostname.replace(/\./g, "\\.") }],
+    missing: hostRuleMissing(),
+    destination: `${to.origin}${destPath === "/" ? "" : destPath}`,
+    permanent: false,
+  });
+  const publicPaths = new Set(PUBLIC_PATHS);
+  return [
+    ...PUBLIC_PATHS.map((source) => rule(source, source)),
+    ...aliases
+      .filter((alias) => publicPaths.has(alias.destination.replace(/#.*$/, "")))
+      .map((alias) => rule(alias.source, alias.destination)),
+  ];
+}
+
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The paths that stay on the main host, derived and never typed: the public paths, every alias or
+ * raw page address that ends on one, /_next/, every top-level entry of public/, every (marketing)
+ * route, every app-root metadata file (favicon, robots, sitemap, manifest, numbered icons) at the
+ * exact path Next serves, and /.well-known/. A new app route is outside
+ * this set, so it is sent to the old host without anyone listing it; a new page joins SITE_PAGES
+ * and stays.
+ * @param {Array<{ source: string, destination: string }>} aliases
+ * @param {ReturnType<typeof listAppRoutes>} [routes] the app's routes (injectable for a test)
+ * @param {Array<{ name: string, isDirectory(): boolean }>} [publicEntries] top level of public/
+ * @returns {{ exact: string[], prefixes: string[] }}
+ */
+export function deriveStays(
+  aliases,
+  routes = listAppRoutes(),
+  publicEntries = readdirSync(path.join(__dirname, "public"), { withFileTypes: true }),
+) {
+  const publicPaths = new Set(PUBLIC_PATHS);
+  // By place (lib/app-route-paths.mjs): every (marketing) route and the app-root fixed addresses.
+  const exact = new Set([...PUBLIC_PATHS, ...placeStays(routes)]);
+  for (const alias of aliases) {
+    if (publicPaths.has(alias.destination.replace(/#.*$/, ""))) exact.add(alias.source);
+  }
+  const prefixes = new Set(["/_next/", "/.well-known/"]);
+  for (const entry of publicEntries) {
+    exact.add(`/${entry.name}`);
+    if (entry.isDirectory()) prefixes.add(`/${entry.name}/`);
+  }
+  return { exact: [...exact], prefixes: [...prefixes] };
+}
+
+/**
+ * Temporary redirects on the main host: every path outside the stays set goes to the same path and
+ * query on the old host, where the app lives. One catch-all rule, no `missing` list (the presence
+ * cookies and the phone shell belong to the old host). An alias that ends on an app path (such as
+ * /sign-in) gets its own rule to the old host's final path (one hop), placed before the catch-all.
+ * Like the old-host rules it exists only while the two hosts differ.
+ * @param {{ origin: string, oldOrigin: string }} hosts
+ * @param {Array<{ source: string, destination: string }>} aliases
+ * @param {ReturnType<typeof listAppRoutes>} [routes] the app's routes (injectable for a test)
+ * @param {Array<{ name: string, isDirectory(): boolean }>} [publicEntries] top level of public/
+ */
+export function buildAppHostRedirects(
+  { origin, oldOrigin },
+  aliases,
+  routes = listAppRoutes(),
+  publicEntries = undefined,
+) {
+  const to = new URL(origin);
+  const from = new URL(oldOrigin);
+  if (to.host === from.host) return [];
+  return appPathRules(to.hostname, from.origin, aliases, routes, publicEntries);
+}
+
+/** The stays set as one regex body (exact names end the path, prefixes start it). */
+function staysPattern(aliases, routes, publicEntries) {
+  const { exact, prefixes } = deriveStays(aliases, routes, publicEntries);
+  return [
+    ...exact.map((p) => `${escapeRegex(p.slice(1))}/?$`),
+    ...prefixes.map((p) => escapeRegex(p.slice(1))),
+  ].join("|");
+}
+
+/** Rules for one host: app-ending aliases, then every path outside stays, to the old origin (307). */
+function appPathRules(hostname, oldOrigin, aliases, routes = listAppRoutes(), publicEntries) {
+  const has = [{ type: "host", value: hostname.replace(/\./g, "\\.") }];
+  const publicPaths = new Set(PUBLIC_PATHS);
+  return [
+    ...aliases
+      .filter((alias) => !publicPaths.has(alias.destination.replace(/#.*$/, "")))
+      .map((alias) => ({
+        source: alias.source,
+        has,
+        destination: `${oldOrigin}${alias.destination}`,
+        permanent: false,
+      })),
+    {
+      source: `/:path((?!(?:${staysPattern(aliases, routes, publicEntries)})).*)`,
+      has,
+      destination: `${oldOrigin}/:path`,
+      permanent: false,
+    },
+  ];
+}
+
+/**
+ * The alias hosts (each origin's bare and www form). Paths outside the stays set go straight to the
+ * old host; paths inside it go to the same path and query on the main host. Both are 307 until after
+ * the demo (a cached 301 would defeat a rollback) and both come from the one stays set, so they never
+ * overlap. Only the form that equals the main host is dropped (never the whole alias). With one host
+ * (the site origin equals the old origin) there is no alias rule of any kind.
+ * @param {{ origin: string, oldOrigin: string, aliasOrigins?: string[] }} hosts
+ * @param {Array<{ source: string, destination: string }>} aliases
+ */
+export function buildAliasHostRedirects({ origin, oldOrigin, aliasOrigins = [] }, aliases) {
+  const to = new URL(origin);
+  const from = new URL(oldOrigin);
+  if (to.host === from.host) return [];
+  const taken = new Set([to.hostname, from.hostname]);
+  const hosts = [
+    ...new Set(
+      aliasOrigins.flatMap((alias) => {
+        const bare = new URL(alias).hostname.replace(/^www\./, "");
+        return [bare, `www.${bare}`];
+      }),
+    ),
+  ].filter((host) => !taken.has(host));
+  if (hosts.length === 0) return [];
+  const stays = staysPattern(aliases);
+  return hosts.flatMap((host) => [
+    ...appPathRules(host, from.origin, aliases),
+    {
+      source: `/:path((?=(?:${stays})).*)`,
+      has: [{ type: "host", value: host.replace(/\./g, "\\.") }],
+      destination: `${to.origin}/:path`,
+      permanent: false,
+    },
+  ]);
+}
+
+// The old marketing site's pages and addresses a visitor might guess, sent to the closest page of
+// the new site (owner order, "no old look left anywhere"). The first eight are permanent, so search
+// engines move the old addresses across; the last four stay temporary. A next.config redirect is
+// evaluated before middleware and always carries its Location header (a prerendered redirect() page
+// served from the ISR cache lost it; spec 36). /distributors, /demo and /about were guessed
+// addresses that pointed at these pages: they go straight to the end of the chain. /faq,
+// /integrations and /quickbooks open the FAQ section on the home page (id="faq").
+const LEGACY_ALIASES = [
+  { source: "/wholesalers", destination: "/product", permanent: true },
+  { source: "/distributors", destination: "/product", permanent: true },
+  { source: "/retailers", destination: "/#stores", permanent: true },
+  { source: "/buyer", destination: "/#stores", permanent: true },
+  { source: "/book-a-demo", destination: "/contact", permanent: true },
+  { source: "/demo", destination: "/contact", permanent: true },
+  { source: "/sign-in", destination: "/login", permanent: true },
+  { source: "/about", destination: "/company", permanent: true },
+  { source: "/features", destination: "/product", permanent: false },
+  { source: "/faq", destination: "/#faq", permanent: false },
+  { source: "/integrations", destination: "/#faq", permanent: false },
+  { source: "/quickbooks", destination: "/#faq", permanent: false },
+];
+
+// Every page's raw file address, which on the old host goes straight to the new host's page too.
+const RAW_PAGE_ALIASES = Object.entries(SITE_PAGES).map(([page, destination]) => ({
+  source: `/site/${page}.html`,
+  destination,
+}));
+
+/** The aliases every host rule is built from (the legacy addresses and the raw page files). */
+export const HOST_ALIASES = [...LEGACY_ALIASES, ...RAW_PAGE_ALIASES];
+
+/** The whole redirect list for a pair of hosts (redirects() reads them from the brand seam). */
+export function buildRedirects(hosts) {
+  return [
+    ...buildSiteHostRedirects(hosts, HOST_ALIASES),
+    ...buildAppHostRedirects(hosts, HOST_ALIASES),
+    ...buildAliasHostRedirects(hosts, HOST_ALIASES),
+    {
+      source: "/route-runs/:id",
+      destination: "/routes/:id",
+      permanent: true,
+    },
+    {
+      source: "/route-runs/:id/dispatch",
+      destination: "/routes/:id/dispatch",
+      permanent: true,
+    },
+    // SA-1146 B-1 (B446): Checkout used to return to these two addresses, which are not pages. A link already
+    // out (a Stripe session lives 23 h) lands on Billing with the return notice. Temporary on purpose; remove
+    // both 7 days after deploy (register row). Pinned by lib/billing-return-redirects.static.test.ts.
+    {
+      source: "/billing/success",
+      destination: "/settings/billing?checkout=success",
+      permanent: false,
+    },
+    {
+      source: "/billing/cancel",
+      destination: "/settings/billing?checkout=cancelled",
+      permanent: false,
+    },
+    ...LEGACY_ALIASES,
+    // The raw file address of a tokenised page (see tokenisedPages).
+    ...tokenisedPages.map((page) => ({
+      source: `/site/${page}.html`,
+      destination: SITE_PAGES[page],
+      permanent: false,
+    })),
+  ];
+}
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -42,72 +332,20 @@ const nextConfig = {
   },
 
   async redirects() {
-    return [
-      {
-        source: "/route-runs/:id",
-        destination: "/routes/:id",
-        permanent: true,
-      },
-      {
-        source: "/route-runs/:id/dispatch",
-        destination: "/routes/:id/dispatch",
-        permanent: true,
-      },
-      // SA-1146 B-1 (B446): Checkout used to return to these two addresses, which are not pages. A link already
-      // out (a Stripe session lives 23 h) lands on Billing with the return notice. Temporary on purpose; remove
-      // both 7 days after deploy (register row). Pinned by lib/billing-return-redirects.static.test.ts.
-      {
-        source: "/billing/success",
-        destination: "/settings/billing?checkout=success",
-        permanent: false,
-      },
-      {
-        source: "/billing/cancel",
-        destination: "/settings/billing?checkout=cancelled",
-        permanent: false,
-      },
-      // The old marketing site's pages, sent to the closest page of the new site (owner order,
-      // "no old look left anywhere"). Permanent, so search engines move the old
-      // addresses across. A next.config redirect is evaluated before middleware and always carries
-      // its Location header (a prerendered redirect() page served from the ISR cache lost it; spec 36).
-      // /distributors, /demo and /about were guessed addresses that pointed at these pages: they go
-      // straight to the end of the chain.
-      { source: "/wholesalers", destination: "/product", permanent: true },
-      { source: "/distributors", destination: "/product", permanent: true },
-      { source: "/retailers", destination: "/#stores", permanent: true },
-      { source: "/buyer", destination: "/#stores", permanent: true },
-      { source: "/book-a-demo", destination: "/contact", permanent: true },
-      { source: "/demo", destination: "/contact", permanent: true },
-      { source: "/sign-in", destination: "/login", permanent: true },
-      { source: "/about", destination: "/company", permanent: true },
-      // W6: other addresses a visitor might guess. /faq, /integrations and /quickbooks open the FAQ
-      // section on the home page (id="faq").
-      { source: "/features", destination: "/product", permanent: false },
-      { source: "/faq", destination: "/#faq", permanent: false },
-      { source: "/integrations", destination: "/#faq", permanent: false },
-      { source: "/quickbooks", destination: "/#faq", permanent: false },
-    ];
+    return buildRedirects(readSiteHosts());
   },
 
   // The home, pricing, product, landing, company, contact and four deep pages (getting-started,
   // does-and-doesnt, data-in-and-out, security) are ready-made HTML under public/site (page,
   // styles, scripts, font and marks together). A beforeFiles rewrite serves each at its own
-  // address after the middleware has run. The
-  // route behind it (app/site-page) is the file plus the Umami tags when the build has a site ID.
+  // address after the middleware has run. The route behind it (app/site-page) is the file plus the
+  // first-touch tag on every page and, when the build has a site ID, the visit-count tags.
   async rewrites() {
     return {
-      beforeFiles: [
-        { source: "/", destination: "/site-page/home" },
-        { source: "/pricing", destination: "/site-page/pricing" },
-        { source: "/product", destination: "/site-page/product" },
-        { source: "/landing", destination: "/site-page/landing" },
-        { source: "/getting-started", destination: "/site-page/getting-started" },
-        { source: "/does-and-doesnt", destination: "/site-page/does-and-doesnt" },
-        { source: "/data-in-and-out", destination: "/site-page/data-in-and-out" },
-        { source: "/security", destination: "/site-page/security" },
-        { source: "/company", destination: "/site-page/company" },
-        { source: "/contact", destination: "/site-page/contact" },
-      ],
+      beforeFiles: Object.entries(SITE_PAGES).map(([page, source]) => ({
+        source,
+        destination: `/site-page/${page}`,
+      })),
     };
   },
 
