@@ -21,6 +21,7 @@ import {
   totalVarianceMoney,
   type StockCountRow,
   type StockCountSessionLine,
+  scanMode,
 } from "../lib/stock-count-logic";
 
 const P = { id: "p1", name: "Cola 24pk", sku: "COLA24", unit: "case", currentStock: 10 };
@@ -373,5 +374,15 @@ describe("groupRowsByVariance / totalRowVarianceMoney / buildRowCommitSummary", 
       matchedCount: 1,
       netVarianceMoney: -5,
     });
+  });
+});
+
+describe("scanMode (R-276 H1)", () => {
+  const rows = [{ productId: "p1", mode: "ADD" as const }];
+  it("a re-scan of a row set to Add sends Add even when the screen default is Replace", () => {
+    expect(scanMode(rows, "p1", "REPLACE")).toBe("ADD");
+  });
+  it("a product not yet on screen takes the screen default", () => {
+    expect(scanMode(rows, "p2", "REPLACE")).toBe("REPLACE");
   });
 });
