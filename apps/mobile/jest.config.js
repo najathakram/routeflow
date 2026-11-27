@@ -90,6 +90,8 @@ module.exports = {
       "<rootDir>/../../packages/types/credit-over-limit-copy.ts",
     // I-120: the shared Counter sale / Store pickup / Complete at counter words (pure, no imports), same subpath trick.
     "^@routeflow/types/counter-copy$": "<rootDir>/../../packages/types/counter-copy.ts",
+    // W-1487: the one payment-terms table (pure, no imports), same subpath trick.
+    "^@routeflow/types/payment-terms$": "<rootDir>/../../packages/types/payment-terms.ts",
     // W-769: the shared no-longer-fits sentence (pure, no imports), same subpath trick.
     "^@routeflow/types/no-longer-fits-copy$":
       "<rootDir>/../../packages/types/no-longer-fits-copy.ts",

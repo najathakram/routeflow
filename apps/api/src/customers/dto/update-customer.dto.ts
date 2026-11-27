@@ -16,11 +16,7 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { WRITABLE_FULFILL_PATHS } from "../../orders/writable-fulfill-paths";
 import { emptyToNull } from "../../common/dto-transforms";
 import { MAX_DECIMAL_10_2 } from "../../common/decimal-bounds.constant";
-import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
-
-// Canonical list plus "" to CLEAR a previously-set override back to "use the
-// tenant default".
-const VALID_CUSTOMER_TERMS = [...VALID_TERMS, ""];
+import { IsPaymentTerm } from "../../invoices/payment-terms";
 
 export class UpdateCustomerDto {
   // RF-110: strip HTML to prevent stored XSS via businessName
@@ -65,9 +61,7 @@ export class UpdateCustomerDto {
    */
   @IsOptional()
   @IsString()
-  @IsIn(VALID_CUSTOMER_TERMS, {
-    message: "defaultPaymentTerms must be one of: " + VALID_CUSTOMER_TERMS.join(", "),
-  })
+  @IsPaymentTerm({ allowEmpty: true }) // W-1487: a preset or a custom "Net N" (1-365); "" leaves / clears the override
   defaultPaymentTerms?: string;
   /**
    * SA-827: the customer-wide invoice unit (staff only). LEGACY = not set, PIECES = mixed boxes list each item and boxes
