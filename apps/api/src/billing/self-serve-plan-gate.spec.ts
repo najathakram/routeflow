@@ -1,6 +1,9 @@
+import * as fs from "fs";
+import * as path from "path";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   isNeverActivated,
+  PLAN_PICK_ASK_FOR_LINK_MESSAGE,
   planGateRefusal,
   selfServePlanGate,
   type PlanGateOp,
@@ -85,7 +88,7 @@ describe("selfServePlanGate (SA-774 r6: card first, then active)", () => {
     it("the refusal says what to do", () => {
       expect(planGateRefusal(API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK).getResponse()).toEqual({
         code: API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
-        message: "Ask us for a payment link.",
+        message: PLAN_PICK_ASK_FOR_LINK_MESSAGE,
       });
     });
   });
@@ -145,5 +148,19 @@ describe("isNeverActivated", () => {
   it("is true for a link-pending tenant that is not ACTIVE, false for one that is", () => {
     expect(isNeverActivated({ status: "SUSPENDED", readOnlyReason: null }, true)).toBe(true);
     expect(isNeverActivated(active, true)).toBe(false);
+  });
+});
+
+describe("the api's ask-for-a-link sentence is byte-equal to the shared web/mobile copy (SA-C)", () => {
+  it("packages/types/plan-pick-copy.ts carries the same sentence", () => {
+    const shared = fs.readFileSync(
+      path.resolve(__dirname, "../../../../packages/types/plan-pick-copy.ts"),
+      "utf8",
+    );
+    const m = /PLAN_PICK_ASK_FOR_LINK_SENTENCE\s*=\s*"([^"]*)"/.exec(shared);
+    expect(m?.[1]).toBe(PLAN_PICK_ASK_FOR_LINK_MESSAGE);
+    expect(PLAN_PICK_ASK_FOR_LINK_MESSAGE).toBe(
+      "To pay for a new plan, ask us for a payment link.",
+    );
   });
 });

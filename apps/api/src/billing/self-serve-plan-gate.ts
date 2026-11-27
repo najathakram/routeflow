@@ -73,6 +73,13 @@ export function isNeverActivated(tenant: PlanGateTenant, linkPending: boolean): 
   return linkPending && tenant.status !== TenantStatus.ACTIVE;
 }
 
+/**
+ * SA-C: the api's copy of `PLAN_PICK_ASK_FOR_LINK_SENTENCE` (packages/types/plan-pick-copy.ts). The api may not load a runtime
+ * value from @routeflow/types (no-runtime-types-import.spec.ts), so it keeps this copy, pinned byte-equal to the shared
+ * sentence by self-serve-plan-gate.spec.ts (the credit-words / live-payments-off pattern).
+ */
+export const PLAN_PICK_ASK_FOR_LINK_MESSAGE = "To pay for a new plan, ask us for a payment link.";
+
 const REFUSAL_MESSAGE: Record<string, string> = {
   [API_ERROR_CODES.CHECKOUT_PAYMENT_PROCESSING]:
     "Your card payment is still being confirmed. This change is available once it clears.",
@@ -82,7 +89,7 @@ const REFUSAL_MESSAGE: Record<string, string> = {
     "Your plan is paid by card. Use Change plan to switch; the new price is prorated.",
   [API_ERROR_CODES.CHOOSE_PLAN_AT_CHECKOUT]:
     "Choose your plan at checkout. Your plan starts once your payment clears.",
-  [API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK]: "Ask us for a payment link.",
+  [API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK]: PLAN_PICK_ASK_FOR_LINK_MESSAGE,
 };
 
 /** The coded 409 for a refused self-serve plan operation (shape of `admin-lock-refusal.ts`). */

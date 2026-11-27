@@ -4,6 +4,7 @@ import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { NO_IMPERSONATION_KEY } from "../auth/guards/no-impersonation.guard";
 import { buildGlobalValidationPipe } from "../common/global-validation-pipe";
+import { PLAN_PICK_ASK_FOR_LINK_MESSAGE } from "./self-serve-plan-gate";
 import { CheckoutPlanPickDto, SettingsBillingController } from "./settings-billing.controller";
 import { SELF_PAY_REASONS } from "./self-checkout-eligibility";
 
@@ -135,7 +136,7 @@ describe("SA-1547 PR-5a: the checkout route says ask-for-a-link for an ACTIVE bu
     expect(e).toBeInstanceOf(ConflictException);
     expect(e.getResponse()).toEqual({
       code: API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
-      message: "Ask us for a payment link.",
+      message: PLAN_PICK_ASK_FOR_LINK_MESSAGE,
     });
     expect(billing.createCheckoutSession).not.toHaveBeenCalled();
   });
