@@ -44,7 +44,11 @@ import { invoiceListStatusParams } from "@/lib/invoice-list-filter";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { useTenantToday } from "@/lib/tenant-timezone";
-import { InvoiceStatusLegend, InvoiceStatusText } from "@/lib/invoice-status-display";
+import {
+  CustomerInvoiceStatusText,
+  InvoiceStatusLegend,
+  InvoiceStatusText,
+} from "@/lib/invoice-status-display";
 import { useAuth } from "@/lib/auth-context";
 import { ReadOnlyHint, WriteButton } from "@/lib/read-only-gate";
 
@@ -879,17 +883,20 @@ export default function InvoicesPage() {
             </div>
           </div>
         </FiltersDisclosure>
-        <div className="mt-2">
-          <button
-            type="button"
-            aria-expanded={statusKeyOpen}
-            onClick={() => setStatusKeyOpen((v) => !v)}
-            className="text-xs font-medium text-navy/60 underline-offset-2 hover:underline"
-          >
-            Status key
-          </button>
-          {statusKeyOpen && <InvoiceStatusLegend className="mt-1.5" />}
-        </div>
+        {/* R-356 F1: the staff legend; a CUSTOMER sees the list as on master, with no key */}
+        {!isCustomer && (
+          <div className="mt-2">
+            <button
+              type="button"
+              aria-expanded={statusKeyOpen}
+              onClick={() => setStatusKeyOpen((v) => !v)}
+              className="text-xs font-medium text-navy/60 underline-offset-2 hover:underline"
+            >
+              Status key
+            </button>
+            {statusKeyOpen && <InvoiceStatusLegend className="mt-1.5" />}
+          </div>
+        )}
       </div>
 
       {/* Phone cards — below md; the table below takes over from md up. Same balance helper and
@@ -908,12 +915,16 @@ export default function InvoicesPage() {
               subtitle={inv.customer?.businessName ?? "—"}
               badges={
                 <>
-                  <InvoiceStatusText
-                    status={inv.status}
-                    dueDate={inv.dueDate}
-                    isOverdue={isCustomer ? undefined : inv.isOverdue}
-                    tenantDay={tenantDay}
-                  />
+                  {isCustomer ? (
+                    <CustomerInvoiceStatusText status={inv.status} dueDate={inv.dueDate} />
+                  ) : (
+                    <InvoiceStatusText
+                      status={inv.status}
+                      dueDate={inv.dueDate}
+                      isOverdue={inv.isOverdue}
+                      tenantDay={tenantDay}
+                    />
+                  )}
                   {!isCustomer && <ToCollectChip state={inv.toCollect} />}
                 </>
               }
@@ -1081,12 +1092,16 @@ export default function InvoicesPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col items-start gap-1">
-                          <InvoiceStatusText
-                            status={inv.status}
-                            dueDate={inv.dueDate}
-                            isOverdue={isCustomer ? undefined : inv.isOverdue}
-                            tenantDay={tenantDay}
-                          />
+                          {isCustomer ? (
+                            <CustomerInvoiceStatusText status={inv.status} dueDate={inv.dueDate} />
+                          ) : (
+                            <InvoiceStatusText
+                              status={inv.status}
+                              dueDate={inv.dueDate}
+                              isOverdue={inv.isOverdue}
+                              tenantDay={tenantDay}
+                            />
+                          )}
                           {!isCustomer && <ToCollectChip state={inv.toCollect} />}
                         </div>
                       </td>

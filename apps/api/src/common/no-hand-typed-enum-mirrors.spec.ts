@@ -19,7 +19,7 @@
  * `pending:` rows to zero by area.
  */
 import { readFileSync, readdirSync } from "fs";
-import { join, relative, sep } from "path";
+import { isAbsolute, join, posix, relative, sep } from "path";
 import * as ts from "typescript";
 import * as PrismaClient from "@prisma/client";
 import { ALLOWED, WHY } from "./no-hand-typed-enum-mirrors.allow";
@@ -61,10 +61,18 @@ const SKIP_FILE = /\.(test|spec)\.[cm]?[jt]sx?$|\.d\.ts$/;
 const SHARED_MODULE = /^(@routeflow\/types(\/.*)?|@prisma\/client)$/;
 /**
  * W-1470: inside packages/types the shared enums are reached by a relative path (a package cannot import its own
- * name), so there `./api/enums` (or `../api/enums`, `./enums`) is the same shared module, guarded by the same compiler.
+ * name). An import counts as the shared module only when, from a file under packages/types, it RESOLVES to
+ * packages/types/api/enums (R-356 F2: by where it points, never by its name).
  */
-const IN_TYPES_ENUMS = /^\.{1,2}\/(api\/)?enums$/;
-const isInTypesPackage = (fileName: string) => /(^|[\\/])packages[\\/]types[\\/]/.test(fileName);
+const SHARED_ENUMS_IN_TYPES = "packages/types/api/enums";
+const repoRel = (fileName: string) =>
+  (isAbsolute(fileName) ? relative(REPO_ROOT, fileName) : fileName).split(sep).join("/");
+function resolvesToSharedEnums(fileName: string, spec: string): boolean {
+  if (!spec.startsWith(".")) return false;
+  const rel = repoRel(fileName);
+  if (!rel.startsWith("packages/types/")) return false;
+  return posix.normalize(posix.join(posix.dirname(rel), spec)) === SHARED_ENUMS_IN_TYPES;
+}
 const MIN_MEMBERS = 3;
 
 type Kind = "array" | "union" | "object" | "enum" | "chain" | "case";
@@ -133,7 +141,7 @@ function sharedImports(sf: ts.SourceFile): Set<string> {
   for (const s of sf.statements) {
     if (!ts.isImportDeclaration(s) || !ts.isStringLiteral(s.moduleSpecifier)) continue;
     const spec = s.moduleSpecifier.text;
-    const inTypes = isInTypesPackage(sf.fileName) && IN_TYPES_ENUMS.test(spec);
+    const inTypes = resolvesToSharedEnums(sf.fileName, spec);
     if (!SHARED_MODULE.test(spec) && !inTypes) continue;
     const b = s.importClause?.namedBindings;
     if (b && ts.isNamedImports(b)) b.elements.forEach((el) => names.add(el.name.text));
@@ -361,6 +369,22 @@ describe("SA-1049 PR-2 — the detector (G-1, in-memory fixtures)", () => {
     expect(find(rel, "apps/web/lib/some-table.ts").filter((h) => h.kind === "object")).toHaveLength(
       1,
     );
+    // R-356 F2: by where the path resolves, not by its name
+    const from = (spec: string) =>
+      `import type { ${ENUM_NAME} } from "${spec}";\nconst R: Record<${ENUM_NAME}, number> = ${body};`;
+    expect(find(from("./enums"), "packages/types/api/some-table.ts")).toEqual([]);
+    for (const [spec, file] of [
+      ["../enums", "packages/types/some-table.ts"],
+      ["../api/enums", "packages/types/some-table.ts"],
+      ["./enums", "packages/types/some-table.ts"],
+      ["./api/enums", "elsewhere/packages/types-copy/some-table.ts"],
+    ]) {
+      expect({
+        spec,
+        file,
+        hits: find(from(spec), file).filter((h) => h.kind === "object").length,
+      }).toEqual({ spec, file, hits: 1 });
+    }
     const other = `import type { ${ENUM_NAME} } from "./local-copy";\nconst R: Record<${ENUM_NAME}, number> = ${body};`;
     expect(
       find(other, "packages/types/some-table.ts").filter((h) => h.kind === "object"),

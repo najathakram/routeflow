@@ -105,21 +105,62 @@ describe("InvoicesPage status word (W-1470)", () => {
     mockUseInvoices.mockReset();
   });
 
-  it("R-in-lane M2: a CUSTOMER on this list never asks for the tenant day and keeps the stored word", () => {
+  /** R-356 F1 (lead ruling 7210882888): a CUSTOMER on this list sees exactly master's word and class. */
+  function customerCell(inv: Parameters<typeof row>[0]) {
     mockRole = "CUSTOMER";
-    setRows([
-      row({
-        id: "inv-1",
-        invoiceNumber: "INV-1",
-        status: "SENT",
-        dueDate: "2026-11-16T00:00:00.000Z",
-        isOverdue: true,
-      }),
-    ]);
+    setBrowserClock("2026-11-26T12:00:00");
+    setRows([row(inv)]);
     const { container } = renderWithProviders(<InvoicesPage />);
+    const cell = cardOf(container).querySelector("[data-invoice-status]") as HTMLElement;
+    return { cell, container };
+  }
+
+  it.each([
+    // master: "Partial · Overdue by 10 days" text-danger (the amber "Partial" is the regression)
+    [
+      "an overdue partly paid invoice",
+      "PARTIAL",
+      "2026-11-16T00:00:00.000Z",
+      "Partial · Overdue by 10 days",
+      "text-danger",
+    ],
+    // master: Viewed, brand-700 (staff now read the shared blue)
+    ["a viewed invoice", "VIEWED", "2026-12-20T00:00:00.000Z", "Viewed", "text-brand-700"],
+    // master: Written off, navy/50 (staff now read stone)
+    [
+      "a written-off invoice",
+      "WRITTEN_OFF",
+      "2026-11-01T00:00:00.000Z",
+      "Written off",
+      "text-navy/50",
+    ],
+    // master: a past-due Sent still read "Sent" for this list (no server flag on Sent)
+    ["a past-due sent invoice", "SENT", "2026-11-16T00:00:00.000Z", "Sent", "text-brand-600"],
+  ])("R-356 F1: a CUSTOMER sees %s exactly as on master", (_name, status, dueDate, word, cls) => {
+    const { cell } = customerCell({
+      id: "inv-1",
+      invoiceNumber: "INV-1",
+      status,
+      dueDate,
+      isOverdue: true,
+    });
+    expect(cell).toHaveTextContent(word);
+    expect(cell.textContent).toBe(word);
+    expect(cell.className).toContain(cls);
+    expect(cell.className).not.toContain("text-warning");
+  });
+
+  it("R-356 F1: a CUSTOMER never asks for the tenant day and gets no status key", () => {
+    const { container } = customerCell({
+      id: "inv-1",
+      invoiceNumber: "INV-1",
+      status: "PARTIAL",
+      dueDate: "2026-11-16T00:00:00.000Z",
+      isOverdue: true,
+    });
     expect(mockTenantEnabled.length).toBeGreaterThan(0);
     expect(mockTenantEnabled.every((e) => e === false)).toBe(true);
-    expect(within(cardOf(container)).getByText("Sent")).toBeInTheDocument();
+    expect(within(container).queryByText("Status key")).toBeNull();
   });
   afterEach(() => jest.useRealTimers());
 

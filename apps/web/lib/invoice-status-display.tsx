@@ -10,6 +10,7 @@ import {
 import { cn, type BadgeVariant } from "@routeflow/ui/web";
 import { calendarDateFromIso } from "@/lib/calendar-date";
 import { daysPastDue } from "@/lib/days-past-due";
+import { calendarDaysUntil } from "@/lib/formatting";
 
 /**
  * W-1470: the ONE web reading of an invoice status. `@routeflow/types` owns the table (tone and words per status); this
@@ -138,6 +139,59 @@ export function InvoiceStatusText({
       data-tone={tone}
       className={cn("text-xs font-semibold", INVOICE_STATUS_TEXT_CLASS[tone])}
     >
+      {label}
+    </span>
+  );
+}
+
+/**
+ * R-356 F1 (lead ruling 7210882888, AC9): a CUSTOMER signed in to the dashboard list sees exactly what master showed
+ * them: the browser's day (they cannot read the tenant zone), no server overdue flag on Sent or Viewed, and master's
+ * colours (Viewed brand-700, Written off navy/50). Staff screens use `invoiceStatusView`; this one is frozen until
+ * the owner rules on a change for customers.
+ */
+export function customerListStatusView(
+  status: string,
+  dueDate?: string | null,
+): { label: string; className: string } {
+  const plural = (n: number) => `${n} day${n !== 1 ? "s" : ""}`;
+  if (status === "PAID") return { label: "Paid", className: "text-success" };
+  if (status === "VOID") return { label: "Void", className: "text-navy/40" };
+  if (status === "WRITTEN_OFF") return { label: "Written off", className: "text-navy/50" };
+  if (status === "DRAFT") return { label: "Draft", className: "text-navy/50" };
+  if (status === "SENT") return { label: "Sent", className: "text-brand-600" };
+  if (status === "VIEWED") return { label: "Viewed", className: "text-brand-700" };
+  const partial = status === "PARTIAL";
+  const diff = calendarDaysUntil(dueDate);
+  if (diff === null) {
+    if (partial) return { label: "Partial", className: "text-warning" };
+    if (status === "OVERDUE") return { label: "Overdue", className: "text-danger" };
+    return { label: status, className: "text-navy/50" };
+  }
+  if (status === "OVERDUE" || diff < 0) {
+    const late = Math.abs(diff);
+    const by = late > 0 ? ` by ${plural(late)}` : "";
+    return { label: `${partial ? "Partial · Overdue" : "Overdue"}${by}`, className: "text-danger" };
+  }
+  if (diff === 0) {
+    return { label: partial ? "Partial · Due today" : "Due today", className: "text-warning" };
+  }
+  return partial
+    ? { label: `Partial · Due in ${plural(diff)}`, className: "text-warning" }
+    : { label: `Due in ${plural(diff)}`, className: "text-brand-600" };
+}
+
+/** The customer list cell: master's words and colours (see `customerListStatusView`). */
+export function CustomerInvoiceStatusText({
+  status,
+  dueDate,
+}: {
+  status: string;
+  dueDate?: string | null;
+}) {
+  const { label, className } = customerListStatusView(status, dueDate);
+  return (
+    <span data-invoice-status={status} className={cn("text-xs font-semibold", className)}>
       {label}
     </span>
   );

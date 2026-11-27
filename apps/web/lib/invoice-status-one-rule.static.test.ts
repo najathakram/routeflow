@@ -10,6 +10,8 @@ import { INVOICE_STATUS_VALUES } from "@routeflow/types";
  */
 const WEB = path.resolve(__dirname, "..");
 const ONE_FILE = "lib/invoice-status-display.tsx";
+/** R-356 F3: every web source folder a screen can live in. */
+const ROOTS = ["app", "lib", "components", "hooks"];
 /** Shrink-only: PR-2 deletes this entry. */
 const LISTED_EXCEPTIONS = new Set<string>(["app/(dashboard)/invoices/[id]/page.tsx"]);
 /** An invoice status key whose value (a string, or an object's first string) holds a text, bg or border colour class. */
@@ -34,7 +36,7 @@ function walk(dir: string, out: string[] = []): string[] {
 describe("one invoice status rule (S-7)", () => {
   it("no other file keys an invoice status to a colour class", () => {
     const hits: string[] = [];
-    for (const root of ["app", "lib"]) {
+    for (const root of ROOTS) {
       for (const file of walk(path.join(WEB, root))) {
         const rel = path.relative(WEB, file).split(path.sep).join("/");
         if (rel === ONE_FILE || LISTED_EXCEPTIONS.has(rel)) continue;
@@ -46,13 +48,20 @@ describe("one invoice status rule (S-7)", () => {
 
   it("no other file keys the invoice statuses to a Badge variant by hand", () => {
     const hits: string[] = [];
-    const byHand =
-      /case\s+"(SENT|VIEWED|WRITTEN_OFF)":[\s\S]{0,80}return\s+"(success|warning|danger|info|neutral)"/;
-    for (const root of ["app", "lib"]) {
+    const byHand = [
+      // a case run: case "SENT": ... return "info"
+      /case\s+"(SENT|VIEWED|WRITTEN_OFF)":[\s\S]{0,80}return\s+"(success|warning|danger|info|neutral)"/,
+      // R-356 F3: a variant map: { SENT: "info", ... }
+      /\b(SENT|VIEWED|WRITTEN_OFF)\b\s*:\s*["'`](success|warning|danger|info|neutral)["'`]/,
+      // R-356 F3: a comparison chain to a class: s === "OVERDUE" ? "text-red-600" : ...
+      /===\s*["'`](SENT|VIEWED|PARTIAL|OVERDUE|WRITTEN_OFF)["'`]\s*\?\s*["'`][^"'`]*\b(text|bg|border)-/,
+    ];
+    for (const root of ROOTS) {
       for (const file of walk(path.join(WEB, root))) {
         const rel = path.relative(WEB, file).split(path.sep).join("/");
         if (rel === ONE_FILE || LISTED_EXCEPTIONS.has(rel)) continue;
-        if (byHand.test(fs.readFileSync(file, "utf8"))) hits.push(rel);
+        const src = withoutLedgerTx(fs.readFileSync(file, "utf8"));
+        if (byHand.some((re) => re.test(src))) hits.push(rel);
       }
     }
     expect(hits).toEqual([]);
