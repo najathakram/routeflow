@@ -129,13 +129,13 @@
 {"id":"B1383","batch":"F65","tier":"T1","state":"regressed","pr":null,"proof":null,"evidence":"#4513 was PR-A only (staff sites); the buyer display sites are PR-B, branch not merged. Closes when PR-B lands (R-183 F1)","sha":"e7c4f7be38d6554b4f5da4e92e4dd983bb07ce62","dischargeEvidence":null}
 {"id":"B1384","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1385","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4512 (merged 2026-11-25): one filterAvailableAdvances plus DRAFT_PAYMENT_HAS_EXCESS refusal; specs available-credit.draft-advance.spec.ts (fixed in c81df0b225857d98dd1a1b7d4b3e33e19105e352)","sha":"c81df0b225857d98dd1a1b7d4b3e33e19105e352"}
-{"id":"B1386","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1386","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4559: every CUSTOMER quantity writer refuses BUYER_LINE_QTY_OVER_MAX; REG-B1386 specs (fixed in d2aa0997ca340da5c91d09bf35e8659f0d741291)","sha":"d2aa0997ca340da5c91d09bf35e8659f0d741291"}
 {"id":"B1387","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4514 (merged 2026-11-25): qty cells via invoiceLineQtyText; estimate-line-qty-price.test.ts and page.qty-cells.test.tsx (fixed in f036def3eba178a78ea7690fd0b805499ee5edbc)","sha":"f036def3eba178a78ea7690fd0b805499ee5edbc"}
 {"id":"B1390","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1391","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4514 (merged 2026-11-25): buyerOrderListTotal reads the stored total; buyer-orders-list-total.test.ts (fixed in f036def3eba178a78ea7690fd0b805499ee5edbc)","sha":"f036def3eba178a78ea7690fd0b805499ee5edbc"}
 {"id":"B1392","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4517 (merged 2026-11-25): label and You-save line removed; page.annual-label.test.tsx (fixed in d71b7ccbee5b774bd172bc104303a3e60ba6a688)","sha":"d71b7ccbee5b774bd172bc104303a3e60ba6a688"}
 {"id":"B1395","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4561: buyer edit grids step a boxed line by the box; REG-B1395 web and mobile specs, deployed 4/4 SUCCESS (fixed in d3b12aec61252679059b40ca5b278df2d5c2f386)","sha":"d3b12aec61252679059b40ca5b278df2d5c2f386"}
-{"id":"B1396","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1396","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4541: paymentRefusal refuses DRAFT, VOID, WRITTEN_OFF with INVOICE_NOT_PAYABLE on every payment writer (fixed in ff11ba27d2818220f1467791c725855ddd504e88)","sha":"ff11ba27d2818220f1467791c725855ddd504e88"}
 {"id":"B1397","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1398","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1399","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
@@ -153,22 +153,22 @@
 {"id":"B1077","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Stale: ADDON_ANNUAL_NOT_SUPPORTED exists and is thrown from the add-on paths since #3129; pinned by trial-addon-checkout.spec.ts:891 (SA-1304 R-1 ruling) (fixed in 3878401c53cb694ed1157c67f0b84e7ba6141cd9)","sha":"3878401c53cb694ed1157c67f0b84e7ba6141cd9"}
 {"id":"B1413","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1414","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1415","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1415","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4560: mobile useAdjustProductStock single-flight; REG-B1415 two saves send one POST (server key is #4568, open) (fixed in b4fe94db3817f1a766bdd9e484b2e9f474316b33)","sha":"b4fe94db3817f1a766bdd9e484b2e9f474316b33"}
 {"id":"B1416","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1417","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1418","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1419","batch":"F65","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1420","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1420","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4538: batch import and variant resolution refuse a no-tenant caller and load by id and tenant; R1-R5 specs (fixed in 21d4d0f0a3f77569adf3e93be6d130bdffba45cf)","sha":"21d4d0f0a3f77569adf3e93be6d130bdffba45cf"}
 {"id":"B1444","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4547: web Modal scrolls by default, 15 opt-outs pinned by a census test (fixed in bc45193911fc5a815766b1a47a2475e5ce17945d)","sha":"bc45193911fc5a815766b1a47a2475e5ce17945d"}
-{"id":"B1461","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1461","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4546: followPartialPrices re-syncs the draft partial ledger in the same transaction; real-Postgres repro (fixed in 58388e66214c2836f1b24968793b56c937c703bc)","sha":"58388e66214c2836f1b24968793b56c937c703bc"}
 {"id":"B1474","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1475","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1475","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4554 (W-1466): six new web suites red on master then green, pricing units-label spec row (fixed in 0f91b0bd5141f21a779e2622489dd052dfb52fef)","sha":"0f91b0bd5141f21a779e2622489dd052dfb52fef"}
 {"id":"B1476","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1477","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1478","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1479","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1480","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
-{"id":"B1481","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1477","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4554 (W-1466): six new web suites red on master then green, pricing units-label spec row (fixed in 0f91b0bd5141f21a779e2622489dd052dfb52fef)","sha":"0f91b0bd5141f21a779e2622489dd052dfb52fef"}
+{"id":"B1478","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4554 (W-1466): six new web suites red on master then green, pricing units-label spec row (fixed in 0f91b0bd5141f21a779e2622489dd052dfb52fef)","sha":"0f91b0bd5141f21a779e2622489dd052dfb52fef"}
+{"id":"B1479","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4554 (W-1466): six new web suites red on master then green, pricing units-label spec row (fixed in 0f91b0bd5141f21a779e2622489dd052dfb52fef)","sha":"0f91b0bd5141f21a779e2622489dd052dfb52fef"}
+{"id":"B1480","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4554 (W-1466): six new web suites red on master then green, pricing units-label spec row (fixed in 0f91b0bd5141f21a779e2622489dd052dfb52fef)","sha":"0f91b0bd5141f21a779e2622489dd052dfb52fef"}
+{"id":"B1481","batch":"F65","tier":"T1","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #4554 (W-1466): six new web suites red on master then green, pricing units-label spec row (fixed in 0f91b0bd5141f21a779e2622489dd052dfb52fef)","sha":"0f91b0bd5141f21a779e2622489dd052dfb52fef"}
 {"id":"B1493","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1494","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1495","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
@@ -189,3 +189,8 @@
 {"id":"B1510","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1511","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1512","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1513","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1514","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1515","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1516","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B1517","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}

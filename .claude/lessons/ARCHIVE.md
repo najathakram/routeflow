@@ -4984,3 +4984,9 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** the diff of "what changed" was computed against the live query data, so a refetch silently moved the baseline under the user's edits.
 - **Lesson:** **Snapshot the server state when editing starts and diff only against that snapshot; send just the fields the user touched. A refetch while editing never re-bases the draft: offer an explicit reload, and let the server reject a stale revision.**
 - **Guard:** none automatic; review checks that a save payload is built from the frozen baseline. Cf. archived L-167.
+
+## Archived 2026-11-27 (bookkeeping for the 2026-11-26 merges) — real test or lint guards, no code or entry cites them; headroom for L-415, L-416
+
+### L-387
+
+### L-389
