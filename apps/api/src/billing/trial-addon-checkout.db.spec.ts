@@ -39,6 +39,13 @@ const audit = (sku: string) => ({
   sku,
 });
 
+/**
+ * SA-1547 R3 (#4569): a settled checkout of a never-activated (TRIAL) business is its trial conversion, so completion
+ * stamps `trialConvertedAt` and writes ONE `trial.converted` in the plan's transaction, before the crossing. It carries
+ * no amount (delta 0): the MRR is the crossing's `subscription.resumed`, exactly as subscribe() books it.
+ */
+const trialConverted = { type: BILLING_EVENTS.TRIAL_CONVERTED, delta: 0, sku: undefined };
+
 describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Postgres)", () => {
   let pool: Pool;
   let prisma: PrismaClient;
@@ -444,6 +451,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       ["FORECASTING", "si_fc", 19, 1],
     ]);
     expect(await r.ledger()).toEqual([
+      trialConverted, // SA-1547 R3: the conversion, written with the plan (delta 0)
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
       audit("CUSTOMER_PACK_100"), // SA-788: the adoption's own record, delta 0
       { type: BILLING_EVENTS.ADDON_ENABLED, delta: 100, sku: "CUSTOMER_PACK_100" },
@@ -499,6 +507,55 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     ]);
     expect(await r.ledgerSum()).toBe(218);
     expect(r.stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+  });
+
+  it("SA-1547 R3: ONE trial.converted per conversion, stamped once — never again on a sequential or simultaneous redelivery, never over an existing stamp", async () => {
+    const conversionsOf = async (tenantId: string) =>
+      (
+        await prisma.billingEvent.findMany({
+          where: { tenantId, type: BILLING_EVENTS.TRIAL_CONVERTED },
+        })
+      ).map((e) => ({ amountDelta: e.amountDelta, payload: e.payload }));
+    const stampOf = async (tenantId: string) =>
+      (await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } })).trialConvertedAt;
+    const fresh = () =>
+      rig({
+        rows: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        items: [
+          base(),
+          stripeItem("si_pack", { sku: "CUSTOMER_PACK_100", cents: 5000, quantity: 2 }),
+        ],
+      });
+
+    // sequential: the redelivery neither re-stamps nor re-announces
+    const seqRig = await fresh();
+    await seqRig.completed();
+    const stamped = await stampOf(seqRig.tenantId);
+    expect(stamped).toBeInstanceOf(Date);
+    await seqRig.completed();
+    expect(await stampOf(seqRig.tenantId)).toEqual(stamped);
+    expect(await conversionsOf(seqRig.tenantId)).toEqual([
+      { amountDelta: null, payload: { planKey: "STARTER" } },
+    ]);
+
+    // simultaneous: the conditional stamp has one winner, and only the winner writes the event
+    const raceRig = await fresh();
+    await Promise.all([raceRig.completed(), raceRig.completed()]);
+    expect(await stampOf(raceRig.tenantId)).toBeInstanceOf(Date);
+    expect(await conversionsOf(raceRig.tenantId)).toEqual([
+      { amountDelta: null, payload: { planKey: "STARTER" } },
+    ]);
+
+    // already stamped (a subscribe() that won first): completion keeps the stamp and writes no event
+    const preRig = await fresh();
+    const earlier = new Date("2026-01-02T03:04:05.000Z");
+    await prisma.tenantSubscription.update({
+      where: { tenantId: preRig.tenantId },
+      data: { trialConvertedAt: earlier },
+    });
+    await preRig.completed();
+    expect(await stampOf(preRig.tenantId)).toEqual(earlier);
+    expect(await conversionsOf(preRig.tenantId)).toEqual([]);
   });
 
   it("the ROW's quantity wins: row 3 / item 2 raises the item to 3 (+50), row 1 / item 2 cuts it to 1 (-50), row quantity untouched", async () => {
@@ -616,8 +673,13 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     await atGate;
     await r.completed(); // B: the marker is there -> ALREADY_APPLIED -> adopts while the tenant is still TRIAL
     expect((await r.rows()).map((x) => x.stripeItemId)).toEqual(["si_pack", "si_fc"]);
-    // a non-paying tenant's adoption books nothing (yet): no MRR event, only the SA-788 records (delta 0)
-    expect(await r.ledger()).toEqual([audit("CUSTOMER_PACK_100"), audit("FORECASTING")]);
+    // a non-paying tenant's adoption books nothing (yet): no MRR event, only the SA-788 records (delta 0).
+    // SA-1547 R3: A's committed plan transaction already holds the conversion (delta 0), so it reads first.
+    expect(await r.ledger()).toEqual([
+      trialConverted,
+      audit("CUSTOMER_PACK_100"),
+      audit("FORECASTING"),
+    ]);
     release();
     await a;
 
@@ -625,6 +687,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     // once; A's own adoption finds both items set and does nothing
     expect(await r.ledger()).toEqual([
       // SA-788: B's adoption wrote its two records first (delta 0); A's crossing books the one MRR event
+      trialConverted, // SA-1547 R3: A's plan transaction, before B's adoption
       audit("CUSTOMER_PACK_100"),
       audit("FORECASTING"),
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99 + 100 + 19, sku: undefined },
@@ -710,6 +773,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     });
     expect(r.stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
     expect(await r.ledger()).toEqual([
+      trialConverted, // SA-1547 R3
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
       audit("CUSTOMER_PACK_100"), // SA-788
       { type: BILLING_EVENTS.ADDON_ENABLED, delta: 100, sku: "CUSTOMER_PACK_100" },
@@ -732,6 +796,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
     });
     expect(r.items.map((i) => i.id)).toEqual(["si_base"]);
     expect(await r.ledger()).toEqual([
+      trialConverted, // SA-1547 R3
       { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
     ]);
   });
@@ -2086,6 +2151,7 @@ describeDb("SA-690 — trial add-ons are adopted at checkout completion (real Po
       await r.completed();
 
       expect(await r.ledger()).toEqual([
+        trialConverted, // SA-1547 R3
         { type: BILLING_EVENTS.SUBSCRIPTION_RESUMED, delta: 99, sku: undefined },
         audit("CUSTOMER_PACK_100"), // SA-788
         { type: BILLING_EVENTS.ADDON_ENABLED, delta: 100, sku: "CUSTOMER_PACK_100" },
