@@ -360,14 +360,19 @@ jobs:
       #
       # SA-1195 K2 (2026-11-20): the step has its own budget under the job cap (56 and 60 minutes
       # since 2026-11-28; they were 41 and 45).
-      # - OPEN (2026-11-28): in runs 46009439210 and 46082824251 the step was still running at the
-      #   45-minute cap, 1.1 and 1.6 minutes past its 41-minute budget plus kill grace, and both
-      #   runs again took 55:00 with no log. So the group kill below did not end the step there;
-      #   why is unknown, since no log survived.
-      # - `timeout -k 60 56m` leads its own process group and signals all of it, so every jest and
-      #   turbo grandchild dies at the budget. `verify` is an `sh -c` chain, and sh does not pass a
-      #   cancel on to its children: two cancels of one PR's Verify took 55:00 against a 45:00 cap,
-      #   and GitHub kept no log of either.
+      # - W-1514 (2026-11-28): `bash scripts/ci-budget.sh 56m 60` runs verify as the leader of a new
+      #   session and, at the budget, signals the whole session: TERM, then KILL once verify has
+      #   exited or the 60s grace has run out. When verify ends by itself it also KILLs whatever is
+      #   left in the session, so a leftover cannot hold the step open.
+      # - It replaced `timeout -k 60 41m`, which signals only its own process group. turbo starts
+      #   each task in a new process group, so a task that outlived turbo was out of reach and held
+      #   the step's output open: runs 46009439210, 46082824251 and 46087941710 ran 1.1-1.6 minutes
+      #   past that budget plus grace to the cap and took 55:00 with no log. A process group change
+      #   keeps the session, so the session kill reaches every turbo task.
+      # - `verify` is an `sh -c` chain, and sh does not pass a cancel on to its children; the
+      #   wrapper's TERM/INT trap kills the session on a cancel too.
+      # - scripts/ci-budget.self-test.mjs (in `npm run verify`) proves it: a group-escaped task
+      #   survives `timeout -k` and the group-kill revert, and dies under the wrapper.
       # - A run past the budget exits 124 ("timed out") and the job ends on its own instead of being
       #   cancelled, so its log should be kept (the two cancelled runs kept none).
       # - The command inside is still exactly `npm run verify`, byte-identical to the pre-push hook.
@@ -377,7 +382,7 @@ jobs:
       - name: Verify (lockfile, bug-signature scan, types, lint, tests)
         run: |
           echo "::notice title=Verify runner::nproc $(nproc), $(free -m | awk '/^Mem:/ {print "memory " $2 " MB total, " $7 " MB available"}')"
-          timeout -k 60 56m npm run verify
+          bash scripts/ci-budget.sh 56m 60 npm run verify
         env:
           VERIFY_EXCLUDE: "@routeflow/control"
           # Setting this splits verify into check-types + lint first, then jest (scripts/verify-turbo.mjs), so
