@@ -2323,13 +2323,22 @@ export class BillingService {
         tenantId,
         { reason, ...this.checkoutCustomerTrail(session, existingOverride, stripeSub) },
         {
-          alsoWrite: (tx) =>
-            writeAdminNotice(tx, {
+          alsoWrite: async (tx) => {
+            await writeAdminNotice(tx, {
               tenantId,
               action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
               message,
               meta: { reason, checkoutSessionId: session.id ?? null },
-            }),
+            });
+            // SA-1332 R1 (SA-B MAJOR): every terminal outcome of a linked session ends its link. A bank-debit pick
+            // LINKED at its unpaid delivery and settled here unapplied would otherwise stay link-pending for good:
+            // every later checkout refused, every price push skipped. Written only while pending, so a card pick
+            // (never linked) adds nothing.
+            await writeUnlinkedMarker(tx, tenantId, subscriptionId, {
+              sessionId: session.id ?? null,
+              reason,
+            });
+          },
         },
       );
       // SA-1325 Q2: and stops, as master's other paid-not-applied exits do. No link, no conversion, no activation, no APPLIED

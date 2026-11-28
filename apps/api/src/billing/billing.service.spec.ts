@@ -4419,6 +4419,44 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms, settle
       },
     );
 
+    // SA-B MAJOR on #4586: every terminal outcome of a linked session ends its link. The SA-1325 Q2 exit (a settled pick
+    // that is INVALID or a price mismatch) stops with no APPLIED row, so it must write UNLINKED, or the subscription stays
+    // link-pending for good: every later checkout refused, every price push skipped.
+    it("W6: a bank-debit pick LINKED unpaid, then settled with a price mismatch, ends its link: one notice, one UNLINKED", async () => {
+      const h = setup(TRIAL());
+      await (h.svc as any).onCheckoutCompleted(unpaid());
+      h.link();
+      expect(await pending(h)).toBe(true);
+      // Stripe's base item bills 99.00 against the session's quoted 199.00: the settled delivery is refused unapplied
+      h.stripe.getSubscription.mockResolvedValue(stripeSubOf(9900));
+      await (h.svc as any).onCheckoutCompleted(pickSession());
+      expect(notApplied(h)).toHaveLength(1);
+      expect(notApplied(h)[0].meta).toMatchObject({ reason: "pick_price_mismatch" });
+      expect(appliedMarks(h)).toHaveLength(0);
+      expect(unlinkedRows(h)).toHaveLength(1);
+      expect(unlinkedRows(h)[0]).toMatchObject({
+        entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+        entityId: "sub_1",
+        meta: { sessionId: "cs_pick", reason: "pick_price_mismatch" },
+      });
+      // the gate and self-pay read exactly this: no longer pending [pending forever]
+      expect(await pending(h)).toBe(false);
+      // and a later price push is no longer held for the link
+      const push = await h.svc.pushResolvedPriceToStripe("t1");
+      expect(push.reason).not.toBe("subscription_link_pending");
+      // a redelivery of the refused session adds no second UNLINKED row
+      await (h.svc as any).onCheckoutCompleted(pickSession());
+      expect(unlinkedRows(h)).toHaveLength(1);
+    });
+
+    it("W6: a CARD pick with a price mismatch (never linked) writes no UNLINKED row", async () => {
+      const h = setup(TRIAL());
+      h.stripe.getSubscription.mockResolvedValue(stripeSubOf(9900));
+      await (h.svc as any).onCheckoutCompleted(pickSession());
+      expect(notApplied(h)).toHaveLength(1);
+      expect(unlinkedRows(h)).toHaveLength(0);
+    });
+
     it("W4: a failed bank debit writes UNLINKED once, and the link is no longer pending", async () => {
       const h = setup(TRIAL());
       await (h.svc as any).onCheckoutCompleted(unpaid());
