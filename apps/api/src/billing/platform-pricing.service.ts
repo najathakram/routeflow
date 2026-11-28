@@ -161,8 +161,22 @@ export class PlatformPricingService {
     interval: "month" | "year",
     proposed?: ProposedOverride,
     /** `readOnly`: a plan/dry-run/tenant read - name the product by its deterministic id, touch Stripe never. */
-    opts: { readOnly?: boolean } = {},
+    opts: {
+      readOnly?: boolean;
+      /** SA-1547 PR-5: a plan the business is only PICKING (its published price): no tenant read, the paid completion applies this price. */
+      plan?: { planKey: string; planName: string; monthly: number };
+    } = {},
   ): Promise<CheckoutPriceData> {
+    if (opts.plan) {
+      return {
+        currency: "usd",
+        product: opts.readOnly
+          ? stripeProductId("plan", opts.plan.planKey)
+          : await ensurePlanProduct(this.stripe.client, opts.plan.planKey, opts.plan.planName),
+        unit_amount: toCents(opts.plan.monthly),
+        recurring: { interval },
+      };
+    }
     const pricing = proposed
       ? await this.resolveTenantPricingWith(tenantId, proposed)
       : await this.resolveTenantPricing(tenantId);

@@ -75,9 +75,9 @@ describe("source pin: no paying-set decision hand-rolled outside isPayingRow", (
   const readSrc = (rel: string) =>
     readFileSync(join(__dirname, "..", rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  it("billing.service.ts calls isPayingRow at both sites that gate on the paying set (emitPayingDelta, reconcilePriceLedger)", () => {
+  it("billing.service.ts calls isPayingRow at every site that gates on the paying set (emitPayingDelta, reconcilePriceLedger, +1: payingBaseTx, a pick's PLAN_CHANGED gate, SA-1327)", () => {
     const src = readSrc("billing/billing.service.ts");
-    expect((src.match(/isPayingRow\(/g) ?? []).length).toBe(2);
+    expect((src.match(/isPayingRow\(/g) ?? []).length).toBe(3);
     // The removed hand-rolled shape this file used to have — never again.
     expect(src).not.toMatch(/sub\.planKey == null\) return; *\n[\s\S]{0,200}addonMrr/);
   });

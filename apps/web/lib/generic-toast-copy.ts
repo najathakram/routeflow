@@ -11,7 +11,13 @@ import {
 import { BUYER_QTY_SPLIT_MISMATCH_COPY } from "./buyer-cart-line";
 import { READ_ONLY_SENTENCE } from "@routeflow/types/read-only-copy";
 import { LIVE_PAYMENTS_OFF_SENTENCE } from "@routeflow/types/live-payments-off-copy";
-import { PLAN_PICK_ASK_FOR_LINK_SENTENCE } from "@routeflow/types/plan-pick-copy";
+import {
+  CUSTOM_FEE_PLAN_PICK_REFUSED_SENTENCE,
+  PLAN_PICK_ASK_FOR_LINK_SENTENCE,
+  PLAN_PICK_OFF_REASON,
+  PLAN_PICK_OFF_SENTENCE,
+  SELF_SERVE_PLAN_NOT_ALLOWED_SENTENCE,
+} from "@routeflow/types/plan-pick-copy";
 import {
   routeStopsNotPlacedFromBody,
   routeStopsNotPlacedSentence,
@@ -69,6 +75,8 @@ const CODE_COPY: Record<string, string> = {
   // SA-1547 M1: the live-payments wall (W-1464); a tester on a test business sees this on every payment surface
   [API_ERROR_CODES.LIVE_PAYMENTS_OFF]: LIVE_PAYMENTS_OFF_SENTENCE,
   // SA-1547 PR-5a (SA-C): a card-first plan pick's refusals (fixed sentences shared with mobile, never the server text)
+  [API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED]: SELF_SERVE_PLAN_NOT_ALLOWED_SENTENCE,
+  [API_ERROR_CODES.CUSTOM_FEE_PLAN_PICK_REFUSED]: CUSTOM_FEE_PLAN_PICK_REFUSED_SENTENCE,
   [API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK]: PLAN_PICK_ASK_FOR_LINK_SENTENCE,
   // Row 510: a staff sale of a restricted product. The warning dialog owns the flow (HANDLED_CODES); these are the
   // fixed sentences for a surface with no dialog, never the server's text.
@@ -545,6 +553,8 @@ export function codedToastCopy(err: unknown): string | null {
   const gate = parsePlanGate(err);
   if (gate && gate.code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE) return PLAN_COPY;
   const code = typeof data.code === "string" ? data.code : "";
+  // SA-1325 Q1 (SA-C): a plan pick while card-first is off is a 403 with a reason, no code; fixed words, shared with mobile
+  if (data.reason === PLAN_PICK_OFF_REASON) return PLAN_PICK_OFF_SENTENCE;
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
   // B981: the customer-create refusals, by code.

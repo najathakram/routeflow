@@ -21,6 +21,8 @@ import { isPricePushFailure } from "./price-override";
 import { toCents } from "@routeflow/pricing";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { normalizePlanKey, planKeyFromEnum } from "./plan-catalog.constants";
+import { PlanCatalogService } from "./plan-catalog.service";
+import { AdminAuditAction } from "../platform-admin/audit-actions.constant";
 import { BillingService } from "./billing.service";
 import { paymentReinstatableWhere } from "./dunning-config";
 import {
@@ -99,6 +101,7 @@ function make(
   };
   const tx = {
     tenant: {
+      update: jest.fn().mockResolvedValue({}), // SA-1547 PR-5: a PAID pick session writes the tenant's plan
       updateMany: jest.fn().mockResolvedValue({ count: overrides.transitionCount ?? 1 }),
       // SA-140: transitionAndEmit reads deletedAt/class post-CAS for emitPayingDelta's
       // isPayingRow gate — every existing test's tenant is PRODUCTION/non-deleted by default,
@@ -2215,6 +2218,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BillingService,
+        { provide: PlanCatalogService, useValue: {} }, // required since SA-1547 PR-5 (plan picks)
         { provide: PrismaService, useValue: prisma },
         { provide: StripeService, useValue: stripe },
         { provide: EmailService, useValue: { send: jest.fn() } },
@@ -3754,6 +3758,546 @@ describe("F2: onCheckoutCompleted re-syncs an override saved during the open ses
 
 // SA-1547 PR-3 (R3): a checkout that converts a business that was NEVER activated stamps `trialConvertedAt` and emits
 // TRIAL_CONVERTED, like subscribe() does. Today a checkout-converted trial drops out of the billing export.
+// SA-1547 PR-5 (SA-1319 R1 / R1a / R2): a card-first PICK session carries the plan, catalog version and quoted price the customer
+// paid. They are applied ONLY by the SETTLED apply (the one that writes the APPLIED marker): a card completion, or
+// `async_payment_succeeded` for a bank debit (even when the subscription is already linked). An unpaid delivery links
+// identity and applies none of them. Nothing was written when the pick was made.
+describe("onCheckoutCompleted: a PAID pick session applies its own terms, settled only (SA-1319 R1 2/5, R1a 8, R2 1-5)", () => {
+  const PICK_META = {
+    tenantId: "t1",
+    planKey: "CORE",
+    selfPick: "1",
+    planVersionId: "v14",
+    quotedMonthly: "199",
+  };
+  const pickSession = (over: Record<string, unknown> = {}) => ({
+    id: "cs_pick",
+    metadata: PICK_META,
+    subscription: "sub_1",
+    customer: "cus_1",
+    payment_status: "paid",
+    ...over,
+  });
+  const unpaid = (over: Record<string, unknown> = {}) =>
+    pickSession({ payment_status: "unpaid", ...over });
+  const subOf = (planKey: string, status: string, readOnlyReason: string | null) => ({
+    tenantId: "t1",
+    planKey,
+    basePriceSnapshot: 349,
+    discount: 0,
+    stripeSubId: null,
+    stripeCustomerId: "cus_1",
+    trialConvertedAt: null,
+    tenant: { status, readOnlyReason },
+  });
+  const TRIAL = () => subOf("ALL_IN", "TRIAL", null);
+  const EXPIRED = () => subOf("ALL_IN", "READ_ONLY", "trial_expired");
+  const stripeSubOf = (baseCents: number, extraItems: any[] = []) => ({
+    customer: "cus_1",
+    status: "active",
+    items: {
+      data: [
+        ...extraItems,
+        {
+          id: "si_base",
+          price: { unit_amount: baseCents },
+          current_period_start: 1_700_000_000,
+          current_period_end: 1_702_000_000,
+        },
+      ],
+    },
+  });
+  /** `hook: false` is the plan-transition (config snapshot) flag OFF. The APPLIED marker is a real store, so a redelivery sees it. */
+  function setup(sub: any, o: { hook?: boolean } = {}) {
+    const h = make({ transitionCount: 1, sub });
+    h.prisma.tenant.findUnique.mockResolvedValue({
+      id: "t1",
+      class: "PRODUCTION",
+      status: sub.tenant.status,
+      plan: "ALL_IN",
+      planVersionId: "v1",
+    });
+    h.mutations.inclusionCatalog = jest
+      .fn()
+      .mockResolvedValue({ addonSkus: [], planNameOf: (k: string) => k });
+    h.mutations.invalidatePlanCaches = jest.fn();
+    // the subscription Stripe made: its BASE item bills the quoted 199.00 (m-5)
+    h.stripe.getSubscription.mockResolvedValue(stripeSubOf(19900));
+    if (o.hook === false) {
+      h.planTransition.isEnabled.mockResolvedValue(false);
+      h.planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
+    }
+    const marks: any[] = [];
+    h.tx.auditLog.create.mockImplementation(async ({ data }: any) => {
+      marks.push(data);
+      return {};
+    });
+    const find = async ({ where }: any) =>
+      marks.find((m) => m.entityId === where.entityId && m.action === where.action) ?? null;
+    h.tx.auditLog.findFirst.mockImplementation(find);
+    h.prisma.auditLog.findFirst.mockImplementation(find);
+    const link = () =>
+      h.prisma.tenantSubscription.findUnique.mockResolvedValue({ ...sub, stripeSubId: "sub_1" });
+    return { ...h, marks, link };
+  }
+  const notApplied = (h: any) =>
+    h.marks.filter((m: any) => m.action === AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED);
+  const upserts = (h: any) => h.prisma.tenantSubscription.upsert.mock.calls.map((c: any[]) => c[0]);
+  const converted = (h: any) =>
+    h.events.emit.mock.calls.filter((c: any[]) => c[1] === BILLING_EVENTS.TRIAL_CONVERTED);
+  const stamped = (h: any) =>
+    h.tx.tenantSubscription.updateMany.mock.calls.filter(
+      (c: any[]) => c[0]?.data && "trialConvertedAt" in c[0].data,
+    );
+  /** Nothing of the pick's terms was written: not the plan, the snapshot, the pins, the tenant plan or a transition. */
+  function expectNothingApplied(h: any) {
+    for (const u of upserts(h)) {
+      expect(u.update).not.toHaveProperty("planKey");
+      expect(u.update).not.toHaveProperty("currentPlan");
+      expect(u.update).not.toHaveProperty("basePriceSnapshot");
+      expect(u.create.planKey ?? null).toBeNull();
+      expect(u.create.basePriceSnapshot ?? null).toBeNull();
+    }
+    expect(h.tx.tenant.update).not.toHaveBeenCalled();
+    expect(h.tx.tenantSubscription.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { planVersionId: expect.anything() } }),
+    );
+    expect(h.planTransition.onPlanChange).not.toHaveBeenCalled();
+    expect(h.mutations.invalidatePlanCaches).not.toHaveBeenCalled();
+    expect(h.pricing.resolveCatalogPricing).not.toHaveBeenCalled();
+  }
+
+  it.each([
+    ["a Pro TRIAL picks Essentials and pays by card", TRIAL],
+    ["a trial-expired READ_ONLY business picks Essentials and pays by card", EXPIRED],
+  ])(
+    "R2 5: %s: the session's plan, version, price and the tenant's plan are written, once",
+    async (_n, sub) => {
+      const h = setup(sub());
+      await (h.svc as any).onCheckoutCompleted(pickSession());
+      expect(upserts(h)).toHaveLength(1);
+      expect(upserts(h)[0].update).toMatchObject({
+        planKey: "CORE",
+        currentPlan: "CORE",
+        basePriceSnapshot: 199, // the session's quoted price, never the old plan's catalog price
+      });
+      expect(h.pricing.resolveCatalogPricing).not.toHaveBeenCalled();
+      expect(h.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+        where: { tenantId: "t1" },
+        data: { planVersionId: "v14" },
+      });
+      expect(h.tx.tenant.updateMany).toHaveBeenCalledWith({
+        where: { id: "t1" },
+        data: { planVersionId: "v14" },
+      });
+      expect(h.tx.tenant.update).toHaveBeenCalledWith({
+        where: { id: "t1" },
+        data: { plan: "CORE" },
+      });
+      // onPlanChange exactly once, from the plan the business is LEAVING, judged on the session's version
+      expect(h.planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+      expect(h.planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({
+        fromPlanKey: "ALL_IN",
+        toPlanKey: "CORE",
+        toPlanVersionId: "v14",
+      });
+      expect(h.mutations.inclusionCatalog).toHaveBeenCalledWith("t1", "v14");
+      // M1: the caches drop after the commit, and the APPLIED row is written once
+      expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
+      expect(h.marks).toHaveLength(1);
+      // m3: the trial conversion is stamped and announced exactly once
+      expect(stamped(h)).toHaveLength(1);
+      expect(converted(h)).toHaveLength(1);
+    },
+  );
+
+  it("R2 1: a bank debit completed UNPAID links identity and applies none of the pick", async () => {
+    const h = setup(TRIAL());
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    expect(upserts(h)).toHaveLength(1);
+    expect(upserts(h)[0].update).toMatchObject({ stripeSubId: "sub_1", stripeCustomerId: "cus_1" });
+    expectNothingApplied(h);
+    expect(h.marks).toHaveLength(0); // no APPLIED row: "applied" means only that row
+    expect(stamped(h)).toHaveLength(0);
+    expect(converted(h)).toHaveLength(0);
+  });
+
+  it("R2 2: then async_payment_succeeded applies the terms ONCE, though the subscription is already linked", async () => {
+    const h = setup(TRIAL());
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    h.link();
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    const applied = upserts(h).filter((u: any) => u.update.planKey === "CORE");
+    expect(applied).toHaveLength(1);
+    expect(applied[0].update).toMatchObject({ currentPlan: "CORE", basePriceSnapshot: 199 });
+    expect(h.tx.tenant.update).toHaveBeenCalledTimes(1);
+    expect(h.planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+    expect(h.planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({ fromPlanKey: "ALL_IN" });
+    expect(h.marks).toHaveLength(1);
+    expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
+    expect(converted(h)).toHaveLength(1);
+  });
+
+  it("R2 3: the same settled event delivered again applies nothing a second time", async () => {
+    const h = setup(TRIAL());
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    h.link();
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expect(upserts(h).filter((u: any) => u.update.planKey === "CORE")).toHaveLength(1);
+    expect(h.planTransition.onPlanChange).toHaveBeenCalledTimes(1);
+    expect(h.tx.tenant.update).toHaveBeenCalledTimes(1);
+    expect(h.marks).toHaveLength(1);
+    expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
+  });
+
+  it("R2 4: a bank debit that FAILS applies nothing; the trial still reads Pro", async () => {
+    const h = setup(TRIAL());
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    await (h.svc as any).onCheckoutAsyncPaymentFailed(unpaid());
+    expectNothingApplied(h);
+    // the failure leaves its own notice rows, never an APPLIED row
+    expect(h.marks.map((m: any) => m.action)).not.toContain(STRIPE_CHECKOUT_APPLIED_ACTION);
+  });
+
+  it("M2: with the config-snapshot flag OFF (the prod default) a paid pick is still applied, and the caches still drop", async () => {
+    const h = setup(TRIAL(), { hook: false });
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expect(upserts(h)[0].update).toMatchObject({
+      planKey: "CORE",
+      currentPlan: "CORE",
+      basePriceSnapshot: 199,
+    });
+    expect(h.tx.tenant.update).toHaveBeenCalledWith({
+      where: { id: "t1" },
+      data: { plan: "CORE" },
+    });
+    expect(h.tx.tenantSubscription.updateMany).toHaveBeenCalledWith({
+      where: { tenantId: "t1" },
+      data: { planVersionId: "v14" },
+    });
+    expect(h.planTransition.onPlanChange).not.toHaveBeenCalled();
+    expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
+    expect(h.marks).toHaveLength(1);
+  });
+
+  it("M2 / flag off: an unpaid delivery still writes none of it", async () => {
+    const h = setup(TRIAL(), { hook: false });
+    await (h.svc as any).onCheckoutCompleted(unpaid());
+    expectNothingApplied(h);
+  });
+
+  it("R5 / m2: a version unpublished after the pick still completes on its own terms (only the session's version is read)", async () => {
+    const h = setup(TRIAL());
+    // the REAL inclusion reader over a catalog whose v14 is retired: only that version, by id, is served
+    const catalog = {
+      getPublishedCatalog: jest
+        .fn()
+        .mockRejectedValue(new Error("the published catalog must not be read")),
+      getVersionForTenant: jest.fn(async (id: string | null) => {
+        if (id !== "v14") throw new Error(`unexpected version ${id}`);
+        return { id: "v14", status: "ARCHIVED", definitions: [], addonSkus: [] };
+      }),
+    };
+    const real = Object.create(SubscriptionMutationService.prototype) as any;
+    real.prisma = {
+      tenantSubscription: { findUnique: jest.fn(async () => ({ planVersionId: "v9" })) },
+      tenant: { findUnique: jest.fn(async () => ({ planVersionId: "v9" })) },
+    };
+    real.catalog = catalog;
+    h.mutations.inclusionCatalog = (t: string, v?: string) => real.inclusionCatalog(t, v);
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expect(catalog.getVersionForTenant).toHaveBeenCalledWith("v14");
+    expect(catalog.getPublishedCatalog).not.toHaveBeenCalled();
+    expect(upserts(h)[0].update).toMatchObject({ planKey: "CORE", basePriceSnapshot: 199 });
+    expect(notApplied(h)).toHaveLength(0);
+  });
+
+  it.each([
+    ["no plan version", { ...PICK_META, planVersionId: undefined }],
+    ["no price", { ...PICK_META, quotedMonthly: undefined }],
+  ])(
+    "m1: a marked session with %s is never treated as bodyless: nothing applied, the paid-but-not-applied notice is written",
+    async (_n, metadata) => {
+      const h = setup(TRIAL());
+      await (h.svc as any).onCheckoutCompleted(pickSession({ metadata }));
+      expectNothingApplied(h);
+      expect(notApplied(h)).toHaveLength(1);
+    },
+  );
+
+  it("m-1: the bad-terms notice is raised only AFTER the customer check and the APPLIED early return", async () => {
+    const bad = { ...PICK_META, planVersionId: undefined };
+    // a session for another customer: refused before anything is raised
+    const foreign = setup({ ...TRIAL(), stripeCustomerId: "cus_other" });
+    await (foreign.svc as any).onCheckoutCompleted(pickSession({ metadata: bad }));
+    expect(notApplied(foreign)).toHaveLength(0);
+    // a session already APPLIED: an idempotent redelivery raises nothing
+    const done = setup(TRIAL());
+    done.marks.push({
+      entityId: "cs_pick",
+      action: STRIPE_CHECKOUT_APPLIED_ACTION,
+      entityType: "stripe_checkout_session",
+    });
+    await (done.svc as any).onCheckoutCompleted(pickSession({ metadata: bad }));
+    expect(notApplied(done)).toHaveLength(0);
+  });
+
+  it.each([
+    ["a quote of 199.00 against a charged 99.00", { metadata: PICK_META }, 9900],
+    [
+      "invalid terms (no plan version)",
+      { metadata: { ...PICK_META, planVersionId: undefined } },
+      19900,
+    ],
+  ])(
+    "SA-1325 Q2: a settled bad pick (%s) records not-applied and RETURNS: no link, no conversion, no activation, no APPLIED, no ledger row, no price push",
+    async (_n, over, chargedCents) => {
+      for (const sub of [TRIAL(), EXPIRED()]) {
+        const h = setup(sub);
+        h.stripe.getSubscription.mockResolvedValue(stripeSubOf(chargedCents));
+        const resync = jest.spyOn(h.svc as any, "resyncPriceAfterCheckout");
+        await (h.svc as any).onCheckoutCompleted(pickSession(over));
+        expect(notApplied(h)).toHaveLength(1);
+        expect(upserts(h)).toHaveLength(0);
+        expect(converted(h)).toHaveLength(0);
+        expect(stamped(h)).toHaveLength(0);
+        expect(h.tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(h.events.emit).not.toHaveBeenCalled();
+        expect(
+          h.marks.filter((m: any) => m.action === STRIPE_CHECKOUT_APPLIED_ACTION),
+        ).toHaveLength(0);
+        expect(resync).not.toHaveBeenCalled();
+        // the same session redelivered: no second row, still no conversion
+        await (h.svc as any).onCheckoutCompleted(pickSession(over));
+        expect(notApplied(h)).toHaveLength(1);
+        expect(converted(h)).toHaveLength(0);
+        expect(h.events.emit).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it("R-372 MINOR: a paid pick whose plan change a newer downgrade skipped converts and marks with the plan the business HOLDS", async () => {
+    const h = setup(TRIAL());
+    h.prisma.tenantFeatureConfigSnapshot.findFirst.mockResolvedValue({ id: "snap_newer" });
+    await (h.svc as any).onCheckoutCompleted(pickSession({ created: 1_700_000_000 }));
+    expectNothingApplied(h);
+    expect(converted(h)).toHaveLength(1);
+    expect(converted(h)[0][2]).toEqual({ planKey: "ALL_IN" });
+    const applied = h.marks.filter((m: any) => m.action === STRIPE_CHECKOUT_APPLIED_ACTION);
+    expect(applied).toHaveLength(1);
+    expect(applied[0].meta.toPlanKey).toBe("ALL_IN");
+  });
+
+  it("m-5: a quote of 199.00 against a Stripe base item of 99.00 is INVALID: nothing applied, the paid-but-not-applied row is written", async () => {
+    const h = setup(TRIAL());
+    h.stripe.getSubscription.mockResolvedValue(stripeSubOf(9900));
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expectNothingApplied(h);
+    expect(notApplied(h)).toHaveLength(1);
+    expect(notApplied(h)[0].meta).toMatchObject({ reason: "pick_price_mismatch" });
+    // never re-applied with either figure
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expectNothingApplied(h);
+    expect(notApplied(h)).toHaveLength(1);
+  });
+
+  it("m-5: an equal amount is applied once, and an add-on item beside the base item is not compared", async () => {
+    const h = setup(TRIAL());
+    h.stripe.getSubscription.mockResolvedValue(
+      stripeSubOf(19900, [
+        { id: "si_addon", price: { unit_amount: 5000, metadata: { addonSku: "MSRP" } } },
+      ]),
+    );
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expect(upserts(h).filter((u: any) => u.update.planKey === "CORE")).toHaveLength(1);
+    expect(notApplied(h)).toHaveLength(0);
+  });
+
+  it("m-5: a base item whose amount cannot be read is never applied", async () => {
+    const h = setup(TRIAL());
+    h.stripe.getSubscription.mockResolvedValue({
+      ...stripeSubOf(19900),
+      items: { data: [{ id: "si_base" }] },
+    });
+    await (h.svc as any).onCheckoutCompleted(pickSession());
+    expectNothingApplied(h);
+    expect(notApplied(h)).toHaveLength(1);
+  });
+
+  it("a bodyless session (no pick marker) completes exactly as before: catalog price, no pin, no tenant plan write, no cache call", async () => {
+    const h = setup(TRIAL());
+    await (h.svc as any).onCheckoutCompleted(
+      pickSession({ metadata: { tenantId: "t1", planKey: "GROWTH" } }),
+    );
+    expect(h.pricing.resolveCatalogPricing).toHaveBeenCalled();
+    expect(h.tx.tenant.update).not.toHaveBeenCalled();
+    expect(upserts(h)[0].update).not.toHaveProperty("currentPlan");
+    expect(h.tx.tenantSubscription.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { planVersionId: expect.anything() } }),
+    );
+    expect(h.mutations.invalidatePlanCaches).not.toHaveBeenCalled();
+  });
+
+  describe("SA-1327: a delayed-method pick's two paid events, in either order, sum to what Stripe bills", () => {
+    const ESSENTIALS = { ...PICK_META, planKey: "STARTER", quotedMonthly: "99" };
+    const GROWTH = { ...PICK_META, planKey: "CORE", quotedMonthly: "199" };
+    const invoice = {
+      id: "in_paid",
+      amount_paid: 9900,
+      customer: "cus_1",
+      parent: { subscription_details: { subscription: "sub_1" } },
+    };
+    /** A stateful row and tenant: every read sees the last write, so the events run in sequence and the ledger can be summed. */
+    function ledger(o: {
+      planKey: string;
+      base: number;
+      status: string;
+      readOnlyReason?: string | null;
+      linked?: boolean;
+      hook?: boolean;
+      chargedCents: number;
+    }) {
+      const state = {
+        sub: {
+          tenantId: "t1",
+          planKey: o.planKey,
+          basePriceSnapshot: o.base,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: o.linked === false ? null : "sub_1",
+          stripeCustomerId: "cus_1",
+          trialConvertedAt: null,
+          failedPaymentCount: 0,
+          cancelAtPeriodEnd: false,
+        } as Record<string, unknown>,
+        tenant: {
+          status: o.status,
+          readOnlyReason: o.readOnlyReason ?? null,
+          class: "PRODUCTION",
+          deletedAt: null,
+        },
+      };
+      const h = setup({ ...state.sub, tenant: state.tenant }, { hook: o.hook });
+      const read = async () => ({ ...state.sub, tenant: { ...state.tenant } });
+      h.prisma.tenantSubscription.findUnique.mockImplementation(read);
+      h.prisma.tenantSubscription.findFirst.mockImplementation(read);
+      h.prisma.tenantSubscription.upsert.mockImplementation(async ({ update }: any) => {
+        Object.assign(state.sub, update);
+        return { ...state.sub };
+      });
+      h.prisma.tenant.findUnique.mockImplementation(async () => ({
+        id: "t1",
+        class: "PRODUCTION",
+        status: state.tenant.status,
+        readOnlyReason: state.tenant.readOnlyReason,
+        plan: "ALL_IN",
+        planVersionId: "v1",
+      }));
+      h.tx.tenant.updateMany.mockImplementation(async ({ data }: any) => {
+        if (state.tenant.status === "ACTIVE" || data?.status !== "ACTIVE") return { count: 0 };
+        state.tenant.status = "ACTIVE";
+        state.tenant.readOnlyReason = null;
+        return { count: 1 };
+      });
+      h.stripe.getSubscription.mockResolvedValue(stripeSubOf(o.chargedCents));
+      const rows = () =>
+        h.events.emit.mock.calls
+          .filter((c: any[]) => typeof c[3]?.amountDelta === "number")
+          .map((c: any[]) => [c[1], c[3].amountDelta]);
+      const sum = () =>
+        rows().reduce((t: number, r: any[]) => Math.round((t + r[1]) * 100) / 100, 0);
+      const lockedNotices = () =>
+        h.marks.filter((m: any) => /PAID_WHILE_LOCKED/i.test(String(m.action)));
+      const settle = (meta: Record<string, unknown>) =>
+        (h.svc as any).onCheckoutCompleted(pickSession({ metadata: meta }));
+      const paid = () => (h.svc as any).onPaymentSucceeded(invoice);
+      return { ...h, state, rows, sum, lockedNotices, settle, paid };
+    }
+
+    it("1, order A (the settled apply, then the invoice): one +99.00 crossing, no PLAN_CHANGED; the invoice books nothing", async () => {
+      const l = ledger({ planKey: "ALL_IN", base: 299, status: "TRIAL", chargedCents: 9900 });
+      await l.settle(ESSENTIALS);
+      await l.paid();
+      expect(l.rows()).toEqual([[BILLING_EVENTS.SUBSCRIPTION_RESUMED, 99]]);
+      expect(l.sum()).toBe(99);
+    });
+
+    it.each([true, false])(
+      "2-4, order B (the invoice, then the settled apply; plan-transition hook %s): +299.00 at the held plan, then PLAN_CHANGED -200.00, once; no locked notice",
+      async (hook) => {
+        const l = ledger({
+          planKey: "ALL_IN",
+          base: 299,
+          status: "TRIAL",
+          chargedCents: 9900,
+          hook,
+        });
+        await l.paid();
+        await l.settle(ESSENTIALS);
+        expect(l.rows()).toEqual([
+          [BILLING_EVENTS.SUBSCRIPTION_RESUMED, 299],
+          [BILLING_EVENTS.PLAN_CHANGED, -200],
+        ]);
+        const changed = l.events.emit.mock.calls.find(
+          (c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED,
+        );
+        expect(changed[2]).toEqual({
+          source: "checkout_pick",
+          fromPlan: "ALL_IN",
+          toPlan: "STARTER",
+          checkoutSessionId: "cs_pick",
+        });
+        expect(l.sum()).toBe(99);
+        // 3: the async event redelivered books nothing more
+        await l.settle(ESSENTIALS);
+        expect(l.sum()).toBe(99);
+        // 4: ACTIVE is reinstatable: the activation CAS missing raises no paid-while-locked notice
+        expect(l.lockedNotices()).toHaveLength(0);
+      },
+    );
+
+    it("5: a trial-expired business on Essentials at 99.00 picks Growth at 199.00, order B: +99.00, then +100.00", async () => {
+      const l = ledger({
+        planKey: "STARTER",
+        base: 99,
+        status: "READ_ONLY",
+        readOnlyReason: "trial_expired",
+        chargedCents: 19900,
+      });
+      await l.paid();
+      await l.settle(GROWTH);
+      expect(l.rows()).toEqual([
+        [BILLING_EVENTS.SUBSCRIPTION_RESUMED, 99],
+        [BILLING_EVENTS.PLAN_CHANGED, 100],
+      ]);
+      expect(l.sum()).toBe(199);
+    });
+
+    it("6: a card pick whose invoice arrives before the completion: no reinstatement (not linked yet); the completion books +99.00 once", async () => {
+      const l = ledger({
+        planKey: "ALL_IN",
+        base: 299,
+        status: "TRIAL",
+        linked: false,
+        chargedCents: 9900,
+      });
+      await l.paid();
+      expect(l.rows()).toEqual([]);
+      await l.settle(ESSENTIALS);
+      expect(l.rows()).toEqual([[BILLING_EVENTS.SUBSCRIPTION_RESUMED, 99]]);
+    });
+
+    it("7: a settled bad pick books no ledger row and pushes no price to Stripe", async () => {
+      const l = ledger({ planKey: "ALL_IN", base: 299, status: "TRIAL", chargedCents: 19900 });
+      const resync = jest.spyOn(l.svc as any, "resyncPriceAfterCheckout");
+      await l.settle(ESSENTIALS);
+      expect(l.rows()).toEqual([]);
+      expect(resync).not.toHaveBeenCalled();
+    });
+  });
+});
+
 describe("onCheckoutCompleted: the trial conversion stamp (SA-1547 R3)", () => {
   const session = (over: Record<string, unknown> = {}) => ({
     id: "cs_conv",

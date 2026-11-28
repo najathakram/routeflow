@@ -3,7 +3,9 @@ import { Reflector } from "@nestjs/core";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { NO_IMPERSONATION_KEY } from "../auth/guards/no-impersonation.guard";
-import { SettingsBillingController } from "./settings-billing.controller";
+import { buildGlobalValidationPipe } from "../common/global-validation-pipe";
+import { PLAN_PICK_ASK_FOR_LINK_MESSAGE } from "./self-serve-plan-gate";
+import { CheckoutPlanPickDto, SettingsBillingController } from "./settings-billing.controller";
 import { SELF_PAY_REASONS } from "./self-checkout-eligibility";
 
 /**
@@ -69,8 +71,10 @@ describe("SettingsBillingController.createCheckout: Pay now follows selfPay (R1,
     });
   });
 
-  it("the route still takes no request body (a plan pick is PR-5)", () => {
-    expect(SettingsBillingController.prototype.createCheckout.length).toBe(1);
+  it("a bodyless request is passed through exactly as before (no pick)", async () => {
+    const { controller, billing } = make(SELF_PAY_OK);
+    await controller.createCheckout({ tenantId: "t1", sub: "u1" } as any, {} as any);
+    expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", { surface: "TENANT_SELF" });
   });
 });
 
@@ -132,7 +136,7 @@ describe("SA-1547 PR-5a: the checkout route says ask-for-a-link for an ACTIVE bu
     expect(e).toBeInstanceOf(ConflictException);
     expect(e.getResponse()).toEqual({
       code: API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
-      message: "Ask us for a payment link.",
+      message: PLAN_PICK_ASK_FOR_LINK_MESSAGE,
     });
     expect(billing.createCheckoutSession).not.toHaveBeenCalled();
   });
@@ -162,5 +166,88 @@ describe("SA-1547 PR-5a: the checkout route says ask-for-a-link for an ACTIVE bu
       await run();
       expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", { surface: "TENANT_SELF" });
     }
+  });
+});
+
+describe("SA-1547 PR-5 R7: the checkout body takes a planKey and nothing else", () => {
+  const pipe = buildGlobalValidationPipe();
+  const run = (body: unknown) =>
+    pipe.transform(body, { type: "body", metatype: CheckoutPlanPickDto });
+
+  it("accepts no body and a planKey, and the route reads the DTO class from its metadata", async () => {
+    await expect(run({})).resolves.toEqual({});
+    await expect(run({ planKey: "CORE" })).resolves.toMatchObject({ planKey: "CORE" });
+    const types = Reflect.getMetadata(
+      "design:paramtypes",
+      SettingsBillingController.prototype,
+      "createCheckout",
+    );
+    expect(types[1]).toBe(CheckoutPlanPickDto);
+  });
+
+  it.each([
+    ["a price", { planKey: "CORE", price: 1 }],
+    ["an interval", { planKey: "CORE", interval: "year" }],
+    ["add-ons", { planKey: "CORE", addons: ["MSRP"] }],
+    ["a field and no planKey", { amount: 5 }],
+    ["a planKey that is not text", { planKey: 5 }],
+    ["an empty planKey", { planKey: "" }],
+  ])("%s is a 400", async (_n, body) => {
+    const e = await rejects(run(body));
+    expect(e.getStatus()).toBe(400);
+  });
+});
+
+describe("SA-1547 PR-5: a plan pick is forwarded with a gate that decides who may pick", () => {
+  const gateOf = async (selfPay: unknown, flag?: boolean) => {
+    const { controller, billing } = make(selfPay, "STARTER", flag);
+    await controller.createCheckout({ tenantId: "t1" } as any, { planKey: "CORE" });
+    const [tenantId, opts] = billing.createCheckoutSession.mock.calls[0];
+    expect(tenantId).toBe("t1");
+    expect(opts).toMatchObject({ surface: "TENANT_SELF", pick: { planKey: "CORE" } });
+    return opts.pick.gate as () => Promise<void>;
+  };
+
+  it("an eligible (trial-expired) business passes the gate, flag on", async () => {
+    await expect((await gateOf(SELF_PAY_OK, true))()).resolves.toBeUndefined();
+  });
+
+  it("SA-1325 Q1: card-first OFF (or no service), a trial-expired pick is a 403 plan_pick_off; the pick is dark", async () => {
+    for (const flag of [false, undefined]) {
+      const e = await rejects((await gateOf(SELF_PAY_OK, flag))());
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect(e.getResponse()).toMatchObject({ reason: "plan_pick_off" });
+    }
+  });
+
+  it("SA-1325 Q1: card-first OFF, a bodyless trial-expired request still opens its own plan's session", async () => {
+    const { controller, billing } = make(SELF_PAY_OK, "STARTER", false);
+    await controller.createCheckout({ tenantId: "t1" } as any);
+    expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", { surface: "TENANT_SELF" });
+  });
+
+  it("a TRIAL business picking a plan, flag ON, passes (it pays now); flag OFF the pick is refused (plan_pick_off)", async () => {
+    await expect((await gateOf(SELF_PAY_TRIAL, true))()).resolves.toBeUndefined();
+    for (const flag of [false, undefined]) {
+      const e = await rejects((await gateOf(SELF_PAY_TRIAL, flag))());
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect(e.getResponse()).toMatchObject({ reason: "plan_pick_off" });
+    }
+  });
+
+  it("ACTIVE with no card: the 5a refusal on the pick path too (flag ON a coded 409, OFF the plan_pick_off 403)", async () => {
+    const noCard = { ...SELF_PAY_OK, eligible: false, reason: "active_no_card" };
+    const e = await rejects((await gateOf(noCard, true))());
+    expect(e.getResponse()).toMatchObject({ code: API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK });
+    expect((await rejects((await gateOf(noCard, false))())).getResponse()).toMatchObject({
+      reason: "plan_pick_off",
+    });
+  });
+
+  it("a TRIAL business with no plan pick is still refused with flag ON (no session during a trial)", async () => {
+    const { controller, billing } = make(SELF_PAY_TRIAL, "STARTER", true);
+    const e = await rejects(controller.createCheckout({ tenantId: "t1" } as any, {} as any));
+    expect(e).toBeInstanceOf(ForbiddenException);
+    expect(billing.createCheckoutSession).not.toHaveBeenCalled();
   });
 });
