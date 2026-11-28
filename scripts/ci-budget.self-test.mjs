@@ -16,8 +16,14 @@
 // - P: the fix-revert probe, the same wrapper with `pkill -s <sid>` swapped for the group kill
 //   `kill -- -<sid>`. It must fail W1 and W2.
 //
-// POSIX only (bash, perl, pkill -s, ps). Under Windows it prints SKIPPED and exits 0: CI (Linux) and
-// the macOS readers run it. CI_BUDGET_SH=<path> runs the W cases against another wrapper file.
+// K: a pkill that cannot kill (a stub on PATH that exits 2) makes the wrapper exit 125, never a clean
+// 124 or the command's own status; a stub that exits 1 (nothing matched) is benign. These and W6 run
+// on any POSIX host.
+//
+// Platforms: under Windows everything prints SKIPPED and exits 0. W1-W5, P and M need procps pkill with
+// -s, which the CI runner (Linux) has. macOS pkill has no -s: there the K and W6 cases run and the rest
+// prints SKIPPED with the probe's exit code. CI_BUDGET_SH=<path> runs every case against another
+// wrapper file.
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +32,7 @@ import { fileURLToPath } from "node:url";
 
 if (process.platform === "win32") {
   console.log(
-    "ci-budget self-test: SKIPPED on win32 (needs bash, perl POSIX::setsid, pkill -s and ps; CI and macOS run it)",
+    "ci-budget self-test: SKIPPED on win32 (needs bash, perl POSIX::setsid, procps pkill -s and ps; CI runs it)",
   );
   process.exit(0);
 }
@@ -55,6 +61,8 @@ const FIXTURES = {
   pass: 'set -m\nsleep 300 &\necho $! > "$1"\nexit 0\n',
   // a red verify, exit code 3
   exit3: "exit 3\n",
+  // the leader is the long task itself, nothing escaped
+  sleeper: 'echo $$ > "$1"\nexec sleep 300\n',
 };
 for (const [name, body] of Object.entries(FIXTURES)) writeFileSync(join(dir, `${name}.sh`), body);
 
@@ -86,12 +94,12 @@ let seq = 0;
 // Runs argv with stdout and stderr piped, like a runner step. Resolves when stdout reaches EOF and the
 // process has exited ('close'), or at `boundMs` with eof=false. Then it always cleans up: it kills the
 // leftover sleep (our own pid, from the fixture's pid file) so the pipe can close.
-function run(argv, { boundMs, fixture, onStart } = {}) {
+function run(argv, { boundMs, fixture, onStart, env } = {}) {
   const pidFile = join(dir, `pid-${++seq}`);
   const args = fixture ? [...argv, "bash", join(dir, `${fixture}.sh`), pidFile] : argv;
   return new Promise((resolve) => {
     const t0 = Date.now();
-    const child = spawn(args[0], args.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(args[0], args.slice(1), { stdio: ["ignore", "pipe", "pipe"], env });
     let stderr = "";
     child.stdout.on("data", () => {});
     child.stderr.on("data", (d) => (stderr += d));
@@ -132,6 +140,64 @@ async function wCases(wrapper) {
 async function main() {
   check("W0 the wrapper exists", existsSync(WRAPPER), `missing: ${WRAPPER}`);
   if (!existsSync(WRAPPER)) return;
+
+  // W6: a budget it cannot read is a usage error, not a run with no budget.
+  for (const bad of ["5x", "", "m", "-1s"]) {
+    const r = spawnSync("bash", [WRAPPER, bad, GRACE, "true"], { encoding: "utf8" });
+    check(`W6 budget "${bad}" is refused with exit 2`, r.status === 2, `status ${r.status}`);
+  }
+  const g = spawnSync("bash", [WRAPPER, "2s", "x", "true"], { encoding: "utf8" });
+  check('W6 grace "x" is refused with exit 2', g.status === 2, `status ${g.status}`);
+  const n = spawnSync("bash", [WRAPPER, "2s", "1"], { encoding: "utf8" });
+  check("W6 no command is refused with exit 2", n.status === 2, `status ${n.status}`);
+
+  // K: a pkill that cannot kill fails the run loudly (exit 125). The stub dir goes first on PATH.
+  const stub = (code) => {
+    const d = mkdtempSync(join(dir, `pkill-${code}-`));
+    writeFileSync(join(d, "pkill"), `#!/bin/sh\nexit ${code}\n`, { mode: 0o755 });
+    return { ...process.env, PATH: `${d}:${process.env.PATH}` };
+  };
+  const k1 = await run(wrapped(WRAPPER, "10s"), { boundMs: 3000, fixture: "exit3", env: stub(2) });
+  check(
+    "K1 pkill exits 2 on the after-exit sweep: exit 125, not the command's 3",
+    k1.exit && k1.exit.code === 125,
+    `exit ${JSON.stringify(k1.exit)}`,
+  );
+  check(
+    "K1 the failure is printed",
+    /pkill -s failed \(exit 2\)/.test(k1.stderr),
+    `stderr ${k1.stderr.trim()}`,
+  );
+  const k2 = await run(wrapped(WRAPPER), { boundMs: BOUND_MS, fixture: "sleeper", env: stub(2) });
+  check(
+    "K2 pkill exits 2 at the budget: exit 125, not 124",
+    k2.exit && k2.exit.code === 125,
+    `exit ${JSON.stringify(k2.exit)}`,
+  );
+  check(
+    "K2 the leader is still signalled, so the run ends within budget + grace + 2s",
+    k2.eof && k2.leftoverDead,
+    `eof ${k2.eof} dead ${k2.leftoverDead}`,
+  );
+  const k3 = await run(wrapped(WRAPPER, "10s"), { boundMs: 3000, fixture: "exit3", env: stub(1) });
+  check(
+    "K3 pkill exits 1 (nothing matched) is benign: the command's 3 passes through",
+    k3.exit && k3.exit.code === 3,
+    `exit ${JSON.stringify(k3.exit)}`,
+  );
+
+  // The session cases need procps pkill with -s. The probe signals processes named exactly a name no
+  // process has, in this test's own session (-s 0): 0 or 1 means -s works; anything else means it does not.
+  const probe0 = spawnSync("pkill", ["-s", "0", "-x", "ci-budget-probe-no-such-process"], {
+    encoding: "utf8",
+  });
+  if (probe0.status !== 0 && probe0.status !== 1) {
+    const why = `probe exit ${probe0.status}${probe0.error ? `, ${probe0.error.code}` : ""}`;
+    console.log(
+      `  SKIPPED W1-W5, P and M on ${process.platform}: pkill has no -s here (${why}). CI (Linux, procps) runs them.`,
+    );
+    return;
+  }
 
   // W1: at the budget the whole session dies, the group-escaped task included, and stdout closes.
   const { w1, w2 } = await wCases(WRAPPER);
@@ -187,16 +253,6 @@ async function main() {
   check("W5 cancel: exit 143", w5.exit && w5.exit.code === 143, `exit ${JSON.stringify(w5.exit)}`);
   check("W5 cancel: stdout EOF", w5.eof, `no EOF in ${BOUND_MS} ms`);
   check("W5 cancel: the group-escaped task is dead", w5.leftoverDead, `pid ${w5.pid} alive`);
-
-  // W6: a budget it cannot read is a usage error, not a run with no budget.
-  for (const bad of ["5x", "", "m", "-1s"]) {
-    const r = spawnSync("bash", [WRAPPER, bad, GRACE, "true"], { encoding: "utf8" });
-    check(`W6 budget "${bad}" is refused with exit 2`, r.status === 2, `status ${r.status}`);
-  }
-  const g = spawnSync("bash", [WRAPPER, "2s", "x", "true"], { encoding: "utf8" });
-  check('W6 grace "x" is refused with exit 2', g.status === 2, `status ${g.status}`);
-  const n = spawnSync("bash", [WRAPPER, "2s", "1"], { encoding: "utf8" });
-  check("W6 no command is refused with exit 2", n.status === 2, `status ${n.status}`);
 
   // P: the fix-revert probe. The same wrapper with every session kill swapped for a group kill must
   // fail W1 and W2, or these cases cannot tell the fix from master's shape.

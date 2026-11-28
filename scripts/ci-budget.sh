@@ -8,8 +8,10 @@
 # until the job cap (#4556's three 55:00 cancels with no log). A process group change keeps the
 # session, so `pkill -s <sid>` reaches every turbo task.
 #
-# - The command runs as the leader of a new session (perl's POSIX::setsid, the same on Linux and
-#   macOS, which has no setsid(1)). Its pid is the session id.
+# - The command runs as the leader of a new session (perl's POSIX::setsid; setsid(1) forks when its
+#   caller leads a process group, which would make $! the wrong id). Its pid is the session id.
+# - The session kill needs procps pkill with -s, as on the CI runner (Linux). macOS pkill has no -s:
+#   there the kill fails loudly and the run exits 125 (see kill_session). This script is CI-only.
 # - At the budget: TERM to the session, then KILL to it once the command has exited or the grace
 #   has run out, whichever is first. Exit 124, like timeout(1).
 # - When the command ends by itself: KILL whatever is left in the session, then exit with the
@@ -65,8 +67,26 @@ disarm() {
   fi
 }
 
-# pkill exits 1 when nothing matched; that is not an error here.
-kill_session() { pkill -"$1" -s "$sid" 2>/dev/null || true; }
+# pkill exits 0 when it signalled something and 1 when nothing matched; both are fine. 2 or more is
+# a usage error or a pkill without -s (macOS's has none): the session was NOT signalled. Say so once,
+# still signal the leader itself (only while it is unreaped, so its pid cannot belong to anything
+# else) so `wait` cannot hang, and exit 125 at the end instead of a clean 124 or the command's own
+# status. A broken kill must never pass as a clean budget stop.
+kill_broken=0
+leader_unreaped() { jobs -p | grep -qx "$sid"; }
+kill_session() {
+  pkill -"$1" -s "$sid" 2>/dev/null
+  local rc=$?
+  if [ "$rc" -ge 2 ]; then
+    [ "$kill_broken" = 1 ] || echo "ci-budget: pkill -s failed (exit $rc), so the session was not signalled; this run exits 125" >&2
+    kill_broken=1
+    if leader_unreaped; then kill -"$1" "$sid" 2>/dev/null; fi
+  fi
+}
+finish() {
+  [ "$kill_broken" = 1 ] && exit 125
+  exit "$1"
+}
 
 # bash starts a background job with INT and QUIT ignored; reset them so the command (and turbo's own
 # shutdown, which sends its tasks SIGINT) behaves as it does in the pre-push hook.
@@ -78,7 +98,7 @@ on_cancel() {
   kill_session TERM
   sleep 2
   kill_session KILL
-  exit "$1"
+  finish "$1"
 }
 trap 'on_cancel 143' TERM
 trap 'on_cancel 130' INT
@@ -98,8 +118,8 @@ if [ "$fired" = 1 ] && kill -0 "$sid" 2>/dev/null; then
   disarm
   kill_session KILL
   wait "$sid" 2>/dev/null
-  exit 124
+  finish 124
 fi
 disarm
 kill_session KILL
-exit "$status"
+finish "$status"
