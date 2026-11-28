@@ -262,7 +262,10 @@ async function main() {
     swaps++;
     return `kill ${sig} -- -"$sid"`;
   });
-  const pkillLeft = groupKill.split("\n").filter((l) => !/^\s*#/.test(l) && /\bpkill\b/.test(l));
+  // A pkill COMMAND left over, not the word inside a quoted message (the 125 error names pkill).
+  const pkillLeft = groupKill
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l) && /\bpkill\b/.test(l.replace(/"[^"]*"|'[^']*'/g, "")));
   check(
     "P0 the probe swapped every session kill for a group kill",
     swaps >= 1 && pkillLeft.length === 0,
