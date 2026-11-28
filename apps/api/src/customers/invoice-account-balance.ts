@@ -1,8 +1,8 @@
-import { isPaidAtSale, roundMoney } from "@routeflow/pricing";
+import { asOfText, isPaidAtSale, roundMoney } from "@routeflow/pricing";
 import type { InvoiceAccountRow } from "@routeflow/types";
 import type { PrismaService } from "../prisma/prisma.service";
 import { overdueCutoff, tenantTodayDay } from "../common/calendar-date";
-import { tenantTimeZone } from "../common/tenant-time-zone";
+import { FALLBACK_ZONE, tenantTimeZone } from "../common/tenant-time-zone";
 import { classifyInvoiceBalance } from "../invoices/invoice-balance-classify";
 import { OPEN_BALANCE_INVOICE_SELECT, OPEN_BALANCE_INVOICE_WHERE } from "./open-balance-basis";
 import { statementOutstandingAmount } from "./customer-statement";
@@ -18,7 +18,7 @@ import { statementOutstandingAmount } from "./customer-statement";
  * - C3 clamped per invoice (`classifyInvoiceBalance`, `statementOutstandingAmount`): an overpaid invoice counts 0.
  * - C6/C7 one predicate: no block when the switch is off, there is no customer, the customer is the walk-in (or the model
  *   does not carry `isWalkIn` at all: fail closed), the sale was paid at the counter, or the invoice is VOID / WRITTEN_OFF.
- * - C8 nothing is read when the predicate fails. C9 every form carries the render day in the tenant's zone.
+ * - C8 nothing is read when the predicate fails. C9 every form carries the read instant (date, time, zone) in the tenant's zone.
  */
 
 /**
@@ -27,11 +27,11 @@ import { statementOutstandingAmount } from "./customer-statement";
  * invoice-account-balance.labels.spec.ts. Every word of the block lives here; no renderer carries one.
  */
 export const INVOICE_ACCOUNT_LABELS_API = {
-  heading: "Your account on {date}",
+  heading: "Customer account balance as of {asOf}",
   others: "Other unpaid invoices",
   thisInvoice: "This invoice",
   openBalance: "Open balance",
-  openBalanceOn: "Open balance on {date}",
+  openBalanceOn: "Open balance on {asOf}",
 } as const;
 
 /** The plain result (C4): `{ show: false }` or the figures, never undefined, so "handed, nothing to show" is not "not handed". */
@@ -42,8 +42,12 @@ export type InvoiceAccountBalance =
       others: number;
       thisInvoice: number;
       openBalance: number;
-      /** The render day in the tenant's zone, YYYY-MM-DD. */
+      /** The read day in the tenant's zone, YYYY-MM-DD. */
       asOf: string;
+      /** SA-1209 D3: the instant this copy's balance was read (ISO), never the viewing time; a cached PDF keeps its own. */
+      asOfAt: string;
+      /** The tenant's zone the instant prints in. */
+      zone: string;
     };
 
 /** The fields of the printed model the block reads (the send snapshot, the PDF's own read, the detail read). */
@@ -102,20 +106,10 @@ export async function readInvoiceAccountBalance(
     thisInvoice,
     openBalance: roundMoney(others + thisInvoice),
     asOf: tenantTodayDay(zone, now),
+    asOfAt: now.toISOString(),
+    zone: zone ?? FALLBACK_ZONE,
   };
 }
-
-/** "Nov 20, 2026": the documents' own date style (the PDF's fmtDate), read from the tenant-zone calendar day. */
-export function accountAsOfText(day: string): string {
-  return new Date(`${day}T00:00:00.000Z`).toLocaleDateString("en-US", {
-    timeZone: "UTC",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-const withDate = (label: string, day: string) => label.replace("{date}", accountAsOfText(day));
 
 /**
  * C5: the ONE decision of what prints. `[]`, the full block, or (Balance Due hidden, Q6 (c)) the single
@@ -128,17 +122,18 @@ export function accountBlockRows(
 ): InvoiceAccountRow[] {
   if (!result.show) return [];
   const L = INVOICE_ACCOUNT_LABELS_API;
+  const asOf = asOfText(result.asOfAt, result.zone);
   if (opts.hideBalanceDue) {
     return [
       {
         kind: "openBalanceOn",
-        label: withDate(L.openBalanceOn, result.asOf),
+        label: L.openBalanceOn.replace("{asOf}", asOf),
         amount: result.openBalance,
       },
     ];
   }
   return [
-    { kind: "heading", label: withDate(L.heading, result.asOf), amount: null },
+    { kind: "heading", label: L.heading.replace("{asOf}", asOf), amount: null },
     { kind: "others", label: L.others, amount: result.others },
     { kind: "thisInvoice", label: L.thisInvoice, amount: result.thisInvoice },
     { kind: "openBalance", label: L.openBalance, amount: result.openBalance },

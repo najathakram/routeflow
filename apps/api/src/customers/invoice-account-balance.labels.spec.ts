@@ -1,7 +1,7 @@
 import { INVOICE_ACCOUNT_LABELS } from "@routeflow/types";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { INVOICE_ACCOUNT_LABELS_API, accountAsOfText } from "./invoice-account-balance";
+import { INVOICE_ACCOUNT_LABELS_API } from "./invoice-account-balance";
 
 /**
  * SA-1197 C12: the one label map lives in packages/types/api/invoice-account.ts; the api may not load a runtime value
@@ -19,42 +19,34 @@ describe("invoice account labels: the api mirror equals the shared map (C12)", (
     }
   });
 
-  it("the two dated forms carry the {date} slot; the others carry none", () => {
-    expect(INVOICE_ACCOUNT_LABELS.heading).toContain("{date}");
-    expect(INVOICE_ACCOUNT_LABELS.openBalanceOn).toContain("{date}");
+  it("SA-1209 D3: the two dated forms carry the {asOf} slot; the others carry none", () => {
+    expect(INVOICE_ACCOUNT_LABELS.heading).toBe("Customer account balance as of {asOf}");
+    expect(INVOICE_ACCOUNT_LABELS.openBalanceOn).toBe("Open balance on {asOf}");
     for (const k of ["others", "thisInvoice", "openBalance"] as const) {
-      expect(INVOICE_ACCOUNT_LABELS[k]).not.toContain("{date}");
+      expect(INVOICE_ACCOUNT_LABELS[k]).not.toContain("{asOf}");
+    }
+    for (const label of Object.values(INVOICE_ACCOUNT_LABELS)) {
+      expect(label).not.toContain("{date}");
     }
   });
 });
 
 /**
- * SA-1197 A1-3: the block's as-of date and the PDF's other dates print in one style. The template is stubbed globally
- * under Jest, so fmtDate cannot be called here; the house pattern is a source pin. Both build the date with the same
- * toLocaleDateString locale and options, so a change to either one goes red here.
+ * SA-1209 D3: the block's time and the PDF's "Generated" stamp print through the ONE formatter, asOfText
+ * (packages/pricing/src/as-of-text.ts). No second date-and-time formatter in either file.
  */
-describe("the as-of date matches the PDF's fmtDate (A1-3)", () => {
+describe("the account block and the PDF stamp share asOfText (SA-1209 D3)", () => {
   const read = (rel: string) => readFileSync(join(__dirname, "..", rel), "utf8");
-  const dateCall = (src: string, startMarker: string) => {
-    const at = src.indexOf(startMarker);
-    expect(at).toBeGreaterThan(-1);
-    const m = /toLocaleDateString\(([\s\S]*?)\);/.exec(src.slice(at));
-    expect(m).not.toBeNull();
-    return (m as RegExpExecArray)[1].replace(/\s+/g, "").replace(/,(?=[}\]])/g, "");
-  };
 
-  it("accountAsOfText and fmtDate pass the same locale and options", () => {
-    const leaf = dateCall(
-      read("customers/invoice-account-balance.ts"),
-      "export function accountAsOfText(",
-    );
-    const pdf = dateCall(read("invoices/invoice-pdf-template.tsx"), "const fmtDate = (");
-    expect(leaf).toBe(pdf);
-    expect(leaf).toContain('timeZone:"UTC"');
+  it("the block builder calls asOfText and keeps no date helper of its own", () => {
+    const src = read("customers/invoice-account-balance.ts");
+    expect(src).toMatch(/asOfText\(\s*result\.asOfAt\s*,\s*result\.zone\s*\)/);
+    expect(src).not.toMatch(/accountAsOfText|withDate|toLocale/);
   });
 
-  it("prints the documents' style", () => {
-    expect(accountAsOfText("2026-11-20")).toBe("Nov 20, 2026");
-    expect(accountAsOfText("2026-01-05")).toBe("Jan 5, 2026");
+  it("the PDF template stamps Generated through asOfText in the tenant's zone, never the server's", () => {
+    const src = read("invoices/invoice-pdf-template.tsx");
+    expect(src).toMatch(/Generated \{asOfText\(generatedAt,\s*invoice\.tenantZone/);
+    expect(src).not.toMatch(/fmtDateTime|toLocaleString/);
   });
 });

@@ -2,7 +2,7 @@ import React from "react";
 import { Document, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 import type { TobaccoReportRow, TobaccoReportTotals } from "./tobacco-report.types";
 
-import { roundMoney } from "@routeflow/pricing";
+import { fmtPdfMoney } from "../common/pdf-money";
 const styles = StyleSheet.create({
   page: { padding: 32, fontSize: 9, fontFamily: "Helvetica", color: "#1B3A5C" },
   title: { fontSize: 16, fontFamily: "Helvetica-Bold", marginBottom: 2 },
@@ -32,7 +32,7 @@ export function TobaccoReportPdf({
   generatedAt: string;
   generationCount: number;
 }) {
-  const money = (n: number | string) => `$${roundMoney(Number(n)).toFixed(2)}`;
+  const money = (n: number | string) => fmtPdfMoney(Number(n));
   const qty = (n: number | string) =>
     Number(n)
       .toFixed(3)

@@ -319,3 +319,71 @@ describe("the invoice PDF's paid stamp and paid date follow the Paid switch (R6a
     },
   );
 });
+
+// SA-1209 D3: the "Generated" stamp prints in the tenant's zone through asOfText, with the zone named; no server zone.
+describe("the invoice PDF's Generated stamp (SA-1209 D3)", () => {
+  const stamp = (over: Record<string, unknown>) => {
+    const tree = walk(
+      InvoicePdfTemplate({
+        invoice: {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          subtotal: 20,
+          taxAmount: 0,
+          discount: 0,
+          shippingFee: 0,
+          total: 20,
+          issueDate: new Date("2026-10-30T12:00:00Z"),
+          dueDate: new Date("2026-11-30T12:00:00Z"),
+          customer: { businessName: "Acme Foods", contactName: "Pat" },
+          items: [baseItem],
+          payments: [],
+          generatedAt: new Date("2026-11-21T22:46:00.000Z"),
+          ...over,
+        },
+      }),
+    );
+    return tree
+      .map((el) => textsOf({ props: { children: el.props?.children } }).join(""))
+      .filter((t) => t.startsWith("Generated "));
+  };
+
+  it("D3-8: 22:46Z in Chicago prints 4:46 PM CST", () => {
+    expect(stamp({ tenantZone: "America/Chicago" })).toContain(
+      "Generated Nov 21, 2026, 4:46 PM CST",
+    );
+  });
+
+  it("a tenant with no zone handed prints UTC, named, never the server's zone", () => {
+    expect(stamp({})).toContain("Generated Nov 21, 2026, 10:46 PM UTC");
+  });
+});
+
+// SA-1211 BF-7: the PDF's money groups thousands (red on "$5500.00").
+describe("the invoice PDF's money text (BF-7)", () => {
+  it("a 5500 invoice total prints $5,500.00 in the Total row and the line subtotal", () => {
+    const tree = walk(
+      InvoicePdfTemplate({
+        invoice: {
+          id: "inv-1",
+          invoiceNumber: "INV-1",
+          status: "SENT",
+          subtotal: 5500,
+          taxAmount: 0,
+          discount: 0,
+          shippingFee: 0,
+          total: 5500,
+          issueDate: new Date("2026-10-30T12:00:00Z"),
+          dueDate: new Date("2026-11-30T12:00:00Z"),
+          customer: { businessName: "Acme Foods", contactName: "Pat" },
+          items: [{ ...baseItem, qty: 1, unitPrice: 5500, subtotal: 5500 }],
+          payments: [],
+        },
+      }),
+    );
+    const texts = tree.flatMap((el) => textsOf({ props: { children: el.props?.children } }));
+    expect(texts).toContain("$5,500.00");
+    expect(texts).not.toContain("$5500.00");
+  });
+});

@@ -1,7 +1,9 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
+import { fmtPdfMoney } from "../common/pdf-money";
 import {
+  asOfText,
   baseUnitSuffix,
   formatInvoiceLineCounts,
   formatPerBaseUnitPrice,
@@ -39,6 +41,8 @@ export interface InvoicePdfData {
   variant?: "draft" | "final";
   /** When this PDF was generated/extracted — stamped small at the page bottom. */
   generatedAt?: Date | string;
+  /** SA-1209 D3: the tenant's zone the "Generated" stamp prints in (absent = UTC, named); never the server's zone. */
+  tenantZone?: string;
   issueDate: Date | string;
   dueDate?: Date | string | null;
   /**
@@ -199,7 +203,7 @@ const toNum = (val: DecimalLike): number => {
   if (typeof val === "string") return parseFloat(val);
   return val.toNumber();
 };
-const fmt = (val: DecimalLike) => `$${roundMoney(toNum(val)).toFixed(2)}`;
+const fmt = (val: DecimalLike) => fmtPdfMoney(toNum(val));
 // Calendar dates (issueDate/dueDate/paidAt) are stored as UTC-midnight instants.
 // Formatting via local-time components would render them a day early for any
 // negative-UTC-offset viewer, so we read the UTC calendar components directly.
@@ -210,16 +214,6 @@ const fmtDate = (val: Date | string | null | undefined): string => {
     month: "short",
     day: "numeric",
     year: "numeric",
-  });
-};
-const fmtDateTime = (val: Date | string | null | undefined): string => {
-  if (!val) return "—";
-  return new Date(val).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
   });
 };
 
@@ -1084,7 +1078,9 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
               : "RouteFlow"}
           </Text>
           <Text style={styles.footerMuted}>Powered by RouteFlow</Text>
-          <Text style={styles.footerText}>Generated {fmtDateTime(generatedAt)}</Text>
+          <Text style={styles.footerText}>
+            Generated {asOfText(generatedAt, invoice.tenantZone ?? "UTC")}
+          </Text>
         </View>
 
         {/*

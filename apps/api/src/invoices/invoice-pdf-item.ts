@@ -12,13 +12,9 @@
  * `apps/web/app/(dashboard)/invoices/[id]/page.tsx` :2408-2481.
  */
 
-import {
-  basePriceText,
-  componentPriceText,
-  invoiceLineQtyText,
-  roundMoney,
-} from "@routeflow/pricing";
+import { basePriceText, componentPriceText, invoiceLineQtyText } from "@routeflow/pricing";
 import type { InvoiceDisplayLines } from "@routeflow/pricing";
+import { fmtPdfMoney } from "../common/pdf-money";
 import type { LineComponentView } from "@routeflow/types";
 
 /** Mirrors `invoice-pdf-template.tsx`'s own `DecimalLike` — a Prisma Decimal, a plain
@@ -154,8 +150,6 @@ export function pdfSubLine(
   };
 }
 
-const amountText = (n: number): string => `$${roundMoney(n).toFixed(2)}`;
-
 /** One component row of a components-layout line. */
 export interface PdfDisplayRow {
   name: string;
@@ -204,14 +198,14 @@ export function pdfItemDisplay(
       barcodeDataUri: barcodes?.get(r.componentProductId) ?? null,
       qtyText: `${r.qty} ${r.unitLabel}`,
       priceText: basePriceText(r.unitPrice),
-      amountText: amountText(r.amount),
+      amountText: fmtPdfMoney(r.amount),
     })),
     group: {
       description: lines.groupTotal.description,
-      amountText: amountText(lines.groupTotal.amount),
+      amountText: fmtPdfMoney(lines.groupTotal.amount),
     },
     categoryTax: lines.categoryTax
-      ? { label: lines.categoryTax.label, amountText: amountText(lines.categoryTax.amount) }
+      ? { label: lines.categoryTax.label, amountText: fmtPdfMoney(lines.categoryTax.amount) }
       : null,
   };
 }

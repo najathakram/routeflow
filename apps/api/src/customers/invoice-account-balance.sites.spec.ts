@@ -44,7 +44,7 @@ describe("invoice account block sites (SA-1197)", () => {
   });
 
   it("no renderer or other file spells a block label (C12)", () => {
-    const LABELS = /Your account on|Other unpaid invoices|Open balance on/;
+    const LABELS = /Customer account balance as of|Other unpaid invoices|Open balance on/;
     const allowed = new Set([
       path.join(API_SRC, LEAF),
       path.join(REPO, "packages", "types", "api", "invoice-account.ts"),

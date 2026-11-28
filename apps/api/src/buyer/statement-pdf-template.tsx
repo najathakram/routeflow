@@ -12,15 +12,17 @@ import {
   type StatementTenantInfo,
 } from "./statement-pdf-shared";
 
-import { roundMoney } from "@routeflow/pricing";
+import { fmtPdfMoney } from "../common/pdf-money";
 
 export type { StatementTenantInfo };
 
 // B954: the shared UTC-anchored PDF date (calendar dates are UTC-midnight instants).
 const fmtDate = fmtPdfDate;
-const fmt = (n: number) => `$${roundMoney(Math.abs(n)).toFixed(2)}`;
-const fmtSigned = (n: number) =>
-  n < 0 ? `−$${roundMoney(Math.abs(n)).toFixed(2)}` : `$${roundMoney(n).toFixed(2)}`;
+// Charges, payments, credits and available credit are positive by meaning: they print their size.
+const fmt = (n: number) => fmtPdfMoney(Math.abs(n));
+// Opening, closing, adjustments and activity lines keep their sign: an overpaid customer closes at "-$50.00"
+// (SA-1211 BF-7). One minus glyph across the PDFs: the ASCII "-$" from fmtPdfMoney.
+const fmtSigned = fmtPdfMoney;
 
 export function StatementPdfTemplate({
   statement,
@@ -73,7 +75,7 @@ export function StatementPdfTemplate({
           <View style={styles.totalsBox}>
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Opening Balance</Text>
-              <Text style={styles.totalValue}>{fmt(opening)}</Text>
+              <Text style={styles.totalValue}>{fmtSigned(opening)}</Text>
             </View>
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>+ Charges</Text>
@@ -99,7 +101,7 @@ export function StatementPdfTemplate({
                 Closing Balance
               </Text>
               <Text style={[styles.totalBigValue, { color: closing > 0 ? DANGER : SUCCESS }]}>
-                {fmt(closing)}
+                {fmtSigned(closing)}
               </Text>
             </View>
             <Text style={{ fontSize: 7, color: GRAY, marginTop: 6, lineHeight: 1.4 }}>

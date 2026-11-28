@@ -28,7 +28,11 @@ const BASE: InvoiceTotalsSummaryProps = {
   advanceApplied: 0,
   balanceDue: 50,
   accountBlock: [
-    { kind: "heading", label: "Your account on Nov 20, 2026", amount: null },
+    {
+      kind: "heading",
+      label: "Customer account balance as of Nov 21, 2026, 4:46 PM CST",
+      amount: null,
+    },
     { kind: "others", label: "Other unpaid invoices", amount: 30 },
     { kind: "thisInvoice", label: "This invoice", amount: 50 },
     { kind: "openBalance", label: "Open balance", amount: 80 },
@@ -69,7 +73,11 @@ describe("InvoiceTotalsSummary: the Open balance figure opens the statement (SA-
     for (const part of ["$30.00", "$50.00"]) {
       expect(within(block).getByText(part).closest("button")).toBeNull();
     }
-    expect(within(block).getByText("Your account on Nov 20, 2026").closest("button")).toBeNull();
+    expect(
+      within(block)
+        .getByText("Customer account balance as of Nov 21, 2026, 4:46 PM CST")
+        .closest("button"),
+    ).toBeNull();
   });
 
   it("the hidden-Balance-Due form's one row taps too", () => {
@@ -78,7 +86,7 @@ describe("InvoiceTotalsSummary: the Open balance figure opens the statement (SA-
         {...BASE}
         customerId="cust-1"
         accountBlock={[
-          { kind: "openBalanceOn", label: "Open balance on Nov 20, 2026", amount: 80 },
+          { kind: "openBalanceOn", label: "Open balance on Nov 21, 2026, 4:46 PM CST", amount: 80 },
         ]}
       />,
     );

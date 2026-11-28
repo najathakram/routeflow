@@ -14,7 +14,11 @@ const BASE: InvoiceTotalsSummaryProps = {
   balanceDue: 50,
 };
 const ROWS = [
-  { kind: "heading" as const, label: "Your account on Nov 20, 2026", amount: null },
+  {
+    kind: "heading" as const,
+    label: "Customer account balance as of Nov 21, 2026, 4:46 PM CST",
+    amount: null,
+  },
   { kind: "others" as const, label: "Other unpaid invoices", amount: 30 },
   { kind: "thisInvoice" as const, label: "This invoice", amount: 50 },
   // deliberately not 30 + 50: the screen must print the server's figure, never its own sum
@@ -30,7 +34,7 @@ describe("InvoiceTotalsSummary: the account block (SA-1197)", () => {
   it("T22: prints the server's rows and figure as given, never a sum of its own", () => {
     render(<InvoiceTotalsSummary {...BASE} accountBlock={ROWS} />);
     const block = screen.getByTestId("invoice-account-block");
-    expect(block).toHaveTextContent("Your account on Nov 20, 2026");
+    expect(block).toHaveTextContent("Customer account balance as of Nov 21, 2026, 4:46 PM CST");
     expect(block).toHaveTextContent("Other unpaid invoices$30.00");
     expect(block).toHaveTextContent("This invoice$50.00");
     expect(block).toHaveTextContent("Open balance$99.00");

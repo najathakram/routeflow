@@ -59,6 +59,7 @@ async function render(opts: {
   others?: { total: number }[];
   handed?: InvoiceAccountBalance;
   customer?: Record<string, unknown>;
+  zone?: string;
 }) {
   mockCapturedInvoice = null;
   const prisma = createMockPrisma();
@@ -76,7 +77,11 @@ async function render(opts: {
       id: `other-${i}`,
     })) as any,
   );
-  prisma.tenantConfig.findUnique.mockResolvedValue(null as any);
+  // The mock answers only the invoice's own tenant: a read aimed at any other tenant finds no config (M3).
+  prisma.tenantConfig.findUnique.mockImplementation((async (args: any) =>
+    args?.where?.tenantId === INVOICE.tenantId && opts.zone
+      ? { timezone: opts.zone }
+      : null) as any);
   const systemConfig = {
     get: jest.fn(async () => null),
     getAll: jest.fn(async () => opts.config ?? {}),
@@ -97,7 +102,11 @@ async function render(opts: {
   }).compile();
   const service = module.get(InvoicePdfService);
   await service.getOrGenerate("inv-1", opts.handed ? { account: opts.handed } : undefined);
-  return { props: mockCapturedInvoice, findMany: prisma.invoice.findMany };
+  return {
+    props: mockCapturedInvoice,
+    findMany: prisma.invoice.findMany,
+    configReads: prisma.tenantConfig.findUnique,
+  };
 }
 
 const ON = { "invoice.showAccountBalance": "true" };
@@ -138,11 +147,45 @@ describe("InvoicePdfService: the account block (SA-1197)", () => {
       others: 12,
       thisInvoice: 50,
       openBalance: 62,
-      asOf: "2026-11-20",
+      asOf: "2026-11-21",
+      asOfAt: "2026-11-21T22:46:00.000Z",
+      zone: "America/Chicago",
     };
     const { props, findMany } = await render({ config: ON, others: [{ total: 30 }], handed });
     expect(findMany).not.toHaveBeenCalled();
     expect(props.accountRows.find((r: any) => r.kind === "openBalance").amount).toBe(62);
+  });
+
+  it("D3-7: a handed read keeps its own time when the PDF is built a day later (a cached PDF's time)", async () => {
+    const handed: InvoiceAccountBalance = {
+      show: true,
+      others: 30,
+      thisInvoice: 50,
+      openBalance: 80,
+      asOf: "2026-11-21",
+      asOfAt: "2026-11-21T22:46:00.000Z",
+      zone: "America/Chicago",
+    };
+    const { props } = await render({ config: ON, handed });
+    expect(props.accountRows[0].label).toBe(
+      "Customer account balance as of Nov 21, 2026, 4:46 PM CST",
+    );
+  });
+
+  it("D3-8: the template gets the tenant's zone for the Generated stamp; no zone falls back to UTC", async () => {
+    expect((await render({ zone: "America/Chicago" })).props.tenantZone).toBe("America/Chicago");
+    expect((await render({})).props.tenantZone).toBe("UTC");
+  });
+
+  it("D3-9: the zone read is scoped to the invoice's own tenant (M3: tenant isolation)", async () => {
+    const { configReads } = await render({ zone: "America/Chicago" });
+    const zoneReads = configReads.mock.calls
+      .map(([args]: any[]) => args)
+      .filter((args: any) => args?.select?.timezone === true);
+    expect(zoneReads).toHaveLength(1);
+    expect(zoneReads[0].where).toEqual({ tenantId: "tenant-1" });
+    for (const [args] of configReads.mock.calls)
+      expect((args as any).where.tenantId).toBe("tenant-1");
   });
 
   it("T3b: a handed { show: false } is honoured, never re-read", async () => {
