@@ -275,10 +275,14 @@ describe("ci.yml — Verify no longer runs control", () => {
       /^ {6}- name: Verify \(lockfile, bug-signature scan, types, lint, tests\)\s*$/,
       6,
     );
-    // SA-1195 K2: the step runs `npm run verify` under a group-kill `timeout`, after one runner-size
-    // notice. The command inside stays exactly `npm run verify`, byte-identical to the pre-push hook.
+    // SA-1195 K2 / W-1514: the step runs `npm run verify` under the session-kill budget wrapper, after
+    // one runner-size notice. The command inside stays exactly `npm run verify`, byte-identical to the
+    // pre-push hook. A group-kill `timeout` is not enough: turbo's tasks leave its process group.
     expect(step.join("\n")).toMatch(/^ {8}run: \|\s*$/m);
-    expect(step.join("\n")).toMatch(/^ {10}timeout -k 60 \d+m npm run verify\s*$/m);
+    expect(step.join("\n")).toMatch(
+      /^ {10}bash scripts\/ci-budget\.sh \d+m 60 npm run verify\s*$/m,
+    );
+    expect(step.filter((l) => /^\s*timeout\s/.test(l))).toHaveLength(0);
     expect(step.filter((l) => /npm run verify/.test(l))).toHaveLength(1);
     const m = /^ {10}VERIFY_EXCLUDE:\s*"([^"]*)"\s*$/m.exec(step.join("\n"));
     expect(m).not.toBeNull();
@@ -296,17 +300,17 @@ describe("ci.yml — Verify no longer runs control", () => {
     expect(code(CI_YML).filter((l) => /VERIFY_EXCLUDE:/.test(l)).length).toBe(1);
   });
 
-  it("the Verify step's group kill lands before the job cap: budget + kill grace <= cap - 3 (SA-1195 A1)", () => {
+  it("the Verify step's session kill lands before the job cap: budget + kill grace <= cap - 3 (SA-1195 A1)", () => {
     // The cap counts from job start, and Verify starts up to about 2.5 min in (setup steps), so the
     // step's own timeout has to fire, kill grace included, at least 3 min before the cap. Otherwise
     // GitHub's cancel wins and leaves no log. Changing either number alone fails here.
     const job = block(CI_YML, /^ {2}verify:\s*$/, 2).join("\n");
     const cap = /^ {4}timeout-minutes:\s*(\d+)\s*$/m.exec(job);
     expect(cap).not.toBeNull();
-    const wrap = /^ {10}timeout -k (\d+) (\d+)m npm run verify\s*$/m.exec(job);
+    const wrap = /^ {10}bash scripts\/ci-budget\.sh (\d+)m (\d+) npm run verify\s*$/m.exec(job);
     expect(wrap).not.toBeNull();
-    const graceMinutes = Math.ceil(Number((wrap as RegExpExecArray)[1]) / 60);
-    const budgetMinutes = Number((wrap as RegExpExecArray)[2]);
+    const budgetMinutes = Number((wrap as RegExpExecArray)[1]);
+    const graceMinutes = Math.ceil(Number((wrap as RegExpExecArray)[2]) / 60);
     expect(budgetMinutes + graceMinutes).toBeLessThanOrEqual(
       Number((cap as RegExpExecArray)[1]) - 3,
     );
