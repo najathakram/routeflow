@@ -12,6 +12,13 @@
 
 ## process
 
+### L-421 · 2026-11-28 · process · a writer keyed by a per-machine id checks the id against the host; two machines writing one append file conflict on every sync (ops monitor, 7234397238)
+
+- **Symptom:** the laptop's ops clone diverged again and again, each time with a rebase conflict in `events/laptop/<day>.jsonl`, and ops event ids written from the PC started with `laptop-`.
+- **Root cause:** at about 01:30Z a PC session changed the PC's `~/.routeflow/ops/machine` from `windows` to `laptop`. `machineId()` read the file as truth, so the PC lead's events (about 30) went into the laptop's day file, and two machines appended to one file that each synced by rebase. The two laptop sessions sharing that file made it worse but were not the cause.
+- **Lesson:** **A per-machine identity is set once at setup and is not a session's to change. A writer keyed by it checks it against something the host cannot share (its hostname) and refuses on a mismatch, so a wrong id fails loudly instead of interleaving two machines' history. When a shared append file conflicts repeatedly, check who else writes it before blaming the sessions on the box.**
+- **Guard:** none automatic. The lead set the PC file back to `windows` and union-resolved both clones (jsonl appends only); the ops-tool fix is logged as its own item. Cf. [[L-417]].
+
 ### L-417 · 2026-11-27 · process · a count pin that two branches both raised by the same amount merges with no conflict and the wrong value; recount from the merged tree (#4544, #4555)
 
 - **Symptom:** two PRs each added DB specs and raised the ND3 count pin in `scripts/ci-lanes.self-test.mjs` (553 to 556, and 553 to 559). Master moved the same pin to 554 between them. A text merge keeps one side's number, and the pin then fails on the merged tree or, worse, matches a count that is no longer true.
@@ -115,6 +122,13 @@
 
 ## testing
 
+### L-420 · 2026-11-28 · testing · a negative assertion on printed output matches the field it means, never a bare digit run, when the output carries random ids (#4556 Replay)
+
+- **Symptom:** #4556's Replay went red (run 46106483618) at `apps/api/scripts/report-corrected-units-sheet.db.spec.ts:446`, `expect(res.out).not.toMatch(/999/)`. Nothing had leaked: the output carried the run's random category UUID, which happened to contain `999`.
+- **Root cause:** the test meant "the other tenant's 999 figure never reaches this sheet", but asserted on the digits anywhere in the text. Output that prints a fresh UUID, timestamp or sequence on every run will sometimes contain any short digit run, so the pin was a flake by construction.
+- **Lesson:** **Assert on the figure, not the digits. Parse the value the test is about (the filed, delta or total field) or bound the token so it cannot sit inside a hex id (`(?<![0-9a-f-])999(?![0-9a-f-])`). Give the pin two red fixtures: a random id that contains the digits (must stay green) and a real leaked figure (must go red).**
+- **Guard:** owed: the queued test-only fix to `report-corrected-units-sheet.db.spec.ts` (lead 7234302025). No scan for bare digit regexes on output yet. Cf. [[L-353]].
+
 ### L-409 · 2026-11-25 · testing · a change that adds a call to an outside service greps every `*.spec.ts` and every `*.db.spec.ts` rig for its fake, and a billing or ledger PR needs a green Migration replay run at the sha before it merges (#4489, fixed by #4497, W-1338)
 
 - **Symptom:** #4489 merged on a green Verify and broke `billing/trial-addon-checkout.db.spec.ts`: subscribe, upgrade and downgrade now list and expire the business's open Checkout Sessions first, and that rig's Stripe fake had no `checkout.sessions`. Fail-closed code turns a missing Stripe member into one coded 503, so the spec saw a refusal instead of an error naming the missing member.
@@ -181,13 +195,6 @@
 - **Root cause:** the earlier fix moved the invoice year only; every other minting site read the server clock itself, and no list of the sites existed, so the fix reached the one named caller and left the other series on the old clock.
 - **Lesson:** **When one number series moves to a rule, sweep every site that mints any series, route all of them through one helper that reads through the caller's own tx, and pin the class with a scan that fails a minting file that reads `getFullYear()`. A per-site fix leaves the next series on the old clock. Cf. [[L-223]].**
 - **Guard:** `common/number-year.ts`; `common/no-server-clock-number-year.spec.ts` (repo-truth lane); `common/document-number-year.spec.ts` (the New York cases were red on master with 2027).
-
-### L-405 · 2026-11-24 · domain · a cap on a credit reads the newest sale and prices it through the pool helper, never qty times unit price; a cap only lowers (#4462, W-1316)
-
-- **Symptom:** a return of an item sold before credited today's higher price, more than the customer last paid.
-- **Root cause:** the sold-before read only asked whether any invoice line existed ("ever sold?") and priced from the catalog; no read said what was paid last, and a boxed line cannot be priced as qty times unit price.
-- **Lesson:** **A read added to answer "ever?" is not an answer to "what, last?": give the new rule its own read, newest invoice first, and price it through the shared helper (`lastPaidCapSubtotal`), where paid and $0 lines pool and boxed lines scale once. A cap returns null when it cannot price (no cap) and only ever lowers; the edit path refuses an override above it with the same figure the quote used.**
-- **Guard:** `returns/inline-returns-quote.last-paid-cap.w1316.spec.ts` (red values taken on master), `returns/inline-returns-last-paid-cap.w1316.db.spec.ts`.
 
 ### L-406 · 2026-11-24 · domain · a refusal added to one write path is added to every write method of that entity, and a pin lists the methods; the check sits where the effect happens (#4479, W-1318)
 
@@ -302,14 +309,6 @@
 - **Guard:** `packages/pricing/src/discount-tax-base.spec.ts` (an omitted mode throws in `computeInvoiceTotals`, `saleTotals`, `sumInvoiceTotals` and the rate inference; PRE_TAX 8 / 88 against LEGACY 10 / 90); the compiler for every typed caller. Cf. archived L-347.
 
 ## security
-
-### L-407 · 2026-11-24 · security · a redaction is applied where each transport stores its error, with one test per transport branch (#4473, W-1289)
-
-- **Symptom:** staff saw a business's own mail server reply in "Email invoice", "Email reminder" and "Email statement", carrying a recipient's full address and a server IP.
-- **Root cause:** every other transport stored `redactAddresses(message)`; the tenant SMTP branch had its own catch and stored the raw string, and no test read the text the staff user sees.
-- **Lesson:** **Redact at the place the error is stored for the screen, not only in the log line, and give each transport branch its own test that asserts the staff-visible text. A transport added later with its own catch is a new unredacted exit unless a test names it.**
-- **Guard:** `email/email.tenant-smtp-error-redact.w1289.spec.ts` (tenant fail with and without a platform transport, the statement 400, the log line).
-
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
 

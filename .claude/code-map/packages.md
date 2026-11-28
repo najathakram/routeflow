@@ -508,3 +508,5 @@ Catch-up (2026-11-25, window 48): [packages/landing-2026-11-25-w48.md](packages/
 Catch-up (2026-11-26, window 49): [packages/landing-2026-11-26-w49.md](packages/landing-2026-11-26-w49.md): `buyer-edit-line.ts`, `term-copy.ts`, `BILLING_CYCLE_VALUES`.
 Catch-up (2026-11-27, window 50): [packages/landing-2026-11-27-w50.md](packages/landing-2026-11-27-w50.md): `landed-cost.ts` (allocatePoCharge, splitLandedShare), `unitsLabel` single bracket, `payment-refusal-copy.ts`, `selfPay` types, `surface-access.ts` (PAGE_SURFACES, mayUse).
 Catch-up (2026-11-27, window 51): [packages/landing-2026-11-27-w51.md](packages/landing-2026-11-27-w51.md): `payment-terms.ts` (termDays, PAYMENT_TERM_PRESETS), `invoice-status-tone.ts`, `tenant-bucket.ts`, `BuyerEditClosedReason`.
+
+Catch-up (2026-11-28, window 52): [packages/landing-2026-11-28-w52.md](packages/landing-2026-11-28-w52.md) — plan-pick error codes and fixed sentences, issued-invoice edit types, `editableFreeUnits` in pricing.

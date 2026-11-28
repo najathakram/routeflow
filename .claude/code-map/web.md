@@ -121,3 +121,4 @@ Next.js 14 App Router operator/buyer dashboard with multi-tenant Radix + Tailwin
 | [web/landing-2026-11-26-w49.md](web/landing-2026-11-26-w49.md) | Window 49: buyer edit grid steps by the box, cart clamp, Modal scrolls by default, linked order preview, far-from-list note, yearly offer gate, site rename |
 | [web/landing-2026-11-27-w50.md](web/landing-2026-11-27-w50.md) | Window 50: stock count and PO screen slips, counter return footer and over-total warning, auth shell colour tokens, closed popups skip the catalog read |
 | [web/landing-2026-11-27-w51.md](web/landing-2026-11-27-w51.md) | Window 51: one invoice status rule and legend, staff invoice copy, payment terms select, staff refund dialog, count tab replaces, site port, e2e site helpers |
+| [web/landing-2026-11-28-w52.md](web/landing-2026-11-28-w52.md) | Window 52: fixed copy for the card-first and plan-pick refusals |

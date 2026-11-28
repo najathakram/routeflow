@@ -5028,4 +5028,18 @@ citations, closed-out with its own post-init assertion guard).
 - **Lesson:** **When a gate runs a child under a time cap, branch on the timeout first and say so (`TIMED OUT after N min`, still a refusal); keep "genuine failure" for a real non-zero exit. Size the default to the loaded host and let one env var override it (a positive integer; anything else is ignored).**
 - **Guard:** `campaign-check-force-timeout.spec.ts` and `campaign-check-freshness.spec.ts` (#4427); `scripts/lib/campaign-force-run.cjs` holds the one parser.
 
+## Archived 2026-11-28 (bookkeeping for window 52) — real spec guards, zero outside citations, oldest of the tie; headroom for L-420 and L-421
 
+### L-405 · 2026-11-24 · domain · a cap on a credit reads the newest sale and prices it through the pool helper, never qty times unit price; a cap only lowers (#4462, W-1316)
+
+- **Symptom:** a return of an item sold before credited today's higher price, more than the customer last paid.
+- **Root cause:** the sold-before read only asked whether any invoice line existed ("ever sold?") and priced from the catalog; no read said what was paid last, and a boxed line cannot be priced as qty times unit price.
+- **Lesson:** **A read added to answer "ever?" is not an answer to "what, last?": give the new rule its own read, newest invoice first, and price it through the shared helper (`lastPaidCapSubtotal`), where paid and $0 lines pool and boxed lines scale once. A cap returns null when it cannot price (no cap) and only ever lowers; the edit path refuses an override above it with the same figure the quote used.**
+- **Guard:** `returns/inline-returns-quote.last-paid-cap.w1316.spec.ts` (red values taken on master), `returns/inline-returns-last-paid-cap.w1316.db.spec.ts`.
+
+### L-407 · 2026-11-24 · security · a redaction is applied where each transport stores its error, with one test per transport branch (#4473, W-1289)
+
+- **Symptom:** staff saw a business's own mail server reply in "Email invoice", "Email reminder" and "Email statement", carrying a recipient's full address and a server IP.
+- **Root cause:** every other transport stored `redactAddresses(message)`; the tenant SMTP branch had its own catch and stored the raw string, and no test read the text the staff user sees.
+- **Lesson:** **Redact at the place the error is stored for the screen, not only in the log line, and give each transport branch its own test that asserts the staff-visible text. A transport added later with its own catch is a new unredacted exit unless a test names it.**
+- **Guard:** `email/email.tenant-smtp-error-redact.w1289.spec.ts` (tenant fail with and without a platform transport, the statement 400, the log line).
