@@ -31,6 +31,7 @@
  */
 
 import { BadRequestException } from "@nestjs/common";
+import { editableFreeUnits } from "@routeflow/pricing";
 import { finiteStoredLevy, finiteStoredMoney } from "../common/money-invariants.util";
 import { assertSellableLines } from "../products/sellable-lines";
 import type { ResolvedLineUnits } from "../products/line-units";
@@ -38,6 +39,7 @@ import { isUnitAware, prepareUnitLadders, requestsUnit } from "../orders/unit-li
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
 import { assertCustomPricesAllowed } from "../orders/staff-override";
 import { buildInvoiceUnitLine } from "./invoice-unit-line";
+import { isNsfLine } from "./nsf-line";
 import { LINE_NAME_PRODUCT_SELECT, displayLineDescription } from "./invoice-line-name";
 import { priceLineItem, type LineOverrideCtx } from "./invoice-line-override";
 import {
@@ -98,19 +100,44 @@ const storedUnitCount = (row: StoredEditRow): unknown =>
   Number(row.unitsPerBox ?? 1) <= 1 ? (row.boxes ?? row.qty) : row.boxes;
 
 /**
- * qty, boxes, pieces, unitPrice, discount, taxRate — the tuple SA-184 calls "untouched" — plus the unit
+ * qty, boxes, pieces, unitPrice, discount, taxRate, free units — the tuple SA-184 calls "untouched" — plus the unit
  * (VU-4a). A unit line's payload qty counts the UNIT (stored as `boxes`; its `qty` column is base pieces).
+ *
+ * SA-1508 A2-N1 rule 2 / A3-H2 / A4-L5 (DRAFT and ISSUED alike, the one free-units change on the DRAFT side): the free units
+ * compare with what a screen can express (`editableFreeUnits(row)`) OR the raw stored value: a row above the cap (a partial
+ * allocation, a duplicate) that comes back at the cap, or echoed back as stored, is untouched and keeps its stored free
+ * units. Any other value is a money edit (it used to be dropped silently, B1451).
+ *
+ * SA-1508 A4-HA 1 (ISSUED only; the caller passes `restampRate` for a locked non-DRAFT invoice and never for a DRAFT): a
+ * stored-rate-0 goods line sent at the verified `restampRate` is untouched too, because the screen shows what the
+ * save writes. On a DRAFT the rate clause is master's, byte for byte; only the free-units clause above also reaches it.
  */
-const sameMoneyTuple = (item: EditPayloadLine, row: StoredEditRow): boolean =>
+const sameMoneyTuple = (
+  item: EditPayloadLine,
+  row: StoredEditRow,
+  restampRate?: number | null,
+): boolean =>
   norm(item.unitLabel ?? "") === norm(row.unitLabel ?? "") &&
   (requestsUnit(item)
     ? same(item.qty, storedUnitCount(row))
     : same(item.qty, row.qty) && same(item.boxes, row.boxes) && same(item.pieces, row.pieces)) &&
   same(item.unitPrice, row.unitPrice) &&
   same(item.discount ?? 0, row.discount ?? 0) &&
-  same(item.taxRate ?? 0, row.taxRate ?? 0);
+  // A4-L5: the screen-shown value OR the raw stored one (an over-cap row echoed back as stored) is no change.
+  (same(item.promoFreeUnits ?? 0, editableFreeUnits(row as any)) ||
+    same(item.promoFreeUnits ?? 0, row.promoFreeUnits ?? 0)) &&
+  (same(item.taxRate ?? 0, row.taxRate ?? 0) ||
+    (restampRate != null &&
+      Number(row.taxRate ?? 0) === 0 &&
+      !isNsfLine(row as any) &&
+      same(item.taxRate, restampRate)));
 
-export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]): LineMatch[] {
+export function matchEditLines(
+  items: EditPayloadLine[],
+  stored: StoredEditRow[],
+  /** SA-1508 A4-HA 1: set only for a locked non-DRAFT invoice (see `sameMoneyTuple`). */
+  restampRate?: number | null,
+): LineMatch[] {
   const byId = new Map(stored.map((r) => [r.id, r]));
   const used = new Set<string>();
   const out: LineMatch[] = items.map(() => ({
@@ -132,7 +159,7 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
     const held = item.unitLabel === undefined ? { ...item, unitLabel: row.unitLabel } : item;
     out[i] = {
       row,
-      untouched: !productChanged && sameMoneyTuple(held, row),
+      untouched: !productChanged && sameMoneyTuple(held, row, restampRate),
       productChanged,
       leftUnit,
     };
@@ -143,7 +170,7 @@ export function matchEditLines(items: EditPayloadLine[], stored: StoredEditRow[]
       (r) =>
         !used.has(r.id) &&
         (r.productId ?? null) === (item.productId ?? null) &&
-        sameMoneyTuple(item, r),
+        sameMoneyTuple(item, r, restampRate),
     );
     if (!row) return;
     used.add(row.id);
@@ -725,4 +752,77 @@ export async function withRowCategories(
   if (missing.length === 0) return categoryMap;
   const cats: any[] = await db.trackedCategory.findMany({ where: { id: { in: missing } } });
   return new Map([...categoryMap, ...cats.map((c): [string, any] => [c.id, c])]);
+}
+
+/**
+ * The invoice-row fields a save can set besides its lines and figures (`update()`'s `headerData`): due and issue dates,
+ * notes, terms, the payment-terms label, reference, subject and the deposit fields. ONE builder, so the header-only
+ * branch and the issued gate read the same keys (SA-1508). A date arrives as its calendar stamp; "" clears a label,
+ * reference or subject (stored null, never an empty string).
+ */
+export function invoiceHeaderData(
+  dto: {
+    notes?: string;
+    terms?: string;
+    paymentTermsLabel?: string;
+    referenceNumber?: string;
+    subject?: string;
+    depositPercent?: number | null;
+  } & { depositDueDate?: string | null },
+  due: { dueDate: Date | null; depositDueDate: Date | null },
+  issueDate: Date | undefined,
+): Record<string, any> {
+  return {
+    ...(due.dueDate && { dueDate: due.dueDate }),
+    ...(issueDate && { issueDate }),
+    ...(dto.notes !== undefined && { notes: dto.notes }),
+    ...(dto.terms !== undefined && { terms: dto.terms }),
+    // "" clears the label (the composer sends it when the operator hand-typed a due date and the term no longer
+    // applies), the same convention as the supplier and customer default-terms fields.
+    ...(dto.paymentTermsLabel !== undefined && {
+      paymentTermsLabel: dto.paymentTermsLabel || null,
+    }),
+    ...(dto.referenceNumber !== undefined && { referenceNumber: dto.referenceNumber || null }),
+    ...(dto.subject !== undefined && { subject: dto.subject || null }),
+    ...(dto.depositPercent !== undefined && { depositPercent: dto.depositPercent }),
+    ...(dto.depositDueDate !== undefined && { depositDueDate: due.depositDueDate }),
+  };
+}
+
+const sameHeaderValue = (a: unknown, b: unknown): boolean => {
+  if (a instanceof Date || b instanceof Date) {
+    return (
+      a != null && b != null && new Date(a as Date).getTime() === new Date(b as Date).getTime()
+    );
+  }
+  if (a == null || b == null) return a == null && b == null;
+  if (typeof a === "number" || typeof b === "number" || typeof (a as any)?.toNumber === "function")
+    return same(a, b);
+  return a === b;
+};
+
+/** The `headerData` keys whose value differs from the invoice row (dates by their stamp, numbers by value). */
+export function headerKeysChanged(
+  headerData: Record<string, any>,
+  row: Record<string, any>,
+): string[] {
+  return Object.keys(headerData).filter((k) => !sameHeaderValue(headerData[k], row[k]));
+}
+
+/**
+ * SA-1508 A2-N1 rule 5: a save that changes nothing writes nothing. FIGURE-FREE (`orderSyncLines(...) === null`), no
+ * line patch, and every header key already equals the locked row. Then no update, no `invoice.revised`, no epilogue,
+ * `updatedAt` unchanged: "revised" appears only when a stored value changed.
+ */
+export function isNoOpEdit(args: {
+  figureFree: boolean;
+  linePatches: number;
+  headerData: Record<string, any>;
+  row: Record<string, any>;
+}): boolean {
+  return (
+    args.figureFree &&
+    args.linePatches === 0 &&
+    headerKeysChanged(args.headerData, args.row).length === 0
+  );
 }

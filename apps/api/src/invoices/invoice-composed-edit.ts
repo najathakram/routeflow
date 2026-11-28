@@ -1,4 +1,5 @@
-import { ConflictException, BadRequestException } from "@nestjs/common";
+import { ConflictException } from "@nestjs/common";
+import { assertStillDraft } from "./locked-invoice-edit";
 import { componentUnitPrice4, roundMoney } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { rescaleComposition } from "../orders/line-composition";
@@ -15,7 +16,7 @@ const refuse = (message: string) =>
 /**
  * #2717 M3 (SA-579 case 18, Q6): keep the component rows of a composed invoice line in step with a
  * DRAFT edit, in the edit's own tx, after the line rows were written.
- * - Only a DRAFT invoice's component rows are ever written (anything else is refused up front).
+ * - Only a DRAFT invoice's component rows are written, except an issued invoice's in-place admin edit (the gate's mode).
  * - An untouched line, or an edit with no composed stored row, writes nothing (ids stay put).
  * - A price change re-stamps `displayUnitPrice4` on the line's own net over its pieces.
  * - A WHOLE-BOX quantity change (old and new both whole boxes, no loose pieces) rebuilds the rows
@@ -28,14 +29,14 @@ export async function applyComposedLineEdits(
   inv: { id: string; status: string; tenantId: string | null },
   editLines: EditedLineLike[],
   storedRows: Array<Record<string, any>>,
+  /** SA-1508: the gate's LOCKED mode of an admin's in-place edit of an issued invoice (component rows carry display price only). */
+  issuedEdit = false,
 ): Promise<void> {
   const composed = new Map(
     storedRows.filter((r) => r.compositionMode === "FIXED").map((r) => [r.id as string, r]),
   );
   if (composed.size === 0) return;
-  if (inv.status !== "DRAFT") {
-    throw new BadRequestException("Only DRAFT invoices can be edited");
-  }
+  if (!issuedEdit) assertStillDraft(inv); // every other caller writes a DRAFT's rows only
   for (const l of editLines) {
     const row = l.rowId ? composed.get(l.rowId) : undefined;
     if (!row || l.untouched || !inv.tenantId) continue;
