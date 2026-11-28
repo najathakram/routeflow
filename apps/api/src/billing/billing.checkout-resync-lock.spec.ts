@@ -97,7 +97,11 @@ describe("resyncPriceAfterCheckout holds the tenant price lock (M1)", () => {
         }),
       },
       tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
-      auditLog: { create: jest.fn().mockResolvedValue({}) },
+      // SA-1332: the push reads the link-pending marker (none: an applied subscription)
+      auditLog: {
+        create: jest.fn().mockResolvedValue({}),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
       $queryRaw: jest.fn().mockResolvedValue([]),
       $transaction: jest.fn(async (fn: any) => fn(prisma)),
     };

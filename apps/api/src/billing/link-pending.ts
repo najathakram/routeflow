@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import type { PrismaService } from "../prisma/prisma.service";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
@@ -9,6 +10,31 @@ import {
 
 /** The slice of a Prisma client (or transaction) `isLinkPending` reads: the audit trail only. */
 export type LinkPendingClient = Pick<PrismaService, "auditLog">;
+
+/**
+ * SA-1332 R1: the UNLINKED marker, the writer that ends a pending link (a failed bank debit, a Stripe cancellation, a
+ * staff activation). Written ONLY while the link is pending, so a repeat or an unrelated cancellation adds nothing.
+ * Pass the transaction when the caller is inside one, so the marker commits with what ended the link. Returns whether a
+ * row was written.
+ */
+export async function writeUnlinkedMarker(
+  db: Pick<PrismaService, "auditLog">,
+  tenantId: string,
+  stripeSubId: string | null | undefined,
+  meta: Prisma.InputJsonObject,
+): Promise<boolean> {
+  if (!stripeSubId || !(await isLinkPending(db, tenantId, stripeSubId))) return false;
+  await db.auditLog.create({
+    data: {
+      tenantId,
+      entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+      entityId: stripeSubId,
+      action: STRIPE_CHECKOUT_UNLINKED_ACTION,
+      meta,
+    },
+  });
+  return true;
+}
 
 function sessionIdOf(meta: unknown): string | null {
   if (meta == null || typeof meta !== "object") return null;

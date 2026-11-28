@@ -97,6 +97,11 @@ function make(
       findUnique: jest.fn().mockResolvedValue({ ...sub, pausedAt: null }),
       update: jest.fn().mockResolvedValue({}),
     },
+    // SA-1332: the price push / cancellation read the link-pending marker (none here: an applied subscription)
+    auditLog: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({}),
+    },
     tenantConfig: { findUnique: jest.fn().mockResolvedValue({ timezone: "UTC" }) },
     billingNotificationLog: { findMany: jest.fn().mockResolvedValue(o.logged ?? []) },
     $transaction: jest.fn(async (fn: any) => fn(tx)),

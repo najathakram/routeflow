@@ -47,6 +47,7 @@ import {
   TRIAL_REASON_PREFIX,
 } from "./dunning-config";
 import { adminLockedRefusal } from "./admin-lock-refusal";
+import { isLinkPending, writeUnlinkedMarker } from "./link-pending";
 import { TenantStatusGuard } from "../tenant/tenant-status.guard";
 import { fromCents, roundMoney, toCents } from "@routeflow/pricing";
 import {
@@ -135,6 +136,8 @@ import {
   STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
   STRIPE_CHECKOUT_HOOK_FAILED_ACTION,
+  STRIPE_CHECKOUT_LINK_ENTITY,
+  STRIPE_CHECKOUT_LINKED_ACTION,
   STRIPE_CHECKOUT_DUPLICATE_ACTION,
   STRIPE_CHECKOUT_REFUSED_ACTION,
   STRIPE_CHECKOUT_STALE_ACTION,
@@ -163,6 +166,15 @@ const PAYMENT_FAILED_PORTAL_REQUEST = { timeoutMs: 10_000, maxNetworkRetries: 0 
  * a false "apply" costs the customer double billing (a card subscription on top of a manual invoice).
  */
 const MANUAL_MARKER_SKEW_S = 60;
+
+/** On a trial, or locked by one (`READ_ONLY` for a `trial_*` reason): the business has never been activated by a payment. */
+function isTrialState(tenant: { status: string; readOnlyReason: string | null }): boolean {
+  return (
+    tenant.status === "TRIAL" ||
+    (tenant.status === READ_ONLY_STATUS &&
+      (tenant.readOnlyReason ?? "").startsWith(TRIAL_REASON_PREFIX))
+  );
+}
 
 /** Returned by the checkout transaction when the session was already applied (a redelivery). */
 const ALREADY_APPLIED = Symbol("checkout-session-already-applied");
@@ -889,6 +901,13 @@ export class BillingService {
     if (!sub?.stripeSubId) {
       return { synced: false, reason: "no_active_stripe_subscription" };
     }
+    // SA-1332 R1: while a checkout's link is pending its subscription's terms belong to that checkout. No price writer
+    // that pushes through here (a catalog fan-out, a custom fee, a reconcile retry) re-prices it until the checkout is
+    // applied or unlinked: the settle's own re-sync then prices what the tenant holds. Deliberately NOT a push failure (price-override.ts): an
+    // override saves locally with Stripe untouched, and heals at that re-sync.
+    if (await isLinkPending(this.prisma, tenantId, sub.stripeSubId)) {
+      return { synced: false, reason: "subscription_link_pending" };
+    }
     if (!this.stripe.isConfigured) {
       return { synced: false, reason: "stripe_not_configured" };
     }
@@ -1420,6 +1439,61 @@ export class BillingService {
         entityType: STRIPE_CHECKOUT_ENTITY,
         entityId: sessionId,
         meta,
+      },
+    });
+  }
+
+  /**
+   * SA-1332 R1: the LINKED marker of an UNPAID checkout (a bank debit in flight), written inside the apply transaction
+   * beside what links the subscription. From it the subscription is link-pending (`isLinkPending`) until the session's
+   * APPLIED row or an UNLINKED row. ONCE per session: a redelivery finds its own row (the per-session advisory lock this
+   * transaction already holds makes the read race-free). `pick` is the pick's terms (null for a bodyless session);
+   * `trialAtLink` is whether the business was on a trial (or a trial lock) when it linked.
+   */
+  private async writeLinkedMarker(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    subscriptionId: string,
+    sessionId: string,
+    link: {
+      pick: { planKey: string; planVersionId: string; monthly: number } | null;
+      tenant: { status: string; readOnlyReason: string | null } | null | undefined;
+    },
+  ): Promise<void> {
+    const written = await tx.auditLog.findFirst({
+      where: {
+        tenantId,
+        entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+        entityId: subscriptionId,
+        action: STRIPE_CHECKOUT_LINKED_ACTION,
+        meta: { path: ["sessionId"], equals: sessionId },
+      },
+      select: { id: true },
+    });
+    if (written) return;
+    const tenant =
+      link.tenant ??
+      (await tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { status: true, readOnlyReason: true },
+      }));
+    await tx.auditLog.create({
+      data: {
+        tenantId,
+        entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+        entityId: subscriptionId,
+        action: STRIPE_CHECKOUT_LINKED_ACTION,
+        meta: {
+          sessionId,
+          pick: link.pick
+            ? {
+                planKey: link.pick.planKey,
+                planVersionId: link.pick.planVersionId,
+                monthly: link.pick.monthly,
+              }
+            : null,
+          trialAtLink: !!tenant && isTrialState(tenant),
+        },
       },
     });
   }
@@ -2035,6 +2109,12 @@ export class BillingService {
         sessionPaymentStatus: session.payment_status ?? null,
       },
     };
+    // SA-1332 R1: the debit failed, so the pending link ends with the notice, in the same transaction (the marker is
+    // written only while the link is pending: an activated or never-linked session adds nothing).
+    const failedSubId: string | null =
+      (typeof session.subscription === "string"
+        ? session.subscription
+        : session.subscription?.id) ?? null;
     await this.recordCheckoutRefusal(
       session,
       tenant ? tenantId : null, // an unknown tenant id would fail the AuditLog FK and leave no trail
@@ -2045,7 +2125,15 @@ export class BillingService {
       },
       {
         action: STRIPE_CHECKOUT_ASYNC_FAILED_ACTION,
-        alsoWrite: tenant ? (tx) => writeAdminNotice(tx, notice) : undefined,
+        alsoWrite: tenant
+          ? async (tx) => {
+              await writeAdminNotice(tx, notice);
+              await writeUnlinkedMarker(tx, tenantId, failedSubId, {
+                sessionId: session.id ?? null,
+                reason: "async_payment_failed",
+              });
+            }
+          : undefined,
       },
     );
   }
@@ -2235,13 +2323,22 @@ export class BillingService {
         tenantId,
         { reason, ...this.checkoutCustomerTrail(session, existingOverride, stripeSub) },
         {
-          alsoWrite: (tx) =>
-            writeAdminNotice(tx, {
+          alsoWrite: async (tx) => {
+            await writeAdminNotice(tx, {
               tenantId,
               action: AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED,
               message,
               meta: { reason, checkoutSessionId: session.id ?? null },
-            }),
+            });
+            // SA-1332 R1 (SA-B MAJOR): every terminal outcome of a linked session ends its link. A bank-debit pick
+            // LINKED at its unpaid delivery and settled here unapplied would otherwise stay link-pending for good:
+            // every later checkout refused, every price push skipped. Written only while pending, so a card pick
+            // (never linked) adds nothing.
+            await writeUnlinkedMarker(tx, tenantId, subscriptionId, {
+              sessionId: session.id ?? null,
+              reason,
+            });
+          },
         },
       );
       // SA-1325 Q2: and stops, as master's other paid-not-applied exits do. No link, no conversion, no activation, no APPLIED
@@ -2562,6 +2659,12 @@ export class BillingService {
                     fromPlanKey: transition.fromPlanKey,
                     toPlanKey: transition.toPlanKey,
                   });
+                } else if (session.id) {
+                  // SA-1332 R1: an unpaid session is LINKED, not applied: the subscription is link-pending
+                  await this.writeLinkedMarker(tx, tenantId, subscriptionId, session.id, {
+                    pick,
+                    tenant: existingOverride?.tenant,
+                  });
                 }
                 return row;
               },
@@ -2640,6 +2743,12 @@ export class BillingService {
               await this.writeAppliedMarker(tx, tenantId, session.id, {
                 toPlanKey: conversionPlanKey,
                 subscriptionId,
+              });
+            } else if (session.id) {
+              // SA-1332 R1: an unpaid session is LINKED, not applied: the subscription is link-pending
+              await this.writeLinkedMarker(tx, tenantId, subscriptionId, session.id, {
+                pick,
+                tenant: existingOverride?.tenant,
               });
             }
             return row;
@@ -2834,11 +2943,7 @@ export class BillingService {
             select: { status: true, readOnlyReason: true },
           }));
     if (!tenant) return false;
-    return (
-      tenant.status === "TRIAL" ||
-      (tenant.status === READ_ONLY_STATUS &&
-        (tenant.readOnlyReason ?? "").startsWith(TRIAL_REASON_PREFIX))
-    );
+    return isTrialState(tenant);
   }
 
   /**
@@ -3606,6 +3711,9 @@ export class BillingService {
       await this.holdStripeCancel(sub, lockTarget.status, reason);
       return;
     }
+    // SA-1332 R1: this subscription is ending, so a link still pending on it ends too (only while it is pending: a
+    // redelivery or a subscription that was never linked unpaid writes nothing). A paused rollout above ends nothing.
+    await writeUnlinkedMarker(this.prisma, sub.tenantId, sub.stripeSubId, { reason });
     // The class the gate judged is part of both CASes (SA-775 S3): a reclassification since the read cannot lock.
     const churned = await this.transitionAndEmit(
       sub.tenantId,
