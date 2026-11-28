@@ -149,6 +149,7 @@ import {
 import { underTenantPriceLock } from "../billing/price-lock";
 import { clearNeedsReconcile } from "../billing/needs-reconcile";
 import { activationClaimRefusal } from "../billing/catchup-claim";
+import { writeUnlinkedMarker } from "../billing/link-pending";
 import { API_BILLING_PORTAL_RETURN_PATH } from "../billing/billing-return-paths";
 import { issueSetPasswordLink } from "../users/set-password-token";
 import { assertSafeTextCell } from "../common/safe-text-cell";
@@ -1850,6 +1851,11 @@ export class PlatformAdminService {
               flaggedInvoiceIds: voidResult.flagged,
             },
           },
+        });
+        // SA-1332 R1: staff took the payment by hand, so a bank-debit checkout still pending on the tenant's stored
+        // subscription is over: its UNLINKED row commits with this activation (and only while that link is pending).
+        await writeUnlinkedMarker(tx, id, before.subscription?.stripeSubId, {
+          reason: "manual_activation",
         });
 
         // SA-788 (c): just before commit, so the list includes what this activation itself priced.

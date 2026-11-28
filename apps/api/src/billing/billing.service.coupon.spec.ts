@@ -77,6 +77,11 @@ function build(init: { status?: string; sub?: Record<string, any> } = {}) {
     return true;
   };
   const prisma: any = {
+    // SA-1332: the price push / cancellation read the link-pending marker (none here: an applied subscription)
+    auditLog: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({}),
+    },
     tenant: {
       updateMany: jest.fn(async ({ where, data }: any) => {
         if (!matchStatus(where.status)) return { count: 0 };

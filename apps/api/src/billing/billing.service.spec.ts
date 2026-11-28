@@ -15,7 +15,10 @@ jest.mock("./needs-reconcile", () =>
   require("../testing/needs-reconcile-mock").needsReconcileMock(),
 );
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, Logger } from "@nestjs/common";
+import { BadRequestException, ConflictException, Logger } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { isLinkPending } from "./link-pending";
+import { SubscriptionService } from "./subscription.service";
 import { armNeedsReconcile, clearNeedsReconcile } from "./needs-reconcile";
 import { isPricePushFailure } from "./price-override";
 import { toCents } from "@routeflow/pricing";
@@ -27,7 +30,9 @@ import { BillingService } from "./billing.service";
 import { paymentReinstatableWhere } from "./dunning-config";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
+  STRIPE_CHECKOUT_LINK_ENTITY,
   STRIPE_CHECKOUT_LINKED_ACTION,
+  STRIPE_CHECKOUT_UNLINKED_ACTION,
 } from "./config-snapshot-audit.constants";
 import { BILLING_EVENTS } from "./plan-catalog.constants";
 import { PrismaService } from "../prisma/prisma.service";
@@ -107,6 +112,8 @@ function make(
       // isPayingRow gate — every existing test's tenant is PRODUCTION/non-deleted by default,
       // preserving current behavior exactly.
       findUniqueOrThrow: jest.fn().mockResolvedValue({ deletedAt: null, class: "PRODUCTION" }),
+      // SA-1332: the LINKED writer reads the tenant's status in the transaction when the subscription read had none.
+      findUnique: jest.fn((args: unknown) => prisma.tenant.findUnique(args)),
     },
     tenantAddon: {
       findMany: jest.fn().mockResolvedValue(overrides.addons ?? []),
@@ -1081,14 +1088,17 @@ describe("BillingService — Stripe churn/reactivation MRR ledger", () => {
       });
 
       it.each(["unpaid", undefined, "weird"])(
-        "payment_status %s: linked, NOT activated, no marker, no MRR delta",
+        "payment_status %s: linked (its LINKED row only), NOT activated, no APPLIED marker, no MRR delta",
         async (status) => {
           const { svc, prisma, tx, events } = make({ transitionCount: 1 });
           await (svc as any).onCheckoutCompleted(sessionOf(status as string | undefined));
           expect(prisma.tenantSubscription.upsert).toHaveBeenCalledTimes(1); // the linking writes land
           expect(emitted(events)).not.toContain(BILLING_EVENTS.SUBSCRIPTION_RESUMED);
-          // the APPLIED marker is written through the apply transaction's client, never for an unpaid session
-          expect(tx.auditLog.create).not.toHaveBeenCalled();
+          // the APPLIED marker is written through the apply transaction's client, never for an unpaid session: the one
+          // row it leaves is the LINKED marker (SA-1332 R1), which makes the subscription link-pending
+          expect(tx.auditLog.create.mock.calls.map((c: any[]) => c[0].data.action)).toEqual([
+            STRIPE_CHECKOUT_LINKED_ACTION,
+          ]);
         },
       );
 
@@ -2172,6 +2182,8 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
     tenant: { findUnique: jest.Mock };
     tenantSubscription: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     tenantAddon: { findMany: jest.Mock };
+    // SA-1332: the push reads the link-pending marker (none by default: every case here is an applied subscription)
+    auditLog: { findFirst: jest.Mock };
     $transaction: jest.Mock;
     $queryRaw: jest.Mock;
   };
@@ -2194,6 +2206,7 @@ describe("BillingService.syncStripeSubscriptionPrice", () => {
       $queryRaw: jest.fn().mockResolvedValue([]),
       // #2440: the tenant's add-on subscription items (none by default).
       tenantAddon: { findMany: jest.fn().mockResolvedValue([]) },
+      auditLog: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     stripe = {
       getSubscription: jest.fn(),
@@ -3828,18 +3841,43 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms, settle
       h.planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
     }
     const marks: any[] = [];
-    h.tx.auditLog.create.mockImplementation(async ({ data }: any) => {
-      marks.push(data);
+    // SA-1332: a row carries its write time, so the newest of two (a LINKED then an UNLINKED) can be told apart, as
+    // isLinkPending needs; `record` is the one writer both the tx and the plain client write through.
+    let clock = Date.UTC(2026, 10, 1);
+    const record = async ({ data }: any) => {
+      marks.push({ ...data, createdAt: new Date((clock += 1000)) });
       return {};
-    });
-    const find = async ({ where }: any) =>
-      marks.find((m) => m.entityId === where.entityId && m.action === where.action) ?? null;
+    };
+    h.tx.auditLog.create.mockImplementation(record);
+    // The lookup honours what the real readers ask for: the entity type, the tenant, and the JSON path on the
+    // session id (the LINKED once-per-session read), newest first.
+    const find = async ({ where }: any) => {
+      const path = where?.meta?.path;
+      return (
+        marks
+          .filter(
+            (m) =>
+              m.entityId === where.entityId &&
+              m.action === where.action &&
+              (where.entityType === undefined || m.entityType === where.entityType) &&
+              (where.tenantId === undefined ||
+                m.tenantId === undefined ||
+                m.tenantId === where.tenantId) &&
+              (path === undefined || m.meta?.[path[0]] === where.meta.equals),
+          )
+          .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0))[0] ?? null
+      );
+    };
     h.tx.auditLog.findFirst.mockImplementation(find);
     h.prisma.auditLog.findFirst.mockImplementation(find);
     const link = () =>
       h.prisma.tenantSubscription.findUnique.mockResolvedValue({ ...sub, stripeSubId: "sub_1" });
-    return { ...h, marks, link };
+    return { ...h, marks, record, link };
   }
+  /** The APPLIED rows only: `marks` also carries the LINKED / UNLINKED rows of the link. */
+  const appliedMarks = (h: any) =>
+    h.marks.filter((m: any) => m.action === STRIPE_CHECKOUT_APPLIED_ACTION);
+  const linkMarks = (h: any, action: string) => h.marks.filter((m: any) => m.action === action);
   const notApplied = (h: any) =>
     h.marks.filter((m: any) => m.action === AdminAuditAction.STRIPE_PAID_CHECKOUT_NOT_APPLIED);
   const upserts = (h: any) => h.prisma.tenantSubscription.upsert.mock.calls.map((c: any[]) => c[0]);
@@ -3917,7 +3955,7 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms, settle
     expect(upserts(h)).toHaveLength(1);
     expect(upserts(h)[0].update).toMatchObject({ stripeSubId: "sub_1", stripeCustomerId: "cus_1" });
     expectNothingApplied(h);
-    expect(h.marks).toHaveLength(0); // no APPLIED row: "applied" means only that row
+    expect(appliedMarks(h)).toHaveLength(0); // no APPLIED row: "applied" means only that row
     expect(stamped(h)).toHaveLength(0);
     expect(converted(h)).toHaveLength(0);
   });
@@ -3933,7 +3971,7 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms, settle
     expect(h.tx.tenant.update).toHaveBeenCalledTimes(1);
     expect(h.planTransition.onPlanChange).toHaveBeenCalledTimes(1);
     expect(h.planTransition.onPlanChange.mock.calls[0][1]).toMatchObject({ fromPlanKey: "ALL_IN" });
-    expect(h.marks).toHaveLength(1);
+    expect(appliedMarks(h)).toHaveLength(1);
     expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
     expect(converted(h)).toHaveLength(1);
   });
@@ -3947,7 +3985,7 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms, settle
     expect(upserts(h).filter((u: any) => u.update.planKey === "CORE")).toHaveLength(1);
     expect(h.planTransition.onPlanChange).toHaveBeenCalledTimes(1);
     expect(h.tx.tenant.update).toHaveBeenCalledTimes(1);
-    expect(h.marks).toHaveLength(1);
+    expect(appliedMarks(h)).toHaveLength(1);
     expect(h.mutations.invalidatePlanCaches).toHaveBeenCalledTimes(1);
   });
 
@@ -4294,6 +4332,395 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms, settle
       await l.settle(ESSENTIALS);
       expect(l.rows()).toEqual([]);
       expect(resync).not.toHaveBeenCalled();
+    });
+  });
+
+  // SA-1332 R1: while a checkout's link is pending (LINKED written, no APPLIED / UNLINKED yet) its subscription's terms
+  // belong to that checkout. The LINKED row comes from the REAL writer (the unpaid completion), never from a fixture.
+  describe("SA-1332 R1: a link-pending subscription's terms belong to its checkout", () => {
+    const ESSENTIALS = { ...PICK_META, planKey: "STARTER", quotedMonthly: "99" };
+    const BODYLESS = (planKey: string) => ({ tenantId: "t1", planKey });
+    const PRICE: Record<string, number> = { ALL_IN: 299, STARTER: 99, CORE: 199 };
+    const linkedRows = (h: any) => linkMarks(h, STRIPE_CHECKOUT_LINKED_ACTION);
+    const unlinkedRows = (h: any) => linkMarks(h, STRIPE_CHECKOUT_UNLINKED_ACTION);
+    const pending = (h: any) => isLinkPending(h.prisma as never, "t1", "sub_1");
+
+    it.each([true, false])(
+      "W1: an unpaid bank-debit pick completion writes ONE LINKED row in the apply transaction: session, pick, trialAtLink (plan-transition hook %s)",
+      async (hook) => {
+        const h = setup(TRIAL(), { hook });
+        await (h.svc as any).onCheckoutCompleted(unpaid());
+        expect(linkedRows(h)).toHaveLength(1);
+        expect(linkedRows(h)[0]).toMatchObject({
+          tenantId: "t1",
+          entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+          entityId: "sub_1",
+          action: STRIPE_CHECKOUT_LINKED_ACTION,
+          meta: {
+            sessionId: "cs_pick",
+            pick: { planKey: "CORE", planVersionId: "v14", monthly: 199 },
+            trialAtLink: true,
+          },
+        });
+        // it is the unpaid link's own row: the APPLIED row is still absent
+        expect(appliedMarks(h)).toHaveLength(0);
+        expect(await pending(h)).toBe(true);
+      },
+    );
+
+    it.each([
+      ["a TRIAL business", TRIAL, true],
+      ["a trial-expired READ_ONLY business", EXPIRED, true],
+      ["a business that is not on a trial", () => subOf("ALL_IN", "ACTIVE", null), false],
+    ])("W1: trialAtLink for %s is %s", async (_n, sub, trialAtLink) => {
+      const h = setup(sub());
+      await (h.svc as any).onCheckoutCompleted(unpaid());
+      expect(linkedRows(h)).toHaveLength(1);
+      expect(linkedRows(h)[0].meta.trialAtLink).toBe(trialAtLink);
+    });
+
+    it("W1: a bodyless unpaid session links with no pick", async () => {
+      const h = setup(TRIAL());
+      await (h.svc as any).onCheckoutCompleted(unpaid({ metadata: BODYLESS("CORE") }));
+      expect(linkedRows(h)).toHaveLength(1);
+      expect(linkedRows(h)[0].meta).toEqual({
+        sessionId: "cs_pick",
+        pick: null,
+        trialAtLink: true,
+      });
+    });
+
+    it("W1: a SETTLED (card) completion writes no LINKED row", async () => {
+      const h = setup(TRIAL());
+      await (h.svc as any).onCheckoutCompleted(pickSession());
+      expect(linkedRows(h)).toHaveLength(0);
+    });
+
+    it.each([true, false])(
+      "W2: a redelivery of the unpaid session leaves ONE LINKED row (plan-transition hook %s)",
+      async (hook) => {
+        const h = setup(TRIAL(), { hook });
+        await (h.svc as any).onCheckoutCompleted(unpaid());
+        h.link();
+        await (h.svc as any).onCheckoutCompleted(unpaid());
+        expect(linkedRows(h)).toHaveLength(1);
+      },
+    );
+
+    it.each([true, false])(
+      "W3: the settled apply (async_payment_succeeded, the paid session) ends the pending link (plan-transition hook %s)",
+      async (hook) => {
+        const h = setup(TRIAL(), { hook });
+        await (h.svc as any).onCheckoutCompleted(unpaid());
+        h.link();
+        expect(await pending(h)).toBe(true);
+        await (h.svc as any).onCheckoutCompleted(pickSession());
+        expect(await pending(h)).toBe(false);
+      },
+    );
+
+    it("W4: a failed bank debit writes UNLINKED once, and the link is no longer pending", async () => {
+      const h = setup(TRIAL());
+      await (h.svc as any).onCheckoutCompleted(unpaid());
+      h.link();
+      expect(await pending(h)).toBe(true);
+      await (h.svc as any).onCheckoutAsyncPaymentFailed(unpaid());
+      expect(unlinkedRows(h)).toHaveLength(1);
+      expect(unlinkedRows(h)[0]).toMatchObject({
+        tenantId: "t1",
+        entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+        entityId: "sub_1",
+        meta: { sessionId: "cs_pick", reason: "async_payment_failed" },
+      });
+      expect(await pending(h)).toBe(false);
+      // the same failure delivered again adds nothing
+      await (h.svc as any).onCheckoutAsyncPaymentFailed(unpaid());
+      expect(unlinkedRows(h)).toHaveLength(1);
+    });
+
+    it("W4: a failed debit for a link that is not pending (never linked, or already activated) writes no UNLINKED row", async () => {
+      const never = setup(TRIAL());
+      await (never.svc as any).onCheckoutAsyncPaymentFailed(unpaid());
+      expect(unlinkedRows(never)).toHaveLength(0);
+      const settled = setup(TRIAL());
+      await (settled.svc as any).onCheckoutCompleted(unpaid());
+      settled.link();
+      await (settled.svc as any).onCheckoutCompleted(pickSession());
+      await (settled.svc as any).onCheckoutAsyncPaymentFailed(unpaid());
+      expect(unlinkedRows(settled)).toHaveLength(0);
+    });
+
+    describe("W5: a Stripe cancellation ends the pending link", () => {
+      const row = {
+        tenantId: "t1",
+        stripeSubId: "sub_1",
+        planKey: "ALL_IN",
+        basePriceSnapshot: 299 as any,
+        discount: 0 as any,
+      };
+      it.each(["subscription_deleted", "subscription_canceled", "subscription_canceled_backstop"])(
+        "W5: cancelFromStripe (%s) writes UNLINKED once",
+        async (reason) => {
+          const h = setup(TRIAL());
+          h.prisma.auditLog.create.mockImplementation(h.record);
+          await (h.svc as any).onCheckoutCompleted(unpaid());
+          h.link();
+          expect(await pending(h)).toBe(true);
+          await (h.svc as any).cancelFromStripe(row, reason);
+          expect(unlinkedRows(h)).toHaveLength(1);
+          expect(unlinkedRows(h)[0]).toMatchObject({
+            tenantId: "t1",
+            entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+            entityId: "sub_1",
+            meta: { reason },
+          });
+          expect(await pending(h)).toBe(false);
+        },
+      );
+
+      it("W5: a cancellation of a subscription that is not link-pending writes no UNLINKED row", async () => {
+        const h = setup(TRIAL());
+        h.prisma.auditLog.create.mockImplementation(h.record);
+        await (h.svc as any).cancelFromStripe(row, "subscription_deleted");
+        expect(unlinkedRows(h)).toHaveLength(0);
+      });
+    });
+
+    describe("G1 / G2: the two readers switch on, from the real writer's output", () => {
+      it("G1: while pending, a self-serve plan change (card-first ON) is refused CHECKOUT_PAYMENT_PROCESSING, never sent to a second checkout", async () => {
+        const h = setup(TRIAL());
+        await (h.svc as any).onCheckoutCompleted(unpaid());
+        h.link();
+        const mutations = Object.create(SubscriptionMutationService.prototype) as any;
+        mutations.cardFirst = { isEnabled: jest.fn().mockResolvedValue(true) };
+        mutations.prisma = {
+          tenant: {
+            findUnique: jest.fn().mockResolvedValue({ status: "TRIAL", readOnlyReason: null }),
+          },
+          tenantSubscription: {
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ stripeSubId: "sub_1", externalPayment: false }),
+          },
+          auditLog: h.prisma.auditLog,
+        };
+        for (const op of ["subscribe", "upgrade", "downgrade"]) {
+          const err = await mutations.enforceCardFirst("t1", op).then(
+            () => null,
+            (e: unknown) => e,
+          );
+          expect(err).toBeInstanceOf(ConflictException);
+          expect((err as ConflictException).getResponse()).toMatchObject({
+            code: API_ERROR_CODES.CHECKOUT_PAYMENT_PROCESSING,
+          });
+        }
+      });
+
+      it("G2: while pending, self-pay eligibility is link_pending", async () => {
+        const h = setup(EXPIRED());
+        await (h.svc as any).onCheckoutCompleted(unpaid());
+        h.link();
+        const subscription = new SubscriptionService(
+          h.prisma as any,
+          {} as any,
+          {} as any,
+          {} as any,
+        );
+        const view = await (subscription as any).selfPayOf("t1", {
+          ent: { status: "READ_ONLY", readOnlyReason: "trial_expired", planKey: "ALL_IN" },
+          sub: { stripeSubId: "sub_1", externalPayment: false, couponFull: false },
+          planName: "Pro",
+          monthly: 299,
+          addons: [],
+          alreadyHaveAddonSkus: [],
+        });
+        expect(view).toMatchObject({ eligible: false, reason: "link_pending" });
+      });
+    });
+
+    // The price-push guard, through the real writer's LINKED row. A world is one business and its one Stripe subscription,
+    // so a fan-out is the same call made on each world's service.
+    describe("SA-1332 1-6 (7234990066): no price writer re-prices a link-pending subscription", () => {
+      /** A stateful row and tenant (the SA-1327 shape) and a Stripe base item that the push reads and writes. */
+      function world(o: { planKey: string; base: number; stripeCents: number; linked?: boolean }) {
+        const state = {
+          sub: {
+            tenantId: "t1",
+            planKey: o.planKey,
+            basePriceSnapshot: o.base,
+            discount: 0,
+            couponFull: false,
+            stripeSubId: o.linked ? "sub_1" : null, // the first (unpaid) delivery links it
+            stripeCustomerId: "cus_1",
+            trialConvertedAt: null,
+            failedPaymentCount: 0,
+            cancelAtPeriodEnd: false,
+            priceOverrideMonthly: null as number | null,
+          } as Record<string, any>,
+          tenant: { status: "TRIAL", readOnlyReason: null, class: "PRODUCTION", deletedAt: null },
+        };
+        const h = setup({ ...state.sub, tenant: state.tenant });
+        const read = async () => ({ ...state.sub, tenant: { ...state.tenant } });
+        h.prisma.tenantSubscription.findUnique.mockImplementation(read);
+        h.prisma.tenantSubscription.findFirst.mockImplementation(read);
+        h.prisma.tenantSubscription.upsert.mockImplementation(async ({ update }: any) => {
+          Object.assign(state.sub, update);
+          return { ...state.sub };
+        });
+        h.prisma.tenant.findUnique.mockImplementation(async () => ({
+          id: "t1",
+          class: "PRODUCTION",
+          status: state.tenant.status,
+          readOnlyReason: state.tenant.readOnlyReason,
+          plan: "ALL_IN",
+          planVersionId: "v1",
+        }));
+        h.tx.tenant.updateMany.mockImplementation(async ({ data }: any) => {
+          if (state.tenant.status === "ACTIVE" || data?.status !== "ACTIVE") return { count: 0 };
+          state.tenant.status = "ACTIVE";
+          state.tenant.readOnlyReason = null;
+          return { count: 1 };
+        });
+        // Stripe: one base item at `cents`; a push rewrites it, a read returns it (so a settle judges what Stripe bills NOW)
+        const item = { cents: o.stripeCents };
+        h.stripe.getSubscription.mockImplementation(async () => stripeSubOf(item.cents));
+        h.stripe.updateSubscription = jest.fn(async (_id: string, p: any) => {
+          item.cents = p.items[0].price_data.unit_amount;
+          return {};
+        });
+        const priceOf = (): number =>
+          state.sub.priceOverrideMonthly ?? PRICE[state.sub.planKey as string] ?? 0;
+        h.pricing.resolveTenantPricing = jest.fn(async () => ({
+          planKey: state.sub.planKey,
+          planName: String(state.sub.planKey),
+          monthly: priceOf(),
+          annual: priceOf() * 10,
+          source: state.sub.priceOverrideMonthly == null ? "catalog" : "override",
+          currency: "usd",
+        }));
+        h.pricing.checkoutPriceData = jest.fn(async () => ({
+          currency: "usd",
+          product: "rf_plan_x",
+          unit_amount: Math.round(priceOf() * 100),
+          recurring: { interval: "month" },
+        }));
+        const link = (metadata: Record<string, unknown>) =>
+          (h.svc as any).onCheckoutCompleted(unpaid({ metadata }));
+        const settle = (metadata: Record<string, unknown>) =>
+          (h.svc as any).onCheckoutCompleted(pickSession({ metadata }));
+        const fanOut = () => h.svc.syncStripeSubscriptionPrice("t1");
+        const rows = () =>
+          h.events.emit.mock.calls
+            .filter((c: any[]) => typeof c[3]?.amountDelta === "number")
+            .map((c: any[]) => [c[1], c[3].amountDelta]);
+        const sum = () =>
+          rows().reduce((t: number, r: any[]) => Math.round((t + r[1]) * 100) / 100, 0);
+        return { ...h, state, item, link, settle, fanOut, rows, sum };
+      }
+
+      it("1: a catalog fan-out skips a trial that picked Essentials by bank debit (subscription_link_pending, base item unchanged); an applied Pro subscription is still pushed", async () => {
+        const w = world({ planKey: "ALL_IN", base: 299, stripeCents: 9900 });
+        await w.link(ESSENTIALS);
+        const skipped = await w.fanOut();
+        expect(skipped).toEqual({ synced: false, reason: "subscription_link_pending" });
+        expect(w.stripe.updateSubscription).not.toHaveBeenCalled();
+        expect(w.item.cents).toBe(9900); // never rewritten to 299.00
+        // an override must still save locally with Stripe untouched: the reason is not a push FAILURE
+        expect(isPricePushFailure(skipped)).toBe(false);
+
+        // an applied Pro subscription (linked, then settled), its Stripe item behind the catalog
+        const applied = world({ planKey: "ALL_IN", base: 299, stripeCents: 9900 });
+        await applied.link(BODYLESS("ALL_IN"));
+        await applied.settle(BODYLESS("ALL_IN"));
+        applied.item.cents = 27900;
+        const pushed = await applied.fanOut();
+        expect(pushed).toMatchObject({ synced: true, oldAmount: 279, newAmount: 299 });
+        expect(applied.item.cents).toBe(29900);
+      });
+
+      it("2: then the debit settles: the pick applies with no price mismatch, and the settle re-sync prices Essentials", async () => {
+        const w = world({ planKey: "ALL_IN", base: 299, stripeCents: 9900 });
+        await w.link(ESSENTIALS);
+        await w.fanOut();
+        const resync = jest.spyOn(w.svc, "syncStripeSubscriptionPrice");
+        await w.settle(ESSENTIALS);
+        expect(notApplied(w)).toHaveLength(0); // never pick_price_mismatch
+        expect(w.state.sub.planKey).toBe("STARTER"); // applied, not held on Pro
+        expect(upserts(w).filter((u: any) => u.update.planKey === "STARTER")).toHaveLength(1);
+        // the settle's own re-sync ran (the link is no longer pending) and prices the plan it applied
+        expect(resync).toHaveBeenCalledTimes(1);
+        await expect(resync.mock.results[0].value).resolves.toMatchObject({
+          synced: true,
+          newAmount: 99,
+        });
+        expect(w.item.cents).toBe(9900);
+      });
+
+      it.each([true, false])(
+        "3: order B (the invoice pays between the fan-out and the settle; plan-transition hook %s): skipped, then applied at settle, the ledger sum equals Stripe's figure",
+        async (hook) => {
+          const w = world({ planKey: "ALL_IN", base: 299, stripeCents: 9900 });
+          if (!hook) {
+            w.planTransition.isEnabled.mockResolvedValue(false);
+            w.planTransition.prepare.mockResolvedValue({ enabled: false, planAllows: null });
+          }
+          await w.link(ESSENTIALS);
+          await (w.svc as any).onPaymentSucceeded({
+            id: "in_paid",
+            amount_paid: 9900,
+            customer: "cus_1",
+            parent: { subscription_details: { subscription: "sub_1" } },
+          });
+          const skipped = await w.fanOut();
+          expect(skipped).toMatchObject({ synced: false, reason: "subscription_link_pending" });
+          await w.settle(ESSENTIALS);
+          expect(notApplied(w)).toHaveLength(0);
+          expect(w.item.cents).toBe(9900);
+          expect(w.sum()).toBe(w.item.cents / 100); // no false mismatch: the ledger holds what Stripe bills
+        },
+      );
+
+      it("4: a bodyless bank debit link-pending during a fan-out of its own plan: skipped; the settle re-sync pushes the new price", async () => {
+        const w = world({ planKey: "ALL_IN", base: 299, stripeCents: 19900 });
+        await w.link(BODYLESS("CORE")); // links the plan it names; Stripe bills CORE at 199.00
+        expect(w.state.sub.planKey).toBe("CORE");
+        PRICE.CORE = 249; // the catalog moves while the debit is in flight
+        try {
+          const skipped = await w.fanOut();
+          expect(skipped).toMatchObject({ synced: false, reason: "subscription_link_pending" });
+          expect(w.item.cents).toBe(19900);
+          await w.settle(BODYLESS("CORE"));
+          expect(w.item.cents).toBe(24900); // the settle re-sync, not the fan-out, moved it
+        } finally {
+          PRICE.CORE = 199;
+        }
+      });
+
+      it("5: a custom fee on a link-pending business is stored but not pushed; the settle re-sync pushes the fee", async () => {
+        const w = world({ planKey: "ALL_IN", base: 299, stripeCents: 29900 });
+        await w.link(BODYLESS("ALL_IN"));
+        w.state.sub.priceOverrideMonthly = 149; // staff set the fee while the debit is in flight
+        const skipped = await w.fanOut();
+        expect(skipped).toMatchObject({ synced: false, reason: "subscription_link_pending" });
+        expect(isPricePushFailure(skipped)).toBe(false); // the override saves locally
+        expect(w.stripe.updateSubscription).not.toHaveBeenCalled();
+        expect(w.item.cents).toBe(29900); // not pushed mid-window
+        await w.settle(BODYLESS("ALL_IN"));
+        expect(w.item.cents).toBe(14900);
+      });
+
+      it("6: an applied subscription and a legacy row with no marker are pushed as today", async () => {
+        const legacy = world({ planKey: "ALL_IN", base: 299, stripeCents: 27900, linked: true });
+        expect(await legacy.fanOut()).toMatchObject({ synced: true, newAmount: 299 });
+        expect(legacy.item.cents).toBe(29900);
+
+        const applied = world({ planKey: "ALL_IN", base: 299, stripeCents: 9900 });
+        await applied.link(BODYLESS("ALL_IN"));
+        await applied.settle(BODYLESS("ALL_IN"));
+        applied.item.cents = 27900;
+        expect(await applied.fanOut()).toMatchObject({ synced: true, newAmount: 299 });
+        expect(applied.item.cents).toBe(29900);
+      });
     });
   });
 });

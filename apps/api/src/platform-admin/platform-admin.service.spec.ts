@@ -47,6 +47,12 @@ import { roundMoney } from "@routeflow/pricing";
 import * as manualActivationAddons from "../billing/manual-activation-addons";
 import { UserRole } from "@prisma/client";
 import { DunningService } from "../billing/dunning.service";
+import { isLinkPending } from "../billing/link-pending";
+import {
+  STRIPE_CHECKOUT_LINK_ENTITY,
+  STRIPE_CHECKOUT_LINKED_ACTION,
+  STRIPE_CHECKOUT_UNLINKED_ACTION,
+} from "../billing/config-snapshot-audit.constants";
 
 /**
  * P1 regression: platform-admin lifecycle mutations MUST emit a purpose-built
@@ -6537,6 +6543,97 @@ describe("PlatformAdminService — audit provenance", () => {
         service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID),
       ).rejects.toThrow("db down");
       expect(auditLog).not.toHaveBeenCalled(); // no post-commit trail for an activation that never committed
+    });
+
+    // SA-1332 R1 (5): a manual activation ends a pending bank-debit link in its own transaction. The LINKED row here is
+    // the shape the checkout writer leaves (billing.service.spec.ts drives that writer itself).
+    describe("SA-1332: a staff activation ends a link-pending checkout", () => {
+      const LINKED_AT = new Date("2026-11-20T10:00:00.000Z");
+      /** An in-memory trail behind the transaction's audit client: what a write leaves, a read sees. */
+      function trail(seed: Array<Record<string, unknown>>) {
+        const rows = [...seed];
+        let tick = 0;
+        (prisma as any).auditLog.create.mockImplementation(async ({ data }: any) => {
+          rows.push({ ...data, createdAt: new Date(Date.now() + ++tick) });
+          return {};
+        });
+        (prisma as any).auditLog.findFirst.mockImplementation(
+          async ({ where }: any) =>
+            rows
+              .filter(
+                (r) =>
+                  r.entityId === where.entityId &&
+                  r.action === where.action &&
+                  (where.entityType === undefined || r.entityType === where.entityType),
+              )
+              .sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null,
+        );
+        return rows;
+      }
+      const linkedRow = {
+        tenantId: TENANT_ID,
+        entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+        entityId: "sub_acme",
+        action: STRIPE_CHECKOUT_LINKED_ACTION,
+        meta: { sessionId: "cs_acme", pick: null, trialAtLink: true },
+        createdAt: LINKED_AT,
+      };
+
+      it("a pending link is UNLINKED in the activation's transaction, and is no longer pending", async () => {
+        tenantBefore({
+          subscription: {
+            stripeSubId: "sub_acme",
+            planKey: null,
+            basePriceSnapshot: null,
+            discount: 0,
+          },
+        });
+        const rows = trail([linkedRow]);
+        expect(
+          await isLinkPending(
+            { auditLog: (prisma as any).auditLog } as never,
+            TENANT_ID,
+            "sub_acme",
+          ),
+        ).toBe(true);
+
+        await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+
+        const unlinked = rows.filter((r) => r.action === STRIPE_CHECKOUT_UNLINKED_ACTION);
+        expect(unlinked).toHaveLength(1);
+        expect(unlinked[0]).toMatchObject({
+          tenantId: TENANT_ID,
+          entityType: STRIPE_CHECKOUT_LINK_ENTITY,
+          entityId: "sub_acme",
+          meta: { reason: "manual_activation" },
+        });
+        expect(
+          await isLinkPending(
+            { auditLog: (prisma as any).auditLog } as never,
+            TENANT_ID,
+            "sub_acme",
+          ),
+        ).toBe(false);
+      });
+
+      it("a subscription that is not link-pending (a legacy row, or none) writes no UNLINKED row", async () => {
+        tenantBefore({
+          subscription: {
+            stripeSubId: "sub_acme",
+            planKey: null,
+            basePriceSnapshot: null,
+            discount: 0,
+          },
+        });
+        const rows = trail([]);
+        await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+        expect(rows.filter((r) => r.action === STRIPE_CHECKOUT_UNLINKED_ACTION)).toHaveLength(0);
+
+        tenantBefore({ subscription: null });
+        const none = trail([linkedRow]);
+        await service.activateManualSubscription(TENANT_ID, activateDto, ADMIN_ID);
+        expect(none.filter((r) => r.action === STRIPE_CHECKOUT_UNLINKED_ACTION)).toHaveLength(0);
+      });
     });
 
     it("an ANNUAL activation (365 days) tells the helper the cycle is ANNUAL", async () => {
