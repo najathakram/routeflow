@@ -66,3 +66,4 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-11-26-w49.md](mobile/landing-2026-11-26-w49.md) | Window 49: edit-items and cart step by the box with Undo, box price labels, linked order from invoice and return |
 | [mobile/landing-2026-11-27-w50.md](mobile/landing-2026-11-27-w50.md) | Window 50: Adjust stock single-flight, payment refusal words |
 | [mobile/landing-2026-11-27-w51.md](mobile/landing-2026-11-27-w51.md) | Window 51: count screen replaces, adjustment key, staff invoice copy, payment terms |
+| [mobile/landing-2026-11-28-w52.md](mobile/landing-2026-11-28-w52.md) | Window 52: plan-pick refusal copy, invoice-edit code in the types mock |

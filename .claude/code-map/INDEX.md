@@ -89,16 +89,12 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Product labels/categories, credit-limit guard | [`api`](api/catchup-2026-09-21-src.md) → `product-labels/`, `orders/credit-limit-guard.ts` |
 | Tenant config snapshots (restore on re-upgrade) | [`api`](api/catchup-2026-09-21-src.md) → `billing/tenant-config-snapshot*.ts` → web admin `ConfigSnapshotsTab` |
 | Scanning engine (shared), verify-turbo, release-health | [`packages`](packages.md) → `scanning`; [`api`](api/catchup-2026-09-21-scripts-schema.md) → `scripts/` |
-| One writer for the Driver row | [`api`](api/landing-2026-11-21-w38.md) → `drivers/drivers.service.ts` `ensureDriverRow` |
-| Email delivery route, ref token, bounce tables | [`api`](api/landing-2026-11-21-w38.md) → `email/email-delivery.service.ts`, `email/bounces/` |
 | Purchase orders: create, receive, edit, close | [`api`](api/codemap-refresh-2026-11-22.md#purchase-orders-inventory) → `inventory/inventory.service.ts` `receivePurchaseOrder` |
 | Vendor bills: create, receive, void, payments, PO gate | [`api`](api/codemap-refresh-2026-11-22.md#vendor-bills) → `vendor-bills/vendor-bills.service.ts`, `po-bill-match.ts` |
 | Counter sale, park, void, pickup, day close | [`api`](api/codemap-refresh-2026-11-22.md#counter-sale-pickup) → `orders/counter-sale/counter-sale.service.ts` `ring`; web `CounterSaleScreen.tsx` |
 | Order drafts: autosave, local mirror, resume | [`api`](api/codemap-refresh-2026-11-22.md#order-drafts) → `drafts/drafts.service.ts`; web `lib/order-draft/engine.ts` |
 | Payment receipts: idempotency key, ref dedupe, edit | [`api`](api/codemap-refresh-2026-11-22.md#payment-receipts) → `invoices/payment-idempotency.ts`, `payment-ref-dedupe.ts` |
 | Billing catch-up: claim, plan, checkout | [`api`](api/codemap-refresh-2026-11-22.md#billing-catchup) → `billing/catchup-claim.ts`, `catchup-plan.ts`, `catchup-checkout.service.ts` |
-| Inventory dialog panel (scroll, keep Save in view) | [`web`](web/landing-2026-11-23-w39.md) → `inventory/_components/modal-panel.ts` |
-| Receipt screen, View receipt link and toast | [`web`](web/landing-2026-11-23-w42.md) → `app/(dashboard)/finance/payments/[id]/page.tsx` |
 | Ops board comments and rf inbox | [`api`](api/landing-2026-11-23-w42.md) → `tools/ops-monitor/lib/inbox.mjs` |
 | Group receipt card (receipt fields vs this payment) | [`web`](web/landing-2026-11-24-w43.md) → `app/(dashboard)/finance/payments/[id]/page.tsx` |
 | Buyer portal home landing (0 orders to Invoices) | [`web`](web/landing-2026-11-24-w43.md) → `app/buyer/portal/[seller]/page.tsx` |
@@ -141,6 +137,10 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Business buckets on the platform tenant list | [`api`](api/landing-2026-11-27-w51.md) → `src/billing/tenant-bucket.ts` |
 | Staff copy of invoice emails | [`api`](api/landing-2026-11-27-w51.md) → `src/invoices/invoice-staff-copy.ts` |
 | QuickBooks history storage tables | [`api`](api/landing-2026-11-27-w51.md) → `src/legacy-import/import-history-models.ts` |
+| Card-first gate: active business with no card asks for a payment link | [`api`](api/landing-2026-11-28-w52.md) → `src/billing/self-serve-plan-gate.ts` |
+| Self-serve plan pick at checkout, applied when paid | [`api`](api/landing-2026-11-28-w52.md) → `src/billing/self-checkout-plan-pick.ts` |
+| Admin edits a SENT invoice in place (policy, consent, epilogue) | [`api`](api/landing-2026-11-28-w52.md) → `src/invoices/issued-invoice-edit.ts` |
+| Verify job cap and step budget, E2E report on a timeout | [`api`](api/landing-2026-11-28-w52.md) → `.github/workflows/ci.yml` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →

@@ -589,3 +589,12 @@
 - SA-1321 · 2026-11-27 · PACK W-1505 U0, the status rule for the three wallet checks, plus the planner-status line for W-1471 A3c; comment 7218057879 (SA-B)
 - SA-1322 · 2026-11-27 · a payment-path candidate (B1522, details private): triaged HIGH, own fix ahead of W-1503 A0; comment 7218142383 (SA-B), details with the lead
 - SA-1323 · 2026-11-27 · W-1485 PR-1 Lens questions, the label column's name and imports; comment 7218217650 (SA-B)
+- SA-1324 · 2026-11-27 · the lead's 12:28Z batch item 3 and the W-1503 A3 Lens questions; comment 7218330197 (SA-B)
+- SA-1325 · 2026-11-27 · SA-1547 PR-5b R-371 Q1 (a plan pick while card-first is off is refused) and Q2 (a bad paid pick records not-applied); comment 7230372608 (SA-B)
+- SA-1326 · 2026-11-27 · W-1446 a ledger payment on a DRAFT; retires SA-827's and SA-1029's ledger DRAFT-to-issued intent; comment 7230424067 (SA-B)
+- SA-1327 · 2026-11-27 · SA-1547 PR-5b R-372 MAJOR-1, an ACH pick's two paid events in either order; comment 7230514440 (SA-B)
+- SA-1328 · 2026-11-28 · W-1447 (B1458) brief OK, the truck-return origin; comment 7230580016 (SA-B)
+- SA-1329 · 2026-11-28 · B1518 proven, a bounced check edited back to PAID; W-1473 C6 is the fix; comment 7231355393 (SA-B)
+- SA-1330 · 2026-11-28 · B1343 a force consolidate with money on the loser's draft; comment 7234128069; Amendment 1, how a kept-out order's reason reaches the caller, comment 7234327493 (SA-B)
+- SA-1331 · 2026-11-28 · #4579 R-374 follow-ups (a), (b), (c); comment 7234629773 (SA-B)
+- SA-1332 · 2026-11-28 · a price push must not reach a link-pending subscription; amends SA-1331 (a); comment 7234990066 (SA-B)
