@@ -211,12 +211,15 @@ jobs:
     # job takes about 38 minutes and keeps no token on disk.
     runs-on: ${{ inputs.runner == 'self-hosted' && fromJSON('["self-hosted","routeflow-ephemeral"]') || 'ubuntu-latest' }}
     # Turbo alone took 25m23s on 2026-10-31; 30 cut the script self-tests off.
-    # The cap is 45 and the Verify step's budget 41 (SA-1195 A1). The cap counts from job start,
+    # The cap is 60 and the Verify step's budget 56 (SA-1195 A1). The cap counts from job start,
     # and Verify starts 1.4-2.5 min in (checkout, setup-node, install, prisma; 8 runs, 2026-11-20),
-    # so 2.5 + 41 + 1 min kill grace = 44.5 lands the step's group kill before the cap. Tonight's
-    # Verify steps ran 21.6 to 36.1 minutes. control's ci-workflow.spec.ts pins
-    # budget + grace <= cap - 3, so changing either number alone fails.
-    timeout-minutes: 45
+    # so 2.5 + 56 + 1 min kill grace = 59.5 lands the step's group kill before the cap. control's
+    # ci-workflow.spec.ts pins budget + grace <= cap - 3, so changing either number alone fails.
+    # 2026-11-28: raised from 45/41. The suite had reached the old cap: #4579's Verify took 39
+    # minutes, and #4556's was cancelled at the 45-minute cap twice (runs 46009439210 and
+    # 46082824251, each 55:00 with no log kept). Raising only the cap would still have killed the
+    # step at 41.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
         with:
@@ -355,8 +358,13 @@ jobs:
       # The script ACCEPTS ONLY that one name and exits 1 on any other (an allow-list, so a later edit
       # here cannot silently exclude api/web); widening it means editing scripts/verify-turbo.mjs.
       #
-      # SA-1195 K2 (2026-11-20): the step has its own 41-minute budget under the 45-minute job cap.
-      # - `timeout -k 60 41m` leads its own process group and signals all of it, so every jest and
+      # SA-1195 K2 (2026-11-20): the step has its own budget under the job cap (56 and 60 minutes
+      # since 2026-11-28; they were 41 and 45).
+      # - OPEN (2026-11-28): in runs 46009439210 and 46082824251 the step was still running at the
+      #   45-minute cap, 1.1 and 1.6 minutes past its 41-minute budget plus kill grace, and both
+      #   runs again took 55:00 with no log. So the group kill below did not end the step there;
+      #   why is unknown, since no log survived.
+      # - `timeout -k 60 56m` leads its own process group and signals all of it, so every jest and
       #   turbo grandchild dies at the budget. `verify` is an `sh -c` chain, and sh does not pass a
       #   cancel on to its children: two cancels of one PR's Verify took 55:00 against a 45:00 cap,
       #   and GitHub kept no log of either.
@@ -369,7 +377,7 @@ jobs:
       - name: Verify (lockfile, bug-signature scan, types, lint, tests)
         run: |
           echo "::notice title=Verify runner::nproc $(nproc), $(free -m | awk '/^Mem:/ {print "memory " $2 " MB total, " $7 " MB available"}')"
-          timeout -k 60 41m npm run verify
+          timeout -k 60 56m npm run verify
         env:
           VERIFY_EXCLUDE: "@routeflow/control"
           # Setting this splits verify into check-types + lint first, then jest (scripts/verify-turbo.mjs), so
@@ -903,9 +911,21 @@ jobs:
           echo "  the reachability-only path far above and never gets here.)"
           exit 1
 
+      # W-1265 R2a (2026-11-28): every sampled run that reached this step (2026-11-12 to 11-27) was
+      # cancelled at the job's 45-minute cap, with the suite still running at about 43 minutes. A
+      # cancelled job keeps no report, because the upload below was `failure()` only (L-418). So the
+      # suite now stops itself first, and a red run uploads its report:
+      # - `--global-timeout` (38 min) ends Playwright the clean way: unfinished tests are reported
+      #   as not run, the html reporter writes playwright-report/, and the exit code is non-zero.
+      # - the step's `timeout-minutes: 40` is the hard backstop if Playwright does not stop itself.
+      # - Steps before this one take about 1.6-2.7 minutes (runs 45973661469 to 46084024465), so
+      #   2.7 + 40 + about 0.5 for the upload ends before the 45-minute job cap. A deploy-readiness
+      #   wait longer than about 2 minutes can still reach the job cap; then the upload's
+      #   `cancelled()` branch tries in the cancel's short grace time.
       - name: Run Playwright tests
         working-directory: apps/web
-        run: npx playwright test
+        timeout-minutes: 40
+        run: npx playwright test --global-timeout=2280000
         env:
           PLAYWRIGHT_BASE_URL: ${{ secrets.PLAYWRIGHT_BASE_URL || 'https://routeflowweb-production.up.railway.app' }}
           PLAYWRIGHT_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
@@ -919,8 +939,10 @@ jobs:
           CI: "true"
 
       - name: Upload Playwright report
-        # This job only runs for the deployment the gate chose, so `failure()` always has a report.
-        if: failure()
+        # This job only runs for the deployment the gate chose. A red suite, including one stopped
+        # by its global timeout or the step's timeout-minutes, fails the step, so `failure()` has a
+        # report. `cancelled()` covers a job-cap cancel (see the Run Playwright tests note).
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report-ci-${{ github.run_number }}
