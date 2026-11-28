@@ -202,3 +202,5 @@
 {"id":"B1521","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1522","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
 {"id":"B1523","batch":"F65","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null}
+{"id":"B681","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Fixed by #1255 (merged 2026-09-22): legacy or unknown box-axis SALE rows are parked, not wrongly reversed (SA-067). SA-C triage 7243673219 and lead routing 7243682675: close it; the historical data correction stays a separate item. (fixed in 3ff8b1421a12e42fef47fdca632a028cc6058863)","sha":"3ff8b1421a12e42fef47fdca632a028cc6058863"}
+{"id":"B403","batch":"F65","tier":"T2","state":"already-fixed","pr":null,"proof":null,"evidence":"Forward fix #725 (B294, merged 2026-09-14): order-derived lines carry their real tax rate. The owner-approved read-only census (lead 7244310176) found 0 pre-fix invoices and 0 lines with the zero rate, so no backfill is needed. (fixed in d4df7f8bc5cc3b99dc51d83ca403901196b7119f)","sha":"d4df7f8bc5cc3b99dc51d83ca403901196b7119f"}

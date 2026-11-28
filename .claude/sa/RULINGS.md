@@ -597,4 +597,7 @@
 - SA-1329 · 2026-11-28 · B1518 proven, a bounced check edited back to PAID; W-1473 C6 is the fix; comment 7231355393 (SA-B)
 - SA-1330 · 2026-11-28 · B1343 a force consolidate with money on the loser's draft; comment 7234128069; Amendment 1, how a kept-out order's reason reaches the caller, comment 7234327493 (SA-B)
 - SA-1331 · 2026-11-28 · #4579 R-374 follow-ups (a), (b), (c); comment 7234629773 (SA-B)
-- SA-1332 · 2026-11-28 · a price push must not reach a link-pending subscription; amends SA-1331 (a); comment 7234990066 (SA-B)
+- SA-1332 · 2026-11-28 · a price push must not reach a link-pending subscription; amends SA-1331 (a); comment 7234990066; R1, re-ruled to one Tier 1 PR, comment 7236052978 (SA-B)
+- SA-1333 · 2026-11-28 · the merge-versus-payment race on a loser's draft (R-380 INFO); comment 7235528870; two db cases added, comment 7235923472 (SA-B)
+- SA-1334 · 2026-11-28 · W-1446 G5 closes with no backfill and no second read; #4525 N1 and N2; comment 7243571316 (SA-B)
+- SA-1335 · 2026-11-28 · a pending link outlives a Stripe cancel held by the rollout pause (R-386 LOW 1); a LOW row, built after #4586; comment 7244342982 (SA-B)

@@ -98,6 +98,13 @@
 
 ## tooling
 
+### L-423 · 2026-11-28 · tooling · a wrapper's kill step that fails must fail the run, and a tool flag is probed on every CI host OS before it is relied on (#4581, R-376)
+
+- **Symptom:** the W-1514 Verify wrapper killed the step's whole session with `pkill -s <sid>`. A Mac reader (R-376) found that macOS `pkill` has no `-s` and exits 2, so the budget kill there signalled nothing, and the wrapper still exited 124 as if the kill had worked.
+- **Root cause:** the wrapper ignored the kill tool's exit code, and the flag was checked only on Linux, where procps supports it. A kill that silently does nothing reads exactly like a kill that worked.
+- **Lesson:** **Check the exit code of every signal tool. Exit 2 or more means the kill did not happen: print it, fall back to signalling the leader, and exit with a distinct code (125), never the budget code. A script that runs on more than one OS probes each flag it needs on each host, and its self-test SKIPS (and says so) where the probe fails, never passes.**
+- **Guard:** `scripts/ci-budget.sh` (exit 125 on a broken kill) and `scripts/ci-budget.self-test.mjs` (K1-K3 with a stub `pkill` that exits 2 or 1; the `-s` probe SKIPs W1-W5, P and M where it fails), in `npm run verify` (#4581, `b7231f0cdf`).
+
 ### L-414 · 2026-11-26 · tooling · a hook that dies with exit 127 or 0xC0000374 and prints nothing is a runtime crash, not a missing command; the hook prints a refusal for every exit code it does not expect (#4563)
 
 - **Symptom:** pushes from the Windows PC died with exit 127 or 0xC0000374 and no output from the leak check, only on master-merge pushes with piped refs. The laptop passed the same pushes, so the first guesses were a missing command and a hook-shell problem.
@@ -122,12 +129,19 @@
 
 ## testing
 
+### L-422 · 2026-11-28 · testing · an assertion after a loop whose per-case setup resets the mocks checks only the last pass; assert inside the loop (#4584, R-383)
+
+- **Symptom:** R-383's read of #4584 found `bookkeeping.service.spec.ts:431-441` vacuous. The test loops over DRAFT and SENT, and each pass calls `arm()`, which clears the mocks. The four `not.toHaveBeenCalled()` checks sit after the loop, so a call made on the DRAFT pass is erased before they run.
+- **Root cause:** the loop body reset the shared mocks before each case, and the check that belonged to every case was written once, after the loop, where only the last case's calls survive. A negative check is the worst case: it goes green on an erased call.
+- **Lesson:** **When a loop's per-case setup resets mocks or state, every assertion about a case goes inside the loop, after that case runs, and names the case in its message. Prove it with a probe: break one early case only and watch the spec go red.**
+- **Guard:** none yet. The vacuous check is still on master at `ed6792fa35` (R-383 rated it LOW; other pins cover the behaviour), and there is no scan for an assertion after a resetting loop.
+
 ### L-420 · 2026-11-28 · testing · a negative assertion on printed output matches the field it means, never a bare digit run, when the output carries random ids (#4556 Replay)
 
 - **Symptom:** #4556's Replay went red (run 46106483618) at `apps/api/scripts/report-corrected-units-sheet.db.spec.ts:446`, `expect(res.out).not.toMatch(/999/)`. Nothing had leaked: the output carried the run's random category UUID, which happened to contain `999`.
 - **Root cause:** the test meant "the other tenant's 999 figure never reaches this sheet", but asserted on the digits anywhere in the text. Output that prints a fresh UUID, timestamp or sequence on every run will sometimes contain any short digit run, so the pin was a flake by construction.
 - **Lesson:** **Assert on the figure, not the digits. Parse the value the test is about (the filed, delta or total field) or bound the token so it cannot sit inside a hex id (`(?<![0-9a-f-])999(?![0-9a-f-])`). Give the pin two red fixtures: a random id that contains the digits (must stay green) and a real leaked figure (must go red).**
-- **Guard:** owed: the queued test-only fix to `report-corrected-units-sheet.db.spec.ts` (lead 7234302025). No scan for bare digit regexes on output yet. Cf. [[L-353]].
+- **Guard:** `apps/api/src/common/testing/corrected-units-sheet-figures.ts` (`sheetFigures`) and `report-corrected-units-sheet.figures.spec.ts` (a random id holding 999 stays green, a leaked 999 figure goes red); QD-9 in `report-corrected-units-sheet.db.spec.ts` asserts on the figures (#4585, `4cc083651d`). No scan for bare digit regexes on output yet. Cf. [[L-353]].
 
 ### L-409 · 2026-11-25 · testing · a change that adds a call to an outside service greps every `*.spec.ts` and every `*.db.spec.ts` rig for its fake, and a billing or ledger PR needs a green Migration replay run at the sha before it merges (#4489, fixed by #4497, W-1338)
 
@@ -224,13 +238,6 @@
 - **Lesson:** **Every code path that makes a browser an operator (sign-in, impersonation, any future switch) calls the one helper that sets the presence cookie, and every exit path clears it unless the browser holds operator tokens of its own. Test it through the real guard with no mocks of the helpers.**
 - **Guard:** `lib/impersonation.presence.test.ts` (5 tests, real guard and helpers). Open: the automatic exits in `lib/api-client.ts` clear the tokens but not the cookie (see the register). Cf. [[L-369]].
 
-### L-369 · 2026-11-05 · domain · a tenant-scoped accessor never degrades to the unscoped client; with no business in context a secret read and every write throw
-
-- **Symptom:** a business's own API key sat as plaintext in a shared config row (written before the encryption existed), so it was also in every database backup; and the config service, asked for a value with no business in context, handed back the unscoped client, so a read or a write could land on another business's row.
-- **Root cause:** `forTenant()` returned the unscoped client when no tenant id was set instead of refusing, and each AI call site resolved its own key, so there was no single place that asked "which business, whose key, how much spent".
-- **Lesson:** **An accessor that is tenant-scoped by contract throws a coded error when the tenant is missing; it never falls back to the unscoped client. Secret reads and every write refuse; other reads may continue with one warning per key. Put every call that spends on a shared key behind one entry (business, key, budget, model, in that order), call its tenant check as the first statement of each caller, and pin the caller list with a census that fails a new site.**
-- **Guard:** `system-config-callers.census.spec.ts` (NONE = 0), `system-config.tenant-required.db.spec.ts`, `secret-keys.pin.spec.ts`, `ai-call-sites.census.spec.ts`, `ai-sites.tenant-first.spec.ts`; `report-plaintext-secrets.mjs` counts legacy rows. Cf. [[L-349]] (prove every id is in the tenant), [[L-368]] (one shared predicate).
-
 ### L-368 · 2026-11-05 · domain · a guard that asks "does a document stand on this order" counts every link that ties a document to it, through one shared predicate
 
 - **Symptom:** a guard refused to move an order while a live return stood on it, yet an inline return raised on another order let the sold-from order through; the goods were already restocked and a later cancel credited stock twice.
@@ -300,13 +307,6 @@
 - **Root cause:** the brief named the call sites, and the change declared "the single add-on ledger writer" without sweeping the tree, so an unnamed writer kept a second formula.
 - **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
 - **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
-
-### L-384 · 2026-11-15 · domain · a rule that is about to become a per-document mode is a REQUIRED parameter that throws when omitted, and every legacy caller states the old mode by name (#4323, W-989)
-
-- **Symptom:** an invoice-level discount must start lowering the sales-tax base for new documents only, while every stored document keeps today's formula. An optional mode would let any caller that forgot it silently total on one formula and re-derive a stored tax rate on the other.
-- **Root cause:** the totals and rate-inference helpers had no notion of a mode, and a default would hide the callers that still need a decision (the cutover constant stays null until the owner flips it).
-- **Lesson:** **Add the mode as a REQUIRED union on every totals and rate-inference helper, assert it at runtime (a JS caller or a mock gets an error, never a default), have each existing caller pass an exported legacy constant by name so a grep lists the sites still to thread, and derive a document's mode from its immutable creation time so a stored document keeps its formula for life.**
-- **Guard:** `packages/pricing/src/discount-tax-base.spec.ts` (an omitted mode throws in `computeInvoiceTotals`, `saleTotals`, `sumInvoiceTotals` and the rate inference; PRE_TAX 8 / 88 against LEGACY 10 / 90); the compiler for every typed caller. Cf. archived L-347.
 
 ## security
 
