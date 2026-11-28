@@ -1,4 +1,4 @@
-import { sheetFigures } from "./corrected-units-sheet-figures";
+import { sheetFigures } from "../common/testing/corrected-units-sheet-figures";
 
 // QD-9's leak check (report-corrected-units-sheet.db.spec.ts) asserted `not.toMatch(/999/)` on the whole console
 // output, which also prints the run's random category UUID and timestamps. #4556's Replay went red (run
