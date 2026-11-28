@@ -5043,3 +5043,19 @@ citations, closed-out with its own post-init assertion guard).
 - **Root cause:** every other transport stored `redactAddresses(message)`; the tenant SMTP branch had its own catch and stored the raw string, and no test read the text the staff user sees.
 - **Lesson:** **Redact at the place the error is stored for the screen, not only in the log line, and give each transport branch its own test that asserts the staff-visible text. A transport added later with its own catch is a new unredacted exit unless a test names it.**
 - **Guard:** `email/email.tenant-smtp-error-redact.w1289.spec.ts` (tenant fail with and without a platform transport, the statement 400, the log line).
+
+## Archived 2026-11-28 (bookkeeping for window 53) — real spec guards, zero outside citations, oldest of the tie; headroom for L-422 and L-423
+
+### L-369 · 2026-11-05 · domain · a tenant-scoped accessor never degrades to the unscoped client; with no business in context a secret read and every write throw
+
+- **Symptom:** a business's own API key sat as plaintext in a shared config row (written before the encryption existed), so it was also in every database backup; and the config service, asked for a value with no business in context, handed back the unscoped client, so a read or a write could land on another business's row.
+- **Root cause:** `forTenant()` returned the unscoped client when no tenant id was set instead of refusing, and each AI call site resolved its own key, so there was no single place that asked "which business, whose key, how much spent".
+- **Lesson:** **An accessor that is tenant-scoped by contract throws a coded error when the tenant is missing; it never falls back to the unscoped client. Secret reads and every write refuse; other reads may continue with one warning per key. Put every call that spends on a shared key behind one entry (business, key, budget, model, in that order), call its tenant check as the first statement of each caller, and pin the caller list with a census that fails a new site.**
+- **Guard:** `system-config-callers.census.spec.ts` (NONE = 0), `system-config.tenant-required.db.spec.ts`, `secret-keys.pin.spec.ts`, `ai-call-sites.census.spec.ts`, `ai-sites.tenant-first.spec.ts`; `report-plaintext-secrets.mjs` counts legacy rows. Cf. [[L-349]] (prove every id is in the tenant), [[L-368]] (one shared predicate).
+
+### L-384 · 2026-11-15 · domain · a rule that is about to become a per-document mode is a REQUIRED parameter that throws when omitted, and every legacy caller states the old mode by name (#4323, W-989)
+
+- **Symptom:** an invoice-level discount must start lowering the sales-tax base for new documents only, while every stored document keeps today's formula. An optional mode would let any caller that forgot it silently total on one formula and re-derive a stored tax rate on the other.
+- **Root cause:** the totals and rate-inference helpers had no notion of a mode, and a default would hide the callers that still need a decision (the cutover constant stays null until the owner flips it).
+- **Lesson:** **Add the mode as a REQUIRED union on every totals and rate-inference helper, assert it at runtime (a JS caller or a mock gets an error, never a default), have each existing caller pass an exported legacy constant by name so a grep lists the sites still to thread, and derive a document's mode from its immutable creation time so a stored document keeps its formula for life.**
+- **Guard:** `packages/pricing/src/discount-tax-base.spec.ts` (an omitted mode throws in `computeInvoiceTotals`, `saleTotals`, `sumInvoiceTotals` and the rate inference; PRE_TAX 8 / 88 against LEGACY 10 / 90); the compiler for every typed caller. Cf. archived L-347.

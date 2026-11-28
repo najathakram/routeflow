@@ -95,10 +95,6 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Order drafts: autosave, local mirror, resume | [`api`](api/codemap-refresh-2026-11-22.md#order-drafts) → `drafts/drafts.service.ts`; web `lib/order-draft/engine.ts` |
 | Payment receipts: idempotency key, ref dedupe, edit | [`api`](api/codemap-refresh-2026-11-22.md#payment-receipts) → `invoices/payment-idempotency.ts`, `payment-ref-dedupe.ts` |
 | Billing catch-up: claim, plan, checkout | [`api`](api/codemap-refresh-2026-11-22.md#billing-catchup) → `billing/catchup-claim.ts`, `catchup-plan.ts`, `catchup-checkout.service.ts` |
-| Ops board comments and rf inbox | [`api`](api/landing-2026-11-23-w42.md) → `tools/ops-monitor/lib/inbox.mjs` |
-| Group receipt card (receipt fields vs this payment) | [`web`](web/landing-2026-11-24-w43.md) → `app/(dashboard)/finance/payments/[id]/page.tsx` |
-| Buyer portal home landing (0 orders to Invoices) | [`web`](web/landing-2026-11-24-w43.md) → `app/buyer/portal/[seller]/page.tsx` |
-| PO create retry, edit line product lock | [`web`](web/landing-2026-11-24-w43.md) → `inventory/_components/PurchaseOrderLinesTable.tsx` |
 | Alias pack memory and void date columns (schema only) | [`api`](api/landing-2026-11-24-w43.md) → `prisma/schema/catalog.prisma`, `finance.prisma` |
 | Local mail TLS pair, fleet CLI | [`api`](api/landing-2026-11-24-w43.md) → `scripts/lib/mailpit-tls.mjs`, `scripts/fleet.mjs` |
 | Pre-push verify fail-fast (RF_VERIFY_FAIL_FAST) | [`api`](api/landing-2026-11-24-w44.md) → `scripts/lib/verify-fail-fast.mjs` |
@@ -141,6 +137,10 @@ Every row here is a pointer, not a description — open the linked file for the 
 | Self-serve plan pick at checkout, applied when paid | [`api`](api/landing-2026-11-28-w52.md) → `src/billing/self-checkout-plan-pick.ts` |
 | Admin edits a SENT invoice in place (policy, consent, epilogue) | [`api`](api/landing-2026-11-28-w52.md) → `src/invoices/issued-invoice-edit.ts` |
 | Verify job cap and step budget, E2E report on a timeout | [`api`](api/landing-2026-11-28-w52.md) → `.github/workflows/ci.yml` |
+| Orders kept out of a merge (money on it, kept-separate reasons) | [`api`](api/landing-2026-11-28-w53.md) → `src/orders/merge-lock-recheck.ts` `readKeptSeparate` |
+| Ledger Record payment refuses a DRAFT (one payable rule) | [`api`](api/landing-2026-11-28-w53.md) → `src/bookkeeping/bookkeeping.service.ts` `writeLedgerPayment` |
+| Verify session kill at its budget (setsid + pkill -s, exit 125) | [`api`](api/landing-2026-11-28-w53.md) → `scripts/ci-budget.sh` |
+| Corrected-units sheet figures for test assertions | [`api`](api/landing-2026-11-28-w53.md) → `src/common/testing/corrected-units-sheet-figures.ts` |
 
 - **Verification layers:** 4 — `npm run verify` (types+lint+test) → `post-deploy-check`
   (read-only authenticated probe) → `feature-smoke` (write-path, approved test tenant only) →
