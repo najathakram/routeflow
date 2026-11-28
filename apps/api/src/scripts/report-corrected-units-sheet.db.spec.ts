@@ -21,6 +21,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { sheetFigures } from "../common/testing/corrected-units-sheet-figures";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -442,8 +443,12 @@ describeDb("SA-1088 corrected-units sheet, real Postgres", () => {
         res.csv.split("\n").filter((l) => l && !l.startsWith("#") && !l.startsWith("period")),
       ).toHaveLength(3);
       expect(res.csv).not.toContain(`ORD-QDX-${run}`);
-      expect(res.out).toMatch(/filed (snapshot, LOCKED): 109 |/);
-      expect(res.out).not.toMatch(/999/);
+      // L-420: read the figures, not every digit run. The output also prints the run's random category UUID and
+      // timestamps, and a bare /999/ went red on a UUID holding "999" (#4556 Replay, run 46106483618). The old
+      // `/filed (snapshot, LOCKED): 109 |/` matched any output (a trailing `|` and an unescaped group).
+      expect(res.out).toContain("filed (snapshot, LOCKED): 109 |");
+      expect(sheetFigures(res.out)).toContain(109);
+      expect(sheetFigures(res.out)).not.toContain(999);
       expect(res.out).toMatch(/2026-07: RECONCILED/);
     } finally {
       await raw.regulatedSalesLedger.deleteMany({ where: { tenantId: t2 } });
