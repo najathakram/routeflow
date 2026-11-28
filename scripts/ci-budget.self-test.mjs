@@ -124,6 +124,13 @@ function run(argv, { boundMs, fixture, onStart, env } = {}) {
   });
 }
 
+// The lines of a shell script that still RUN pkill: comments are skipped, and quoted strings are dropped
+// before the match, so the wrapper's 125 message (which names pkill) is not a leftover kill.
+const pkillCommands = (text) =>
+  text
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l) && /\bpkill\b/.test(l.replace(/"[^"]*"|'[^']*'/g, "")));
+
 const BUDGET = "2s";
 const GRACE = "1";
 // budget + grace + 2s of slack: what "the step ends at its budget" means here
@@ -150,6 +157,21 @@ async function main() {
   check('W6 grace "x" is refused with exit 2', g.status === 2, `status ${g.status}`);
   const n = spawnSync("bash", [WRAPPER, "2s", "1"], { encoding: "utf8" });
   check("W6 no command is refused with exit 2", n.status === 2, `status ${n.status}`);
+
+  // P0b: P0's leftover filter still sees a real pkill command. The unswapped wrapper has exactly one,
+  // and a quoted mention next to a real command counts once, so narrowing it never made P0 vacuous.
+  const realKills = pkillCommands(readFileSync(WRAPPER, "utf8"));
+  check(
+    "P0b the filter finds the wrapper's one unswapped pkill command",
+    realKills.length === 1 && /^\s*pkill -/.test(realKills[0]),
+    `found ${realKills.length}: ${realKills.join(" | ")}`,
+  );
+  check(
+    "P0b a quoted mention is not a command; an unquoted pkill line is",
+    pkillCommands('echo "pkill -s failed"\n  pkill -TERM -s "$sid"\n# pkill in a comment\n')
+      .length === 1,
+    "expected exactly one command line",
+  );
 
   // K: a pkill that cannot kill fails the run loudly (exit 125). The stub dir goes first on PATH.
   const stub = (code) => {
@@ -262,10 +284,7 @@ async function main() {
     swaps++;
     return `kill ${sig} -- -"$sid"`;
   });
-  // A pkill COMMAND left over, not the word inside a quoted message (the 125 error names pkill).
-  const pkillLeft = groupKill
-    .split("\n")
-    .filter((l) => !/^\s*#/.test(l) && /\bpkill\b/.test(l.replace(/"[^"]*"|'[^']*'/g, "")));
+  const pkillLeft = pkillCommands(groupKill);
   check(
     "P0 the probe swapped every session kill for a group kill",
     swaps >= 1 && pkillLeft.length === 0,
