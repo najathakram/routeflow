@@ -1,3 +1,4 @@
+import type { KeptSeparateOrder } from "./merge-lock-recheck";
 import {
   saleFulfilmentKind,
   type SaleFulfilmentFacts,
@@ -22,6 +23,8 @@ export interface MergeWarnOpts {
   actor?: ChannelPrincipal | null;
   /** F-05 (SA-255): the banned lines of the merged order, for the acting UI (beside onPackMismatch). */
   onBannedLines?: (lines: BannedMergedLine[]) => void;
+  /** B1343 (SA-1330 A1), force only: the customer's orders kept out of the consolidate, each with its reason. */
+  onKeptSeparate?: (rows: KeptSeparateOrder[]) => void;
 }
 export type MergeWinner = { id: string; tenantId?: string | null } & MergeSide &
   SaleFulfilmentFacts;

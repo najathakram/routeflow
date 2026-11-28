@@ -1,4 +1,5 @@
 import type { BannedMergedLine } from "./merge-restriction-warning";
+import type { KeptSeparateOrder } from "./merge-lock-recheck";
 import {
   Controller,
   Get,
@@ -834,12 +835,20 @@ export class OrdersController {
   @Roles(UserRole.OPERATOR)
   async forceConsolidate(@Param("customerId") customerId: string, @CurrentUser() user: JwtPayload) {
     // F-05 (SA-255): merge-and-warn — the banned lines of the merged order ride along for the acting UI.
+    // B1343 (SA-1330 A1): so do the orders kept out of it, each with a reason code (never a sentence).
     let bannedLines: BannedMergedLine[] = [];
+    let keptSeparate: KeptSeparateOrder[] = [];
     const merged = await this.ordersService.forceConsolidateCustomer(customerId, {
       actor: user,
       onBannedLines: (lines) => (bannedLines = lines),
+      onKeptSeparate: (rows) => (keptSeparate = rows),
     });
-    return merged && bannedLines.length > 0 ? { ...merged, bannedLines } : merged;
+    if (!merged) return merged;
+    return {
+      ...merged,
+      ...(bannedLines.length > 0 ? { bannedLines } : {}),
+      ...(keptSeparate.length > 0 ? { keptSeparate } : {}),
+    };
   }
 
   // Delete-any: staff (OPERATOR/TENANT_ADMIN) may delete an order in any status;

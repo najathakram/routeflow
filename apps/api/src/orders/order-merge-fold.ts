@@ -16,6 +16,7 @@ import { assertMergeLockAcquired, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
   lockAndRecheckMergeInputs,
+  readKeptSeparate,
   readMergeGroup,
 } from "./merge-lock-recheck";
 import { UserRole, ItemStatus } from "@prisma/client";
@@ -356,11 +357,17 @@ export async function forceConsolidateCustomerImpl(
     const result = await withAdvisoryLock(
       { family: "order-merge", key: customerId, mode: "wait", waitMs: 20_000 },
       async () => {
-        const { group: orders } = await readMergeGroup(
+        const { group: orders, multiDraftSkipped } = await readMergeGroup(
           self.prisma.forTenant(),
           customerId,
           "force",
         );
+        // B1343 (SA-1330 A1): name each order kept out (money on it, or more than one draft), under the same lock
+        if (opts?.onKeptSeparate) {
+          opts.onKeptSeparate(
+            await readKeptSeparate(self.prisma.forTenant(), customerId, multiDraftSkipped),
+          );
+        }
         if (orders.length <= 1) return orders[0] ?? null;
         unitAware.assertNoUnitAwareLines(
           orders.flatMap((o) => o.lineItems),

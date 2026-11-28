@@ -13,8 +13,11 @@ import { isMergeContention, mapLockError } from "./merge-contention";
 import {
   deleteLoserGuarded,
   lockAndRecheckMergeInputs,
+  MERGE_NO_CREDIT_INTENT,
+  MERGE_NO_DRAFT_PAYMENT,
   mergeEligibleWhere,
   mergeInputFingerprint,
+  readKeptSeparate,
   readMergeGroup,
 } from "./merge-lock-recheck";
 
@@ -70,6 +73,9 @@ describe("mergeEligibleWhere — one predicate per path", () => {
       returns: { none: {} },
       deliveryMutations: { none: {} },
       ...ORDER_HAS_NO_LIVE_DELIVERED_LINE, // SA-1149: a live delivered line is never a winner or a loser
+      // SA-1330 (B1343): money on the order keeps it out: a credit intent (both kinds) and, force, a DRAFT holding a payment
+      orderCreditNotes: { none: {} },
+      AND: [{ invoices: { none: { status: InvoiceStatus.DRAFT, payments: { some: {} } } } }],
     });
   });
   it("both kinds exclude an order with delivery evidence (a DeliveryMutation, FK RESTRICT)", () => {
@@ -87,6 +93,7 @@ describe("mergeEligibleWhere — one predicate per path", () => {
       deliveryMutations: { none: {} },
       skipAutoMerge: false,
       ...ORDER_HAS_NO_LIVE_DELIVERED_LINE, // SA-1149
+      orderCreditNotes: { none: {} }, // SA-1330: a credit intent is never folded (the loser delete would cascade it)
     });
   });
   it("force skips a loser with two DRAFT invoices at the pre-read (C')", async () => {
@@ -273,5 +280,83 @@ describe("contention mapping + caller wiring", () => {
     const src = readFileSync(path.resolve(__dirname, "..", rel), "utf8");
     expect(src.match(/mergeAllPendingForCustomer\(/g)).toHaveLength(calls);
     expect((src.match(/!isMergeContention\(e\)/g) ?? []).length).toBeGreaterThanOrEqual(calls);
+  });
+});
+
+describe("SA-1330 (B1343): money on an order keeps it out of a merge", () => {
+  it("7: the guarded loser delete keeps both money clauses (force) and the intent clause (auto)", async () => {
+    const force = fakeTx([]);
+    await deleteLoserGuarded(force, "loser-1", "force");
+    const fw = (force.order.deleteMany.mock.calls[0] as any[])[0].where;
+    expect(fw.orderCreditNotes).toEqual({ none: {} });
+    expect(fw.AND).toEqual([
+      { invoices: { none: { status: InvoiceStatus.DRAFT, payments: { some: {} } } } },
+    ]);
+    expect(fw.invoices).toEqual({ none: {} }); // the override is only `invoices`
+    const auto = fakeTx([]);
+    await deleteLoserGuarded(auto, "loser-1", "auto");
+    expect((auto.order.deleteMany.mock.calls[0] as any[])[0].where.orderCreditNotes).toEqual({
+      none: {},
+    });
+  });
+
+  it("12: mergeEligibleWhere and the reason read use the SAME exported clause objects, never a copy", async () => {
+    const force = mergeEligibleWhere("force") as any;
+    expect(force.orderCreditNotes).toBe(MERGE_NO_CREDIT_INTENT.orderCreditNotes);
+    expect(force.AND).toBe(MERGE_NO_DRAFT_PAYMENT.AND);
+    expect((mergeEligibleWhere("auto") as any).orderCreditNotes).toBe(
+      MERGE_NO_CREDIT_INTENT.orderCreditNotes,
+    );
+    const db = { order: { findMany: jest.fn(async () => []) } };
+    await readKeptSeparate(db, "c-1", []);
+    const where = (db.order.findMany.mock.calls[0] as any[])[0].where;
+    expect(where.OR[0].NOT).toBe(MERGE_NO_CREDIT_INTENT);
+    expect(where.OR[1].NOT).toBe(MERGE_NO_DRAFT_PAYMENT);
+  });
+
+  it("the reason read looks only at the customer's otherwise-eligible PENDING orders, not at the two money clauses", async () => {
+    const db = { order: { findMany: jest.fn(async () => []) } };
+    await readKeptSeparate(db, "c-1", []);
+    const where = (db.order.findMany.mock.calls[0] as any[])[0].where;
+    expect(where.customerId).toBe("c-1");
+    expect(where.status).toBe(OrderStatus.PENDING);
+    expect(where.invoices).toEqual({ none: { status: { not: InvoiceStatus.DRAFT } } });
+    expect(where).not.toHaveProperty("orderCreditNotes");
+    expect(where).not.toHaveProperty("AND");
+  });
+
+  it("8-10: each kept-out order carries its id, number and reason; a multi-draft skip is MULTI_DRAFT", async () => {
+    const db = {
+      order: {
+        findMany: jest.fn(async () => [{ id: "m1", orderNumber: "ORD-0007" }]),
+      },
+    };
+    const rows = await readKeptSeparate(db, "c-1", [order("d1", { orderNumber: "ORD-0009" })]);
+    expect(rows).toEqual([
+      { orderId: "m1", orderNumber: "ORD-0007", reason: "MONEY_ON_ORDER" },
+      { orderId: "d1", orderNumber: "ORD-0009", reason: "MULTI_DRAFT" },
+    ]);
+  });
+
+  it("11: nothing kept out reads as an empty list", async () => {
+    const db = { order: { findMany: jest.fn(async () => []) } };
+    expect(await readKeptSeparate(db, "c-1", [])).toEqual([]);
+  });
+
+  it("force reports the orders its multi-draft skip removed (the reason read's MULTI_DRAFT input)", async () => {
+    const db = {
+      order: { findMany: jest.fn(async () => [order("a"), order("b")]) },
+      invoice: {
+        findMany: jest.fn(async () => [
+          { orderId: "b", deliveryBatchId: null },
+          { orderId: "b", deliveryBatchId: null },
+        ]),
+      },
+    };
+    const read = await readMergeGroup(db, "c-1", "force");
+    expect(read.group.map((o: any) => o.id)).toEqual(["a"]);
+    expect(read.multiDraftSkipped.map((o: any) => o.id)).toEqual(["b"]);
+    const auto = await readMergeGroup(db, "c-1", "auto");
+    expect(auto.multiDraftSkipped).toEqual([]);
   });
 });
