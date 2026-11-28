@@ -26,6 +26,15 @@ describe("planPickCopy", () => {
     expect(planPickCopy(err(code))).not.toContain("raw server text");
   });
 
+  it("SA-1325 Q1: the 403 with reason plan_pick_off maps to its sentence, never the server text", () => {
+    const off = {
+      response: { status: 403, data: { reason: "plan_pick_off", message: "raw server text" } },
+    };
+    expect(planPickCopy(off)).toBe(
+      "Choosing a different plan here isn't available yet. Contact us to change your plan.",
+    );
+  });
+
   it("returns null for any other code or shape", () => {
     expect(planPickCopy(err("SOMETHING_ELSE"))).toBeNull();
     expect(planPickCopy(err("toString"))).toBeNull();

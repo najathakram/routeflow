@@ -1121,6 +1121,14 @@ describe("genericToastCopy: SA-1547 PR-5a plan-pick refusals (SA-C)", () => {
     expect(copy).toBe(sentence);
     expect(copy).not.toContain(RAW);
   });
+
+  it("SA-1325 Q1: the 403 with reason plan_pick_off maps to its sentence, never the server message", () => {
+    const copy = genericToastCopy(err(403, { reason: "plan_pick_off" }));
+    expect(copy).toBe(
+      "Choosing a different plan here isn't available yet. Contact us to change your plan.",
+    );
+    expect(copy).not.toContain(RAW);
+  });
 });
 
 describe("genericToastCopy: B1415 M1b reused adjustment key", () => {

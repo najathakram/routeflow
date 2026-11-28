@@ -208,26 +208,39 @@ describe("SA-1547 PR-5: a plan pick is forwarded with a gate that decides who ma
     return opts.pick.gate as () => Promise<void>;
   };
 
-  it("an eligible (trial-expired) business passes the gate, flag on or off", async () => {
+  it("an eligible (trial-expired) business passes the gate, flag on", async () => {
     await expect((await gateOf(SELF_PAY_OK, true))()).resolves.toBeUndefined();
-    await expect((await gateOf(SELF_PAY_OK))()).resolves.toBeUndefined();
   });
 
-  it("a TRIAL business picking a plan, flag ON, passes (it pays now); flag OFF it is the 403 it is today", async () => {
+  it("SA-1325 Q1: card-first OFF (or no service), a trial-expired pick is a 403 plan_pick_off; the pick is dark", async () => {
+    for (const flag of [false, undefined]) {
+      const e = await rejects((await gateOf(SELF_PAY_OK, flag))());
+      expect(e).toBeInstanceOf(ForbiddenException);
+      expect(e.getResponse()).toMatchObject({ reason: "plan_pick_off" });
+    }
+  });
+
+  it("SA-1325 Q1: card-first OFF, a bodyless trial-expired request still opens its own plan's session", async () => {
+    const { controller, billing } = make(SELF_PAY_OK, "STARTER", false);
+    await controller.createCheckout({ tenantId: "t1" } as any);
+    expect(billing.createCheckoutSession).toHaveBeenCalledWith("t1", { surface: "TENANT_SELF" });
+  });
+
+  it("a TRIAL business picking a plan, flag ON, passes (it pays now); flag OFF the pick is refused (plan_pick_off)", async () => {
     await expect((await gateOf(SELF_PAY_TRIAL, true))()).resolves.toBeUndefined();
     for (const flag of [false, undefined]) {
       const e = await rejects((await gateOf(SELF_PAY_TRIAL, flag))());
       expect(e).toBeInstanceOf(ForbiddenException);
-      expect(e.getResponse()).toMatchObject({ reason: "trial_active" });
+      expect(e.getResponse()).toMatchObject({ reason: "plan_pick_off" });
     }
   });
 
-  it("ACTIVE with no card: the 5a refusal on the pick path too (flag ON a coded 409, OFF a 403)", async () => {
+  it("ACTIVE with no card: the 5a refusal on the pick path too (flag ON a coded 409, OFF the plan_pick_off 403)", async () => {
     const noCard = { ...SELF_PAY_OK, eligible: false, reason: "active_no_card" };
     const e = await rejects((await gateOf(noCard, true))());
     expect(e.getResponse()).toMatchObject({ code: API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK });
     expect((await rejects((await gateOf(noCard, false))())).getResponse()).toMatchObject({
-      reason: "active_no_card",
+      reason: "plan_pick_off",
     });
   });
 

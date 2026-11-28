@@ -4043,11 +4043,45 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms, settle
     expect(notApplied(done)).toHaveLength(0);
   });
 
-  it("m-3: a settled bad pick converts and marks with the plan the business HOLDS, not the one never applied", async () => {
+  it.each([
+    ["a quote of 199.00 against a charged 99.00", { metadata: PICK_META }, 9900],
+    [
+      "invalid terms (no plan version)",
+      { metadata: { ...PICK_META, planVersionId: undefined } },
+      19900,
+    ],
+  ])(
+    "SA-1325 Q2: a settled bad pick (%s) records not-applied and RETURNS: no link, no conversion, no activation, no APPLIED, no ledger row, no price push",
+    async (_n, over, chargedCents) => {
+      for (const sub of [TRIAL(), EXPIRED()]) {
+        const h = setup(sub);
+        h.stripe.getSubscription.mockResolvedValue(stripeSubOf(chargedCents));
+        const resync = jest.spyOn(h.svc as any, "resyncPriceAfterCheckout");
+        await (h.svc as any).onCheckoutCompleted(pickSession(over));
+        expect(notApplied(h)).toHaveLength(1);
+        expect(upserts(h)).toHaveLength(0);
+        expect(converted(h)).toHaveLength(0);
+        expect(stamped(h)).toHaveLength(0);
+        expect(h.tx.tenant.updateMany).not.toHaveBeenCalled();
+        expect(h.events.emit).not.toHaveBeenCalled();
+        expect(
+          h.marks.filter((m: any) => m.action === STRIPE_CHECKOUT_APPLIED_ACTION),
+        ).toHaveLength(0);
+        expect(resync).not.toHaveBeenCalled();
+        // the same session redelivered: no second row, still no conversion
+        await (h.svc as any).onCheckoutCompleted(pickSession(over));
+        expect(notApplied(h)).toHaveLength(1);
+        expect(converted(h)).toHaveLength(0);
+        expect(h.events.emit).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it("R-372 MINOR: a paid pick whose plan change a newer downgrade skipped converts and marks with the plan the business HOLDS", async () => {
     const h = setup(TRIAL());
-    await (h.svc as any).onCheckoutCompleted(
-      pickSession({ metadata: { ...PICK_META, planVersionId: undefined } }),
-    );
+    h.prisma.tenantFeatureConfigSnapshot.findFirst.mockResolvedValue({ id: "snap_newer" });
+    await (h.svc as any).onCheckoutCompleted(pickSession({ created: 1_700_000_000 }));
+    expectNothingApplied(h);
     expect(converted(h)).toHaveLength(1);
     expect(converted(h)[0][2]).toEqual({ planKey: "ALL_IN" });
     const applied = h.marks.filter((m: any) => m.action === STRIPE_CHECKOUT_APPLIED_ACTION);
@@ -4103,6 +4137,164 @@ describe("onCheckoutCompleted: a PAID pick session applies its own terms, settle
       expect.objectContaining({ data: { planVersionId: expect.anything() } }),
     );
     expect(h.mutations.invalidatePlanCaches).not.toHaveBeenCalled();
+  });
+
+  describe("SA-1327: a delayed-method pick's two paid events, in either order, sum to what Stripe bills", () => {
+    const ESSENTIALS = { ...PICK_META, planKey: "STARTER", quotedMonthly: "99" };
+    const GROWTH = { ...PICK_META, planKey: "CORE", quotedMonthly: "199" };
+    const invoice = {
+      id: "in_paid",
+      amount_paid: 9900,
+      customer: "cus_1",
+      parent: { subscription_details: { subscription: "sub_1" } },
+    };
+    /** A stateful row and tenant: every read sees the last write, so the events run in sequence and the ledger can be summed. */
+    function ledger(o: {
+      planKey: string;
+      base: number;
+      status: string;
+      readOnlyReason?: string | null;
+      linked?: boolean;
+      hook?: boolean;
+      chargedCents: number;
+    }) {
+      const state = {
+        sub: {
+          tenantId: "t1",
+          planKey: o.planKey,
+          basePriceSnapshot: o.base,
+          discount: 0,
+          couponFull: false,
+          stripeSubId: o.linked === false ? null : "sub_1",
+          stripeCustomerId: "cus_1",
+          trialConvertedAt: null,
+          failedPaymentCount: 0,
+          cancelAtPeriodEnd: false,
+        } as Record<string, unknown>,
+        tenant: {
+          status: o.status,
+          readOnlyReason: o.readOnlyReason ?? null,
+          class: "PRODUCTION",
+          deletedAt: null,
+        },
+      };
+      const h = setup({ ...state.sub, tenant: state.tenant }, { hook: o.hook });
+      const read = async () => ({ ...state.sub, tenant: { ...state.tenant } });
+      h.prisma.tenantSubscription.findUnique.mockImplementation(read);
+      h.prisma.tenantSubscription.findFirst.mockImplementation(read);
+      h.prisma.tenantSubscription.upsert.mockImplementation(async ({ update }: any) => {
+        Object.assign(state.sub, update);
+        return { ...state.sub };
+      });
+      h.prisma.tenant.findUnique.mockImplementation(async () => ({
+        id: "t1",
+        class: "PRODUCTION",
+        status: state.tenant.status,
+        readOnlyReason: state.tenant.readOnlyReason,
+        plan: "ALL_IN",
+        planVersionId: "v1",
+      }));
+      h.tx.tenant.updateMany.mockImplementation(async ({ data }: any) => {
+        if (state.tenant.status === "ACTIVE" || data?.status !== "ACTIVE") return { count: 0 };
+        state.tenant.status = "ACTIVE";
+        state.tenant.readOnlyReason = null;
+        return { count: 1 };
+      });
+      h.stripe.getSubscription.mockResolvedValue(stripeSubOf(o.chargedCents));
+      const rows = () =>
+        h.events.emit.mock.calls
+          .filter((c: any[]) => typeof c[3]?.amountDelta === "number")
+          .map((c: any[]) => [c[1], c[3].amountDelta]);
+      const sum = () =>
+        rows().reduce((t: number, r: any[]) => Math.round((t + r[1]) * 100) / 100, 0);
+      const lockedNotices = () =>
+        h.marks.filter((m: any) => /PAID_WHILE_LOCKED/i.test(String(m.action)));
+      const settle = (meta: Record<string, unknown>) =>
+        (h.svc as any).onCheckoutCompleted(pickSession({ metadata: meta }));
+      const paid = () => (h.svc as any).onPaymentSucceeded(invoice);
+      return { ...h, state, rows, sum, lockedNotices, settle, paid };
+    }
+
+    it("1, order A (the settled apply, then the invoice): one +99.00 crossing, no PLAN_CHANGED; the invoice books nothing", async () => {
+      const l = ledger({ planKey: "ALL_IN", base: 299, status: "TRIAL", chargedCents: 9900 });
+      await l.settle(ESSENTIALS);
+      await l.paid();
+      expect(l.rows()).toEqual([[BILLING_EVENTS.SUBSCRIPTION_RESUMED, 99]]);
+      expect(l.sum()).toBe(99);
+    });
+
+    it.each([true, false])(
+      "2-4, order B (the invoice, then the settled apply; plan-transition hook %s): +299.00 at the held plan, then PLAN_CHANGED -200.00, once; no locked notice",
+      async (hook) => {
+        const l = ledger({
+          planKey: "ALL_IN",
+          base: 299,
+          status: "TRIAL",
+          chargedCents: 9900,
+          hook,
+        });
+        await l.paid();
+        await l.settle(ESSENTIALS);
+        expect(l.rows()).toEqual([
+          [BILLING_EVENTS.SUBSCRIPTION_RESUMED, 299],
+          [BILLING_EVENTS.PLAN_CHANGED, -200],
+        ]);
+        const changed = l.events.emit.mock.calls.find(
+          (c: any[]) => c[1] === BILLING_EVENTS.PLAN_CHANGED,
+        );
+        expect(changed[2]).toEqual({
+          source: "checkout_pick",
+          fromPlan: "ALL_IN",
+          toPlan: "STARTER",
+          checkoutSessionId: "cs_pick",
+        });
+        expect(l.sum()).toBe(99);
+        // 3: the async event redelivered books nothing more
+        await l.settle(ESSENTIALS);
+        expect(l.sum()).toBe(99);
+        // 4: ACTIVE is reinstatable: the activation CAS missing raises no paid-while-locked notice
+        expect(l.lockedNotices()).toHaveLength(0);
+      },
+    );
+
+    it("5: a trial-expired business on Essentials at 99.00 picks Growth at 199.00, order B: +99.00, then +100.00", async () => {
+      const l = ledger({
+        planKey: "STARTER",
+        base: 99,
+        status: "READ_ONLY",
+        readOnlyReason: "trial_expired",
+        chargedCents: 19900,
+      });
+      await l.paid();
+      await l.settle(GROWTH);
+      expect(l.rows()).toEqual([
+        [BILLING_EVENTS.SUBSCRIPTION_RESUMED, 99],
+        [BILLING_EVENTS.PLAN_CHANGED, 100],
+      ]);
+      expect(l.sum()).toBe(199);
+    });
+
+    it("6: a card pick whose invoice arrives before the completion: no reinstatement (not linked yet); the completion books +99.00 once", async () => {
+      const l = ledger({
+        planKey: "ALL_IN",
+        base: 299,
+        status: "TRIAL",
+        linked: false,
+        chargedCents: 9900,
+      });
+      await l.paid();
+      expect(l.rows()).toEqual([]);
+      await l.settle(ESSENTIALS);
+      expect(l.rows()).toEqual([[BILLING_EVENTS.SUBSCRIPTION_RESUMED, 99]]);
+    });
+
+    it("7: a settled bad pick books no ledger row and pushes no price to Stripe", async () => {
+      const l = ledger({ planKey: "ALL_IN", base: 299, status: "TRIAL", chargedCents: 19900 });
+      const resync = jest.spyOn(l.svc as any, "resyncPriceAfterCheckout");
+      await l.settle(ESSENTIALS);
+      expect(l.rows()).toEqual([]);
+      expect(resync).not.toHaveBeenCalled();
+    });
   });
 });
 

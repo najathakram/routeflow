@@ -39,7 +39,7 @@ import {
 } from "./billing-return-paths";
 import { selfPayForViewer } from "./self-checkout-eligibility";
 import { CardFirstFlagService } from "./card-first-flag.service";
-import { planGateRefusal } from "./self-serve-plan-gate";
+import { PLAN_PICK_OFF_MESSAGE, planGateRefusal } from "./self-serve-plan-gate";
 
 import { PermissionBase } from "../auth/permissions/permission.decorators";
 /**
@@ -289,6 +289,10 @@ export class SettingsBillingController {
 
   /** The server's verdict on this checkout: a session to pay, or (card-first ON, a plan picked) a trial business choosing its plan. */
   private async checkoutGate(tenantId: string, planKey: string | undefined): Promise<void> {
+    // SA-1325 Q1: picking a plan is live only with card-first ON (no service counts as OFF); refused before any customer
+    if (planKey && (await this.cardFirst?.isEnabled()) !== true) {
+      throw new ForbiddenException({ message: PLAN_PICK_OFF_MESSAGE, reason: "plan_pick_off" });
+    }
     const { selfPay } = await this.subscription.getSubscription(tenantId);
     if (selfPay?.eligible) return;
     if (await this.cardFirst?.isEnabled()) {

@@ -14,6 +14,8 @@ import { LIVE_PAYMENTS_OFF_SENTENCE } from "@routeflow/types/live-payments-off-c
 import {
   CUSTOM_FEE_PLAN_PICK_REFUSED_SENTENCE,
   PLAN_PICK_ASK_FOR_LINK_SENTENCE,
+  PLAN_PICK_OFF_REASON,
+  PLAN_PICK_OFF_SENTENCE,
   SELF_SERVE_PLAN_NOT_ALLOWED_SENTENCE,
 } from "@routeflow/types/plan-pick-copy";
 import {
@@ -551,6 +553,8 @@ export function codedToastCopy(err: unknown): string | null {
   const gate = parsePlanGate(err);
   if (gate && gate.code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE) return PLAN_COPY;
   const code = typeof data.code === "string" ? data.code : "";
+  // SA-1325 Q1 (SA-C): a plan pick while card-first is off is a 403 with a reason, no code; fixed words, shared with mobile
+  if (data.reason === PLAN_PICK_OFF_REASON) return PLAN_PICK_OFF_SENTENCE;
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
   // B981: the customer-create refusals, by code.

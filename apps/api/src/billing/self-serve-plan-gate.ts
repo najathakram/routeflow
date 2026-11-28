@@ -79,6 +79,9 @@ export function isNeverActivated(tenant: PlanGateTenant, linkPending: boolean): 
  * sentence by self-serve-plan-gate.spec.ts (the credit-words / live-payments-off pattern).
  */
 export const PLAN_PICK_ASK_FOR_LINK_MESSAGE = "To pay for a new plan, ask us for a payment link.";
+/** SA-1325 Q1 (SA-C): the api's copy of `PLAN_PICK_OFF_SENTENCE`, pinned the same way; the 403's reason is `plan_pick_off`. */
+export const PLAN_PICK_OFF_MESSAGE =
+  "Choosing a different plan here isn't available yet. Contact us to change your plan.";
 
 const REFUSAL_MESSAGE: Record<string, string> = {
   [API_ERROR_CODES.CHECKOUT_PAYMENT_PROCESSING]:

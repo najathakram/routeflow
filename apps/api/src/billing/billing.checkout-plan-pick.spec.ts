@@ -336,6 +336,14 @@ describe("m-2: a REFUSED pick writes nothing at all, identity included", () => {
       null,
     ],
     [
+      "SA-1325 Q1: a trial-expired pick with card-first off (the gate refuses, plan_pick_off)",
+      {},
+      "GROWTH",
+      () => new ForbiddenException({ reason: "plan_pick_off" }),
+      null,
+      null,
+    ],
+    [
       "an ACTIVE business with no card (PLAN_PICK_ASK_FOR_LINK)",
       {},
       "GROWTH",
@@ -398,6 +406,18 @@ describe("m-2: a REFUSED pick writes nothing at all, identity included", () => {
       noTrace(h);
     },
   );
+
+  it("R-372 MINOR: a gate-refused pick never reaches the add-on or price checks (they judge the CURRENT plan)", async () => {
+    const h = make({ noCustomer: true });
+    const gate = jest.fn(gateRefuses(() => new ForbiddenException({ reason: "plan_pick_off" })));
+    await rejection(
+      h.billing.createCheckoutSession("t1", { ...self, pick: { planKey: "GROWTH", gate } }),
+    );
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(h.mutations.checkoutAddonLines).not.toHaveBeenCalled();
+    expect(h.pricing.checkoutPriceData).not.toHaveBeenCalled();
+    noTrace(h);
+  });
 
   it("the order is: gate, then the customer, then the session", async () => {
     const h = make({ noCustomer: true });

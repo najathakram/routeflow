@@ -3,6 +3,8 @@ import {
   CHECKOUT_PAYMENT_IN_PROGRESS_SENTENCE,
   CUSTOM_FEE_PLAN_PICK_REFUSED_SENTENCE,
   PLAN_PICK_ASK_FOR_LINK_SENTENCE,
+  PLAN_PICK_OFF_REASON,
+  PLAN_PICK_OFF_SENTENCE,
   SELF_SERVE_PLAN_NOT_ALLOWED_SENTENCE,
 } from "@routeflow/types/plan-pick-copy";
 
@@ -18,8 +20,12 @@ const PLAN_PICK_COPY: Record<string, string> = {
 };
 
 export function planPickCopy(err: unknown): string | null {
-  const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
-    ?.data?.code;
+  const data = (
+    err as { response?: { data?: { code?: unknown; reason?: unknown } } } | null | undefined
+  )?.response?.data;
+  // SA-1325 Q1: a pick while card-first is off is a 403 with a reason, no code
+  if (data?.reason === PLAN_PICK_OFF_REASON) return PLAN_PICK_OFF_SENTENCE;
+  const code = data?.code;
   return typeof code === "string" && Object.hasOwn(PLAN_PICK_COPY, code)
     ? PLAN_PICK_COPY[code]
     : null;
