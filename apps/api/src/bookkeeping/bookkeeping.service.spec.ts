@@ -45,6 +45,9 @@ import { PlatformConfigService } from "../platform-admin/platform-config.service
 import { AI_TASKS, type AiTask } from "../platform-admin/ai-models";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import * as invoiceStatus from "../invoices/invoice-status";
+import { tenantTimeZone } from "../common/tenant-time-zone";
 
 const MOCK_TXN = {
   id: "txn-1",
@@ -305,91 +308,136 @@ describe("BookkeepingService", () => {
     });
   });
 
-  describe("recordPayment — SA-827: a DRAFT paid through the ledger freezes its display unit once", () => {
-    const UNITS = new Map([["it-1", { kind: "pieces" as const, label: "Piece" }]]);
-    const WORDS = new Map([["p-1", "Bag"]]); // SA-1029: the pre-tx base words
-
-    function arm(status: string) {
-      (resolveIssueDisplayUnits as jest.Mock).mockReset().mockResolvedValue(UNITS);
-      (loadDraftBaseLabels as jest.Mock).mockReset().mockResolvedValue(WORDS);
+  describe("recordPayment — W-1446 (SA-1326): the ledger writer refuses a DRAFT, like every payment writer (B1396)", () => {
+    // SA-1326 retires SA-827 / SA-1029's "a DRAFT paid through the ledger becomes issued": a payment never issues a DRAFT.
+    function arm(
+      locked: { status: string; total?: number; payments?: any[]; dueDate?: Date | null },
+      pre = locked.status,
+    ) {
+      (resolveIssueDisplayUnits as jest.Mock).mockReset();
+      (loadDraftBaseLabels as jest.Mock).mockReset();
       (writeIssueDisplayUnits as jest.Mock).mockClear();
       (writeIssueBaseLabels as jest.Mock).mockClear();
-      prisma.invoice.findUnique.mockResolvedValue({ status, tenantId: "tenant-acme-1" });
-      const txClient = {
+      // a stale row: the page (and any pre-read) saw `pre`; the row read under the lock is `locked`
+      prisma.invoice.findUnique.mockResolvedValue({ status: pre, tenantId: "tenant-acme-1" });
+      const update = jest.fn(async ({ data }: any) => ({
+        id: "inv-1446",
+        status: data.status,
+        total: locked.total ?? 100,
+        payments: [],
+      }));
+      const create = jest.fn().mockResolvedValue({ id: "pay-1446" });
+      const tx = {
         $executeRaw: jest.fn(),
         invoice: {
           findMany: jest.fn(async () => []),
           findUnique: jest.fn().mockResolvedValue({
-            id: "inv-827",
+            id: "inv-1446",
             tenantId: "tenant-acme-1",
-            status,
-            total: 100,
-            payments: [],
+            status: locked.status,
+            total: locked.total ?? 100,
+            dueDate: locked.dueDate ?? null,
+            paidAt: null,
+            payments: locked.payments ?? [],
           }),
-          update: jest.fn().mockResolvedValue({ id: "inv-827", status: "PARTIAL", payments: [] }),
+          update,
         },
-        // master's W-769 flag reads the created payment's id (as the sibling recordPayment specs mock it)
-        invoicePayment: {
-          create: jest.fn().mockResolvedValue({ id: "pay-827" }),
-          findMany: jest.fn(async () => []),
-        },
+        invoicePayment: { create, findMany: jest.fn(async () => []) },
       };
-      prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(txClient));
-      return txClient;
+      prisma.tenantTransaction.mockImplementation(async (fn: any) => fn(tx));
+      return { tx, update, create };
     }
+    const notPayable = (reason: string) =>
+      expect.objectContaining({
+        response: expect.objectContaining({ code: API_ERROR_CODES.INVOICE_NOT_PAYABLE, reason }),
+      });
 
-    it("a DRAFT: resolves OUTSIDE the tx (a non-tx client, the row's own tenant), writes INSIDE it for this invoice", async () => {
-      const tx = arm("DRAFT");
-      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
-      expect(resolveIssueDisplayUnits).toHaveBeenCalledTimes(1);
-      const [readDb, tenantId, invoiceId] = (resolveIssueDisplayUnits as jest.Mock).mock.calls[0];
-      expect(readDb).toBe(prisma.forTenant());
-      expect(tenantId).toBe("tenant-acme-1");
-      expect(invoiceId).toBe("inv-827");
-      expect(writeIssueDisplayUnits).toHaveBeenCalledTimes(1);
-      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][0]).toBe(tx);
-      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][1]).toBe("inv-827");
-      expect((writeIssueDisplayUnits as jest.Mock).mock.calls[0][2]).toBe(UNITS);
-      expect((resolveIssueDisplayUnits as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
-        prisma.tenantTransaction.mock.invocationCallOrder[0],
-      );
-      // SA-1029 A-1: the words are read off-tx too, then handed to the in-tx writer
-      const [wdb, wtenant, winv] = (loadDraftBaseLabels as jest.Mock).mock.calls[0];
-      expect(wdb).toBe(prisma.forTenant());
-      expect(wtenant).toBe("tenant-acme-1");
-      expect(winv).toBe("inv-827");
-      expect((loadDraftBaseLabels as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan(
-        prisma.tenantTransaction.mock.invocationCallOrder[0],
-      );
-      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0]).toEqual([
-        tx,
-        "inv-827",
-        "tenant-acme-1",
-        WORDS,
-      ]);
+    it("1: a DRAFT with a ledger payment of the full total is a coded 400 INVOICE_NOT_PAYABLE (DRAFT), nothing written [master: PAID, 1 row, paidAt set]", async () => {
+      const { update, create } = arm({ status: "DRAFT" });
+      const err = await service
+        .recordPayment("inv-1446", { amount: 100, method: "CASH" as any })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err).toEqual(notPayable("DRAFT"));
+      expect(create).not.toHaveBeenCalled(); // 0 payment rows
+      expect(update).not.toHaveBeenCalled(); // status stays DRAFT, paidAt stays null
     });
 
-    it("D-R2: a DRAFT whose resolve found NO pieces line (null units) still freezes the base labels in the tx", async () => {
-      const tx = arm("DRAFT");
-      (resolveIssueDisplayUnits as jest.Mock).mockResolvedValue(null);
-      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
-      expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
-      expect(writeIssueBaseLabels).toHaveBeenCalledTimes(1);
-      expect((writeIssueBaseLabels as jest.Mock).mock.calls[0]).toEqual([
-        tx,
-        "inv-827",
-        "tenant-acme-1",
-        WORDS,
-      ]);
+    it("2: the stale row (SENT on the page, back to DRAFT by an order edit's revert) is refused on the LOCKED row [master: PAID]", async () => {
+      const { update, create } = arm({ status: "DRAFT" }, "SENT");
+      await expect(
+        service.recordPayment("inv-1446", { amount: 100, method: "CASH" as any }),
+      ).rejects.toEqual(notPayable("DRAFT"));
+      expect(create).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
     });
 
-    it("an already issued (SENT) invoice makes zero resolve calls and no write", async () => {
-      arm("SENT");
-      await service.recordPayment("inv-827", { amount: 40, method: "CASH" as any });
+    it("3: a partial ledger payment on a DRAFT is refused too [master: PARTIAL]", async () => {
+      const { update, create } = arm({ status: "DRAFT" });
+      await expect(
+        service.recordPayment("inv-1446", { amount: 40, method: "CASH" as any }),
+      ).rejects.toEqual(notPayable("DRAFT"));
+      expect(create).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+    });
+
+    it.each(["VOID", "WRITTEN_OFF"])(
+      "4: a %s invoice is still refused, now with the code and its reason [master: a plain 400 with no code]",
+      async (status) => {
+        const { create } = arm({ status });
+        await expect(
+          service.recordPayment("inv-1446", { amount: 10, method: "CASH" as any }),
+        ).rejects.toEqual(notPayable(status));
+        expect(create).not.toHaveBeenCalled();
+      },
+    );
+
+    it("6: an OVERDUE invoice with a partial ledger payment is PARTIAL through the shared status rule (statusFromPayments)", async () => {
+      const due = new Date("2026-01-01T00:00:00.000Z");
+      const { update } = arm({ status: "OVERDUE", total: 100, dueDate: due });
+      const shared = jest.spyOn(invoiceStatus, "statusFromPayments");
+      await service.recordPayment("inv-1446", { amount: 40, method: "CASH" as any });
+      // the tenant's own zone (this mock tenant has none configured, so the shared fallback, UTC)
+      expect(shared).toHaveBeenCalledWith(
+        40,
+        100,
+        due,
+        "OVERDUE",
+        await tenantTimeZone(prisma as any),
+        "NOT_PAID",
+      );
+      expect(update.mock.calls[0][0].data.status).toBe("PARTIAL");
+      expect(update.mock.calls[0][0].data).not.toHaveProperty("paidAt");
+      shared.mockRestore();
+    });
+
+    it.each([
+      ["SENT", 40, "PARTIAL"],
+      ["SENT", 100, "PAID"],
+      ["PARTIAL", 60, "PAID"],
+    ])(
+      "7: unchanged: a %s invoice with a %d payment records and reaches %s",
+      async (status, amount, expected) => {
+        const payments = status === "PARTIAL" ? [{ amount: 40 }] : [];
+        const { update, create } = arm({ status, total: 100, payments });
+        await service.recordPayment("inv-1446", { amount, method: "CASH" as any });
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(update.mock.calls[0][0].data.status).toBe(expected);
+        if (expected === "PAID") expect(update.mock.calls[0][0].data.paidAt).toBeInstanceOf(Date);
+      },
+    );
+
+    it("no payment path resolves or freezes issue display units or base words any more (SA-827 / SA-1029 retired)", async () => {
+      for (const status of ["DRAFT", "SENT"]) {
+        arm({ status });
+        await service
+          .recordPayment("inv-1446", { amount: 40, method: "CASH" as any })
+          .catch(() => undefined);
+      }
       expect(resolveIssueDisplayUnits).not.toHaveBeenCalled();
+      expect(loadDraftBaseLabels).not.toHaveBeenCalled();
       expect(writeIssueDisplayUnits).not.toHaveBeenCalled();
       expect(writeIssueBaseLabels).not.toHaveBeenCalled();
-      expect(loadDraftBaseLabels).not.toHaveBeenCalled(); // no extra read on an issued invoice
     });
   });
 
@@ -466,7 +514,14 @@ describe("BookkeepingService", () => {
       );
       await expect(
         service.recordPayment("inv-v", { amount: 10, method: "CASH" as any }),
-      ).rejects.toThrow("Cannot record a payment on a voided invoice.");
+      ).rejects.toEqual(
+        expect.objectContaining({
+          response: expect.objectContaining({
+            code: API_ERROR_CODES.INVOICE_NOT_PAYABLE,
+            reason: "VOID",
+          }),
+        }),
+      ); // W-1446: the coded refusal (SA-1326), read on the locked row
       expect(log).toEqual(["lock Order", "lock Invoice", "read status"]);
     });
   });

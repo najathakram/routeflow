@@ -1,10 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-  OnModuleInit,
-  Optional,
-} from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
 import { toCollectByCustomer, toCollectState } from "../invoices/to-collect";
 import { assertRefsInTenant } from "../common/assert-refs-in-tenant";
 import { aiKeyRefusedException, aiNotAvailableException } from "../common/ai-key-failure";
@@ -63,14 +57,8 @@ import {
   sumConfirmed,
 } from "../invoices/payment-predicates";
 import { settledDateFilter } from "../invoices/settled-date-filter";
-import { lockInvoicesForPayment } from "../invoices/invoice-send-guard";
-import {
-  loadDraftBaseLabels,
-  resolveIssueDisplayUnits,
-  writeIssueBaseLabels,
-  writeIssueDisplayUnits,
-} from "../invoices/invoice-display-unit";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { assertPayable, lockInvoicesForPayment } from "../invoices/invoice-send-guard";
+import { statusFromPayments } from "../invoices/invoice-status";
 import { counterPay } from "../invoices/counter-payment-guard";
 import {
   createPaymentRefGuard,
@@ -92,8 +80,6 @@ export class BookkeepingService implements OnModuleInit {
     private readonly vendorBillsService: VendorBillsService,
     private readonly platformConfig: PlatformConfigService,
     private readonly commissionEngine: CommissionEngineService,
-    // SA-827: the strict plan-flag read the display-unit resolve needs. Optional so a bare unit harness still builds.
-    @Optional() private readonly entitlements?: EntitlementsService,
   ) {}
 
   async onModuleInit() {
@@ -232,25 +218,10 @@ export class BookkeepingService implements OnModuleInit {
     // G4: the same end-of-day-close door the office recordPayment uses. The counter scope is read BEFORE the transaction so the
     // shared close lock is its FIRST statement; a non-counter invoice gets null here and every counterPay helper is a no-op.
     const till = await counterPay.scope(this.prisma, id);
-    // SA-827: a DRAFT paid through this ledger path becomes an issued invoice. Its display units are RESOLVED here on a
-    // non-tx client (no catalog read joins the Serializable snapshot) and WRITTEN inside the tx once the lock confirms DRAFT.
-    const pre = await this.prisma
-      .forTenant()
-      .invoice.findUnique({ where: { id }, select: { status: true, tenantId: true } });
-    const units =
-      pre?.status === InvoiceStatus.DRAFT && pre.tenantId
-        ? await resolveIssueDisplayUnits(
-            this.prisma.forTenant(),
-            pre.tenantId,
-            id,
-            this.entitlements,
-          )
-        : null;
-    // SA-1029: the per-piece base words, read here too (flag-free, off-tx) for the same DRAFT -> issued flip
-    const words =
-      pre?.status === InvoiceStatus.DRAFT && pre.tenantId
-        ? await loadDraftBaseLabels(this.prisma.forTenant(), pre.tenantId, id)
-        : null;
+    // W-1446 (SA-1326): a payment never issues a DRAFT (B1396), here as on every payment writer. SA-827 / SA-1029's "a DRAFT paid
+    // through this ledger path becomes an issued invoice" is retired: a DRAFT is issued only by the send path (which freezes its
+    // display units and base words) and by the delivery writer's ruled issue-first path.
+    const tz = await tenantTimeZone(this.prisma); // SA-495a: the tenant's due day, for the shared status rule below
     const refGuard = createPaymentRefGuard({ ...dto, invoiceId: id, opts });
     return this.prisma.tenantTransaction(async (tx) => {
       await counterPay.lock(tx, till);
@@ -270,15 +241,11 @@ export class BookkeepingService implements OnModuleInit {
         include: { payments: { where: CONFIRMED_PAYMENT } },
       });
       if (!inv) throw new NotFoundException("Transaction not found");
-      // B312: this ledger writer had no status guard at all — unlike invoices.service's
-      // recordPayment (which refuses VOID), a WRITTEN_OFF invoice's `remaining` balance is
-      // still > 0 (write-off doesn't touch `total`), so this path would happily flip it back
-      // to PARTIAL/PAID — resurrecting a forgiven invoice as if it were still collectible.
-      if (inv.status === InvoiceStatus.VOID || inv.status === InvoiceStatus.WRITTEN_OFF) {
-        throw new BadRequestException(
-          `Cannot record a payment on a ${inv.status === InvoiceStatus.VOID ? "voided" : "written-off"} invoice.`,
-        );
-      }
+      // W-1446 (SA-1326) / B1396: the ONE refusal every payment writer uses, judged on the row read under the lock (never a
+      // pre-read: an order edit's revert can bring a SENT row back to DRAFT while the page still shows it). A DRAFT, VOID or
+      // WRITTEN_OFF invoice is the coded 400 INVOICE_NOT_PAYABLE with its reason, before any write. (B312: a WRITTEN_OFF
+      // invoice's `remaining` is still > 0, so without this it would be resurrected as collectible.)
+      assertPayable(inv.status);
 
       if (inv.orderId) await assertOrderReviewed(tx, inv.orderId); // SA-1124 PR-1b: staff money waits for the price review
 
@@ -331,12 +298,15 @@ export class BookkeepingService implements OnModuleInit {
       );
 
       const totalPaid = roundMoney(alreadyPaid + paymentAmount);
-      const newInvStatus =
-        totalPaid >= totalOwed
-          ? InvoiceStatus.PAID
-          : totalPaid > 0
-            ? InvoiceStatus.PARTIAL
-            : InvoiceStatus.SENT;
+      // W-1446 (SA-1326): one status rule for every payment writer (OVERDUE and the shared tolerance included), as the invoice page
+      const newInvStatus = statusFromPayments(
+        totalPaid,
+        totalOwed,
+        inv.dueDate,
+        inv.status,
+        tz,
+        "NOT_PAID",
+      );
 
       const updated = await tx.invoice.update({
         where: { id },
@@ -350,12 +320,6 @@ export class BookkeepingService implements OnModuleInit {
           order: { select: { id: true, orderNumber: true, status: true } },
         },
       });
-
-      // SA-827: the DRAFT -> issued transition freezes the display unit (once; a SENT invoice never rewrites it).
-      if (inv.status === InvoiceStatus.DRAFT && units) await writeIssueDisplayUnits(tx, id, units);
-      // SA-1029: the per-piece word freezes on every DRAFT -> issued flip, never gated on a pieces line (D-R2)
-      if (inv.status === InvoiceStatus.DRAFT)
-        await writeIssueBaseLabels(tx, id, inv.tenantId, words);
 
       // Commission hook: this ledger path creates a PAID payment directly —
       // the accrual's payable must move with the cash in the same tx.

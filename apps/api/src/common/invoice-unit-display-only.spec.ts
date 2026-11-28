@@ -16,7 +16,8 @@ const FORBIDDEN =
 
 /**
  * SA-827 (I6): the CALLER names. The display helpers (live resolve, issue-time resolve/write/clear, the item decorator) may be
- * called only from the two services that own the DRAFT -> issued transition, and from invoice-draft-return.ts (revert and
+ * called only from the service that owns the DRAFT -> issued transition (InvoicesService; W-1446 took the ledger writer off it),
+ * from invoice-draft-return.ts (revert and
  * reopen, moved out of InvoicesService for the size ratchet; it only clears the snapshot), plus the display files. A new caller is a new
  * place that decides when a snapshot is written, so it must be added here on purpose.
  */
@@ -24,7 +25,8 @@ const CALLER =
   /\b(?:resolveLiveDisplayUnits|withItemDisplayUnits|resolveDraftIssueUnits|itemsWithDisplayUnits|resolveIssueDisplayUnits|writeIssueDisplayUnits|writeIssueBaseLabels|freezeDraftIssueUnits|freezeIssueUnitsFromCatalog|loadStopDisplayUnitCatalog|clearIssueDisplayUnits|clearIssueDisplayUnitsForRows|freezeIssueUnitsFromCatalogForRows|writeIssueBaseLabelsForRows|displayUnit)\b/;
 const CALLER_FILES = [
   "apps/api/src/invoices/invoices.service.ts",
-  "apps/api/src/bookkeeping/bookkeeping.service.ts",
+  // W-1446 (SA-1326): the ledger writer (bookkeeping.service.ts) left this list: a payment never issues a DRAFT, so it no longer
+  // writes an issue snapshot, and naming a display helper there is now a new caller (red) like any other file.
   // SA-1508 commit 3: revert and reopen call clearIssueDisplayUnits (a DRAFT renders live), moved with their bodies.
   "apps/api/src/invoices/invoice-draft-return.ts",
   // SA-1508 A1-M1: the issued-edit epilogue re-snapshots ONLY the rows whose product or sale unit changed (row-scoped helpers).
@@ -217,9 +219,9 @@ describe("G1: the invoice unit never reaches a money writer", () => {
       ).length;
     }
     expect([...named].filter((n) => !ALLOWED.has(n))).toEqual([]);
-    // markSent, the inline flip in createInvoiceFromOrderWithTenant, recordDeliveryPaymentInTx, bookkeeping recordPayment,
-    // and (SA-1508 A1-M1) the issued-edit epilogue freezing the changed and new rows
-    expect(writeCalls).toBe(5);
+    // markSent, the inline flip in createInvoiceFromOrderWithTenant, recordDeliveryPaymentInTx, and (SA-1508 A1-M1) the
+    // issued-edit epilogue freezing the changed and new rows (W-1446: the ledger recordPayment no longer issues, so not 5)
+    expect(writeCalls).toBe(4);
   });
 });
 

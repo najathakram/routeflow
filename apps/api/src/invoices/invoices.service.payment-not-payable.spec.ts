@@ -237,6 +237,73 @@ describe("B1396 inventory: every invoice payment writer goes through the one ref
     expect(guard.match(/InvoiceStatus\.WRITTEN_OFF\) return/g)).toHaveLength(1);
   });
 
+  /**
+   * W-1446 (SA-1326): the pin is repo-wide. Every `invoicePayment.create` / `createMany` / `upsert` in apps/api/src either runs
+   * after `assertPayable` / `assertStandalonePayable` in its own method, or is listed here with its reason. A new payment writer
+   * that is neither guarded nor listed goes red (the ledger writer, which this pin could not see, was the gap).
+   */
+  const UNGUARDED_PAYMENT_CREATES: Record<string, string> = {
+    "credit-notes/credit-notes.service.ts#applyCreditInTx":
+      "a credit application: statusFromPayments keeps a DRAFT as DRAFT, so it never pays one to PAID",
+    "import/import.service.ts#importInvoices":
+      "the history import writes imported payments with their imported invoice (out of scope, SA-1326)",
+    "import/import.service.ts#importPayments":
+      "the history import's payment file (out of scope, SA-1326)",
+    "invoices/invoices.service.ts#recordDeliveryPaymentInTx":
+      "the delivery writer's ruled issue-first path: it issues a DRAFT to SENT, then pays",
+  };
+  it("W-1446: every payment create in apps/api/src is behind the one refusal, or on the named allow-list", () => {
+    const CREATE = /\binvoicePayment\s*\.\s*(create|createMany|upsert)\s*\(/g;
+    const METHOD = /^ {2}(?:(?:private|public|protected|static|async)\s+)*([A-Za-z0-9_]+)\s*\(/gm;
+    const unguarded: string[] = [];
+    const seen = new Set<string>();
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== "testing") walk(p);
+          continue;
+        }
+        if (!/\.ts$/.test(e.name) || /\.spec\.ts$/.test(e.name)) continue;
+        const text = fs.readFileSync(p, "utf8");
+        const rel = path.relative(apiSrc, p).replace(/\\/g, "/");
+        for (const m of text.matchAll(CREATE)) {
+          // the method that holds this create: the last class-member declaration before it
+          let start = 0;
+          let name = "<top>";
+          for (const d of text.matchAll(METHOD)) {
+            if ((d.index ?? 0) > (m.index ?? 0)) break;
+            start = d.index ?? 0;
+            name = d[1];
+          }
+          const key = `${rel}#${name}`;
+          seen.add(key);
+          const body = text.slice(start, m.index);
+          if (/\bassert(?:Standalone)?Payable\(/.test(body)) continue;
+          if (!(key in UNGUARDED_PAYMENT_CREATES)) unguarded.push(key);
+        }
+      }
+    };
+    walk(apiSrc);
+    expect(unguarded).toEqual([]);
+    // the list never outlives a site: each entry still names a real unguarded create
+    for (const key of Object.keys(UNGUARDED_PAYMENT_CREATES)) expect(seen).toContain(key);
+  });
+
+  it("W-1446: the ledger writer refuses through assertPayable on the LOCKED row, before any write, with no copy of its own", () => {
+    const bk = src("bookkeeping/bookkeeping.service.ts");
+    const body = bk.slice(bk.indexOf("private async writeLedgerPayment("));
+    const end = body.indexOf("\n  }\n");
+    const fn = body.slice(0, end);
+    const at = fn.indexOf("assertPayable(inv.status)");
+    expect(at).toBeGreaterThan(fn.indexOf("lockInvoicesForPayment(tx"));
+    expect(at).toBeLessThan(fn.indexOf("assertOrderReviewed"));
+    expect(at).toBeLessThan(fn.indexOf("invoicePayment.create"));
+    expect(fn).toMatch(/statusFromPayments\(/); // one status rule for every writer
+    expect(fn).not.toMatch(/Cannot record a payment on a/);
+    expect(fn).not.toMatch(/writeIssueDisplayUnits|writeIssueBaseLabels|resolveIssueDisplayUnits/);
+  });
+
   it("only the staff route, the counter tender and the pickup hand-over call recordPayment", () => {
     const callers: string[] = [];
     const walk = (dir: string) => {

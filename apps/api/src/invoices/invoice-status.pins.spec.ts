@@ -7,9 +7,9 @@
  *  2. the literal `"PAID"` appears at EXACTLY ONE call site: the operator's standalone overpayment
  *     (recordStandalonePayment), which also writes the `invoice.deliberate-overpayment` audit row;
  *  3. no other code derives an invoice PAID from a paid-vs-total comparison. The allow-list is the
- *     two derivations that cannot restate an issued invoice: the historical-data import (the source
- *     system's own status) and bookkeeping's recordPayment (the payment is capped at the remaining balance
- *     before it is written, so it cannot overpay). A new entry needs a stated reason.
+ *     one derivation that cannot restate an issued invoice: the historical-data import (the source
+ *     system's own status). (W-1446 / SA-1326: bookkeeping's recordPayment now derives its status through
+ *     statusFromPayments, so its entry is gone.) A new entry needs a stated reason.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -119,18 +119,13 @@ describe("statusFromPayments: one body, one deliberate PAID caller (SA-763r P-3)
   });
 
   it("no code outside invoice-status.ts derives PAID from a paid-vs-total comparison (counted per file)", () => {
-    // Allow-listed by the owner (review 10-10), one derivation EACH. A second derivation in either file, or
+    // Allow-listed by the owner (review 10-10), one derivation EACH. A second derivation in that file, or
     // one anywhere else, turns this red.
     const ALLOWED: Record<string, { count: number; reason: string }> = {
       "import/import-payment-status.ts": {
         count: 1,
         reason:
           "imported historical invoices take the source system's own settled state; no order edit reaches them",
-      },
-      "bookkeeping/bookkeeping.service.ts": {
-        count: 1,
-        reason:
-          "recordPayment refuses an amount above the remaining balance (+ 0.001) before it writes, so it cannot overpay",
       },
     };
     const found: Record<string, number> = {};
