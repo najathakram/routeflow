@@ -33,6 +33,18 @@ export class UpdateInvoiceItemDto extends CreateInvoiceItemDto {
 }
 
 /**
+ * SA-1508 A2-N1 rule 6: the admin's consent to a save whose stored figures no line explains. Echoes the two figures the
+ * 409 dialog showed; the server proceeds only when both equal its own fresh figures (within half a cent).
+ */
+export class AcceptLineTotalDto {
+  @IsNumber() storedTotal!: number;
+  @IsNumber() newTotal!: number;
+  /** R-302 P4: the tax half of the dialog's two figures; omitted, the echo only confirms a save whose tax does not move. */
+  @IsOptionalNotNull() @IsNumber() storedTax?: number;
+  @IsOptionalNotNull() @IsNumber() newTax?: number;
+}
+
+/**
  * B777: the PATCH /invoices/:id body. Before this class the handler was typed
  * `Partial<CreateInvoiceDto>` — a mapped TS type erases to `Object` in
  * design:paramtypes, which the global ValidationPipe (whitelist +
@@ -78,4 +90,10 @@ export class UpdateInvoiceDto extends PartialType(
   @IsOptional()
   @IsISO8601()
   expectedUpdatedAt?: string;
+
+  /** SA-1508: consent to line-based figures on an issued invoice whose stored total or tax its lines do not explain. */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AcceptLineTotalDto)
+  acceptLineTotal?: AcceptLineTotalDto;
 }

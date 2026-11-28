@@ -16,6 +16,7 @@ import { EmailModule } from "../email/email.module";
 import { RfInvoicesAdminService } from "../platform-admin/rf-invoices.service";
 import { BillingModule } from "./billing.module";
 import { BillingStatusService } from "./billing-status.service";
+import { PlanCatalogService } from "./plan-catalog.service";
 import { BillingService } from "./billing.service";
 import { CatchupCheckoutService } from "./catchup-checkout.service";
 import { AutoLockSwitchService } from "./auto-lock-switch.service";
@@ -76,6 +77,8 @@ describe("BillingModule wiring: the @Optional collaborators are really provided"
       expect(billing.catchup).toBeInstanceOf(CatchupClaimService);
       expect(billing.scheduledPrice).toBeInstanceOf(ScheduledPriceChangeService);
       expect(billing.dunning).toBeInstanceOf(DunningService);
+      // SA-1547 PR-5: a plan pick reads the catalog; the module must provide it (a missing one fails at boot, not at the first pick)
+      expect(billing.catalog).toBeInstanceOf(PlanCatalogService);
       const mutations = moduleRef.get(SubscriptionMutationService, { strict: false }) as any;
       expect(mutations.scheduledPrice).toBeInstanceOf(ScheduledPriceChangeService);
       expect(mutations.dunning).toBeInstanceOf(DunningService);

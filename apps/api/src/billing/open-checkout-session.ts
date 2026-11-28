@@ -1,5 +1,10 @@
 import { createHash } from "crypto";
-import { ConflictException, Logger, ServiceUnavailableException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Logger,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import type Stripe from "stripe";
 import type { TenantSubscription } from "@prisma/client";
 import type { CheckoutStart } from "@routeflow/types";
@@ -13,6 +18,7 @@ import {
   TENANT_PRICE_LOCK_WAIT_MS,
 } from "./price-lock";
 import { assertTenantLivePaymentsAllowed } from "./live-payments-wall";
+import { PICK_META, readPickSession } from "./self-checkout-plan-pick";
 import {
   checkoutStartFromSession,
   checkoutUiMode,
@@ -49,6 +55,8 @@ export interface SessionTerms {
   /** The add-on lines as billed (amount and quantity), so a price change under the same SKU is a new term. */
   addonLines: { unitAmount: number; quantity: number }[];
   anchorAt: Date;
+  /** SA-1547 PR-5: a plan pick's catalog version. In the hash, so a re-pick of another plan or version is new terms. */
+  planVersionId?: string;
 }
 export interface OpenLink {
   kind: "card" | "catch_up";
@@ -190,6 +198,7 @@ const termsHash = (terms: SessionTerms, surface: CheckoutSurface) =>
       terms.addonLines.map((l) => [l.unitAmount, l.quantity]).sort(),
       terms.anchorAt.getTime(),
       checkoutUiMode(surface),
+      ...(terms.planVersionId ? [terms.planVersionId] : []),
     ]),
   ).slice(0, 32);
 
@@ -199,16 +208,43 @@ const termsHash = (terms: SessionTerms, surface: CheckoutSurface) =>
  */
 export async function openCheckoutSession(
   d: SlotDeps,
-  a: { tenantId: string; customerId: string; surface: CheckoutSurface; readOffer: SlotOfferReader },
+  a: {
+    tenantId: string;
+    /**
+     * The Stripe customer id, or (a plan pick) a resolver run UNDER the hold after `beforeOffer` has refused: a refused pick
+     * creates no customer and no subscription row.
+     */
+    customerId: string | (() => Promise<string>);
+    surface: CheckoutSurface;
+    readOffer: SlotOfferReader;
+    /**
+     * SA-1547 PR-5: refusals a caller must run UNDER the hold, right after the wall and before the first Stripe call (a plan
+     * pick's eligibility gate and subscription checks). It throws the coded refusal; it writes nothing.
+     */
+    beforeOffer?: () => Promise<void>;
+  },
 ): Promise<CheckoutStart> {
   return underSlotLock(
     a.tenantId,
     async () => {
       // W-1464: under the tenant-price lock, before the first Stripe call (the list, the expire, the create)
       await assertTenantLivePaymentsAllowed(d.prisma, a.tenantId);
-      const sessions = await tenantSessions(d, a.tenantId, a.customerId);
+      await a.beforeOffer?.();
+      const customerId = typeof a.customerId === "function" ? await a.customerId() : a.customerId;
+      const sessions = await tenantSessions(d, a.tenantId, customerId);
       if (hasUnapplied(sessions, await readRow(d, a.tenantId))) throw inProgress();
       const { terms, params } = await a.readOffer(); // the ONLY term read, under the lock
+      // SA-1547 PR-5: a pick session must carry the terms completion applies (ONE validator, shared with completion);
+      // refused BEFORE anything is expired or created.
+      if (
+        params.metadata?.[PICK_META.selfPick] &&
+        readPickSession(params.metadata).status !== "PICK"
+      ) {
+        throw new BadRequestException({
+          code: API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED,
+          message: "A plan pick must name its plan, catalog version and price.",
+        });
+      }
       const hash = termsHash(terms, a.surface);
       const live = sessions.find(
         (s) =>
@@ -226,7 +262,7 @@ export async function openCheckoutSession(
         ),
         {
           idempotencyKey: `rf-slot-${sha(
-            `${a.tenantId}:${a.customerId}:${hash}:${sessions[0]?.id ?? "none"}`,
+            `${a.tenantId}:${customerId}:${hash}:${sessions[0]?.id ?? "none"}`,
           )}`,
         },
       );

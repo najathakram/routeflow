@@ -446,7 +446,7 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
   describe("revertInvoiceToDraft", () => {
     it("clears the snapshot inside the revert tx, so a re-issue snapshots afresh", async () => {
       const sent = fixture(InvoiceStatus.SENT);
-      prisma.invoice.findUnique.mockResolvedValue(sent);
+      prisma.invoice.findUnique.mockResolvedValue({ ...sent, payments: [] });
       prisma.invoicePayment.count.mockResolvedValue(0);
       prisma.invoice.update.mockResolvedValue({ ...sent, status: InvoiceStatus.DRAFT });
       await service.revertInvoiceToDraft(INVOICE_ID);
@@ -454,6 +454,49 @@ describe("InvoicesService display-unit wiring (SA-827)", () => {
       const [tx, id] = (clearIssueDisplayUnits as jest.Mock).mock.calls[0];
       expect(typeof tx.$executeRaw).toBe("function");
       expect(id).toBe(INVOICE_ID);
+    });
+
+    // SA-1508 (R-197-D F2): the decision is re-taken on the LOCKED row, after the lock statement.
+    it("refuses on what the locked re-read sees (a payment since the pre-read)", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: INVOICE_ID,
+        status: InvoiceStatus.SENT,
+        payments: [{ status: "PAID" }], // landed after the pre-read count of 0
+      });
+      prisma.invoicePayment.count.mockResolvedValue(0);
+
+      await expect(service.revertInvoiceToDraft(INVOICE_ID)).rejects.toThrow("payments recorded");
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses a status that changed to VOID since the pre-read, and writes nothing", async () => {
+      prisma.invoice.findUnique
+        .mockResolvedValueOnce({ id: INVOICE_ID, status: InvoiceStatus.SENT }) // the pre-read
+        .mockResolvedValueOnce({ id: INVOICE_ID, status: InvoiceStatus.VOID, payments: [] }); // under the lock
+      prisma.invoicePayment.count.mockResolvedValue(0);
+
+      await expect(service.revertInvoiceToDraft(INVOICE_ID)).rejects.toThrow(
+        "Current status: VOID",
+      );
+      expect(prisma.invoice.update).not.toHaveBeenCalled();
+    });
+
+    it("writes with a status predicate", async () => {
+      prisma.invoice.findUnique.mockResolvedValue({
+        id: INVOICE_ID,
+        status: InvoiceStatus.OVERDUE,
+        payments: [],
+      });
+      prisma.invoicePayment.count.mockResolvedValue(0);
+      prisma.invoice.update.mockResolvedValue({ id: INVOICE_ID, status: "DRAFT" });
+
+      await service.revertInvoiceToDraft(INVOICE_ID);
+
+      expect(prisma.invoice.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: INVOICE_ID, status: { in: ["SENT", "VIEWED", "OVERDUE"] } },
+        }),
+      );
     });
   });
 

@@ -15,6 +15,7 @@ import {
 } from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { ApiTags, ApiOperation, ApiBearerAuth } from "@nestjs/swagger";
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from "class-validator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -38,9 +39,21 @@ import {
 } from "./billing-return-paths";
 import { selfPayForViewer } from "./self-checkout-eligibility";
 import { CardFirstFlagService } from "./card-first-flag.service";
-import { planGateRefusal } from "./self-serve-plan-gate";
+import { PLAN_PICK_OFF_MESSAGE, planGateRefusal } from "./self-serve-plan-gate";
 
 import { PermissionBase } from "../auth/permissions/permission.decorators";
+/**
+ * SA-1547 card-first: the checkout body. A plan KEY and nothing else: the global pipe's `forbidNonWhitelisted` makes a
+ * price, an interval or an add-on a 400. Which keys may be picked is the published catalog's call (`readPickTerms`).
+ */
+export class CheckoutPlanPickDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  planKey?: string;
+}
+
 interface AuthUser {
   tenantId: string | null;
   sub?: string;
@@ -246,32 +259,54 @@ export class SettingsBillingController {
   }
 
   /**
-   * R2.9 / SA-1547: Pay now. A Stripe Checkout session for the tenant's OWN pinned plan/price, offered only when the
+   * R2.9 / SA-1547: Pay now. A Stripe Checkout session for the tenant's pinned plan/price, offered only when the
    * server's own verdict (`selfPay.eligible`, self-checkout-eligibility.ts) says so: an invited LITE business that is not
-   * ACTIVE, or a trial-expired READ_ONLY one. A TRIAL with days left is refused (B1). DELIBERATELY takes no request body:
-   * accepting a planKey here would let a caller check out into an arbitrary plan (a plan pick is the card-first chunk 2).
-   * Switching plans still goes through subscribe/upgrade/downgrade above.
+   * ACTIVE, or a trial-expired READ_ONLY one. A TRIAL with days left is refused (B1). The body is optional and takes a
+   * plan KEY only (card-first chunk 2): the session is built from that published self-serve plan under the checkout's one
+   * hold (nothing is written until it is paid), and the price, interval and add-ons are always the server's. With card-first ON a TRIAL business that picks
+   * pays now, like any other pick (nothing is written before payment). Switching plans for a card payer still goes through subscribe/upgrade/downgrade.
    */
   @Post("subscription/checkout")
   @HttpCode(HttpStatus.OK)
   @Roles(UserRole.TENANT_ADMIN)
   @NoImpersonation("billing")
-  @ApiOperation({ summary: "Start a Stripe Checkout session for the tenant's own pinned plan" })
-  async createCheckout(@CurrentUser() user: AuthUser) {
+  @ApiOperation({
+    summary: "Start a Stripe Checkout session for the tenant's own plan (or a picked one)",
+  })
+  async createCheckout(@CurrentUser() user: AuthUser, @Body() dto?: CheckoutPlanPickDto) {
     const tenantId = this.tenantIdOf(user);
+    const planKey = dto?.planKey;
+    const gate = () => this.checkoutGate(tenantId, planKey);
+    // a plan pick runs the gate itself, under the checkout's hold (and early), after the wall; no pick: as before
+    if (planKey)
+      return this.billing.createCheckoutSession(tenantId, {
+        surface: "TENANT_SELF",
+        pick: { planKey, gate },
+      });
+    await gate();
+    return this.billing.createCheckoutSession(tenantId, { surface: "TENANT_SELF" });
+  }
+
+  /** The server's verdict on this checkout: a session to pay, or (card-first ON, a plan picked) a trial business choosing its plan. */
+  private async checkoutGate(tenantId: string, planKey: string | undefined): Promise<void> {
+    // SA-1325 Q1: picking a plan is live only with card-first ON (no service counts as OFF); refused before any customer
+    if (planKey && (await this.cardFirst?.isEnabled()) !== true) {
+      throw new ForbiddenException({ message: PLAN_PICK_OFF_MESSAGE, reason: "plan_pick_off" });
+    }
     const { selfPay } = await this.subscription.getSubscription(tenantId);
-    if (!selfPay?.eligible) {
-      // SA-1547 card-first: an ACTIVE business with no card is told to ask for a payment link (a coded 409, not a bare 403)
-      if (selfPay?.reason === "active_no_card" && (await this.cardFirst?.isEnabled())) {
+    if (selfPay?.eligible) return;
+    if (await this.cardFirst?.isEnabled()) {
+      // card-first: a TRIAL business that picks a plan pays now (a bodyless TRIAL request is still refused)
+      if (planKey && selfPay?.reason === "trial_active") return;
+      if (selfPay?.reason === "active_no_card") {
         throw planGateRefusal(API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK);
       }
-      throw new ForbiddenException({
-        message:
-          "Online payment is not available for this workspace right now - contact us to complete your subscription.",
-        reason: selfPay?.reason ?? "unavailable",
-      });
     }
-    return this.billing.createCheckoutSession(tenantId, { surface: "TENANT_SELF" });
+    throw new ForbiddenException({
+      message:
+        "Online payment is not available for this workspace right now - contact us to complete your subscription.",
+      reason: selfPay?.reason ?? "unavailable",
+    });
   }
 
   /**

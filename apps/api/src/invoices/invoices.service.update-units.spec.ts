@@ -178,12 +178,13 @@ describe("InvoicesService.update — a DRAFT invoice edit sells a line by a unit
     expect(prisma.invoice.update).not.toHaveBeenCalled();
   });
 
-  it("A3: a SENT invoice + a unit line keeps the exact unchanged 400; SENT without a unit keeps its own", async () => {
+  it("A3: a SENT invoice + a unit line keeps the exact unchanged 400; SENT without a unit is refused NOT_ADMIN for a non-admin", async () => {
     prisma.invoice.findUnique.mockResolvedValue(draft({ status: InvoiceStatus.SENT }));
     await expect(update([caseLine()])).rejects.toThrow(REFUSAL);
-    await expect(update([{ ...caseLine(), unitLabel: undefined, qty: 1 }])).rejects.toThrow(
-      "Only DRAFT invoices can be edited",
-    );
+    // SA-1508: a sent invoice is no longer "Only DRAFT"; a caller who is not an admin of the tenant is NOT_ADMIN (409)
+    await expect(update([{ ...caseLine(), unitLabel: undefined, qty: 1 }])).rejects.toMatchObject({
+      response: { code: "INVOICE_EDIT_REFUSED", reason: "NOT_ADMIN" },
+    });
     expect(prisma.invoice.update).not.toHaveBeenCalled();
   });
 

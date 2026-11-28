@@ -20,6 +20,8 @@
 //                    `expectedRevisionNumber` is behind the order's latest revision (nothing written; reload).
 //   INVOICE_STALE — `body.code` of the 409 on PATCH /invoices/:id when the client's `expectedUpdatedAt`
 //                    is not the invoice's current updatedAt (another save landed; nothing written; reload).
+//   INVOICE_EDIT_REFUSED — `body.code` of the 409 on PATCH /invoices/:id when an issued invoice cannot be edited in
+//                    place (SA-1508); `body.reason` is an `InvoiceEditBlockReason`, `body.message` plain words. Nothing written.
 //   ORDER_INVOICE_SETTLE_FAILED — `body.code` of the 409 raised AFTER a ship/deliver status committed when its
 //                    invoice could not be created, updated or checked (the status stays; open the order).
 //   DELIVERY_DATE_IN_PAST — `body.code` of the 400 when a create / buyer-cart merge carries a
@@ -260,6 +262,7 @@ export const API_ERROR_CODES = {
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   ORDER_REVISION_STALE: "ORDER_REVISION_STALE",
   INVOICE_STALE: "INVOICE_STALE",
+  INVOICE_EDIT_REFUSED: "INVOICE_EDIT_REFUSED",
   ORDER_INVOICES_NEED_REVIEW: "ORDER_INVOICES_NEED_REVIEW",
   ORDER_INVOICE_SETTLE_FAILED: "ORDER_INVOICE_SETTLE_FAILED",
   DELIVERY_DATE_IN_PAST: "DELIVERY_DATE_IN_PAST",
@@ -624,6 +627,8 @@ export const API_ERROR_CODES = {
   CHECKOUT_LINK_NOT_EXPIRED: "CHECKOUT_LINK_NOT_EXPIRED",
   LIVE_PAYMENTS_OFF: "LIVE_PAYMENTS_OFF",
   CHOOSE_PLAN_AT_CHECKOUT: "CHOOSE_PLAN_AT_CHECKOUT",
+  SELF_SERVE_PLAN_NOT_ALLOWED: "SELF_SERVE_PLAN_NOT_ALLOWED",
+  CUSTOM_FEE_PLAN_PICK_REFUSED: "CUSTOM_FEE_PLAN_PICK_REFUSED",
   PLAN_PICK_ASK_FOR_LINK: "PLAN_PICK_ASK_FOR_LINK",
   PAYMENT_OVERDUE: "PAYMENT_OVERDUE",
   PAYMENT_STATE_UNKNOWN: "PAYMENT_STATE_UNKNOWN",

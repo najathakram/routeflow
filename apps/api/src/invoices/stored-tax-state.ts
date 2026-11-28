@@ -306,3 +306,76 @@ export function guardItemsEditTaxState(args: {
     }
   }
 }
+
+/**
+ * SA-1508 A3-H1 / A4-STAMP: in an ISSUED money edit, a verified `restampRate` is written onto every KEPT stored line
+ * whose stored rate is 0 and whose edit line still reads 0 after matching, never an NSF line. A line sent at any
+ * non-zero rate keeps it. Pure and the only stamper besides `guardItemsEditTaxState` (the DRAFT door, unchanged).
+ */
+export function restampEditLines(
+  editLines: ReadonlyArray<{ rowId: string | null; data: Record<string, any> }>,
+  storedRows: ReadonlyArray<Record<string, any>>,
+  restampRate: number | null | undefined,
+): void {
+  if (restampRate == null) return;
+  for (const l of editLines) {
+    const row = l.rowId ? storedRows.find((r) => r.id === l.rowId) : undefined;
+    if (
+      row &&
+      Number(row.taxRate ?? 0) === 0 &&
+      Number(l.data.taxRate ?? 0) === 0 &&
+      !isNsfLine(row)
+    )
+      l.data.taxRate = restampRate;
+  }
+}
+
+/** What an issued invoice's stored lines say about its stored figures (SA-1508 A2-N1 rule 6, A3-M2). */
+export type IssuedRecomputeState = "REPRODUCES" | "TAX_STALE" | "TOTAL_NOT_FROM_LINES";
+
+export interface IssuedRecompute {
+  state: IssuedRecomputeState;
+  /** The VERIFIED flat rate a stale invoice's rate-0 goods lines are stamped with (null: none, or not stale). */
+  restampRate: number | null;
+}
+
+/**
+ * The three-state judge: TAX_STALE when the stored lines cannot reproduce the stored tax (a verified rate may still
+ * exist); TOTAL_NOT_FROM_LINES when the tax reproduces but the stored lines, discount and shipping give a total more
+ * than one cent from the stored one (an imported file total); else REPRODUCES. Reads the STORED rows only.
+ */
+export function issuedRecomputeState(args: {
+  invoice: TaxStateArgs["invoice"] & { total?: unknown; shippingFee?: unknown };
+  storedLines: ReadonlyArray<StoredTaxLine>;
+  isTaxExempt: boolean;
+  preferredRate?: number | null;
+}): IssuedRecompute {
+  const { invoice, storedLines, isTaxExempt, preferredRate } = args;
+  const v = taxStateOf({
+    invoice,
+    storedLines,
+    canRestamp: true,
+    isTaxExempt,
+    discount: Number(invoice.discount ?? 0),
+    shipping: Number(invoice.shippingFee ?? 0),
+    preferredRate,
+  });
+  if (v.stale) return { state: "TAX_STALE", restampRate: v.restampRate };
+  const gap = Math.abs(toCents(v.totals.total) - toCents(invoice.total));
+  return { state: gap > 1 ? "TOTAL_NOT_FROM_LINES" : "REPRODUCES", restampRate: null };
+}
+
+/**
+ * The detail read and the lock both ask here, with the lock's own arguments: a standalone, non-DRAFT invoice's judge
+ * (null for a DRAFT, which keeps master's rule, and for an order-linked invoice, which edits on its order).
+ */
+export async function issuedRecomputeOf(
+  db: any,
+  invoice: TaxStateArgs["invoice"] & { total?: unknown; shippingFee?: unknown },
+  storedLines: ReadonlyArray<StoredTaxLine>,
+  isTaxExempt: boolean,
+): Promise<IssuedRecompute | null> {
+  if (invoice.status === InvoiceStatus.DRAFT || invoice.orderId) return null;
+  const preferredRate = await tenantPreferredRate(db);
+  return issuedRecomputeState({ invoice, storedLines, isTaxExempt, preferredRate });
+}

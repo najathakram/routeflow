@@ -110,12 +110,10 @@ describe("SettingsBillingController.createCheckout (WP3c, R2.9)", () => {
     expect(result).toEqual({ checkoutUrl: "https://checkout.stripe.com/x", sessionId: "cs_1" });
   });
 
-  // R2.9: the endpoint accepts no request body at all — a caller cannot direct
-  // checkout at any plan other than the tenant's own pinned one. This is a
-  // compile-time/structural guarantee (no @Body() param exists on the handler), so
-  // the runtime check here is that the handler's arity is exactly 1 (@CurrentUser only).
-  it("R2.9 takes no request-body param — the tenant's own plan is structural, not client-supplied", () => {
-    expect(SettingsBillingController.prototype.createCheckout.length).toBe(1);
+  // R2.9, amended by SA-1547 PR-5: the endpoint takes ONE optional input, a plan KEY (the whitelist is pinned in
+  // settings-billing.self-pay.spec.ts); a caller still cannot direct checkout at a price, an interval or an add-on.
+  it("R2.9 the route's only client input is the optional plan-key body", () => {
+    expect(SettingsBillingController.prototype.createCheckout.length).toBe(2);
   });
 
   // SA-1547: the REG-6 kill switch (INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT) now lives in the eligibility helper; its own

@@ -3045,6 +3045,7 @@ describe("InvoicesService", () => {
       prisma.invoice.findUnique.mockResolvedValue({
         id: "inv-1",
         status: InvoiceStatus.SENT,
+        payments: [{ status: "VOID" }], // the locked re-read: the bounced row is not live
       });
       // Where-aware, same technique as the order-edit variant above: a real query with
       // status:{not:"VOID"} excludes the sole VOID row (0); without the filter it counts it (1).

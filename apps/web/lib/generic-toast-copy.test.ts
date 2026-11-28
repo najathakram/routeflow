@@ -1102,6 +1102,16 @@ describe("genericToastCopy: SA-1547 M1 live-payments wall", () => {
 describe("genericToastCopy: SA-1547 PR-5a plan-pick refusals (SA-C)", () => {
   it.each([
     [
+      400,
+      API_ERROR_CODES.SELF_SERVE_PLAN_NOT_ALLOWED,
+      "This plan can't be chosen here right now. Reload the page to see the plans you can pick, or contact us.",
+    ],
+    [
+      409,
+      API_ERROR_CODES.CUSTOM_FEE_PLAN_PICK_REFUSED,
+      "Your account has its own price, so plan changes go through us. Contact us to change your plan.",
+    ],
+    [
       409,
       API_ERROR_CODES.PLAN_PICK_ASK_FOR_LINK,
       "To pay for a new plan, ask us for a payment link.",
@@ -1109,6 +1119,14 @@ describe("genericToastCopy: SA-1547 PR-5a plan-pick refusals (SA-C)", () => {
   ])("%i %s maps to its sentence, never the server message", (status, code, sentence) => {
     const copy = genericToastCopy(err(status, { code }));
     expect(copy).toBe(sentence);
+    expect(copy).not.toContain(RAW);
+  });
+
+  it("SA-1325 Q1: the 403 with reason plan_pick_off maps to its sentence, never the server message", () => {
+    const copy = genericToastCopy(err(403, { reason: "plan_pick_off" }));
+    expect(copy).toBe(
+      "Choosing a different plan here isn't available yet. Contact us to change your plan.",
+    );
     expect(copy).not.toContain(RAW);
   });
 });
@@ -1136,5 +1154,15 @@ describe("genericToastCopy: B1415 M1b reused adjustment key", () => {
       );
       expect(copy).not.toBe("server text");
     }
+  });
+});
+
+describe("genericToastCopy: CHECKOUT_PAYMENT_IN_PROGRESS is unchanged (SA-1547 PR-5b)", () => {
+  // the platform-admin price override raises this code too, and the backoffice pricing card shows the generic toast: the
+  // plan-pick sentence is mapped only by the plan-pick surface's own mapper, never here
+  it("is the neutral 409, byte for byte", () => {
+    expect(genericToastCopy(err(409, { code: API_ERROR_CODES.CHECKOUT_PAYMENT_IN_PROGRESS }))).toBe(
+      NEUTRAL_409,
+    );
   });
 });

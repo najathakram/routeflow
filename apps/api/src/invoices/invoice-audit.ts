@@ -9,9 +9,17 @@ import { AUDIT_ACTIONS } from "../audit/audit-actions.constant";
  */
 type AuditTx = { auditLog: { create(args: { data: Record<string, unknown> }): Promise<unknown> } };
 
-function write(tx: AuditTx, action: string, invoiceId: string, actor: string | null, meta: object) {
+function write(
+  tx: AuditTx,
+  action: string,
+  invoiceId: string,
+  actor: string | null,
+  meta: object,
+  /** Columns only some writers carry (`impersonatedBy`): added when present, never an explicit null. */
+  extra: Record<string, unknown> = {},
+) {
   return tx.auditLog.create({
-    data: { userId: actor, action, entityType: "invoice", entityId: invoiceId, meta },
+    data: { userId: actor, action, entityType: "invoice", entityId: invoiceId, meta, ...extra },
   });
 }
 
@@ -29,6 +37,85 @@ export function auditInvoiceRevised(
 ) {
   const { invoiceId, actor, ...meta } = p;
   return write(tx, AUDIT_ACTIONS.INVOICE_REVISED, invoiceId, actor, { invoiceId, actor, ...meta });
+}
+
+type EditView = {
+  lines: Array<Record<string, any>>;
+  discount: unknown;
+  shippingFee: unknown;
+  taxAmount: unknown;
+  total: unknown;
+  dueDate: Date | null | undefined;
+  notes?: unknown;
+};
+const num = (v: unknown) => roundMoney(Number(v ?? 0));
+const lineView = (l: Record<string, any>) => ({
+  id: l.id,
+  productId: l.productId ?? null,
+  qty: Number(l.qty ?? 0),
+  boxes: l.boxes ?? null,
+  pieces: l.pieces ?? null,
+  unitPrice: num(l.unitPrice),
+  subtotal: num(l.subtotal),
+});
+const figures = (v: EditView) => ({
+  lines: v.lines.map(lineView),
+  discount: num(v.discount),
+  shippingFee: num(v.shippingFee),
+  taxAmount: num(v.taxAmount),
+  dueDate: v.dueDate ? new Date(v.dueDate).toISOString() : null,
+});
+
+/**
+ * SA-1508: an admin edited an ISSUED invoice in place. ONE `invoice.revised` row per real edit, in the editing
+ * transaction (a rolled-back edit leaves no row), with the before and after of every figure and line, the status move,
+ * whether the save was figure-free, and (when the admin confirmed figures no line explains) both totals and taxes.
+ * `impersonatedBy` rides only when a support session did the edit.
+ */
+export function auditIssuedInvoiceEdit(
+  tx: AuditTx,
+  p: {
+    invoiceId: string;
+    actor: string | null;
+    impersonatedBy?: string | null;
+    fromStatus: string;
+    toStatus: string;
+    before: EditView;
+    after: EditView;
+    figureFree: boolean;
+    consented: boolean;
+  },
+) {
+  const { before, after } = p;
+  const lineKeys = (v: EditView) =>
+    v.lines.map((l) => ({ orderItemId: l.id, qty: l.qty, subtotal: l.subtotal }));
+  const meta = {
+    source: "invoice-edit",
+    invoiceId: p.invoiceId,
+    actor: p.actor,
+    fromStatus: p.fromStatus,
+    toStatus: p.toStatus,
+    totalBefore: num(before.total),
+    totalAfter: num(after.total),
+    linesChanged: countLinesChanged(lineKeys(before), lineKeys(after)),
+    before: figures(before),
+    after: figures(after),
+    notesChanged: (before.notes ?? null) !== (after.notes ?? null),
+    figureFree: p.figureFree,
+    ...(p.consented && {
+      consented: true,
+      taxBefore: num(before.taxAmount),
+      taxAfter: num(after.taxAmount),
+    }),
+  };
+  return write(
+    tx,
+    AUDIT_ACTIONS.INVOICE_REVISED,
+    p.invoiceId,
+    p.actor,
+    meta,
+    p.impersonatedBy ? { impersonatedBy: p.impersonatedBy } : {},
+  );
 }
 
 /** SA-1050 rule 3: a write-off. `amount` is the confirmed balance written off, `preTax` its pre-tax share (the event's figures). */

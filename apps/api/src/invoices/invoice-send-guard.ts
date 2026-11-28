@@ -169,3 +169,24 @@ export function externalPaidOn(
       .reduce((s, p) => s + Number(p.amount), 0),
   );
 }
+
+/** The statuses the operator's Revert to draft may un-issue. */
+export const REVERTABLE_STATUSES: InvoiceStatus[] = [
+  InvoiceStatus.SENT,
+  InvoiceStatus.VIEWED,
+  InvoiceStatus.OVERDUE,
+];
+
+/**
+ * revertInvoiceToDraft(): the refusal to throw (400), or null. Judged twice (SA-389 shape): on the pre-read as the
+ * fast refusal, and on the row re-read under {@link lockInvoiceRow} as the authoritative one. `livePayments` counts
+ * every payment row that is not VOID (a pending one still blocks).
+ */
+export function revertRefusal(status: InvoiceStatus, livePayments: number): string | null {
+  if (!REVERTABLE_STATUSES.includes(status)) {
+    return `Only SENT, VIEWED, or OVERDUE invoices with no payments can be reverted to Draft. Current status: ${status}`;
+  }
+  return livePayments > 0
+    ? "Cannot revert to Draft: this invoice has payments recorded. Void it instead."
+    : null;
+}
