@@ -44,6 +44,33 @@ export const MERGE_WRITE_LOCK_TIMEOUT = "3s";
 const BILLED_INVOICE = { status: { not: InvoiceStatus.DRAFT } };
 
 /**
+ * SA-1330 (B1343): a merge never moves money and never deletes an order holding money or a credit promise, so such an
+ * order is never a merge participant (winner or loser). Two clauses, exported so the predicate below and the
+ * "kept separate" reason read (`readKeptSeparate`) share the SAME objects, never a copy.
+ * - Both kinds: an order carrying a credit intent (OrderCreditNote, FK CASCADE: the loser delete would drop it silently).
+ */
+export const MERGE_NO_CREDIT_INTENT = {
+  orderCreditNotes: { none: {} },
+} satisfies Prisma.OrderWhereInput;
+/**
+ * - `force`: an order whose DRAFT invoice holds ANY payment row, of any method or status, VOID included: the InvoicePayment
+ *   FK is RESTRICT, so the draft's delete would roll the consolidate back with a 500. Under `AND` so it sits beside the
+ *   billed-invoice `invoices` filter.
+ *   scan-ok: draft-payment-not-void — a delete-safety selection matching the RESTRICT FK on every payment row, never a paid figure.
+ */
+export const MERGE_NO_DRAFT_PAYMENT = {
+  AND: [{ invoices: { none: { status: InvoiceStatus.DRAFT, payments: { some: {} } } } }],
+} satisfies Prisma.OrderWhereInput;
+
+/** Why an order of the customer stayed out of a force consolidate (SA-1330 A1); SA-C's words map by this code. */
+export type KeptSeparateReason = "MONEY_ON_ORDER" | "MULTI_DRAFT";
+export interface KeptSeparateOrder {
+  orderId: string;
+  orderNumber: string | null;
+  reason: KeptSeparateReason;
+}
+
+/**
  * The ONE eligibility predicate per path (the pre-read, the under-lock re-read and the guarded loser
  * delete all use it). `auto` (sweep / buyer / templates): a plain pending order, no route, invoice, sale
  * or return. `force` (staff consolidate): any pending order, but never one with a billed Invoice
@@ -51,6 +78,13 @@ const BILLED_INVOICE = { status: { not: InvoiceStatus.DRAFT } };
  * open DRAFT mirror invoice is the B214 exception (it is removed with the loser).
  */
 export function mergeEligibleWhere(kind: MergeKind): Prisma.OrderWhereInput {
+  return kind === "auto"
+    ? { ...mergeBaseWhere("auto"), ...MERGE_NO_CREDIT_INTENT }
+    : { ...mergeBaseWhere("force"), ...MERGE_NO_CREDIT_INTENT, ...MERGE_NO_DRAFT_PAYMENT };
+}
+
+/** The eligibility conditions other than the SA-1330 money clauses (also the reason read's pool of candidates). */
+function mergeBaseWhere(kind: MergeKind): Prisma.OrderWhereInput {
   return kind === "auto"
     ? {
         status: OrderStatus.PENDING,
@@ -78,7 +112,8 @@ export function mergeEligibleWhere(kind: MergeKind): Prisma.OrderWhereInput {
 /**
  * The loser delete's own predicate. `force` has removed the (single) open DRAFT mirror by then, so it
  * additionally requires NO invoice at all: a second DRAFT partial (pre-delivery partials stay DRAFT) would
- * be orphaned by the FK SET NULL and its lines billed twice, so the delete fails closed.
+ * be orphaned by the FK SET NULL and its lines billed twice, so the delete fails closed. It overrides only
+ * `invoices`, so both SA-1330 clauses (`orderCreditNotes`, `AND`) survive into the delete.
  */
 function loserDeleteWhere(kind: MergeKind): Prisma.OrderWhereInput {
   return kind === "force"
@@ -92,7 +127,13 @@ export async function readMergeGroup(
   customerId: string,
   kind: MergeKind,
   focusOrderId?: string,
-): Promise<{ group: MergeOrder[]; unitAware: boolean; discounted: boolean }> {
+): Promise<{
+  group: MergeOrder[];
+  unitAware: boolean;
+  discounted: boolean;
+  /** `force` only: the orders the multi-draft / batch-draft skip removed (the "kept separate" MULTI_DRAFT input). */
+  multiDraftSkipped: MergeOrder[];
+}> {
   const found: MergeOrder[] = await db.order.findMany({
     where: { customerId, ...mergeEligibleWhere(kind) },
     include: {
@@ -106,6 +147,7 @@ export async function readMergeGroup(
   });
   // force: a loser with MORE THAN ONE DRAFT invoice, or a batch draft, is skipped (the merge removes only one plain mirror)
   const eligible = kind === "force" ? await withoutMultiDraftOrders(db, found) : found;
+  const multiDraftSkipped = kind === "force" ? found.filter((o) => !eligible.includes(o)) : [];
   // a SHIP order never folds into a ROUTE one; a post-create sweep folds only the new order's path
   const group = sameFulfilPathAsWinner(
     unshipped(eligible),
@@ -116,13 +158,46 @@ export async function readMergeGroup(
   if (group.length > 1 && mergeBlockedByDiscount(group)) {
     if (kind === "force") throw orderMergeDiscounted();
     logDiscountedSkip(`readMergeGroup(${kind})`, customerId);
-    return { group: [], unitAware: false, discounted: true };
+    return { group: [], unitAware: false, discounted: true, multiDraftSkipped };
   }
   return {
     group,
     unitAware: group.length > 1 && group.some((o) => o.lineItems.some(unitAware.isUnitAwareLine)),
     discounted: false,
+    multiDraftSkipped,
   };
+}
+
+/**
+ * SA-1330 A1: the customer's PENDING orders a force consolidate kept out, each with its reason. Read under the customer's
+ * merge lock, beside `readMergeGroup("force")`: the otherwise-eligible orders that fail one of the two exported money
+ * clauses (`NOT` of the SAME objects the predicate spreads) are MONEY_ON_ORDER, and the orders the multi-draft skip
+ * removed are MULTI_DRAFT. Orders that were never candidates (routed, billed, returns, delivery evidence) are not listed.
+ */
+export async function readKeptSeparate(
+  db: { order: { findMany: (args: any) => Promise<any[]> } },
+  customerId: string,
+  multiDraftSkipped: Array<{ id: string; orderNumber?: string | null }>,
+): Promise<KeptSeparateOrder[]> {
+  const held: Array<{ id: string; orderNumber: string | null }> = await db.order.findMany({
+    where: {
+      customerId,
+      ...mergeBaseWhere("force"),
+      OR: [{ NOT: MERGE_NO_CREDIT_INTENT }, { NOT: MERGE_NO_DRAFT_PAYMENT }],
+    },
+    select: { id: true, orderNumber: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const rows: KeptSeparateOrder[] = held.map((o) => ({
+    orderId: o.id,
+    orderNumber: o.orderNumber ?? null,
+    reason: "MONEY_ON_ORDER",
+  }));
+  for (const o of multiDraftSkipped) {
+    if (rows.some((r) => r.orderId === o.id)) continue;
+    rows.push({ orderId: o.id, orderNumber: o.orderNumber ?? null, reason: "MULTI_DRAFT" });
+  }
+  return rows;
 }
 
 async function withoutMultiDraftOrders(db: any, found: MergeOrder[]): Promise<MergeOrder[]> {
